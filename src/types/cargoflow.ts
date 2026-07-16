@@ -679,6 +679,11 @@ export interface CargoOrder {
   packageStatus?: string
   shipmentStatusName?: string
   isReadyToShip?: boolean | null
+  paymentType?: string
+  paymentMode?: string
+  isCashOnDelivery?: boolean
+  cashOnDeliveryAmount?: number | null
+  codAmount?: number | null
   rawOrder?: unknown
   totalAmount: number
   totalPrice?: number
@@ -756,6 +761,12 @@ export interface SuratIntegrationConfig {
   kullaniciAdi: string
   sifre: string
   webPassword?: string
+  sellerPaysKullaniciAdi?: string
+  sellerPaysSifre?: string
+  sellerPaysWebPassword?: string
+  codKullaniciAdi?: string
+  codSifre?: string
+  codWebPassword?: string
   firmaId: string
   testKullaniciAdi?: string
   testSifre?: string
@@ -791,6 +802,7 @@ export interface SuratIntegrationConfig {
   trackingCodeField: string
   barcodeCodeField: string
   tNoCodeField: string
+  trackingVerificationDelaysMs?: number[]
 }
 
 export interface IntegrationConfig {

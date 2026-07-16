@@ -248,10 +248,115 @@ export function IntegrationsPage({
               placeholder="KargoBarkoduSiparis icin e-Surat WebPassword"
             />
           </label>
+          <p className="field-note">
+            Yukarıdaki mevcut bilgiler, Satıcı Öder hesabı için varsayılan olarak
+            kullanılmaya devam eder. Farklı hesap varsa aşağıdaki alanlarla açıkça
+            ayırabilirsiniz.
+          </p>
+          <label>
+            <span>Satıcı Öder Cari Kodu</span>
+            <input
+              value={form.surat.sellerPaysKullaniciAdi ?? ''}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  surat: {
+                    ...form.surat,
+                    sellerPaysKullaniciAdi: event.target.value,
+                  },
+                })
+              }
+              placeholder="Boşsa mevcut cari kodu kullanılır"
+            />
+          </label>
+          <label>
+            <span>Satıcı Öder WebPassword</span>
+            <input
+              type="password"
+              value={form.surat.sellerPaysWebPassword ?? ''}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  surat: {
+                    ...form.surat,
+                    sellerPaysWebPassword: event.target.value,
+                  },
+                })
+              }
+              placeholder="Boşsa mevcut WebPassword kullanılır"
+            />
+          </label>
+          <label>
+            <span>Satıcı Öder Şifre</span>
+            <input
+              type="password"
+              value={form.surat.sellerPaysSifre ?? ''}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  surat: {
+                    ...form.surat,
+                    sellerPaysSifre: event.target.value,
+                  },
+                })
+              }
+              placeholder="Boşsa mevcut Sürat şifresi kullanılır"
+            />
+          </label>
+          <label>
+            <span>Kapıda Ödeme Cari Kodu</span>
+            <input
+              value={form.surat.codKullaniciAdi ?? ''}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  surat: {
+                    ...form.surat,
+                    codKullaniciAdi: event.target.value,
+                  },
+                })
+              }
+              placeholder="Yalnız kapıda ödeme siparişlerinde kullanılır"
+            />
+          </label>
+          <label>
+            <span>Kapıda Ödeme WebPassword</span>
+            <input
+              type="password"
+              value={form.surat.codWebPassword ?? ''}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  surat: {
+                    ...form.surat,
+                    codWebPassword: event.target.value,
+                  },
+                })
+              }
+              placeholder="Kapıda ödeme hesabının sorgulama şifresi"
+            />
+          </label>
+          <label>
+            <span>Kapıda Ödeme Şifre</span>
+            <input
+              type="password"
+              value={form.surat.codSifre ?? ''}
+              onChange={(event) =>
+                setForm({
+                  ...form,
+                  surat: {
+                    ...form.surat,
+                    codSifre: event.target.value,
+                  },
+                })
+              }
+              placeholder="Kapıda ödeme hesabının servis şifresi"
+            />
+          </label>
           {form.surat.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP' ? (
             <>
               <label>
-                <span>Sürat Entegrasyon Sözleşme No</span>
+                <span>Sürat Entegrasyon Sözleşme No (opsiyonel)</span>
                 <input
                   value={form.surat.entegrasyonSozlesme ?? ''}
                   onChange={(event) =>
@@ -280,9 +385,10 @@ export function IntegrationsPage({
                 />
               </label>
               <p className="field-note">
-                Bu iki değer Sürat hesabına özeldir. Değer uydurulmaz; çalışan
-                Durusoft hesabındaki tanım veya Sürat desteğinin verdiği değer
-                kullanılmalıdır.
+                WSDL bu XML alanını ister ancak pozitif bir numarayı zorunlu
+                kılmaz. Numara bilinmiyorsa CargoFlow şemaya uygun olarak 0
+                gönderir; hayali değer üretmez. WhoPays de yalnız Sürat hesabınıza
+                tanımlı değer biliniyorsa doldurulmalıdır.
               </p>
             </>
           ) : null}

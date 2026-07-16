@@ -28,6 +28,12 @@ export const defaultIntegrationConfig: IntegrationConfig = {
     kullaniciAdi: '',
     sifre: '',
     webPassword: '',
+    sellerPaysKullaniciAdi: '',
+    sellerPaysSifre: '',
+    sellerPaysWebPassword: '',
+    codKullaniciAdi: '',
+    codSifre: '',
+    codWebPassword: '',
     firmaId: '',
     testKullaniciAdi: '',
     testSifre: '',
@@ -52,6 +58,7 @@ export const defaultIntegrationConfig: IntegrationConfig = {
     trackingCodeField: 'auto',
     barcodeCodeField: 'auto',
     tNoCodeField: 'auto',
+    trackingVerificationDelaysMs: [0, 3000, 10000, 30000, 60000],
   },
 }
 
@@ -290,6 +297,12 @@ function hasIntegrationCredentials(config: IntegrationConfig): boolean {
       config.surat.kullaniciAdi ||
       config.surat.sifre ||
       config.surat.webPassword ||
+      config.surat.sellerPaysKullaniciAdi ||
+      config.surat.sellerPaysSifre ||
+      config.surat.sellerPaysWebPassword ||
+      config.surat.codKullaniciAdi ||
+      config.surat.codSifre ||
+      config.surat.codWebPassword ||
       config.surat.firmaId,
   )
 }

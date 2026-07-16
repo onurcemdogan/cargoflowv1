@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
+import { mkdtemp, rm } from 'node:fs/promises'
 import http from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import test from 'node:test'
 
 const host = '127.0.0.1'
@@ -301,6 +304,8 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   t.after(() => mockSurat.close())
 
   const apiPort = await getFreePort()
+  const configDirectory = await mkdtemp(join(tmpdir(), 'cargoflow-surat-test-'))
+  t.after(() => rm(configDirectory, { recursive: true, force: true }))
   const apiProcess = spawn(process.execPath, ['server/index.mjs'], {
     cwd: process.cwd(),
     env: {
@@ -311,6 +316,7 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       SURAT_REST_LIVE_BASE_URL: `http://${host}:${mockPort}`,
       TRENDYOL_PROD_BASE_URL: `http://${host}:${mockPort}`,
       TRENDYOL_STAGE_BASE_URL: `http://${host}:${mockPort}`,
+      CARGOFLOW_CONFIG_DIR: configDirectory,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
@@ -385,12 +391,16 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     '/api/shipments/surat/create',
     { config: missingContractConfig, order },
   )
-  assert.equal(missingContractResponse.ok, false)
-  assert.equal(
-    missingContractResponse.errorCode,
-    'SURAT_INTEGRATION_CONTRACT_MISSING',
+  assert.equal(missingContractResponse.ok, true)
+  const missingContractSoapRequest = requests
+    .slice(requestCountBeforeMissingContract)
+    .find((item) => item.soapAction.includes('KargoBarkoduSiparis'))
+  assert.ok(missingContractSoapRequest)
+  assert.match(
+    missingContractSoapRequest.body,
+    /<EntegrasyonSozlesme>0<\/EntegrasyonSozlesme>/,
   )
-  assert.equal(requests.length, requestCountBeforeMissingContract)
+  const requestCountBeforePdfBarcode = requests.length
   const pdfBarcodeResponse = await postJson(
     apiPort,
     '/api/shipments/surat/create',
@@ -431,9 +441,9 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     pdfBarcodeResponse.download.fileName,
     'surat-etiket-11397075043.pdf',
   )
-  const pdfSoapRequest = requests.find((item) =>
-    item.soapAction.includes('KargoBarkoduSiparis'),
-  )
+  const pdfSoapRequest = requests
+    .slice(requestCountBeforePdfBarcode)
+    .find((item) => item.soapAction.includes('KargoBarkoduSiparis'))
   assert.ok(pdfSoapRequest)
   assert.match(pdfSoapRequest.body, /<WebPassword>TEST_WEB_PASSWORD<\/WebPassword>/)
   assert.match(pdfSoapRequest.body, /<ReferansNo>7270034129020027<\/ReferansNo>/)
@@ -455,6 +465,114 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   assert.ok(
     pdfSoapRequest.body.indexOf('<EntegrasyonSozlesme>') <
       pdfSoapRequest.body.indexOf('<Iademi>'),
+  )
+
+  const idempotencyRequestStart = requests.length
+  const idempotencyBody = {
+    config: pdfBarcodeConfig,
+    order: {
+      ...order,
+      id: 'order-idempotency-parallel',
+      orderNumber: 'IDEMPOTENCY-ORDER',
+      packageId: 'IDEMPOTENCY-PACKAGE',
+      shipmentPackageId: 'IDEMPOTENCY-PACKAGE',
+      cargoTrackingNumber: '7270034129020027',
+    },
+  }
+  const [parallelCreateA, parallelCreateB] = await Promise.all([
+    postJson(apiPort, '/api/shipments/surat/create', idempotencyBody),
+    postJson(apiPort, '/api/shipments/surat/create', idempotencyBody),
+  ])
+  assert.equal(parallelCreateA.ok, true)
+  assert.equal(parallelCreateB.ok, true)
+  assert.equal(
+    requests
+      .slice(idempotencyRequestStart)
+      .filter((item) => item.soapAction.includes('KargoBarkoduSiparis'))
+      .length,
+    1,
+  )
+  assert.equal(
+    [parallelCreateA, parallelCreateB].some(
+      (item) => item.idempotency.reusedInFlight === true,
+    ),
+    true,
+  )
+  const requestCountBeforePersistedReplay = requests.length
+  const persistedReplay = await postJson(
+    apiPort,
+    '/api/shipments/surat/create',
+    idempotencyBody,
+  )
+  assert.equal(persistedReplay.ok, true)
+  assert.equal(persistedReplay.idempotency.restoredFromStore, true)
+  assert.equal(persistedReplay.idempotency.carrierCreateCalled, false)
+  assert.equal(requests.length, requestCountBeforePersistedReplay)
+
+  const sellerCredentialRequestStart = requests.length
+  const sellerCredentialResponse = await postJson(
+    apiPort,
+    '/api/shipments/surat/create',
+    {
+      config: buildConfig({
+        serviceMode: 'KARGO_BARKODU_SIPARIS_SOAP',
+        serviceType: 'KargoBarkoduSiparisSoap',
+        createShipmentPath: '/api/KargoBarkoduSiparis',
+        sellerPaysKullaniciAdi: 'SELLER_CARI',
+        sellerPaysSifre: 'SELLER_SIFRE',
+        sellerPaysWebPassword: 'SELLER_WEB_PASSWORD',
+      }),
+      order: {
+        ...order,
+        id: 'order-seller-pays-credential',
+        orderNumber: 'SELLER-PAYS-ORDER',
+      },
+    },
+  )
+  assert.equal(sellerCredentialResponse.ok, true)
+  const sellerCredentialRequest = requests
+    .slice(sellerCredentialRequestStart)
+    .find((item) => item.soapAction.includes('KargoBarkoduSiparis'))
+  assert.match(sellerCredentialRequest.body, /<cariKodu>SELLER_CARI<\/cariKodu>/)
+  assert.match(
+    sellerCredentialRequest.body,
+    /<WebPassword>SELLER_WEB_PASSWORD<\/WebPassword>/,
+  )
+
+  const codCredentialRequestStart = requests.length
+  const codCredentialResponse = await postJson(
+    apiPort,
+    '/api/shipments/surat/create',
+    {
+      config: buildConfig({
+        serviceMode: 'KARGO_BARKODU_SIPARIS_SOAP',
+        serviceType: 'KargoBarkoduSiparisSoap',
+        createShipmentPath: '/api/KargoBarkoduSiparis',
+        codKullaniciAdi: 'COD_CARI',
+        codSifre: 'COD_SIFRE',
+        codWebPassword: 'COD_WEB_PASSWORD',
+      }),
+      order: {
+        ...order,
+        id: 'order-cod-credential',
+        orderNumber: 'COD-ORDER',
+        isCashOnDelivery: true,
+        cashOnDeliveryAmount: 25.5,
+      },
+    },
+  )
+  assert.equal(codCredentialResponse.ok, true)
+  const codCredentialRequest = requests
+    .slice(codCredentialRequestStart)
+    .find((item) => item.soapAction.includes('KargoBarkoduSiparis'))
+  assert.match(codCredentialRequest.body, /<cariKodu>COD_CARI<\/cariKodu>/)
+  assert.match(
+    codCredentialRequest.body,
+    /<WebPassword>COD_WEB_PASSWORD<\/WebPassword>/,
+  )
+  assert.match(
+    codCredentialRequest.body,
+    /<KapidanOdemeTutari>25.5<\/KapidanOdemeTutari>/,
   )
 
   const diagnosticLoop = await postJson(
@@ -1178,6 +1296,7 @@ function buildConfig(overrides) {
       ortam: 'test',
       trackingServiceType: 'KargoTakipHareketDetayiSoap',
       trackingPath: '/api/KargoTakipHareketDetayi',
+      trackingVerificationDelaysMs: [0],
       ...overrides,
     },
   }

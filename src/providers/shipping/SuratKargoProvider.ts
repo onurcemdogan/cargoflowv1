@@ -177,6 +177,8 @@ export class SuratKargoProvider implements ShippingProvider {
           requestValidation:
             createLog?.requestValidation ??
             data.shipment?.requestValidation,
+          credentialSelection: createLog?.credentialSelection,
+          idempotency: data.idempotency,
           trendyolPreflight:
             createLog?.trendyolPreflight ??
             data.shipment?.trendyolPreflight,

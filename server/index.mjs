@@ -2,13 +2,14 @@ import cors from 'cors'
 import express from 'express'
 import { execFile } from 'node:child_process'
 import {
+  createHash,
   createCipheriv,
   createDecipheriv,
   randomBytes,
   randomUUID,
 } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
@@ -27,6 +28,12 @@ const localIntegrationConfigPath = join(
   localConfigDirectory,
   'integration-config.enc.json',
 )
+const suratCreateOperationPath = join(
+  localConfigDirectory,
+  'surat-create-operations.json',
+)
+const suratCreateLocks = new Map()
+let suratCreateStoreQueue = Promise.resolve()
 const SURAT_SOAP_URL =
   process.env.SURAT_SOAP_URL ||
   'https://webservices.suratkargo.com.tr/services.asmx'
@@ -534,8 +541,53 @@ app.listen(port, '127.0.0.1', () => {
 
 async function createSuratShipment(request, response) {
   const order = request.body?.order
+  const normalizedConfig = normalizeSuratConfig(
+    request.body?.config?.surat ?? request.body?.config,
+  )
+
+  if (
+    !order?.orderNumber ||
+    normalizedConfig.serviceMode !== 'KARGO_BARKODU_SIPARIS_SOAP'
+  ) {
+    await createSuratShipmentCore(request, response)
+    return
+  }
+
+  const selectedConfig = resolveSuratCredentialSet(
+    normalizedConfig,
+    order,
+  ).config
+  const operation = buildSuratCreateOperationContext(request, selectedConfig)
+  const inFlight = suratCreateLocks.get(operation.idempotencyKey)
+  if (inFlight) {
+    const result = await inFlight
+    response.json(withSuratIdempotencyDebug(result, operation, {
+      reusedInFlight: true,
+      carrierCreateCalled: false,
+    }))
+    return
+  }
+
+  const operationPromise = executeIdempotentSuratCreate(
+    request,
+    operation,
+  )
+  suratCreateLocks.set(operation.idempotencyKey, operationPromise)
+  try {
+    response.json(await operationPromise)
+  } finally {
+    suratCreateLocks.delete(operation.idempotencyKey)
+  }
+}
+
+async function createSuratShipmentCore(request, response) {
+  const order = request.body?.order
   const fullConfig = request.body?.config ?? {}
-  const config = normalizeSuratConfig(request.body?.config?.surat ?? request.body?.config)
+  const baseConfig = normalizeSuratConfig(
+    request.body?.config?.surat ?? request.body?.config,
+  )
+  const credentialSelection = resolveSuratCredentialSet(baseConfig, order)
+  const config = credentialSelection.config
   const trendyolConfig = fullConfig?.trendyol
 
   if (!order?.orderNumber) {
@@ -677,6 +729,357 @@ async function createSuratShipment(request, response) {
     errorSource: 'Frontend',
     message: `Desteklenmeyen Sürat create servis modu: ${config.serviceMode}`,
   })
+}
+
+function buildSuratCreateOperationContext(request, config) {
+  const order = request.body?.order ?? {}
+  const fullConfig = request.body?.config ?? {}
+  const tenantSeed = firstNonEmpty(
+    request.body?.tenantId,
+    fullConfig?.trendyol?.sellerId,
+    config.kullaniciAdi,
+    'local',
+  )
+  const tenantId = `tenant_${shortHash(tenantSeed)}`
+  const orderId = String(order.id ?? order.orderNumber ?? '').trim()
+  const fingerprintPayload = {
+    tenantId,
+    orderId,
+    orderNumber: String(order.orderNumber ?? ''),
+    packageId: String(order.packageId ?? order.shipmentPackageId ?? ''),
+    cargoTrackingNumber: String(order.cargoTrackingNumber ?? ''),
+    desi: Number(order.desi ?? 0),
+    serviceMode: config.serviceMode,
+    environment: config.ortam,
+  }
+  return {
+    tenantId,
+    orderId,
+    idempotencyKey: `SURAT:${tenantId}:${orderId}:CREATE`,
+    requestFingerprint: createHash('sha256')
+      .update(JSON.stringify(fingerprintPayload))
+      .digest('hex'),
+    correlationId: randomUUID(),
+    environment: config.ortam,
+    operation: 'KargoBarkoduSiparis',
+    maskedAccount: maskCarrierAccount(config.kullaniciAdi),
+    maxCreateCalls: 3,
+  }
+}
+
+async function executeIdempotentSuratCreate(request, operation) {
+  const existing = await readSuratCreateOperation(operation.idempotencyKey)
+  const retryAuthorized = Boolean(
+    request.body?.retryAfterConfirmedNoRecord === true &&
+      request.body?.confirmedNoCarrierRecord === true,
+  )
+
+  if (existing?.status === 'SUCCESS') {
+    return buildPersistedSuratCreateResponse(existing, operation)
+  }
+  if (existing && ['IN_PROGRESS', 'UNKNOWN'].includes(existing.status)) {
+    return buildSuratIdempotencyBlockedResponse(
+      existing,
+      operation,
+      'Önceki Sürat create çağrısının taşıyıcı sonucu kesinleşmedi. Yeni gönderi oluşturulmadı; mevcut adaylarla Serendip doğrulaması yapılmalıdır.',
+    )
+  }
+  if (existing?.status === 'FAILED_SAFE' && !retryAuthorized) {
+    return buildSuratIdempotencyBlockedResponse(
+      existing,
+      operation,
+      'Önceki create çağrısı başarısız olarak kaydedildi. Serendipte kayıt olmadığı doğrulanmadan ve kontrollü tekrar açıkça yetkilendirilmeden yeni çağrı yapılmadı.',
+    )
+  }
+  if (Number(existing?.createCallCount ?? 0) >= operation.maxCreateCalls) {
+    return buildSuratIdempotencyBlockedResponse(
+      existing,
+      operation,
+      'Bu sipariş için güvenli create çağrısı sınırına ulaşıldı. Otomatik deneme durduruldu.',
+    )
+  }
+
+  const startedAt = new Date().toISOString()
+  const inProgressRecord = {
+    ...existing,
+    ...operation,
+    status: 'IN_PROGRESS',
+    createCallCount: Number(existing?.createCallCount ?? 0) + 1,
+    startedAt,
+    updatedAt: startedAt,
+  }
+  await writeSuratCreateOperation(inProgressRecord)
+
+  let result
+  try {
+    result = await executeSuratCreateCoreAsValue(request)
+  } catch (error) {
+    const unknownRecord = {
+      ...inProgressRecord,
+      status: 'UNKNOWN',
+      updatedAt: new Date().toISOString(),
+      errorCode: 'SURAT_CREATE_TRANSPORT_UNKNOWN',
+    }
+    await writeSuratCreateOperation(unknownRecord)
+    return buildSuratIdempotencyBlockedResponse(
+      unknownRecord,
+      operation,
+      error instanceof Error
+        ? error.message
+        : 'Sürat create çağrısının sonucu kesinleşmedi.',
+    )
+  }
+
+  const carrierCreateCalled = didSuratCreateReachCarrier(result)
+  if (!carrierCreateCalled) {
+    await deleteSuratCreateOperation(operation.idempotencyKey)
+    return withSuratIdempotencyDebug(result, operation, {
+      carrierCreateCalled: false,
+      createCallCount: Number(existing?.createCallCount ?? 0),
+      persistentStatus: 'NOT_SENT',
+    })
+  }
+
+  const verified = isSerendipVerifiedCreateResult(result)
+  const explicitBusinessFailure = isExplicitSuratBusinessFailure(result)
+  const completedAt = new Date().toISOString()
+  const record = {
+    ...inProgressRecord,
+    status: verified
+      ? 'SUCCESS'
+      : explicitBusinessFailure
+        ? 'FAILED_SAFE'
+        : 'UNKNOWN',
+    updatedAt: completedAt,
+    completedAt,
+    businessCode: firstNonEmpty(
+      result?.suratCreateLog?.responseCode,
+      result?.createDiagnostics?.code,
+      result?.errorCode,
+    ),
+    businessMessage: String(result?.message ?? '').slice(0, 600),
+    carrierTrackingNumber: verified
+      ? firstNonEmpty(result?.shipment?.tNo, result?.shipment?.trackingNumber)
+      : '',
+    carrierBarcodeNumber: verified
+      ? firstNonEmpty(result?.shipment?.barkodNo, result?.shipment?.barcode)
+      : '',
+    candidateIdentifiers: collectSafeSuratCandidates(result),
+  }
+  await writeSuratCreateOperation(record)
+
+  return withSuratIdempotencyDebug(result, operation, {
+    carrierCreateCalled: true,
+    createCallCount: record.createCallCount,
+    persistentStatus: record.status,
+  })
+}
+
+async function executeSuratCreateCoreAsValue(request) {
+  let payload
+  await createSuratShipmentCore(request, {
+    json(value) {
+      payload = value
+      return value
+    },
+  })
+  return payload
+}
+
+function didSuratCreateReachCarrier(result) {
+  const createLog = result?.shipment?.suratCreateLog ?? result?.suratCreateLog
+  return Boolean(
+    createLog &&
+      createLog?.rawRequest?.skipped !== true &&
+      Number(createLog?.responseStatus ?? result?.responseStatus ?? 0) > 0,
+  )
+}
+
+function isSerendipVerifiedCreateResult(result) {
+  return Boolean(
+    result?.ok === true &&
+      result?.shipment?.serdendipVerified === true &&
+      result?.shipment?.verifiedShipment === true &&
+      Number(result?.trackingVerification?.gonderilerLength ?? 0) === 1 &&
+      isOperationalSuratTNo(
+        firstNonEmpty(result?.shipment?.tNo, result?.shipment?.trackingNumber),
+      ),
+  )
+}
+
+function isExplicitSuratBusinessFailure(result) {
+  const responseStatus = Number(
+    result?.shipment?.suratCreateLog?.responseStatus ??
+      result?.suratCreateLog?.responseStatus ??
+      result?.responseStatus ??
+      0,
+  )
+  return Boolean(
+    responseStatus > 0 &&
+      result?.ok === false &&
+      result?.errorCode !== 'SURAT_TRACKING_CONFIRMATION_MISSING',
+  )
+}
+
+function collectSafeSuratCandidates(result) {
+  return uniqueStrings([
+    result?.shipment?.tNo,
+    result?.shipment?.trackingNumber,
+    result?.shipment?.barkodNo,
+    result?.shipment?.barcode,
+    ...Object.values(result?.suratCreateLog?.codeCandidates ?? {}),
+    ...Object.values(result?.createDiagnostics?.codeCandidates ?? {}),
+  ]).slice(0, 24)
+}
+
+function withSuratIdempotencyDebug(result, operation, extra = {}) {
+  return {
+    ...result,
+    idempotency: {
+      idempotencyKey: operation.idempotencyKey,
+      correlationId: operation.correlationId,
+      requestFingerprint: operation.requestFingerprint,
+      environment: operation.environment,
+      operation: operation.operation,
+      maskedAccount: operation.maskedAccount,
+      reusedInFlight: false,
+      ...extra,
+    },
+  }
+}
+
+function buildPersistedSuratCreateResponse(record, operation) {
+  return withSuratIdempotencyDebug(
+    {
+      ok: true,
+      source: 'real',
+      message:
+        'Bu sipariş daha önce Sürat ve Serendip tarafından doğrulandı; yeni create çağrısı yapılmadı.',
+      serviceType: 'KargoBarkoduSiparisSoap',
+      operationName: 'KargoBarkoduSiparis',
+      shipment: {
+        trackingNumber: record.carrierTrackingNumber,
+        kargoTakipNo: record.carrierTrackingNumber,
+        tNo: record.carrierTrackingNumber,
+        barcode: record.carrierBarcodeNumber,
+        barkodNo: record.carrierBarcodeNumber,
+        barcodeValue: record.carrierBarcodeNumber,
+        finalSuratBarcode: record.carrierBarcodeNumber,
+        verifiedShipment: true,
+        dispatchRegistrationConfirmed: true,
+        operationalBarcodeVerified: true,
+        serdendipVerified: true,
+        verificationStage: 'serdendip_verified',
+        lifecycleStatus: 'LABEL_READY',
+        labelStatus: 'READY',
+        printEnabled: true,
+      },
+      trackingVerification: {
+        gonderilerLength: 1,
+        KargoTakipNo: record.carrierTrackingNumber,
+        serdendipVerified: true,
+        restoredFromIdempotencyStore: true,
+      },
+    },
+    operation,
+    {
+      carrierCreateCalled: false,
+      persistentStatus: 'SUCCESS',
+      createCallCount: record.createCallCount,
+      restoredFromStore: true,
+    },
+  )
+}
+
+function buildSuratIdempotencyBlockedResponse(record, operation, message) {
+  return withSuratIdempotencyDebug(
+    {
+      ok: false,
+      source: 'real',
+      errorCode: 'SURAT_CREATE_IDEMPOTENCY_BLOCKED',
+      errorSource: 'CargoFlow',
+      message,
+      shipment: {
+        verifiedShipment: false,
+        dispatchRegistrationConfirmed: false,
+        operationalBarcodeVerified: false,
+        labelStatus: 'BLOCKED',
+        printEnabled: false,
+        lifecycleStatus: 'SURAT_CREATE_UNCERTAIN',
+      },
+    },
+    operation,
+    {
+      carrierCreateCalled: false,
+      persistentStatus: record?.status ?? 'UNKNOWN',
+      createCallCount: Number(record?.createCallCount ?? 0),
+    },
+  )
+}
+
+function shortHash(value) {
+  return createHash('sha256')
+    .update(String(value ?? ''))
+    .digest('hex')
+    .slice(0, 12)
+}
+
+function maskCarrierAccount(value) {
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  if (text.length <= 4) return '*'.repeat(text.length)
+  return `${text.slice(0, 2)}${'*'.repeat(
+    Math.max(2, text.length - 4),
+  )}${text.slice(-2)}`
+}
+
+async function readSuratCreateOperation(idempotencyKey) {
+  const store = await readSuratCreateOperationStore()
+  return store.operations?.[idempotencyKey]
+}
+
+async function writeSuratCreateOperation(record) {
+  await queueSuratCreateStoreUpdate((store) => {
+    store.operations[record.idempotencyKey] = record
+  })
+}
+
+async function deleteSuratCreateOperation(idempotencyKey) {
+  await queueSuratCreateStoreUpdate((store) => {
+    delete store.operations[idempotencyKey]
+  })
+}
+
+async function queueSuratCreateStoreUpdate(mutator) {
+  const update = suratCreateStoreQueue.then(async () => {
+    const store = await readSuratCreateOperationStore()
+    mutator(store)
+    await mkdir(localConfigDirectory, { recursive: true })
+    const temporaryPath = `${suratCreateOperationPath}.${process.pid}.${randomUUID()}.tmp`
+    await writeFile(temporaryPath, JSON.stringify(store, null, 2), {
+      encoding: 'utf8',
+      mode: 0o600,
+    })
+    await rename(temporaryPath, suratCreateOperationPath)
+  })
+  suratCreateStoreQueue = update.catch(() => {})
+  return update
+}
+
+async function readSuratCreateOperationStore() {
+  try {
+    const parsed = JSON.parse(await readFile(suratCreateOperationPath, 'utf8'))
+    return {
+      version: 1,
+      operations:
+        parsed?.operations && typeof parsed.operations === 'object'
+          ? parsed.operations
+          : {},
+    }
+  } catch (error) {
+    if (error?.code === 'ENOENT') return { version: 1, operations: {} }
+    throw error
+  }
 }
 
 function buildTrendyolShipmentPreflight(order = {}) {
@@ -2142,6 +2545,12 @@ async function createSuratBarcodeOrderSoap(config, order, reference) {
   createLog.webPasswordProvided = true
   createLog.webPasswordSource = webPasswordInfo.source
   createLog.webPasswordFallbackUsed = webPasswordInfo.fallbackUsed
+  createLog.credentialSelection = {
+    name: config.selectedCredentialSet || 'seller_pays',
+    maskedAccount: config.selectedCredentialMaskedAccount ||
+      maskCarrierAccount(config.kullaniciAdi),
+    cashOnDelivery: config.cashOnDelivery === true,
+  }
   createLog.PdfBarkodAvailable = parsed.hasPdfBarkod
   createLog.PdfBarkodLength = parsed.PdfBarkod.length
   createLog.BarkodNoList = parsed.BarkodNoList
@@ -2994,6 +3403,23 @@ function resolveSuratMarketplaceRegistration(createResult, shipmentPayload) {
   }
 }
 
+function resolveTrackingVerificationOffsets(config = {}) {
+  const configured = Array.isArray(config.trackingVerificationDelaysMs)
+    ? config.trackingVerificationDelaysMs
+    : [0, 3000, 10000, 30000, 60000]
+  const offsets = uniqueStrings(
+    configured.map((value) => String(Math.max(0, Number(value) || 0))),
+  )
+    .map(Number)
+    .sort((left, right) => left - right)
+  return offsets.length > 0 ? offsets : [0]
+}
+
+function waitForTrackingOffset(delayMs) {
+  if (!Number.isFinite(delayMs) || delayMs <= 0) return Promise.resolve()
+  return new Promise((resolve) => setTimeout(resolve, delayMs))
+}
+
 async function verifySuratCreateResultWithTracking({
   config,
   order,
@@ -3017,21 +3443,40 @@ async function verifySuratCreateResultWithTracking({
   ])
   let trackingVerification
   const trackingAttempts = []
-  for (const candidate of trackingCandidates) {
-    trackingVerification =
-      config.trackingServiceType === 'KargoTakipHareketDetayiRest'
-        ? await trackShipmentRest(config, candidate, {
-            orderId: order?.id,
-            shipmentId: reference,
-          })
-        : await trackShipmentSoap(config, candidate, {
-            orderId: order?.id,
-            shipmentId: reference,
-          })
-    trackingVerification.trackingReference = candidate
-    trackingAttempts.push(buildTrackingAttemptDebug(candidate, trackingVerification))
-    trackingVerification.trackingAttempts = trackingAttempts
-    if (shouldStopTrackingCandidateSearch(trackingVerification)) break
+  const verificationOffsets = resolveTrackingVerificationOffsets(config)
+  let previousOffset = 0
+  let trackingSearchFinished = false
+  for (const offsetMs of verificationOffsets) {
+    await waitForTrackingOffset(offsetMs - previousOffset)
+    previousOffset = offsetMs
+    for (const candidate of trackingCandidates) {
+      trackingVerification =
+        config.trackingServiceType === 'KargoTakipHareketDetayiRest'
+          ? await trackShipmentRest(config, candidate, {
+              orderId: order?.id,
+              shipmentId: reference,
+            })
+          : await trackShipmentSoap(config, candidate, {
+              orderId: order?.id,
+              shipmentId: reference,
+            })
+      trackingVerification.trackingReference = candidate
+      trackingAttempts.push({
+        ...buildTrackingAttemptDebug(candidate, trackingVerification),
+        pollOffsetMs: offsetMs,
+        pollAttempt: trackingAttempts.length + 1,
+      })
+      trackingVerification.trackingAttempts = trackingAttempts
+      if (Number(trackingVerification?.gonderilerLength ?? 0) > 0) {
+        trackingSearchFinished = true
+        break
+      }
+      if (shouldStopTrackingCandidateSearch(trackingVerification)) {
+        trackingSearchFinished = true
+        break
+      }
+    }
+    if (trackingSearchFinished) break
   }
   if (trackingVerification) trackingVerification.trackingAttempts = trackingAttempts
   const tracking = trackingVerification?.tracking ?? {}
@@ -4086,6 +4531,12 @@ function enrichKargoBarkoduSiparisPayload(payload, config = {}) {
     ),
     0,
   )
+  payload.KapidanOdemeTahsilatTipi = config.cashOnDelivery
+    ? toIntegerXml(config.kapidanOdemeTahsilatTipi, 1)
+    : 0
+  payload.KapidanOdemeTutari = config.cashOnDelivery
+    ? toDecimalXml(config.codAmount, 0)
+    : 0
   payload.WhoPays = firstNonEmpty(config.whoPays, config.WhoPays)
   payload.KWebGonderiGirisiKaynak = firstNonEmpty(
     config.kWebGonderiGirisiKaynak,
@@ -5805,10 +6256,6 @@ function validateSuratBarcodeOrderCredentials(config) {
   if (!resolveSuratWebPassword(config).value) {
     missing.push('WebPassword / Sorgulama Sifresi')
   }
-  if (Number(config.entegrasyonSozlesme || 0) <= 0) {
-    missing.push('Sürat Entegrasyon Sözleşme No')
-  }
-
   if (missing.length === 0) return null
 
   return {
@@ -5816,9 +6263,7 @@ function validateSuratBarcodeOrderCredentials(config) {
     ok: false,
     source: 'real',
     message: `Eksik Surat KargoBarkoduSiparis alanlari: ${missing.join(', ')}`,
-    errorCode: missing.includes('Sürat Entegrasyon Sözleşme No')
-      ? 'SURAT_INTEGRATION_CONTRACT_MISSING'
-      : 'SURAT_WEB_PASSWORD_MISSING',
+    errorCode: 'SURAT_WEB_PASSWORD_MISSING',
     errorSource: 'CargoFlow',
     serviceType: 'KargoBarkoduSiparisSoap',
     serviceMode: 'KARGO_BARKODU_SIPARIS_SOAP',
@@ -5831,6 +6276,75 @@ function validateSuratBarcodeOrderCredentials(config) {
     },
     rawResponse: '',
     checkedAt: new Date().toISOString(),
+  }
+}
+
+function resolveSuratCredentialSet(config = {}, order = {}) {
+  const rawOrder = firstObjectCandidate(
+    order.rawOrder,
+    order.rawPackage,
+    order.rawResponse,
+  )
+  const sources = [order, rawOrder]
+  const paymentText = String(
+    firstNonEmpty(
+      order.paymentType,
+      order.paymentMode,
+      readSuratField(sources, [
+        'paymentType',
+        'paymentMode',
+        'paymentMethod',
+        'collectionType',
+      ]),
+    ),
+  ).toLocaleLowerCase('tr-TR')
+  const codAmount = toPositiveNumber(
+    firstNonEmpty(
+      order.cashOnDeliveryAmount,
+      order.codAmount,
+      readSuratField(sources, [
+        'cashOnDeliveryAmount',
+        'codAmount',
+        'collectionAmount',
+      ]),
+    ),
+  )
+  const cashOnDelivery = Boolean(
+    order.isCashOnDelivery === true ||
+      codAmount != null ||
+      /kapıda|kapida|cash[ _-]?on[ _-]?delivery|\bcod\b/.test(paymentText),
+  )
+  const selected = cashOnDelivery
+    ? {
+        name: 'cash_on_delivery',
+        kullaniciAdi: config.codKullaniciAdi,
+        sifre: config.codSifre,
+        webPassword: config.codWebPassword,
+      }
+    : {
+        name: 'seller_pays',
+        kullaniciAdi:
+          config.sellerPaysKullaniciAdi || config.kullaniciAdi,
+        sifre: config.sellerPaysSifre || config.sifre,
+        webPassword: config.sellerPaysWebPassword || config.webPassword,
+      }
+
+  return {
+    name: selected.name,
+    cashOnDelivery,
+    codAmount: cashOnDelivery ? codAmount : null,
+    config: {
+      ...config,
+      kullaniciAdi: String(selected.kullaniciAdi ?? '').trim(),
+      sifre: String(selected.sifre ?? '').trim(),
+      webPassword: String(selected.webPassword ?? '').trim(),
+      selectedCredentialSet: selected.name,
+      selectedCredentialMaskedAccount: maskCarrierAccount(
+        selected.kullaniciAdi,
+      ),
+      cashOnDelivery,
+      codAmount: cashOnDelivery ? codAmount : null,
+    },
   }
 }
 
@@ -5936,6 +6450,22 @@ function normalizeSuratConfig(value = {}) {
         value.suratWebPassword ||
         '',
     ).trim(),
+    sellerPaysKullaniciAdi: String(
+      value.sellerPaysKullaniciAdi ?? value.sellerPaysCariKodu ?? '',
+    ).trim(),
+    sellerPaysSifre: String(value.sellerPaysSifre ?? '').trim(),
+    sellerPaysWebPassword: String(
+      value.sellerPaysWebPassword ?? '',
+    ).trim(),
+    codKullaniciAdi: String(
+      value.codKullaniciAdi ?? value.cashOnDeliveryCariKodu ?? '',
+    ).trim(),
+    codSifre: String(
+      value.codSifre ?? value.cashOnDeliverySifre ?? '',
+    ).trim(),
+    codWebPassword: String(
+      value.codWebPassword ?? value.cashOnDeliveryWebPassword ?? '',
+    ).trim(),
     firmaId: String(envFirmaId || scopedFirmaId || value.firmaId || '').trim(),
     testKullaniciAdi: String(value.testKullaniciAdi ?? '').trim(),
     testSifre: String(value.testSifre ?? '').trim(),
@@ -5973,6 +6503,13 @@ function normalizeSuratConfig(value = {}) {
     trackingCodeField: String(value.trackingCodeField || 'auto'),
     barcodeCodeField: String(value.barcodeCodeField || 'auto'),
     tNoCodeField: String(value.tNoCodeField || 'auto'),
+    trackingVerificationDelaysMs: Array.isArray(
+      value.trackingVerificationDelaysMs,
+    )
+      ? value.trackingVerificationDelaysMs
+          .map((delay) => Math.max(0, Number(delay) || 0))
+          .slice(0, 5)
+      : [0, 3000, 10000, 30000, 60000],
   }
 }
 
@@ -6716,6 +7253,19 @@ function normalizeTrendyolOrders(data) {
       ),
       isReadyToShip:
         typeof item.isReadyToShip === 'boolean' ? item.isReadyToShip : null,
+      paymentType: String(
+        item.paymentType ?? item.paymentMode ?? item.paymentMethod ?? '',
+      ),
+      isCashOnDelivery:
+        typeof item.isCashOnDelivery === 'boolean'
+          ? item.isCashOnDelivery
+          : false,
+      cashOnDeliveryAmount:
+        toPositiveNumber(
+          item.cashOnDeliveryAmount ??
+            item.codAmount ??
+            item.collectionAmount,
+        ) ?? null,
       totalAmount: Number(item.totalPrice ?? item.grossAmount ?? 0),
       totalPrice: Number(item.totalPrice ?? item.grossAmount ?? 0),
       createdAt: orderDate || new Date().toISOString(),
@@ -7696,6 +8246,12 @@ function hasIntegrationCredentials(config) {
       config?.surat?.kullaniciAdi ||
       config?.surat?.sifre ||
       config?.surat?.webPassword ||
+      config?.surat?.sellerPaysKullaniciAdi ||
+      config?.surat?.sellerPaysSifre ||
+      config?.surat?.sellerPaysWebPassword ||
+      config?.surat?.codKullaniciAdi ||
+      config?.surat?.codSifre ||
+      config?.surat?.codWebPassword ||
       config?.surat?.firmaId,
   )
 }
