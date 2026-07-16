@@ -1,0 +1,43 @@
+{
+  "name": "cargoflow-mvp",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:web": "vite --host 127.0.0.1 --port 5173",
+    "dev:web:host": "vite --host 0.0.0.0 --port 5173 --strictPort",
+    "dev:api": "node server/index.mjs",
+    "dev:host": "concurrently -k \"npm:dev:api\" \"npm:dev:web:host\"",
+    "test:surat": "node --test --test-concurrency=1 server/surat-flow.test.mjs server/trendyol-fetch-flow.test.mjs server/label-flow.test.mjs server/print-flow.test.mjs server/dashboard-flow.test.mjs server/orders-ui-flow.test.mjs server/persistence-flow.test.mjs server/local-config-flow.test.mjs",
+    "test:surat:serendip": "node server/surat-serendip-live-check.mjs",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@types/jsbarcode": "^3.11.4",
+    "concurrently": "^10.0.3",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "jsbarcode": "^3.12.3",
+    "lucide-react": "^1.20.0",
+    "qrcode-generator": "^2.0.4",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.12.3",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "eslint": "^10.3.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.2",
+    "globals": "^17.6.0",
+    "typescript": "~6.0.2",
+    "typescript-eslint": "^8.59.2",
+    "vite": "^8.0.12"
+  }
+}

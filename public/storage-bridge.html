@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>CargoFlow yerel ayar geçişi</title>
+  </head>
+  <body>
+    <script>
+      const allowedOrigins = new Set([
+        'http://127.0.0.1:5173',
+        'http://localhost:5173',
+      ])
+      const allowedKeys = [
+        'cargoflow.integrationConfig',
+        'cargoflow.printerSettings',
+        'cargoflow.labelTemplate',
+      ]
+
+      window.addEventListener('message', (event) => {
+        if (
+          !allowedOrigins.has(event.origin) ||
+          event.data?.type !== 'CARGOFLOW_STORAGE_REQUEST'
+        ) {
+          return
+        }
+        const values = Object.fromEntries(
+          allowedKeys.map((key) => [key, window.localStorage.getItem(key)]),
+        )
+        event.source?.postMessage(
+          { type: 'CARGOFLOW_STORAGE_RESPONSE', values },
+          event.origin,
+        )
+      })
+    </script>
+  </body>
+</html>
