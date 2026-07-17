@@ -191,14 +191,28 @@ export function resolvePrintableLabel(
   const dispatchRegistrationConfirmed = readBoolean(shipment, [
     'dispatchRegistrationConfirmed',
   ])
-  const canPreview = Boolean(verifiedAfter && resolvedBarcode)
+  // Kanıt (17.07.2026): create/label yanıtındaki ön-atanmış T.No/barkod
+  // fiziksel tesellümde birebir korunuyor; sunucu printEnabled verdiyse
+  // kabul öncesi etiket bu kodlarla yazdırılabilir.
+  const preassignedPrintReady = Boolean(
+    readBoolean(shipment, ['printEnabled']) &&
+      firstString(readPath(shipment, ['candidateVerificationStatus'])) ===
+        'PREASSIGNED_AWAITING_ACCEPTANCE' &&
+      tracking.value &&
+      barcode.value &&
+      barcodeRaw.value,
+  )
+  const canPreview = Boolean(
+    (verifiedAfter || preassignedPrintReady) && resolvedBarcode,
+  )
   const canPrint = Boolean(
-    canPreview &&
+    (canPreview &&
       resolvedTrackingNumber &&
       resolvedBarcode &&
       verifiedAfter &&
       dispatchRegistrationConfirmed &&
-      verification.operationalPrintAllowed,
+      verification.operationalPrintAllowed) ||
+      (preassignedPrintReady && resolvedTrackingNumber && resolvedBarcode),
   )
   const warningReason = resolveWarningReason({
     shipmentFound: Boolean(shipment),

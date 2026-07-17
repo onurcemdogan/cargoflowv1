@@ -14,13 +14,19 @@ test('Yeni senkronizasyon kalÄ±cÄ± operasyon listesini merge eder', async (t
   )
   const storage = new Map()
   const previousWindow = globalThis.window
-  globalThis.window = {
-    localStorage: {
-      getItem: (key) => storage.get(key) ?? null,
-      setItem: (key, value) => storage.set(key, value),
-      removeItem: (key) => storage.delete(key),
+  const localStorage = {
+    get length() {
+      return storage.size
     },
+    key: (index) => Array.from(storage.keys())[index] ?? null,
+    getItem: (key) => storage.get(key) ?? null,
+    setItem: (key, value) => storage.set(key, value),
+    removeItem: (key) => storage.delete(key),
   }
+  globalThis.window = {
+    localStorage,
+  }
+  storage.set('cargoFlow_active_marketplace_account_v2', '123456')
   t.after(() => {
     globalThis.window = previousWindow
   })
@@ -39,7 +45,7 @@ test('Yeni senkronizasyon kalÄ±cÄ± operasyon listesini merge eder', async (t
     },
   }
   storage.set(
-    'cargoFlow_orders_v3',
+    'cargoFlow_orders_v3:123456',
     JSON.stringify([yesterdayPending, yesterdayReady, staleLocalizedError]),
   )
 
@@ -132,6 +138,34 @@ test('Yeni senkronizasyon kalÄ±cÄ± operasyon listesini merge eder', async (t
       (order) => order.packageId === 'PKG-NEWER-PACKAGE',
     ),
   )
+
+  assert.equal(workflow.setMarketplaceAccount('654321'), true)
+  assert.deepEqual(workflow.loadOrders(), [])
+  storage.set(
+    'cargoFlow_orders_v3:654321',
+    JSON.stringify([buildOrder('SECOND-ACCOUNT')]),
+  )
+  assert.deepEqual(
+    workflow.loadOrders().map((order) => order.orderNumber),
+    ['ORDER-SECOND-ACCOUNT'],
+  )
+  assert.equal(storage.has('cargoFlow_orders_v3:123456'), false)
+  assert.equal(workflow.setMarketplaceAccount('123456'), true)
+  assert.deepEqual(workflow.loadOrders(), [])
+  assert.equal(storage.has('cargoFlow_orders_v3:654321'), false)
+
+  fetchedOrders = Array.from({ length: 140 }, (_, index) => ({
+    ...buildOrder(`DELIVERED-${index}`),
+    marketplaceStatus: 'Delivered',
+    operationStatus: 'DELIVERED',
+    status: 'Teslim Edildi',
+  }))
+  const largeClosedSync = await workflow.fetchOrders(buildConfig('123456'))
+  assert.equal(largeClosedSync.orders.length, 140)
+  assert.equal(
+    JSON.parse(storage.get('cargoFlow_orders_v3:123456')).length,
+    120,
+  )
 })
 
 function buildOrder(suffix) {
@@ -216,10 +250,10 @@ function buildReadyOrder(suffix) {
   }
 }
 
-function buildConfig() {
+function buildConfig(sellerId = '123456') {
   return {
     trendyol: {
-      sellerId: '123456',
+      sellerId,
       apiKey: 'test-api-key',
       apiSecret: 'test-api-secret',
       environment: 'prod',

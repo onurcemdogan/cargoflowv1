@@ -296,6 +296,7 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
 
   const persistedReady = {
     ...buildOrder(),
+    cargoTrackingNumber: '7270033990557601',
     status: 'Etiket Hazır',
     operationStatus: 'LABEL_READY',
     labelStatus: 'READY',
@@ -310,15 +311,27 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
       serviceMode: 'ORTAK_BARKOD_SOAP',
       operationName: 'OrtakBarkodOlustur',
       kargoTakipNo: '2512361562501',
+      tNo: '2512361562501',
       barcode: '0123990557601',
       barcodeRaw: '^XA^FD0123990557601^FS^XZ',
+      webSiparisKodu: '7270033990557601',
+      ozelKargoTakipNo: '7270033990557601',
       status: 'created',
       source: 'real',
       rawResponse: {},
       verifiedShipment: true,
       dispatchRegistrationConfirmed: true,
+      operationalBarcodeVerified: true,
       serdendipVerified: true,
       verificationStage: 'serdendip_verified',
+      lifecycleStage: 'VERIFIED',
+      suratTrackingLog: {
+        gonderilerLength: 1,
+        KargoTakipNo: '2512361562501',
+        BarkodNo: '0123990557601',
+        WebSiparisKodu: '7270033990557601',
+        OzelKargoTakipNo: '7270033990557601',
+      },
       createdAt: new Date().toISOString(),
     },
   }
@@ -436,6 +449,28 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     'LABEL_PRINTED',
   )
 
+  const failedBeforePendingTracking = {
+    ...printedBeforeEmptyTracking,
+    status: 'Hata',
+    operationStatus: 'ERROR',
+    labelStatus: 'BLOCKED',
+    label: undefined,
+  }
+  const pendingTrackingWorkflowResult =
+    await emptyTrackingWorkflow.trackShipments(
+      [failedBeforePendingTracking],
+      [failedBeforePendingTracking.id],
+      {},
+    )
+  assert.equal(
+    pendingTrackingWorkflowResult.orders[0].operationStatus,
+    'SURAT_TRANSFERRED_BUT_NO_BARCODE',
+  )
+  assert.equal(
+    pendingTrackingWorkflowResult.orders[0].status,
+    'Takip no/T.No Alınamadı',
+  )
+
   const deliveredTrackingWorkflow = new OrderWorkflowService(
     {},
     {
@@ -495,9 +530,15 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     '2026-06-19T12:30:00',
   )
 
+  const candidateDetailOrder = buildOrder()
+  candidateDetailOrder.shipment = {
+    candidateTNo: '41176176501029',
+    candidateBarkodNo: '01249710673',
+    candidateVerificationStatus: 'PENDING_VERIFICATION',
+  }
   const detailHtml = renderToStaticMarkup(
     createElement(OrderDetailDrawer, {
-      order: buildOrder(),
+      order: candidateDetailOrder,
       products: [
         {
           id: 'drawer-product',
@@ -526,6 +567,11 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
   assert.match(detailHtml, /Ürün Görsel Debug/)
   assert.match(detailHtml, /drawer-product/)
   assert.match(detailHtml, /productContentId/)
+  assert.match(detailHtml, /Aday T\.No/)
+  assert.match(detailHtml, /41176176501029/)
+  assert.match(detailHtml, /Aday Barkod/)
+  assert.match(detailHtml, /01249710673/)
+  assert.match(detailHtml, /Serendip/)
   assert.match(detailHtml, /Pazaryeri: Sipariş Oluştu/)
 
   const activeOrders = Array.from({ length: 11 }, (_, index) => ({

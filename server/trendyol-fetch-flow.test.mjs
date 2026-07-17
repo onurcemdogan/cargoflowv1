@@ -24,17 +24,20 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
       return
     }
 
-    const status = url.searchParams.get('status') ?? 'Created'
+    const requestedStatus = url.searchParams.get('status')
+    const status = requestedStatus ?? 'UNFILTERED'
     const page = Number(url.searchParams.get('page') ?? 0)
     const content = buildPageContent(status, page)
+    const totalPages = status === 'UNFILTERED' ? 1 : 2
     response.writeHead(200, { 'Content-Type': 'application/json' })
     response.end(
       JSON.stringify({
         content,
         page,
         size: Number(url.searchParams.get('size') ?? 1),
-        totalPages: 2,
-        totalElements: status === 'Created' ? 2 : 1,
+        totalPages,
+        totalElements:
+          status === 'Created' ? 2 : status === 'UNFILTERED' ? 2 : 1,
       }),
     )
   })
@@ -64,7 +67,6 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
       environment: 'prod',
     },
     query: {
-      statuses: ['Created', 'Picking'],
       startDate: Date.parse('2026-07-01T00:00:00.000Z'),
       endDate: Date.parse('2026-07-08T23:59:59.000Z'),
       size: 1,
@@ -72,19 +74,30 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
   })
 
   assert.equal(response.ok, true)
-  assert.equal(response.orders.length, 3)
-  assert.equal(response.debug.rawOrdersCount, 3)
-  assert.equal(response.debug.normalizedOrdersCount, 3)
-  assert.equal(response.debug.totalLineCount, 3)
+  assert.equal(response.orders.length, 4)
+  assert.equal(response.debug.rawOrdersCount, 4)
+  assert.equal(response.debug.normalizedOrdersCount, 4)
+  assert.equal(response.debug.totalLineCount, 4)
   assert.deepEqual(
     response.orders.map((order) => order.packageId).sort(),
-    ['PKG-CREATED-0', 'PKG-CREATED-1', 'PKG-PICKING-0'],
+    [
+      'PKG-CREATED-0',
+      'PKG-CREATED-1',
+      'PKG-HIDDEN-CREATED',
+      'PKG-PICKING-0',
+    ],
   )
   assert.equal(
     response.orders.find((order) => order.packageId === 'PKG-CREATED-1')
       ?.items[0]?.imageUrl,
     'https://cdn.example.com/PKG-CREATED-1.jpg',
   )
+  assert.ok(
+    requests.some((request) => request.status === '' && request.page === 0),
+    'Statü filtresinin kaçırdığı yeni paketler için filtresiz güvenlik ağı çağrılmalı.',
+  )
+  assert.equal(response.debug.fetchDebug.unfilteredFallback.ok, true)
+  assert.equal(response.debug.fetchDebug.unfilteredFallback.addedCount, 1)
   assert.ok(
     requests.some(
       (request) => request.status === 'Created' && request.page === 0,
@@ -106,6 +119,24 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
     ),
   )
   assert.ok(
+    requests.some(
+      (request) => request.status === 'Shipped' && request.page === 0,
+    ),
+    'Statü verilmediğinde Shipped kayıtları da güncellenmeli.',
+  )
+  assert.ok(
+    requests.some(
+      (request) => request.status === 'Delivered' && request.page === 0,
+    ),
+    'Statü verilmediğinde Delivered kayıtları da güncellenmeli.',
+  )
+  assert.ok(
+    requests.some(
+      (request) => request.status === 'Cancelled' && request.page === 0,
+    ),
+    'Statü verilmediğinde iptal kayıtları da güncellenmeli.',
+  )
+  assert.ok(
     response.debug.statusRequests.every((entry) =>
       Array.isArray(entry.pageRequests),
     ),
@@ -113,6 +144,20 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
 })
 
 function buildPageContent(status, page) {
+  if (status === 'UNFILTERED' && page === 0) {
+    return [
+      buildPackage({
+        status: 'Created',
+        suffix: 'CREATED-0',
+        packageId: 'PKG-CREATED-0',
+      }),
+      buildPackage({
+        status: 'Created',
+        suffix: 'HIDDEN-CREATED',
+        packageId: 'PKG-HIDDEN-CREATED',
+      }),
+    ]
+  }
   if (status === 'Created') {
     return [
       buildPackage({

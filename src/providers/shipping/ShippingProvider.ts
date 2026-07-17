@@ -67,6 +67,20 @@ export interface TrackShipmentResponse {
     gonderilerLength?: number
     trackingAttempts?: unknown[]
     trackingReference?: string
+    verificationPersistence?: {
+      verificationStatus?:
+        | 'VERIFIED'
+        | 'LABEL_CREATED_UNVERIFIED'
+        | 'LABEL_CREATED_NOT_REGISTERED'
+      status?: 'SUCCESS' | 'FAILED_SAFE' | 'UNKNOWN' | 'IN_PROGRESS'
+      lastCheckedAt?: string
+      lastGonderilerLength?: number
+      verificationReferenceType?: 'WEB_SIPARIS_KODU'
+      candidateTrackingNumber?: string
+      candidateBarcodeNumber?: string
+      carrierTrackingNumber?: string
+      carrierBarcodeNumber?: string
+    }
     carrierStatus?: {
       key?: string
       label?: string

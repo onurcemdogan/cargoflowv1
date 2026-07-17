@@ -80,6 +80,7 @@ function App() {
   const [integrationConfig, setIntegrationConfig] = useState<IntegrationConfig>(
     () => integrationConfigService.loadIntegrationConfig(),
   )
+  const [integrationHydrated, setIntegrationHydrated] = useState(false)
   const [integrationConfigRevision, setIntegrationConfigRevision] = useState(0)
   const [printerSettings, setPrinterSettings] = useState<PrinterSettings>(() =>
     integrationConfigService.loadPrinterSettings(),
@@ -88,14 +89,11 @@ function App() {
     integrationConfigService.loadLabelTemplate(),
   )
   const [ordersState, setOrdersState] = useState<OrdersState>(() => ({
-    orders: workflowService.enrichOrderImages(
-      workflowService.loadOrders(),
-      workflowService.loadProducts(),
-    ),
-    ordersLoading: false,
+    orders: [],
+    ordersLoading: true,
   }))
   const [productsState, setProductsState] = useState<ProductsState>(() => ({
-    products: workflowService.loadProducts(),
+    products: [],
     productsLoading: false,
   }))
   const [logs, setLogs] = useState<AuditLog[]>(() => auditLogService.load())
@@ -143,8 +141,25 @@ function App() {
       const hydrated =
         await integrationConfigService.hydrateIntegrationConfig()
       if (active) {
+        workflowService.setMarketplaceAccount(
+          hydrated.trendyol.sellerId,
+        )
+        const cachedProducts = workflowService.loadProducts()
         setIntegrationConfig(hydrated)
         setIntegrationConfigRevision((current) => current + 1)
+        setSelectedIds([])
+        setOrdersState({
+          orders: workflowService.enrichOrderImages(
+            workflowService.loadOrders(),
+            cachedProducts,
+          ),
+          ordersLoading: false,
+        })
+        setProductsState({
+          products: cachedProducts,
+          productsLoading: false,
+        })
+        setIntegrationHydrated(true)
       }
     })()
     return () => {
@@ -329,11 +344,34 @@ function App() {
     }
   }
 
+  function saveConfigAndActivateMarketplaceAccount(config: IntegrationConfig) {
+    const saved = integrationConfigService.saveIntegrationConfig(config)
+    const accountChanged = workflowService.setMarketplaceAccount(
+      saved.trendyol.sellerId,
+    )
+    setIntegrationConfig(saved)
+    if (accountChanged) {
+      setSelectedIds([])
+      setOrdersState({
+        orders: workflowService.enrichOrderImages(
+          workflowService.loadOrders(),
+          workflowService.loadProducts(),
+        ),
+        ordersLoading: false,
+      })
+      setProductsState({
+        products: workflowService.loadProducts(),
+        productsLoading: false,
+      })
+    }
+    return { saved, accountChanged }
+  }
+
   async function handleTestTrendyol(config: IntegrationConfig) {
     setBusy(true)
     try {
-      setIntegrationConfig(integrationConfigService.saveIntegrationConfig(config))
-      const result = await workflowService.testTrendyolConnection(config)
+      const { saved } = saveConfigAndActivateMarketplaceAccount(config)
+      const result = await workflowService.testTrendyolConnection(saved)
       setTrendyolTest(result)
       setLastResult({
         level: result.ok ? 'success' : 'warning',
@@ -349,8 +387,8 @@ function App() {
   async function handleTestSurat(config: IntegrationConfig) {
     setBusy(true)
     try {
-      setIntegrationConfig(integrationConfigService.saveIntegrationConfig(config))
-      const result = await workflowService.testSuratConnection(config)
+      const { saved } = saveConfigAndActivateMarketplaceAccount(config)
+      const result = await workflowService.testSuratConnection(saved)
       setSuratTest(result)
       setLastResult({
         level: result.ok ? 'success' : 'warning',
@@ -583,8 +621,8 @@ function App() {
   }
 
   function handleSaveIntegrations(config: IntegrationConfig) {
-    const saved = integrationConfigService.saveIntegrationConfig(config)
-    setIntegrationConfig(saved)
+    const { saved, accountChanged } =
+      saveConfigAndActivateMarketplaceAccount(config)
     const nextLogs = auditLogService.append({
       action: 'Entegrasyon kaydedildi',
       level: 'success',
@@ -593,8 +631,19 @@ function App() {
     setLogs(nextLogs)
     setLastResult({
       level: 'success',
-      message: 'Entegrasyon bilgileri kaydedildi.',
+      message: accountChanged
+        ? 'Yeni Trendyol hesabı kaydedildi. Siparişler bu hesaba göre yenileniyor.'
+        : 'Entegrasyon bilgileri kaydedildi.',
     })
+    if (accountChanged) {
+      void handleFetchOrders(saved, {
+        statuses: [
+          ...ACTIVE_MARKETPLACE_STATUSES,
+          ...ARCHIVE_MARKETPLACE_STATUSES,
+        ],
+        ...marketplaceSyncRange(),
+      })
+    }
   }
 
   function handleSavePrinterSettings(settings: PrinterSettings) {
@@ -659,7 +708,7 @@ function App() {
           integrationConfig={integrationConfig}
           printerSettings={printerSettings}
           apiDebugLogs={apiDebugLogs}
-          loading={ordersState.ordersLoading}
+          loading={ordersState.ordersLoading || !integrationHydrated}
           error={ordersState.ordersError}
           lastSyncedAt={ordersState.lastSyncedAt}
           onNavigatePage={handleNavigate}

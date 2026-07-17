@@ -48,9 +48,7 @@ export function IntegrationsPage({
       ...config.surat,
       serviceMode: initialSuratServiceMode,
       ...routeFromServiceMode(initialSuratServiceMode),
-      trackingServiceType:
-        config.surat.trackingServiceType ??
-        'KargoTakipHareketDetayiSoap',
+      trackingServiceType: 'KargoTakipHareketDetayiSoap',
     },
   })
 
@@ -91,6 +89,7 @@ export function IntegrationsPage({
           <label>
             <span>apiKey</span>
             <input
+              type="password"
               value={form.trendyol.apiKey}
               onChange={(event) =>
                 setForm({
@@ -428,13 +427,16 @@ export function IntegrationsPage({
               }}
             >
               <option value="ORTAK_BARKOD_SOAP">
-                OrtakBarkodOlustur SOAP (Sürat resmi ZPL / önerilen)
+                Gerçek Sürat kaydı + ortak etiket (önerilen)
               </option>
               <option value="KARGO_BARKODU_SIPARIS_SOAP">
                 KargoBarkoduSiparis SOAP (PDF barkod / onerilen)
               </option>
               <option value="PRE_REGISTRATION_REST">
                 GonderiyiKargoyaGonder REST (Trendyol / önerilen)
+              </option>
+              <option value="GONDERI_YENI_SOAP">
+                GonderiyiKargoyaGonderYeni SOAP (kontrollü deney)
               </option>
               <option value="GONDERI_OLUSTUR_V2_EXPERIMENTAL">
                 GonderiOlusturV2 (deneysel / endpoint doğrulanmadı)
@@ -450,8 +452,14 @@ export function IntegrationsPage({
               <option value="/api/OrtakBarkodOlustur">
                 /api/OrtakBarkodOlustur
               </option>
+              <option value="/api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur">
+                /api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur
+              </option>
               <option value="/api/KargoBarkoduSiparis">
                 /api/KargoBarkoduSiparis
+              </option>
+              <option value="/api/GonderiyiKargoyaGonderYeni">
+                /api/GonderiyiKargoyaGonderYeni
               </option>
               <option value="/api/Gonderi/GonderiOlustur">
                 /api/Gonderi/GonderiOlustur

@@ -449,15 +449,18 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   assert.match(missingRawCleanPrintHtml, /01231201024/)
 
   // Selected row shipment taşımıyorsa canonical order state kullanılır.
+  const canonicalShipment = buildShipment('5')
   const canonicalReady = {
     ...buildOrder('CANONICAL'),
-    shipment: buildShipment('5'),
+    cargoTrackingNumber: canonicalShipment.webSiparisKodu,
+    shipment: canonicalShipment,
     status: 'Etiket Hazır',
     operationStatus: 'LABEL_READY',
     labelStatus: 'READY',
   }
   const selectedRow = {
     ...buildOrder('CANONICAL'),
+    cargoTrackingNumber: canonicalShipment.webSiparisKodu,
     shipment: undefined,
   }
   const canonicalResolution = resolvePrintableLabel(selectedRow, {
@@ -666,6 +669,7 @@ function buildShipment(suffix = '1') {
   const numericSuffix = toNumericSuffix(suffix)
   const barcode = `0123120102${numericSuffix}`
   const tracking = `2522014844619${numericSuffix}`
+  const webSiparisKodu = `72700335633245${suffix}`
   const barcodeRaw = `^XA\n^FO20,20^BCN,80,Y,N,N^FD${barcode}^FS\n^XZ`
   const parsedResponse = {
     KargoTakipNo: tracking,
@@ -684,9 +688,9 @@ function buildShipment(suffix = '1') {
     barcodeRaw,
     trackingUrl: '',
     shipmentCode: `PKG-${suffix}`,
-    satisKodu: `PKG-${suffix}`,
-    webSiparisKodu: `PKG-${suffix}`,
-    ozelKargoTakipNo: `PKG-${suffix}`,
+    satisKodu: `ORDER-${suffix}`,
+    webSiparisKodu,
+    ozelKargoTakipNo: webSiparisKodu,
     barcodeValue: barcode,
     barcodeSource: 'surat.ortakBarkod.Barcode',
     zplSource: 'surat.ortakBarkod.BarcodeRaw',
@@ -696,8 +700,17 @@ function buildShipment(suffix = '1') {
     source: 'real',
     verifiedShipment: true,
     dispatchRegistrationConfirmed: true,
+    operationalBarcodeVerified: true,
     serdendipVerified: true,
     verificationStage: 'serdendip_verified',
+    lifecycleStage: 'VERIFIED',
+    suratTrackingLog: {
+      gonderilerLength: 1,
+      KargoTakipNo: tracking,
+      BarkodNo: barcode,
+      WebSiparisKodu: webSiparisKodu,
+      OzelKargoTakipNo: webSiparisKodu,
+    },
     rawResponse: { parsedResponse },
     suratCreateLog: {
       rawRequest: '<OrtakBarkodOlustur />',

@@ -39,6 +39,12 @@ export type OperationStatus =
   | 'SURAT_DISPATCH_REJECTED'
   | 'SURAT_BARCODE_FAILED'
   | 'SURAT_TRACKING_MISSING'
+  | 'LABEL_CREATED_NOT_REGISTERED'
+  | 'CREATE_ACCEPTED_UNCONFIRMED'
+  | 'LABEL_CREATED_UNVERIFIED'
+  | 'SHIPMENT_REGISTERED_LABEL_REQUIRED'
+  | 'SHIPMENT_REGISTERED_PENDING_TRACKING'
+  | 'TRACKING_ACTIVE'
   | 'TECHNICAL_ZPL_RECEIVED'
   | 'ZPL_NOT_OPERATIONALLY_VERIFIED'
   | 'TRACKING_CONFIRMED'
@@ -68,6 +74,7 @@ export type SuratServiceMode =
   | 'KARGO_BARKODU_SIPARIS_SOAP'
   | 'ORTAK_BARKOD_SOAP'
   | 'PRE_REGISTRATION_REST'
+  | 'GONDERI_YENI_SOAP'
   | 'TRENDYOL_MARKETPLACE'
   | 'GONDERI_OLUSTUR_V2_EXPERIMENTAL'
 
@@ -180,10 +187,34 @@ export interface Shipment {
   codeCandidates?: SuratCodeCandidates
   codeMapping?: SuratCodeMapping
   verificationStage?: SuratVerificationStage
+  lifecycleStage?: SuratLifecycleStage
+  lifecycleMilestones?: Array<
+    | 'CREATE_ACCEPTED'
+    | 'SHIPMENT_REGISTERED'
+    | 'LABEL_CREATED'
+    | 'TRACKING_ACTIVE'
+    | 'VERIFIED'
+  >
+  lifecycleEvidence?: {
+    state: SuratLifecycleStage
+    milestones: string[]
+    createAccepted: boolean
+    shipmentRegistered: boolean
+    labelCreated: boolean
+    trackingActive: boolean
+    serendipVerified: boolean
+    registrationGraceExpired: boolean
+    printable: boolean
+  }
   errorCategory?: SuratErrorCategory
   technicalZplReceived?: boolean
   operationalBarcodeVerified?: boolean
   finalSuratBarcode?: string
+  candidateTNo?: string
+  candidateBarkodNo?: string
+  candidateVerificationStatus?:
+    | 'PENDING_VERIFICATION'
+    | 'LABEL_CREATED_NOT_REGISTERED'
   internalWebBarcode?: string
   zplAnalysis?: SuratZplAnalysis
   requestValidation?: SuratRequestValidation
@@ -229,6 +260,7 @@ export interface Shipment {
     | 'ORTAK_BARKOD_SUCCESS'
     | 'SURAT_RESPONSE'
     | 'SURAT_REJECTED'
+    | 'SURAT_LABEL_NOT_REGISTERED'
     | 'TRENDYOL_MARKETPLACE'
   previousStatus?: OperationStatus
   newStatus?: OperationStatus
@@ -249,7 +281,9 @@ export interface Shipment {
     | 'SURAT_TRANSFERRED_BUT_NO_BARCODE'
     | 'SURAT_DISPATCH_REJECTED'
     | 'SURAT_BARCODE_FAILED'
+    | 'SURAT_CREATE_UNCERTAIN'
     | 'SURAT_TRACKING_MISSING'
+    | 'LABEL_CREATED_NOT_REGISTERED'
     | 'TECHNICAL_ZPL_RECEIVED'
     | 'ZPL_NOT_OPERATIONALLY_VERIFIED'
     | 'TRACKING_CONFIRMED'
@@ -315,6 +349,11 @@ export interface SuratDispatchRegistration {
 }
 
 export type SuratVerificationStage =
+  | 'create_accepted'
+  | 'create_accepted_unconfirmed'
+  | 'shipment_registered_label_required'
+  | 'shipment_registered_pending_tracking'
+  | 'tracking_active'
   | 'dispatch_rejected'
   | 'dispatch_registered'
   | 'dispatch_registered_marketplace_barcode'
@@ -322,9 +361,20 @@ export type SuratVerificationStage =
   | 'operational_barcode_verified'
   | 'serdendip_verified'
   | 'tracking_confirmation_missing'
+  | 'label_created_not_registered'
   | 'operational_barcode_missing'
   | 'zpl_received_but_not_operationally_verified'
   | 'failed'
+
+export type SuratLifecycleStage =
+  | 'CREATE_FAILED'
+  | 'CREATE_ACCEPTED_UNCONFIRMED'
+  | 'LABEL_CREATED_UNVERIFIED'
+  | 'LABEL_CREATED_NOT_REGISTERED'
+  | 'SHIPMENT_REGISTERED_LABEL_REQUIRED'
+  | 'SHIPMENT_REGISTERED_PENDING_TRACKING'
+  | 'TRACKING_ACTIVE'
+  | 'VERIFIED'
 
 export type SuratErrorCategory =
   | 'TRENDYOL_INTEGRATION_CODE_NOT_FOUND'
@@ -341,7 +391,10 @@ export type SuratErrorCategory =
   | 'AUTH_OR_CONTRACT_MISMATCH'
   | 'OPERATIONAL_VERIFICATION_FAILED'
   | 'SURAT_OPERATIONAL_BARCODE_MISSING'
+  | 'SURAT_TRACKING_CONFIRMATION_MISSING'
+  | 'SURAT_LABEL_CREATED_NOT_REGISTERED'
   | 'SURAT_WEB_PASSWORD_INVALID_OR_PERMISSION_MISSING'
+  | 'SURAT_BARCODE_SERVICE_ACCOUNT_SETUP_OR_CONTRACT_MISSING'
   | ''
 
 export interface SuratZplAnalysis {
@@ -475,6 +528,8 @@ export interface SuratCreateLog {
   rawRequestContainsExpectedOperation?: boolean
   rawRequestContainsLegacyOperation?: boolean
   wrongServiceCalled?: boolean
+  hardError?: boolean
+  failedBarcodeValidation?: boolean
   preRegistrationOnly?: boolean
   duplicateShipment?: boolean
   noTrackingReason?: string
@@ -768,6 +823,16 @@ export interface SuratIntegrationConfig {
   codSifre?: string
   codWebPassword?: string
   firmaId: string
+  restBasicUsername?: string
+  restBasicPassword?: string
+  restSenderMusteriId?: string
+  restSenderAdi?: string
+  restSenderSoyadi?: string
+  restSenderTelefon?: string
+  restSenderEmail?: string
+  restSenderAdres?: string
+  restSenderIlId?: number
+  restSenderIlceAdi?: string
   testKullaniciAdi?: string
   testSifre?: string
   testWebPassword?: string
@@ -787,12 +852,16 @@ export interface SuratIntegrationConfig {
   serviceType:
     | 'KargoBarkoduSiparisSoap'
     | 'OrtakBarkodOlusturSoap'
+    | 'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap'
+    | 'GonderiyiKargoyaGonderYeniSoap'
     | 'GonderiyiKargoyaGonderRestJson'
     | 'GonderiOlusturV2'
     | 'GonderiyiKargoyaGonderLegacy'
   createShipmentPath:
     | '/api/KargoBarkoduSiparis'
     | '/api/OrtakBarkodOlustur'
+    | '/api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur'
+    | '/api/GonderiyiKargoyaGonderYeni'
     | '/api/GonderiyiKargoyaGonder'
     | '/api/Gonderi/GonderiOlustur'
   trackingServiceType:
@@ -803,6 +872,7 @@ export interface SuratIntegrationConfig {
   barcodeCodeField: string
   tNoCodeField: string
   trackingVerificationDelaysMs?: number[]
+  labelRegistrationGraceMs?: number
 }
 
 export interface IntegrationConfig {

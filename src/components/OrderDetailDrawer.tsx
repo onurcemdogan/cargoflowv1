@@ -220,6 +220,18 @@ export function OrderDetailDrawer({
                   value={suratVerification.officialBarcodeValue}
                 />
                 <Detail label="T.No" value={suratVerification.tNo} />
+                {order.shipment?.candidateTNo ? (
+                  <Detail
+                    label="Aday T.No (doğrulanmadı)"
+                    value={order.shipment.candidateTNo}
+                  />
+                ) : null}
+                {order.shipment?.candidateBarkodNo ? (
+                  <Detail
+                    label="Aday Barkod (doğrulanmadı)"
+                    value={order.shipment.candidateBarkodNo}
+                  />
+                ) : null}
                 <Detail
                   label="Sürat Gönderi No"
                   value={suratVerification.gonderiNo}
@@ -239,6 +251,19 @@ export function OrderDetailDrawer({
                   label="CargoFlow iç referansı"
                   value={order.shipment?.shipmentCode}
                 />
+                {order.shipment?.candidateVerificationStatus ===
+                'PENDING_VERIFICATION' ? (
+                  <div className="detail-warning" role="status">
+                    Bu kodlar Serendip kaydı doğrulanmadan yazdırılamaz.
+                  </div>
+                ) : null}
+                {order.shipment?.candidateVerificationStatus ===
+                'LABEL_CREATED_NOT_REGISTERED' ? (
+                  <div className="detail-warning" role="alert">
+                    Etiket oluşturuldu ancak Serendip gönderi kaydı açılmadı.
+                    Aday T.No ve barkod yazdırılamaz.
+                  </div>
+                ) : null}
                 <div>
                   <span>Top Ds/Kg</span>
                   <input
@@ -351,7 +376,13 @@ export function OrderDetailDrawer({
                 />
                 <Detail
                   label="Gönderi Oluşturuldu mu?"
-                  value={order.shipment?.suratCreateLog ? 'Evet' : 'Hayır'}
+                  value={
+                    order.shipment?.dispatchRegistrationConfirmed === true
+                      ? 'Evet'
+                      : order.shipment?.suratCreateLog
+                        ? 'Hayır - API çağrısı doğrulanmadı'
+                        : 'Hayır'
+                  }
                 />
                 <Detail
                   label="Takip Sorgulandı mı?"

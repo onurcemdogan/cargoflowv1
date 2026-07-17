@@ -245,13 +245,26 @@ export class SuratKargoProvider implements ShippingProvider {
       })
       if (
         (!response.ok || data?.ok === false) &&
-        !['SURAT_BARCODE_FAILED', 'SURAT_DISPATCH_REJECTED'].includes(
-          String(data?.shipment?.lifecycleStatus ?? ''),
-        )
+        ![
+          'SURAT_BARCODE_FAILED',
+          'SURAT_DISPATCH_REJECTED',
+          'SURAT_CREATE_UNCERTAIN',
+          'SURAT_TRACKING_MISSING',
+          'LABEL_CREATED_NOT_REGISTERED',
+        ].includes(String(data?.shipment?.lifecycleStatus ?? ''))
       ) {
         throw new Error(data.message ?? 'Sürat gönderisi oluşturulamadı.')
       }
       if (data?.shipment) {
+        const candidateTNo =
+          data.shipment.candidateTNo ??
+          data.shipment.codeCandidates?.unverifiedTNoCandidate ??
+          createLog?.codeCandidates?.unverifiedTNoCandidate
+        const candidateBarkodNo =
+          data.shipment.candidateBarkodNo ??
+          data.shipment.codeCandidates?.unverifiedBarcodeCandidate ??
+          createLog?.codeCandidates?.unverifiedBarcodeCandidate
+
         return {
           id: shipmentId,
           provider: 'surat-kargo',
@@ -341,6 +354,16 @@ export class SuratKargoProvider implements ShippingProvider {
             data.shipment.finalSuratBarcode ??
             operationalBarcodeLog?.BarkodNo ??
             data.shipment.zplAnalysis?.acceptedFinalBarcode,
+          candidateTNo,
+          candidateBarkodNo,
+          candidateVerificationStatus:
+            data.shipment.candidateVerificationStatus ??
+            (candidateTNo || candidateBarkodNo
+              ? data.shipment.lifecycleStatus ===
+                'LABEL_CREATED_NOT_REGISTERED'
+                ? 'LABEL_CREATED_NOT_REGISTERED'
+                : 'PENDING_VERIFICATION'
+              : undefined),
           internalWebBarcode:
             data.shipment.internalWebBarcode ??
             data.shipment.zplAnalysis?.internalWebBarcode,
@@ -380,7 +403,13 @@ export class SuratKargoProvider implements ShippingProvider {
           noTrackingReason: data.shipment.noTrackingReason,
           labelBlockedReason: data.shipment.labelBlockedReason,
           zplDisabledReason: data.shipment.zplDisabledReason,
-          status: data.shipment.status ?? 'created',
+          status:
+            data.shipment.status ??
+            (['SURAT_CREATE_UNCERTAIN', 'LABEL_CREATED_NOT_REGISTERED'].includes(
+              String(data.shipment.lifecycleStatus ?? ''),
+            )
+              ? 'failed'
+              : 'created'),
           lifecycleStatus:
             data.shipment.lifecycleStatus ?? 'SHIPMENT_CREATED',
           source: data.source ?? 'real',
@@ -449,28 +478,21 @@ export class SuratKargoProvider implements ShippingProvider {
   ): Promise<TrackShipmentResponse> {
     const startedAt = performance.now()
     const { order, shipment, config } = input
-    const trackingReferences = Array.from(
-      new Set(
-        [
-          order.cargoTrackingNumber,
-          shipment.ozelKargoTakipNo,
-          shipment.internalWebBarcode,
-          shipment.zplAnalysis?.internalWebBarcode,
-          ...(shipment.zplAnalysis?.dataMatrixCandidates ?? []),
-          order.orderNumber,
-          order.packageId,
-          order.shipmentPackageId,
-          shipment.shipmentReference,
-          shipment.satisKodu,
-          shipment.kargoTakipNo,
-          shipment.trackingNumber,
-          shipment.webSiparisKodu,
-        ]
-          .map((value) => String(value ?? '').trim())
-          .filter(Boolean),
-      ),
-    )
-    const trackingReference = trackingReferences[0] || order.orderNumber
+    const trackingReference = String(
+      shipment.ozelKargoTakipNo || order.cargoTrackingNumber || '',
+    ).trim()
+    if (!trackingReference) {
+      throw new Error(
+        'Sürat takip sorgusu için gönderi oluşturma isteğindeki OzelKargoTakipNo bulunamadı.',
+      )
+    }
+    const queryReference = {
+      value: trackingReference,
+      type: 'WEB_SIPARIS_KODU' as const,
+      source: shipment.ozelKargoTakipNo
+        ? 'shipment.ozelKargoTakipNo -> createRequest.OzelKargoTakipNo'
+        : 'order.cargoTrackingNumber -> createRequest.OzelKargoTakipNo',
+    }
 
     try {
       const response = await fetch('/api/shipments/surat/track', {
@@ -479,12 +501,14 @@ export class SuratKargoProvider implements ShippingProvider {
         body: JSON.stringify({
           config: config.surat,
           webSiparisKodu: trackingReference,
-          webSiparisKoduCandidates: trackingReferences,
+          queryReference,
           orderId: order.id,
           shipmentId: shipment.id,
         }),
       })
       const data = await response.json()
+      const carrierAcceptancePending =
+        data.trackingState === 'SURAT_TRANSFERRED_BUT_NO_BARCODE'
       const resolvedTrackingReference =
         data.trackingReference || trackingReference
       const trackingLog = data.suratTrackingLog
@@ -509,7 +533,10 @@ export class SuratKargoProvider implements ShippingProvider {
         ),
         responseBody: trackingLog?.rawResponse ?? data.rawResponse ?? data,
         rawResponse: trackingLog?.rawResponse ?? data.rawResponse ?? data,
-        status: !response.ok || data.ok === false ? 'ERROR' : 'SUCCESS',
+        status:
+          !response.ok || (data.ok === false && !carrierAcceptancePending)
+            ? 'ERROR'
+            : 'SUCCESS',
         durationMs: Math.round(performance.now() - startedAt),
         orderNumber: order.orderNumber,
         shipmentId: shipment.id,
@@ -547,16 +574,20 @@ export class SuratKargoProvider implements ShippingProvider {
           trackingState:
             data.trackingState ?? trackingLog?.trackingState,
           trackingAttempts: data.trackingAttempts,
+          trackingReferenceType: 'WEB_SIPARIS_KODU',
+          trackingReferenceSource: queryReference.source,
         },
         errorMessage:
-          !response.ok || data.ok === false ? data.message : undefined,
+          !response.ok || (data.ok === false && !carrierAcceptancePending)
+            ? data.message
+            : undefined,
         errorSource:
-          !response.ok || data.ok === false
+          !response.ok || (data.ok === false && !carrierAcceptancePending)
             ? (data.errorSource ?? 'Sürat')
             : undefined,
       })
 
-      if (!response.ok || data.ok === false) {
+      if (!response.ok || (data.ok === false && !carrierAcceptancePending)) {
         throw new Error(data.message ?? 'Sürat takip sorgusu başarısız.')
       }
 

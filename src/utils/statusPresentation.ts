@@ -127,6 +127,16 @@ export function mapOperationStatus(order: CargoOrder): StatusPresentation {
       sourceLabel: 'CargoFlow',
     }
   }
+  if (operationStatus === 'LABEL_CREATED_NOT_REGISTERED') {
+    return {
+      label: 'Etiket Oluştu, Kayıt Yok',
+      description:
+        'Etiket adayları alındı ancak Serendip gönderi kaydı açılmadı. Yazdırma kapalıdır.',
+      color: 'red',
+      source: 'localOperation',
+      sourceLabel: 'CargoFlow',
+    }
+  }
   if (
     order.status === 'Hata' ||
     operationStatus === 'ERROR' ||

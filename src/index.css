@@ -2408,6 +2408,14 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.detail-grid .detail-warning {
+  grid-column: 1 / -1;
+  color: var(--amber);
+  background: var(--amber-soft);
+  border-color: #f4d27c;
+  font-weight: 700;
+}
+
 .barcode-meta {
   display: grid;
   grid-template-columns: 130px minmax(0, 1fr);

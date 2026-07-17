@@ -352,8 +352,12 @@ function buildIntegrations() {
 function buildReadyOrder(suffix) {
   const numericSuffix = toNumericSuffix(suffix)
   const barcodeRaw = `^XA^FO20,20^FD0123990557${numericSuffix}^FS^XZ`
+  const trackingNumber = `25123615625${numericSuffix}`
+  const barcodeNumber = `0123990557${numericSuffix}`
+  const webSiparisKodu = `7270099${numericSuffix}`
   return {
     ...buildOrder(suffix),
+    cargoTrackingNumber: webSiparisKodu,
     status: 'Etiket Hazır',
     operationStatus: 'LABEL_READY',
     labelStatus: 'READY',
@@ -363,13 +367,16 @@ function buildReadyOrder(suffix) {
       provider: 'surat-kargo',
       serviceMode: 'ORTAK_BARKOD_SOAP',
       operationName: 'OrtakBarkodOlustur',
-      trackingNumber: `25123615625${numericSuffix}`,
-      kargoTakipNo: `25123615625${numericSuffix}`,
-      barcode: `0123990557${numericSuffix}`,
+      trackingNumber,
+      kargoTakipNo: trackingNumber,
+      tNo: trackingNumber,
+      barcode: barcodeNumber,
       barcodeRaw,
       trackingUrl: '',
       shipmentCode: `PKG-${suffix}`,
-      barcodeValue: `0123990557${numericSuffix}`,
+      webSiparisKodu,
+      ozelKargoTakipNo: webSiparisKodu,
+      barcodeValue: barcodeNumber,
       barcodeSource: 'surat.ortakBarkod.Barcode',
       zplSource: 'surat.ortakBarkod.BarcodeRaw',
       labelStatus: 'READY',
@@ -378,8 +385,17 @@ function buildReadyOrder(suffix) {
       source: 'real',
       verifiedShipment: true,
       dispatchRegistrationConfirmed: true,
+      operationalBarcodeVerified: true,
       serdendipVerified: true,
       verificationStage: 'serdendip_verified',
+      lifecycleStage: 'VERIFIED',
+      suratTrackingLog: {
+        gonderilerLength: 1,
+        KargoTakipNo: trackingNumber,
+        BarkodNo: barcodeNumber,
+        WebSiparisKodu: webSiparisKodu,
+        OzelKargoTakipNo: webSiparisKodu,
+      },
       rawResponse: {},
       createdAt: new Date().toISOString(),
     },

@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
+import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
+
 const app = express()
 const execFileAsync = promisify(execFile)
 const serverDirectory = dirname(fileURLToPath(import.meta.url))
@@ -65,6 +67,8 @@ const ALL_TRENDYOL_ORDER_STATUSES = [
   ...ACTIVE_TRENDYOL_ORDER_STATUSES,
   ...ARCHIVE_TRENDYOL_ORDER_STATUSES,
 ]
+const TRENDYOL_ACTIVE_STATUS_WINDOW_MS = 10 * 24 * 60 * 60 * 1000
+const SURAT_LABEL_REGISTRATION_GRACE_MS = 30 * 60 * 1000
 const SURAT_BARCODE_FAILED_MESSAGE =
   'OrtakBarkodOlustur çağrıldı ancak Sürat KargoTakipNo/Barcode döndürmedi. Sürat ortak barkod yetkisi, SOAP parametreleri veya hesap ayarları kontrol edilmeli.'
 
@@ -188,7 +192,7 @@ app.put('/api/local-config/integration', async (request, response) => {
   }
   const config = request.body?.config
   if (!config || typeof config !== 'object' || Array.isArray(config)) {
-    response.status(400).json({
+    response.json({
       ok: false,
       message: 'Geçerli entegrasyon ayarı gerekli.',
     })
@@ -375,6 +379,7 @@ app.post('/api/integrations/surat/test', async (request, response) => {
 
 app.post('/api/shipments/surat', createSuratShipment)
 app.post('/api/shipments/surat/create', createSuratShipment)
+app.post('/api/shipments/surat/label', createSuratLabelForRegisteredShipment)
 
 app.post('/api/diagnostics/surat/common-barcode-loop', (request, response) => {
   const order = request.body?.order ?? {}
@@ -390,20 +395,7 @@ app.post('/api/diagnostics/surat/common-barcode-loop', (request, response) => {
 
 app.post('/api/shipments/surat/track', async (request, response) => {
   const config = normalizeSuratConfig(request.body?.config)
-  const webSiparisKoduCandidates = Array.from(
-    new Set(
-      [
-        ...(Array.isArray(request.body?.webSiparisKoduCandidates)
-          ? request.body.webSiparisKoduCandidates
-          : []),
-        request.body?.webSiparisKodu,
-        request.body?.shipmentCode,
-        request.body?.trackingNumber,
-      ]
-        .map((value) => String(value ?? '').trim())
-        .filter(Boolean),
-    ),
-  )
+  const queryReference = resolveSuratTrackingQueryReference(request.body)
   const validation = validateSuratSoapCredentials(config)
 
   if (validation) {
@@ -411,28 +403,76 @@ app.post('/api/shipments/surat/track', async (request, response) => {
     return
   }
 
-  if (webSiparisKoduCandidates.length === 0) {
-    response.json({
+  if (!queryReference.ok) {
+    response.status(400).json({
       ok: false,
       source: 'real',
-      message: 'Takip sorgusu için WebSiparisKodu / shipmentCode gerekli.',
+      errorCode: 'SURAT_TRACKING_REFERENCE_INVALID',
+      message: queryReference.message,
+      acceptedReferenceType: 'WEB_SIPARIS_KODU',
+      rejectedReferenceType: queryReference.type,
+      ignoredLegacyFields: queryReference.ignoredLegacyFields,
     })
     return
   }
 
-  let result
-  const trackingAttempts = []
-  for (const webSiparisKodu of webSiparisKoduCandidates) {
-    result =
-      config.trackingServiceType === 'KargoTakipHareketDetayiRest'
-        ? await trackShipmentRest(config, webSiparisKodu, request.body)
-        : await trackShipmentSoap(config, webSiparisKodu, request.body)
-    result.trackingReference = webSiparisKodu
-    trackingAttempts.push(buildTrackingAttemptDebug(webSiparisKodu, result))
-    result.trackingAttempts = trackingAttempts
-    if (shouldStopTrackingCandidateSearch(result)) break
+  const webSiparisKodu = queryReference.value
+  const trackingRequestBody = {
+    ...request.body,
+    webSiparisKodu,
+    queryReference,
   }
-  if (result) result.trackingAttempts = trackingAttempts
+  const result =
+    config.trackingServiceType === 'KargoTakipHareketDetayiRest'
+      ? await trackShipmentRest(config, webSiparisKodu, trackingRequestBody)
+      : await trackShipmentSoap(config, webSiparisKodu, trackingRequestBody)
+  result.trackingReference = webSiparisKodu
+  result.trackingReferenceType = queryReference.type
+  result.trackingReferenceSource = queryReference.source
+  result.trackingAttempts = [
+    buildTrackingAttemptDebug(webSiparisKodu, result, queryReference),
+  ]
+  // KargoTakipHareketDetayi anlık tutarsız dönebiliyor ve çoğu zaman BarkodNo
+  // içermiyor; kayıtlı gönderi doğrulaması WebSiparisKodu DataSet yüzeyiyle
+  // tamamlanır (17.07.2026 canlı bulgusu).
+  if (String(request.body?.orderId ?? '').trim()) {
+    try {
+      const registrationLookup = await callSuratWebSiparisKodu(
+        config,
+        webSiparisKodu,
+        {
+          orderId: request.body?.orderId,
+          shipmentId: firstNonEmpty(
+            request.body?.shipmentId,
+            request.body?.packageId,
+          ),
+        },
+      )
+      if (
+        registrationLookup?.rowCount > 0 &&
+        registrationLookup?.referenceMatches
+      ) {
+        result.registrationLookup = {
+          rowCount: registrationLookup.rowCount,
+          KargoTakipNo: registrationLookup.KargoTakipNo || '',
+          BarkodNo: registrationLookup.BarkodNo || '',
+        }
+        result.registrationRowFound = true
+        result.KargoTakipNo = firstNonEmpty(
+          result.KargoTakipNo,
+          registrationLookup.KargoTakipNo,
+        )
+        result.BarkodNo = firstNonEmpty(
+          result.BarkodNo,
+          registrationLookup.BarkodNo,
+        )
+      }
+    } catch {
+      // Salt-okunur tamamlayıcı sorgu başarısızlığı takip yanıtını bozmaz.
+    }
+  }
+  result.verificationPersistence =
+    await persistSuratTrackingVerification(trackingRequestBody, result)
   response.json(result)
 })
 
@@ -545,10 +585,7 @@ async function createSuratShipment(request, response) {
     request.body?.config?.surat ?? request.body?.config,
   )
 
-  if (
-    !order?.orderNumber ||
-    normalizedConfig.serviceMode !== 'KARGO_BARKODU_SIPARIS_SOAP'
-  ) {
+  if (!order?.orderNumber) {
     await createSuratShipmentCore(request, response)
     return
   }
@@ -601,7 +638,7 @@ async function createSuratShipmentCore(request, response) {
 
   const validation =
     config.serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL'
-      ? validateSuratRestCredentials(config)
+      ? validateSuratRestCredentials(config, order)
       : config.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP'
         ? validateSuratBarcodeOrderCredentials(config)
       : validateSuratSoapCredentials(config)
@@ -687,11 +724,20 @@ async function createSuratShipmentCore(request, response) {
   }
 
   if (config.serviceMode === 'ORTAK_BARKOD_SOAP') {
-    const commonBarcodeResult = await createSuratRegisteredCommonBarcode(
-      config,
-      orderForSurat,
-      reference,
-    )
+    const labelOnlyChain =
+      config.serviceType === 'OrtakBarkodOlusturSoap' ||
+      String(config.createShipmentPath || '').endsWith('/OrtakBarkodOlustur')
+    const commonBarcodeResult = labelOnlyChain
+      ? await createSuratRegisteredCommonBarcode(
+          config,
+          orderForSurat,
+          reference,
+        )
+      : await createSuratCommonBarcodeSoap(
+          config,
+          orderForSurat,
+          reference,
+        )
     response.json(commonBarcodeResult)
     return
   }
@@ -717,6 +763,16 @@ async function createSuratShipmentCore(request, response) {
     return
   }
 
+  if (config.serviceMode === 'GONDERI_YENI_SOAP') {
+    const gonderiYeniResult = await createSuratGonderiyiKargoyaGonderYeniSoap(
+      config,
+      orderForSurat,
+      reference,
+    )
+    response.json(gonderiYeniResult)
+    return
+  }
+
   if (config.serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL') {
     const restResult = await createSuratRestShipment(config, orderForSurat, reference)
     response.json(restResult)
@@ -731,9 +787,201 @@ async function createSuratShipmentCore(request, response) {
   })
 }
 
+async function createSuratLabelForRegisteredShipment(request, response) {
+  const order = request.body?.order
+  const fullConfig = request.body?.config ?? {}
+  const baseConfig = normalizeSuratConfig(
+    request.body?.config?.surat ?? request.body?.config,
+  )
+  const config = resolveSuratCredentialSet(baseConfig, order).config
+  const validation = validateSuratSoapCredentials(config)
+  if (validation) {
+    response.json(validation)
+    return
+  }
+  if (!order?.orderNumber || !order?.id || !order?.cargoTrackingNumber) {
+    response.status(400).json({
+      ok: false,
+      source: 'real',
+      errorCode: 'SURAT_LABEL_REQUEST_INCOMPLETE',
+      message:
+        'Etiket ikinci aşaması için sipariş kimliği, sipariş no ve OzelKargoTakipNo eksiksiz olmalıdır.',
+    })
+    return
+  }
+
+  const operationContext = buildSuratCreateOperationContext(
+    {
+      ...request,
+      body: {
+        ...request.body,
+        config: fullConfig,
+      },
+    },
+    config,
+  )
+  const createRecord = await readSuratCreateOperation(
+    operationContext.idempotencyKey,
+  )
+  if (
+    !createRecord ||
+    Number(createRecord.createCallCount || 0) !== 1 ||
+    createRecord.operation === 'OrtakBarkodOlustur'
+  ) {
+    response.json({
+      ok: false,
+      source: 'real',
+      errorCode: 'SURAT_REGISTERED_CREATE_REQUIRED',
+      message:
+        'Etiket oluşturulmadı. Önce aynı sipariş için tek gerçek shipment create ve read-only kayıt teyidi gerekir.',
+    })
+    return
+  }
+
+  const labelLockKey = `${operationContext.idempotencyKey}:LABEL`
+  if (suratCreateLocks.has(labelLockKey)) {
+    response.json({
+      ok: false,
+      source: 'real',
+      errorCode: 'SURAT_LABEL_ALREADY_IN_PROGRESS',
+      message: 'Bu siparişin Sürat etiket operasyonu zaten çalışıyor.',
+    })
+    return
+  }
+  if (Number(createRecord.labelCallCount || 0) > 0) {
+    response.json({
+      ok: false,
+      source: 'real',
+      errorCode: 'SURAT_LABEL_IDEMPOTENCY_BLOCKED',
+      message:
+        'Bu siparişte label operation daha önce çağrıldı; mükerrer etiket çağrısı yapılmadı.',
+      labelCallCount: Number(createRecord.labelCallCount || 0),
+    })
+    return
+  }
+
+  const labelPromise = executeRegisteredSuratLabel({
+    config,
+    order,
+    operationContext,
+    createRecord,
+  })
+  suratCreateLocks.set(labelLockKey, labelPromise)
+  try {
+    response.json(await labelPromise)
+  } finally {
+    suratCreateLocks.delete(labelLockKey)
+  }
+}
+
+async function executeRegisteredSuratLabel({
+  config,
+  order,
+  operationContext,
+  createRecord,
+}) {
+  const webSiparisKodu = String(order.cargoTrackingNumber).trim()
+  const registration = await callSuratWebSiparisKodu(
+    config,
+    webSiparisKodu,
+    { orderId: order.id, shipmentId: makeShipmentReference(order) },
+  )
+  if (!(registration.rowCount > 0 && registration.referenceMatches)) {
+    return {
+      ok: false,
+      source: 'real',
+      errorCode: 'SURAT_SHIPMENT_NOT_REGISTERED_FOR_LABEL',
+      message:
+        'Sürat shipment kaydı WebSiparisKodu servisinde bulunmadı; label operation çağrılmadı.',
+      shipmentRegistered: false,
+      labelCallCount: Number(createRecord.labelCallCount || 0),
+    }
+  }
+
+  try {
+    buildSuratShipmentPayload(order, makeShipmentReference(order), {
+      commonBarcode: true,
+    })
+  } catch (error) {
+    return {
+      ok: false,
+      source: 'real',
+      errorCode: 'SURAT_LABEL_REQUEST_INVALID',
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Etiket isteği taşıyıcıya gönderilmeden geçersiz bulundu.',
+      carrierLabelCalled: false,
+      labelCallCount: Number(createRecord.labelCallCount || 0),
+    }
+  }
+
+  const startedAt = new Date().toISOString()
+  await queueSuratCreateStoreUpdate((store) => {
+    const record = store.operations[operationContext.idempotencyKey]
+    if (!record) return
+    record.labelCallCount = 1
+    record.labelOperation = 'OrtakBarkodOlustur'
+    record.labelStartedAt = startedAt
+    record.updatedAt = startedAt
+    record.verificationStatus = 'SHIPMENT_REGISTERED_LABEL_REQUIRED'
+    record.carrierTrackingNumber = registration.KargoTakipNo || ''
+    record.carrierBarcodeNumber = registration.BarkodNo || ''
+  })
+
+  const result = await createSuratCommonBarcodeSoap(
+    config,
+    order,
+    makeShipmentReference(order),
+    {
+      operationName: 'OrtakBarkodOlustur',
+      serviceType: 'OrtakBarkodOlusturSoap',
+      strictGonderiModel: true,
+    },
+  )
+  const verified = isSerendipVerifiedCreateResult(result)
+  const completedAt = new Date().toISOString()
+  await queueSuratCreateStoreUpdate((store) => {
+    const record = store.operations[operationContext.idempotencyKey]
+    if (!record) return
+    record.labelCompletedAt = completedAt
+    record.labelVerificationStatus = verified ? 'VERIFIED' : 'UNVERIFIED'
+    record.updatedAt = completedAt
+    if (verified) {
+      record.status = 'SUCCESS'
+      record.verificationStatus = 'VERIFIED'
+      record.carrierTrackingNumber = firstNonEmpty(
+        result.shipment?.tNo,
+        result.shipment?.trackingNumber,
+      )
+      record.carrierBarcodeNumber = firstNonEmpty(
+        result.shipment?.barkodNo,
+        result.shipment?.barcode,
+      )
+    }
+  })
+  return {
+    ...result,
+    labelIdempotency: {
+      operation: 'OrtakBarkodOlustur',
+      labelCallCount: 1,
+      shipmentCreateCallCount: Number(createRecord.createCallCount || 0),
+      shipmentCreateRepeated: false,
+    },
+  }
+}
+
 function buildSuratCreateOperationContext(request, config) {
   const order = request.body?.order ?? {}
   const fullConfig = request.body?.config ?? {}
+  const desi = Number(order.desi ?? 0)
+  const desiSource =
+    desi > 0 &&
+    ['manual', 'MANUAL_USER_CONFIRMED'].includes(
+      String(order.desiSource ?? '').trim(),
+    )
+      ? 'MANUAL_USER_CONFIRMED'
+      : String(order.desiSource ?? '').trim()
   const tenantSeed = firstNonEmpty(
     request.body?.tenantId,
     fullConfig?.trendyol?.sellerId,
@@ -748,7 +996,8 @@ function buildSuratCreateOperationContext(request, config) {
     orderNumber: String(order.orderNumber ?? ''),
     packageId: String(order.packageId ?? order.shipmentPackageId ?? ''),
     cargoTrackingNumber: String(order.cargoTrackingNumber ?? ''),
-    desi: Number(order.desi ?? 0),
+    desi,
+    desiSource,
     serviceMode: config.serviceMode,
     environment: config.ortam,
   }
@@ -761,10 +1010,39 @@ function buildSuratCreateOperationContext(request, config) {
       .digest('hex'),
     correlationId: randomUUID(),
     environment: config.ortam,
-    operation: 'KargoBarkoduSiparis',
+    operation: resolveSuratCreateOperationName(config),
     maskedAccount: maskCarrierAccount(config.kullaniciAdi),
-    maxCreateCalls: 3,
+    desi,
+    desiSource,
+    maxCreateCalls: 1,
   }
+}
+
+function resolveSuratCreateOperationName(configOrServiceMode) {
+  const config =
+    typeof configOrServiceMode === 'string'
+      ? { serviceMode: configOrServiceMode }
+      : configOrServiceMode || {}
+  const serviceMode = config.serviceMode
+  if (serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP') {
+    return 'KargoBarkoduSiparis'
+  }
+  if (serviceMode === 'ORTAK_BARKOD_SOAP') {
+    if (
+      config.serviceType === 'OrtakBarkodOlusturSoap' ||
+      String(config.createShipmentPath || '').endsWith('/OrtakBarkodOlustur')
+    ) {
+      return 'OrtakBarkodOlustur'
+    }
+    return 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur'
+  }
+  if (serviceMode === 'PRE_REGISTRATION_REST') {
+    return 'GonderiyiKargoyaGonder'
+  }
+  if (serviceMode === 'GONDERI_YENI_SOAP') {
+    return 'GonderiyiKargoyaGonderYeni'
+  }
+  return 'GonderiOlusturV2'
 }
 
 async function executeIdempotentSuratCreate(request, operation) {
@@ -858,13 +1136,63 @@ async function executeIdempotentSuratCreate(request, operation) {
       result?.errorCode,
     ),
     businessMessage: String(result?.message ?? '').slice(0, 600),
-    carrierTrackingNumber: verified
-      ? firstNonEmpty(result?.shipment?.tNo, result?.shipment?.trackingNumber)
-      : '',
-    carrierBarcodeNumber: verified
-      ? firstNonEmpty(result?.shipment?.barkodNo, result?.shipment?.barcode)
-      : '',
+    carrierTrackingNumber:
+      verified || result?.shipment?.dispatchRegistrationConfirmed
+        ? firstNonEmpty(result?.shipment?.tNo, result?.shipment?.trackingNumber)
+        : '',
+    carrierBarcodeNumber:
+      verified || result?.shipment?.dispatchRegistrationConfirmed
+        ? firstNonEmpty(result?.shipment?.barkodNo, result?.shipment?.barcode)
+        : '',
+    candidateTrackingNumber: firstNonEmpty(
+      result?.shipment?.tNo,
+      result?.shipment?.trackingNumber,
+      result?.shipment?.codeMapping?.tNoValue,
+      result?.shipment?.zplAnalysis?.acceptedTNo,
+      result?.suratCreateLog?.codeMapping?.tNoValue,
+      result?.suratCreateLog?.zplAnalysis?.acceptedTNo,
+      result?.createDiagnostics?.codeMapping?.tNoValue,
+      result?.createDiagnostics?.zplAnalysis?.acceptedTNo,
+    ),
+    candidateBarcodeNumber: firstNonEmpty(
+      result?.shipment?.barkodNo,
+      result?.shipment?.barcode,
+      result?.shipment?.codeMapping?.barcodeValue,
+      result?.shipment?.zplAnalysis?.acceptedFinalBarcode,
+      result?.suratCreateLog?.codeMapping?.barcodeValue,
+      result?.suratCreateLog?.zplAnalysis?.acceptedFinalBarcode,
+      result?.createDiagnostics?.codeMapping?.barcodeValue,
+      result?.createDiagnostics?.zplAnalysis?.acceptedFinalBarcode,
+    ),
     candidateIdentifiers: collectSafeSuratCandidates(result),
+    soapAction: `http://tempuri.org/${operation.operation}`,
+    requestRoot: operation.operation,
+    ozelKargoTakipNo: firstNonEmpty(
+      readSuratField(result?.suratCreateLog?.rawRequest, ['OzelKargoTakipNo']),
+      readSuratField(result?.shipment?.suratCreateLog?.rawRequest, [
+        'OzelKargoTakipNo',
+      ]),
+    ),
+    referansNo: firstNonEmpty(
+      readSuratField(result?.suratCreateLog?.rawRequest, ['ReferansNo']),
+      readSuratField(result?.shipment?.suratCreateLog?.rawRequest, [
+        'ReferansNo',
+      ]),
+    ),
+    verificationStatus: verified
+      ? 'VERIFIED'
+      : result?.shipment?.lifecycleStatus ===
+          'SHIPMENT_REGISTERED_LABEL_REQUIRED'
+        ? 'SHIPMENT_REGISTERED_LABEL_REQUIRED'
+        : result?.shipment?.technicalZplReceived ||
+          result?.createDiagnostics?.technicalZplReceived
+        ? 'LABEL_CREATED_UNVERIFIED'
+        : explicitBusinessFailure
+          ? 'VERIFICATION_FAILED'
+          : 'SHIPMENT_REGISTERED',
+    technicalZplSha256: buildSafeZplReference(result).sha256,
+    technicalZplLength: buildSafeZplReference(result).length,
+    lastCheckedAt: completedAt,
   }
   await writeSuratCreateOperation(record)
 
@@ -917,16 +1245,36 @@ function isExplicitSuratBusinessFailure(result) {
   return Boolean(
     responseStatus > 0 &&
       result?.ok === false &&
-      result?.errorCode !== 'SURAT_TRACKING_CONFIRMATION_MISSING',
+      ![
+        'SURAT_TRACKING_CONFIRMATION_MISSING',
+        'SURAT_LABEL_REQUIRED',
+      ].includes(result?.errorCode),
   )
 }
 
 function collectSafeSuratCandidates(result) {
   return uniqueStrings([
+    result?.candidateTrackingNumber,
+    result?.candidateBarcodeNumber,
     result?.shipment?.tNo,
     result?.shipment?.trackingNumber,
     result?.shipment?.barkodNo,
     result?.shipment?.barcode,
+    result?.shipment?.codeMapping?.tNoValue,
+    result?.shipment?.codeMapping?.trackingValue,
+    result?.shipment?.codeMapping?.barcodeValue,
+    result?.shipment?.zplAnalysis?.acceptedTNo,
+    result?.shipment?.zplAnalysis?.acceptedFinalBarcode,
+    result?.suratCreateLog?.codeMapping?.tNoValue,
+    result?.suratCreateLog?.codeMapping?.trackingValue,
+    result?.suratCreateLog?.codeMapping?.barcodeValue,
+    result?.suratCreateLog?.zplAnalysis?.acceptedTNo,
+    result?.suratCreateLog?.zplAnalysis?.acceptedFinalBarcode,
+    result?.createDiagnostics?.codeMapping?.tNoValue,
+    result?.createDiagnostics?.codeMapping?.trackingValue,
+    result?.createDiagnostics?.codeMapping?.barcodeValue,
+    result?.createDiagnostics?.zplAnalysis?.acceptedTNo,
+    result?.createDiagnostics?.zplAnalysis?.acceptedFinalBarcode,
     ...Object.values(result?.suratCreateLog?.codeCandidates ?? {}),
     ...Object.values(result?.createDiagnostics?.codeCandidates ?? {}),
   ]).slice(0, 24)
@@ -949,14 +1297,31 @@ function withSuratIdempotencyDebug(result, operation, extra = {}) {
 }
 
 function buildPersistedSuratCreateResponse(record, operation) {
+  const operationName = firstNonEmpty(
+    record?.operation,
+    operation?.operation,
+    'KargoBarkoduSiparis',
+  )
+  const serviceType =
+    operationName === 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur'
+      ? 'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap'
+      : operationName === 'OrtakBarkodOlustur'
+        ? 'OrtakBarkodOlusturSoap'
+      : operationName === 'GonderiyiKargoyaGonder'
+        ? 'GonderiyiKargoyaGonderRestJson'
+        : operationName === 'GonderiyiKargoyaGonderYeni'
+          ? 'GonderiyiKargoyaGonderYeniSoap'
+        : operationName === 'GonderiOlusturV2'
+          ? 'GonderiOlusturV2'
+          : 'KargoBarkoduSiparisSoap'
   return withSuratIdempotencyDebug(
     {
       ok: true,
       source: 'real',
       message:
         'Bu sipariş daha önce Sürat ve Serendip tarafından doğrulandı; yeni create çağrısı yapılmadı.',
-      serviceType: 'KargoBarkoduSiparisSoap',
-      operationName: 'KargoBarkoduSiparis',
+      serviceType,
+      operationName,
       shipment: {
         trackingNumber: record.carrierTrackingNumber,
         kargoTakipNo: record.carrierTrackingNumber,
@@ -992,6 +1357,82 @@ function buildPersistedSuratCreateResponse(record, operation) {
 }
 
 function buildSuratIdempotencyBlockedResponse(record, operation, message) {
+  const candidateIdentifiers = uniqueStrings(record?.candidateIdentifiers ?? [])
+  const operationName = firstNonEmpty(
+    record?.operation,
+    operation?.operation,
+    'KargoBarkoduSiparis',
+  )
+  const serviceMode =
+    [
+      'OrtakBarkodOlustur',
+      'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+    ].includes(operationName)
+      ? 'ORTAK_BARKOD_SOAP'
+      : operationName === 'GonderiyiKargoyaGonder'
+        ? 'PRE_REGISTRATION_REST'
+        : operationName === 'GonderiyiKargoyaGonderYeni'
+          ? 'GONDERI_YENI_SOAP'
+        : 'KARGO_BARKODU_SIPARIS_SOAP'
+  const serviceType =
+    operationName === 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur'
+      ? 'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap'
+      : operationName === 'OrtakBarkodOlustur'
+        ? 'OrtakBarkodOlusturSoap'
+      : operationName === 'GonderiyiKargoyaGonder'
+        ? 'GonderiyiKargoyaGonderRestJson'
+        : operationName === 'GonderiyiKargoyaGonderYeni'
+          ? 'GonderiyiKargoyaGonderYeniSoap'
+        : 'KargoBarkoduSiparisSoap'
+  const unverifiedTNoCandidate =
+    firstNonEmpty(
+      record?.candidateTrackingNumber,
+      candidateIdentifiers.find(
+        (value) => /^\d{12,20}$/.test(String(value ?? '').trim()),
+      ),
+    )
+  const unverifiedBarcodeCandidate =
+    firstNonEmpty(
+      record?.candidateBarcodeNumber,
+      candidateIdentifiers.find(
+        (value) =>
+          value !== unverifiedTNoCandidate &&
+          isNumericSuratOperationalCode(value),
+      ),
+    )
+  // Kanıt (17.07.2026): ön-atanmış aday kodlar tesellümde birebir korunuyor;
+  // etiket üretilmiş bekleyen kayıtlar bu kodlarla yazdırılabilir.
+  const preassignedPrintAllowed = Boolean(
+    unverifiedTNoCandidate &&
+      unverifiedBarcodeCandidate &&
+      [
+        'LABEL_CREATED_NOT_REGISTERED',
+        'LABEL_CREATED_UNVERIFIED',
+        'LABEL_CREATED_PENDING_VERIFICATION',
+      ].includes(String(record?.verificationStatus ?? '')),
+  )
+  const noTrackingReason = preassignedPrintAllowed
+    ? 'Serendip kaydi fiziksel kargo kabulunde olusur; on-atanmis T.No/barkod tesellumde dogrulanir.'
+    : record?.verificationStatus === 'LABEL_CREATED_NOT_REGISTERED'
+      ? 'Etiket olusturuldu ancak dogru WebSiparisKodu ile Serendip gonderi kaydi acilmadi. Aday kodlar yazdirilamaz.'
+      : 'Surat create cevabi aday kodlar dondurdu ancak Serendip Gonderiler=1 teyidi yok. Bu kodlar yazdirilamaz.'
+  const labelCreatedNotRegistered =
+    record?.verificationStatus === 'LABEL_CREATED_NOT_REGISTERED'
+  const verificationStage = preassignedPrintAllowed
+    ? 'preassigned_awaiting_acceptance'
+    : labelCreatedNotRegistered
+      ? 'label_created_not_registered'
+      : 'tracking_confirmation_missing'
+  const errorCategory = preassignedPrintAllowed
+    ? ''
+    : labelCreatedNotRegistered
+      ? 'SURAT_LABEL_CREATED_NOT_REGISTERED'
+      : 'SURAT_TRACKING_CONFIRMATION_MISSING'
+  const lifecycleStatus = preassignedPrintAllowed
+    ? 'LABEL_READY_AWAITING_ACCEPTANCE'
+    : labelCreatedNotRegistered
+      ? 'LABEL_CREATED_NOT_REGISTERED'
+      : 'SURAT_CREATE_UNCERTAIN'
   return withSuratIdempotencyDebug(
     {
       ok: false,
@@ -999,13 +1440,57 @@ function buildSuratIdempotencyBlockedResponse(record, operation, message) {
       errorCode: 'SURAT_CREATE_IDEMPOTENCY_BLOCKED',
       errorSource: 'CargoFlow',
       message,
+      serviceMode,
+      serviceType,
+      operationName,
       shipment: {
+        serviceMode,
+        operationName,
         verifiedShipment: false,
         dispatchRegistrationConfirmed: false,
         operationalBarcodeVerified: false,
-        labelStatus: 'BLOCKED',
-        printEnabled: false,
-        lifecycleStatus: 'SURAT_CREATE_UNCERTAIN',
+        verificationStage,
+        errorCategory,
+        codeCandidates: {
+          unverifiedTNoCandidate,
+          unverifiedBarcodeCandidate,
+        },
+        ...(preassignedPrintAllowed
+          ? {
+              trackingNumber: unverifiedTNoCandidate,
+              kargoTakipNo: unverifiedTNoCandidate,
+              tNo: unverifiedTNoCandidate,
+              trackingSource: 'surat.create.preassignedTNo',
+              barcode: unverifiedBarcodeCandidate,
+              barkodNo: unverifiedBarcodeCandidate,
+              barcodeValue: unverifiedBarcodeCandidate,
+              barcodeSource: 'surat.create.preassignedBarkod',
+              finalSuratBarcode: unverifiedBarcodeCandidate,
+            }
+          : {}),
+        labelStatus: preassignedPrintAllowed ? 'READY' : 'BLOCKED',
+        printEnabled: preassignedPrintAllowed,
+        lifecycleStatus,
+        candidateVerificationStatus: preassignedPrintAllowed
+          ? 'PREASSIGNED_AWAITING_ACCEPTANCE'
+          : labelCreatedNotRegistered
+            ? 'LABEL_CREATED_NOT_REGISTERED'
+            : 'PENDING_VERIFICATION',
+        noTrackingReason,
+        diagnosticMessage: String(record?.businessMessage ?? '').slice(0, 600),
+        suratCreateLog: {
+          serviceMode,
+          serviceType,
+          operationName,
+          codeCandidates: {
+            unverifiedTNoCandidate,
+            unverifiedBarcodeCandidate,
+          },
+          errorCategory,
+          verificationStage,
+          noTrackingReason,
+          verifiedShipment: false,
+        },
       },
     },
     operation,
@@ -1013,6 +1498,8 @@ function buildSuratIdempotencyBlockedResponse(record, operation, message) {
       carrierCreateCalled: false,
       persistentStatus: record?.status ?? 'UNKNOWN',
       createCallCount: Number(record?.createCallCount ?? 0),
+      candidateIdentifiers,
+      previousOperation: record?.operation ?? '',
     },
   )
 }
@@ -1080,6 +1567,166 @@ async function readSuratCreateOperationStore() {
     if (error?.code === 'ENOENT') return { version: 1, operations: {} }
     throw error
   }
+}
+
+function buildSafeZplReference(result = {}) {
+  const zpl = firstNonEmpty(
+    result?.shipment?.barcodeRaw,
+    result?.suratCreateLog?.BarcodeRaw,
+    result?.suratCreateLog?.parsedResponse?.BarcodeRaw,
+    result?.createDiagnostics?.officialBarcodeRaw,
+  )
+  return {
+    sha256: zpl
+      ? createHash('sha256').update(zpl).digest('hex')
+      : '',
+    length: zpl.length,
+  }
+}
+
+async function persistSuratTrackingVerification(requestBody = {}, result = {}) {
+  const orderId = String(requestBody.orderId ?? '').trim()
+  if (!orderId) return undefined
+  const queryReference = resolveSuratTrackingQueryReference(requestBody)
+  if (!queryReference.ok) return undefined
+  const webSiparisKodu = queryReference.value
+  const shipmentReference = firstNonEmpty(
+    requestBody.shipmentId,
+    requestBody.packageId,
+    requestBody.shipmentPackageId,
+  )
+  const checkedAt = new Date().toISOString()
+  const gonderilerLength = Number(result?.gonderilerLength ?? 0)
+  const trackingNumber = firstNonEmpty(
+    result?.KargoTakipNo,
+    result?.tracking?.KargoTakipNo,
+    result?.tracking?.TakipUrlTrackingNo,
+  )
+  const trackedBarcode = firstNonEmpty(
+    result?.BarkodNo,
+    result?.tracking?.BarkodNo,
+    result?.tracking?.Barkod,
+  )
+  let persistenceSummary
+  await queueSuratCreateStoreUpdate((store) => {
+    for (const record of Object.values(store.operations)) {
+      if (String(record?.orderId ?? '') !== orderId) continue
+      const storedOzelKargoTakipNo = String(
+        record?.ozelKargoTakipNo ?? '',
+      ).trim()
+      if (
+        storedOzelKargoTakipNo &&
+        normalizeSuratCodeForComparison(storedOzelKargoTakipNo) !==
+          normalizeSuratCodeForComparison(webSiparisKodu)
+      ) {
+        continue
+      }
+      record.maxCreateCalls = 1
+      record.soapAction ||= `http://tempuri.org/${record.operation}`
+      record.requestRoot ||= String(record.operation ?? '')
+      record.ozelKargoTakipNo ||= webSiparisKodu
+      record.referansNo ||= shipmentReference
+      record.verificationWebSiparisKodu = webSiparisKodu
+      record.verificationReferenceType = queryReference.type
+      record.verificationReferenceSource = queryReference.source
+      record.lastCheckedAt = checkedAt
+      record.lastTrackingState = String(result?.trackingState ?? '')
+      record.lastGonderilerLength = gonderilerLength
+      const expectedTrackingNumber = String(
+        record.candidateTrackingNumber ?? '',
+      ).trim()
+      const expectedBarcodeNumber = String(
+        record.candidateBarcodeNumber ?? '',
+      ).trim()
+      const trackingNumberMatches = Boolean(
+        trackingNumber &&
+          (!expectedTrackingNumber ||
+            normalizeSuratCodeForComparison(expectedTrackingNumber) ===
+              normalizeSuratCodeForComparison(trackingNumber)),
+      )
+      const barcodeNumberMatches = Boolean(
+        trackedBarcode &&
+          (!expectedBarcodeNumber ||
+            normalizeSuratCodeForComparison(expectedBarcodeNumber) ===
+              normalizeSuratCodeForComparison(trackedBarcode)),
+      )
+      record.verificationComparison = {
+        expectedTrackingNumber,
+        responseTrackingNumber: trackingNumber,
+        trackingNumberMatches,
+        expectedBarcodeNumber,
+        responseBarcodeNumber: trackedBarcode,
+        barcodeNumberMatches,
+      }
+      if (
+        (gonderilerLength > 0 || result?.registrationRowFound === true) &&
+        trackingNumberMatches &&
+        barcodeNumberMatches
+      ) {
+        record.status = 'SUCCESS'
+        record.verificationStatus = 'VERIFIED'
+        record.carrierTrackingNumber = trackingNumber
+        record.carrierBarcodeNumber = trackedBarcode
+      } else {
+        const labelRegistrationState = resolveSuratLabelRegistrationState(
+          record,
+          checkedAt,
+          requestBody?.config?.labelRegistrationGraceMs,
+        )
+        record.verificationStatus = labelRegistrationState
+        if (labelRegistrationState === 'LABEL_CREATED_NOT_REGISTERED') {
+          record.status = 'FAILED_SAFE'
+          record.failureCategory = 'SURAT_LABEL_CREATED_NOT_REGISTERED'
+        }
+      }
+      persistenceSummary = {
+        idempotencyKey: record.idempotencyKey,
+        verificationStatus: record.verificationStatus,
+        status: record.status,
+        lastCheckedAt: record.lastCheckedAt,
+        lastGonderilerLength: record.lastGonderilerLength,
+        verificationReferenceType: record.verificationReferenceType,
+        candidateTrackingNumber: record.candidateTrackingNumber ?? '',
+        candidateBarcodeNumber: record.candidateBarcodeNumber ?? '',
+        carrierTrackingNumber: record.carrierTrackingNumber ?? '',
+        carrierBarcodeNumber: record.carrierBarcodeNumber ?? '',
+      }
+    }
+  })
+  return persistenceSummary
+}
+
+function resolveSuratLabelRegistrationState(
+  record = {},
+  checkedAt = new Date().toISOString(),
+  configuredGraceMs,
+) {
+  const graceMs = Number.isFinite(Number(configuredGraceMs))
+    ? Math.max(0, Number(configuredGraceMs))
+    : SURAT_LABEL_REGISTRATION_GRACE_MS
+  const labelCreated = Boolean(
+    String(record?.candidateTrackingNumber ?? '').trim() ||
+      String(record?.candidateBarcodeNumber ?? '').trim() ||
+      Number(record?.technicalZplLength ?? 0) > 0,
+  )
+  const correctReferenceUsed = Boolean(
+    record?.verificationReferenceType === 'WEB_SIPARIS_KODU' &&
+      String(record?.verificationWebSiparisKodu ?? '').trim(),
+  )
+  const noCarrierRecord = Number(record?.lastGonderilerLength ?? -1) === 0
+  const createdAtMs = Date.parse(
+    firstNonEmpty(record?.completedAt, record?.createdAt, record?.startedAt),
+  )
+  const checkedAtMs = Date.parse(String(checkedAt ?? ''))
+  const graceExpired = Boolean(
+    Number.isFinite(createdAtMs) &&
+      Number.isFinite(checkedAtMs) &&
+      checkedAtMs - createdAtMs >= graceMs,
+  )
+
+  return labelCreated && correctReferenceUsed && noCarrierRecord && graceExpired
+    ? 'LABEL_CREATED_NOT_REGISTERED'
+    : 'LABEL_CREATED_UNVERIFIED'
 }
 
 function buildTrendyolShipmentPreflight(order = {}) {
@@ -1250,20 +1897,24 @@ function buildSuratCommonBarcodeLoopDiagnostic({
   const orderNumber = String(order.orderNumber ?? '').trim()
   const cargoTrackingNumber = String(order.cargoTrackingNumber ?? '').trim()
   const reference = order?.orderNumber ? makeShipmentReference(order) : ''
-  const webPasswordInfo = resolveSuratWebPassword(config)
-  const serviceModeOk = config.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP'
+  const serviceModeOk = config.serviceMode === 'ORTAK_BARKOD_SOAP'
 
   add({
     id: 'research-source',
     title: 'Resmi servis kaynağı',
     status: 'PASS',
     message:
-      'Sürat WSDL içinde KargoBarkoduSiparis operasyonu var; beklenen response alanları KargoTakipNo, BarkodNo[] ve PdfBarkod.',
+      'Sürat WSDL içindeki GonderiyiKargoyaGonderYeniSiparisBarkodOlustur operasyonu GonderiModel alır ve senkron barkod/ZPL döndürür.',
     evidence: {
-      endpoint: `${SURAT_SOAP_URL}#KargoBarkoduSiparis`,
-      soapAction: 'http://tempuri.org/KargoBarkoduSiparis',
-      requestParams: ['cariKodu', 'WebPassword', 'Gonderientity'],
-      requiredSuccessFields: ['KargoTakipNo', 'BarkodNo[]', 'PdfBarkod'],
+      endpoint: `${SURAT_SOAP_URL}#GonderiyiKargoyaGonderYeniSiparisBarkodOlustur`,
+      soapAction:
+        'http://tempuri.org/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      requestParams: ['KullaniciAdi', 'Sifre', 'Gonderi (GonderiModel)'],
+      requiredSuccessFields: [
+        'Barcode/ZPL içindeki numeric T.No',
+        'Barcode/ZPL içindeki numeric Code128',
+        'KargoTakipHareketDetayi Gonderiler=1',
+      ],
     },
   })
 
@@ -1272,8 +1923,8 @@ function buildSuratCommonBarcodeLoopDiagnostic({
     title: 'Servis modu',
     status: serviceModeOk ? 'PASS' : 'BLOCKED',
     message: serviceModeOk
-      ? 'CargoFlow Sürat ortak barkod için KargoBarkoduSiparis SOAP modunda.'
-      : 'Sürat ortak barkod için servis modu KargoBarkoduSiparis SOAP olmalı.',
+      ? 'CargoFlow resmî yeni sipariş barkod SOAP modunda.'
+      : 'Sürat ortak barkod için Yeni Sipariş Barkod SOAP modu seçilmeli.',
     evidence: {
       serviceMode: config.serviceMode,
       serviceType: config.serviceType,
@@ -1281,36 +1932,26 @@ function buildSuratCommonBarcodeLoopDiagnostic({
     },
     nextAction: serviceModeOk
       ? undefined
-      : 'Entegrasyonlar / Ayarlar ekranında Sürat servis modunu KargoBarkoduSiparis SOAP olarak seç.',
+      : 'Entegrasyonlar / Ayarlar ekranında Yeni Sipariş Barkod SOAP modunu seç.',
   })
 
   add({
     id: 'credentials',
     title: 'Sürat kimlik bilgileri',
-    status:
-      config.kullaniciAdi && webPasswordInfo.value
-        ? webPasswordInfo.matchesShipmentPassword
-          ? 'WARN'
-          : 'PASS'
-        : 'BLOCKED',
+    status: config.kullaniciAdi && config.sifre ? 'PASS' : 'BLOCKED',
     message:
-      config.kullaniciAdi && webPasswordInfo.value
-        ? 'Cari kodu ve WebPassword mevcut; canlı barkod denemesi yapılabilir.'
-        : 'KargoBarkoduSiparis için Cari Kodu ve e-Sürat WebPassword / Sorgulama Şifresi zorunlu.',
+      config.kullaniciAdi && config.sifre
+        ? 'Sürat gönderi kullanıcı adı ve şifresi mevcut.'
+        : 'Yeni sipariş barkod operasyonu için Sürat kullanıcı adı ve gönderi şifresi zorunlu.',
     evidence: {
-      cariKoduConfigured: Boolean(config.kullaniciAdi),
-      webPasswordConfigured: Boolean(webPasswordInfo.value),
-      webPasswordSource: webPasswordInfo.source,
-      normalShipmentPasswordConfigured: Boolean(config.sifre),
-      normalShipmentPasswordUsedAsWebPassword:
-        webPasswordInfo.matchesShipmentPassword,
-      webPasswordMatchesShipmentPassword:
-        webPasswordInfo.matchesShipmentPassword,
+      shipmentUserConfigured: Boolean(config.kullaniciAdi),
+      shipmentPasswordConfigured: Boolean(config.sifre),
+      webPasswordRequired: false,
     },
     nextAction:
-      config.kullaniciAdi && webPasswordInfo.value
+      config.kullaniciAdi && config.sifre
         ? undefined
-        : 'e-Sürat panelinden Web Servis/WebPassword/Sorgulama şifresini oluşturup CargoFlow Sürat ayarlarına gir.',
+        : 'Sürat gönderi kullanıcı adı ve şifresini CargoFlow ayarlarına gir.',
   })
 
   const preflight = buildTrendyolShipmentPreflight(order)
@@ -1344,7 +1985,6 @@ function buildSuratCommonBarcodeLoopDiagnostic({
     payload = buildSuratShipmentPayload(order, reference, {
       commonBarcode: true,
     })
-    enrichKargoBarkoduSiparisPayload(payload, config, order)
   } catch (error) {
     payloadError =
       error instanceof Error
@@ -1354,18 +1994,34 @@ function buildSuratCommonBarcodeLoopDiagnostic({
   const mappingOk = Boolean(
     payload &&
       cargoTrackingNumber &&
-      payload.ReferansNo === cargoTrackingNumber &&
+      payload.ReferansNo ===
+        String(order.packageId ?? order.shipmentPackageId ?? reference) &&
       payload.OzelKargoTakipNo === cargoTrackingNumber,
+  )
+  const requestXml = payload
+    ? buildSuratGonderiXml(payload, {
+        commonBarcode: true,
+        strictGonderiModel: true,
+      })
+    : ''
+  const schemaOk = Boolean(
+    requestXml &&
+      !/<(?:WebSiparisKodu|SatisKodu|MarketplaceIntegrationCode)>/.test(
+        requestXml,
+      ) &&
+      /<OdemeTipi>/.test(requestXml) &&
+      /<SevkAdresi>/.test(requestXml),
   )
   add({
     id: 'request-mapping',
     title: 'Sürat request mapping',
-    status: payloadError ? 'BLOCKED' : mappingOk ? 'PASS' : 'WARN',
+    status:
+      payloadError ? 'BLOCKED' : mappingOk && schemaOk ? 'PASS' : 'WARN',
     message: payloadError
       ? payloadError
-      : mappingOk
-        ? 'Trendyol 727 kodu ReferansNo ve OzelKargoTakipNo alanlarına doğru bağlandı.'
-        : 'ReferansNo/OzelKargoTakipNo mapping kontrol edilmeli; 727 kodu bu iki alanda olmalı.',
+      : mappingOk && schemaOk
+        ? 'Paket kimliği ReferansNo, 727 kodu OzelKargoTakipNo alanında; XML resmî GonderiModel şemasına uygun.'
+        : 'Referans/OzelKargoTakipNo eşlemesi veya GonderiModel XML şeması kontrol edilmeli.',
     evidence: payload
       ? {
           orderNumber,
@@ -1382,42 +2038,65 @@ function buildSuratCommonBarcodeLoopDiagnostic({
           WhoPays: payload.WhoPays,
           BirimDesi: payload.BirimDesi,
           BirimKg: payload.BirimKg,
+          strictGonderiModel: schemaOk,
+          forbiddenFieldsPresent:
+            /<(?:WebSiparisKodu|SatisKodu|MarketplaceIntegrationCode)>/.test(
+              requestXml,
+            ),
         }
       : { payloadError },
     nextAction:
-      payloadError || mappingOk
+      payloadError || (mappingOk && schemaOk)
         ? undefined
-        : 'KargoBarkoduSiparis mapping fonksiyonunda ReferansNo ve OzelKargoTakipNo cargoTrackingNumber olmalı.',
+        : 'ReferansNo paket kimliği, OzelKargoTakipNo cargoTrackingNumber olmalı ve XML’de WSDL dışı alan bulunmamalı.',
   })
 
-  const parsedLast = parseDiagnosticSuratLastResponse(lastResponse)
+  const parsedLast = lastResponse
+    ? mapSuratCreateResponse(lastResponse, reference)
+    : null
+  const parsedOutcome = lastResponse
+    ? classifySuratCreateResponse(
+        lastResponse,
+        parsedLast,
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
+        {
+          ...config,
+          marketplaceIntegrationCode: cargoTrackingNumber,
+        },
+      )
+    : null
+  const serdendipVerified = Boolean(
+    lastResponse?.shipment?.serdendipVerified === true ||
+      lastResponse?.trackingVerification?.serdendipVerified === true ||
+      Number(lastResponse?.trackingVerification?.gonderilerLength ?? 0) === 1,
+  )
   if (lastResponse) {
     const success = Boolean(
-      isOperationalSuratTNo(parsedLast.KargoTakipNo) &&
-        isNumericSuratOperationalCode(parsedLast.BarkodNo) &&
-        parsedLast.hasPdfBarkod,
+      parsedOutcome?.operationalBarcodeVerified && serdendipVerified,
     )
     add({
       id: 'response-parse',
       title: 'Sürat response parse',
       status: success ? 'PASS' : 'BLOCKED',
       message: success
-        ? 'Sürat response içinde T.No, BarkodNo ve PdfBarkod birlikte var.'
-        : buildKargoBarkoduSiparisNoTrackingReason(parsedLast, webPasswordInfo) ||
-          'Sürat response içinde yazdırılabilir barkod verisi yok.',
+        ? 'Sürat ZPL içindeki T.No ve ana barkod Serendip Gonderiler=1 ile doğrulandı.'
+        : parsedOutcome?.operationalBarcodeVerified
+          ? 'Sürat barkod/ZPL döndürdü ancak Serendip Gonderiler=1 teyidi yok.'
+          : parsedOutcome?.noTrackingReason ||
+            'Sürat response içinde yazdırılabilir T.No ve ana barkod yok.',
       evidence: {
-        KargoTakipNo: parsedLast.KargoTakipNo,
-        BarkodNo: parsedLast.BarkodNo,
-        BarkodNoList: parsedLast.BarkodNoList,
-        hasPdfBarkod: parsedLast.hasPdfBarkod,
-        PdfBarkodLength: parsedLast.PdfBarkod?.length ?? 0,
-        Aciklama: parsedLast.Aciklama,
+        KargoTakipNo: parsedOutcome?.officialTrackingNumber ?? '',
+        BarkodNo: parsedOutcome?.officialBarcode ?? '',
+        hasBarcodeRaw: Boolean(parsedOutcome?.officialBarcodeRaw),
+        serdendipVerified,
+        responseCategory: parsedOutcome?.responseCategory,
+        message: parsedOutcome?.message,
       },
       nextAction: success
         ? undefined
-        : /object reference/i.test(parsedLast.Aciklama)
-          ? 'WebPassword değerini ve Sürat cari hesabının KargoBarkoduSiparis / pazaryeri barkod yetkisini Sürat ile doğrula.'
-          : 'Ham Sürat cevabındaki Aciklama alanını Sürat destek ile paylaş.',
+        : parsedOutcome?.operationalBarcodeVerified
+          ? 'Aynı OzelKargoTakipNo ile KargoTakipHareketDetayi sorgusunu sürdür; Gonderiler=1 olmadan yazdırmayı açma.'
+          : 'Ham Sürat cevabındaki Message/Barcode alanını Sürat destek ile paylaş.',
     })
   } else {
     add({
@@ -1425,7 +2104,7 @@ function buildSuratCommonBarcodeLoopDiagnostic({
       title: 'Sürat response parse',
       status: 'SKIPPED',
       message:
-        'Henüz canlı KargoBarkoduSiparis response yok; önce bloklu adımlar temizlenmeli.',
+        'Henüz canlı yeni sipariş barkod response yok; önce bloklu adımlar temizlenmeli.',
     })
   }
 
@@ -1434,13 +2113,11 @@ function buildSuratCommonBarcodeLoopDiagnostic({
   return {
     ok: true,
     diagnosticType: 'SURAT_COMMON_BARCODE_LOOP',
-    targetOperation: 'KargoBarkoduSiparis',
+    targetOperation:
+      'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
     canAttemptLiveSuratCall: readyForLiveAttempt,
     canPrintLabel:
-      parsedLast &&
-      isOperationalSuratTNo(parsedLast.KargoTakipNo) &&
-      isNumericSuratOperationalCode(parsedLast.BarkodNo) &&
-      parsedLast.hasPdfBarkod,
+      parsedOutcome?.operationalBarcodeVerified && serdendipVerified,
     terminalBlocker: blocking
       ? {
           stepId: blocking.id,
@@ -1450,10 +2127,10 @@ function buildSuratCommonBarcodeLoopDiagnostic({
       : undefined,
     loop: [
       '1) Araştır: WSDL ve Trendyol dokümanı ile doğru servis/alanları doğrula.',
-      '2) Preflight: WebPassword, Trendyol statüsü, Sürat ataması, desi ve mapping kontrol et.',
-      '3) Deney: yalnız preflight yeşilse KargoBarkoduSiparis canlı çağrısını yap.',
-      '4) Kanıt: response içinde KargoTakipNo + BarkodNo[] + PdfBarkod birlikte yoksa yazdırmayı açma.',
-      '5) Düzelt: dönen Aciklama/errorCategory üzerinden tek parametre değiştir, tekrar preflight + deney yap.',
+      '2) Preflight: gönderi kimliği, Trendyol statüsü, Sürat ataması, desi ve GonderiModel XML kontrol et.',
+      '3) Deney: yalnız temiz ve geçmişsiz siparişte tek canlı yeni sipariş barkod çağrısı yap.',
+      '4) Kanıt: ZPL içindeki T.No + numeric Code128 ve Serendip Gonderiler=1 birlikte yoksa yazdırmayı açma.',
+      '5) Düzelt: Message/errorCategory üzerinden tek değişkeni düzelt; sonucu belirsiz create çağrısını tekrarlama.',
     ],
     steps,
   }
@@ -1987,21 +2664,19 @@ async function createSuratRegisteredCommonBarcode(config, order, reference) {
     dispatchRegistration,
     registrationPayload,
   )
-  const acceptedRegistrationCategory = [
-    'BARCODE_SUCCESS',
-    'PARTIAL',
-    'DUPLICATE_EXISTS',
-  ].includes(
-    String(
-      registrationLog?.responseCategory ??
-        dispatchRegistration.createDiagnostics?.responseCategory ??
-        '',
-    ),
-  )
+  const lifecycleEvidence =
+    dispatchRegistration.shipment?.lifecycleEvidence ?? {}
   const registrationAccepted = Boolean(
-    dispatchRegistration.ok ||
-      marketplaceRegistration.accepted ||
-      acceptedRegistrationCategory,
+    lifecycleEvidence.createAccepted ||
+      dispatchRegistration.shipment?.lifecycleMilestones?.includes(
+        'CREATE_ACCEPTED',
+      ),
+  )
+  const shipmentRegistered = Boolean(
+    lifecycleEvidence.shipmentRegistered ||
+      dispatchRegistration.shipment?.lifecycleMilestones?.includes(
+        'SHIPMENT_REGISTERED',
+      ),
   )
 
   if (!registrationAccepted) {
@@ -2036,17 +2711,56 @@ async function createSuratRegisteredCommonBarcode(config, order, reference) {
     }
   }
 
+  if (!shipmentRegistered) {
+    return {
+      ...dispatchRegistration,
+      ok: false,
+      message:
+        'Sürat create isteği kabul edildi ancak read-only sorguda gönderi kaydı henüz bulunamadı. Etiket operasyonu çağrılmadı.',
+      dispatchRegistration: {
+        ok: false,
+        createAccepted: true,
+        shipmentRegistered: false,
+        endpoint: dispatchRegistration.endpoint,
+        serviceType: dispatchRegistration.serviceType,
+        responseStatus:
+          dispatchRegistration.responseStatus ??
+          dispatchRegistration.statusCode,
+        responseCode:
+          registrationLog?.responseCode ??
+          dispatchRegistration.createDiagnostics?.responseCategory,
+        responseMessage:
+          registrationLog?.responseMessage ??
+          dispatchRegistration.createDiagnostics?.message,
+        rawRequest: registrationLog?.rawRequest,
+        rawResponse: registrationLog?.rawResponse,
+      },
+      barcodeCreation: {
+        ok: false,
+        skipped: true,
+        reason: 'SHIPMENT_NOT_REGISTERED',
+      },
+    }
+  }
+
   const commonBarcodeResult = await createSuratCommonBarcodeSoap(
     config,
     order,
     reference,
+    {
+      operationName: 'OrtakBarkodOlustur',
+      serviceType: 'OrtakBarkodOlusturSoap',
+      strictGonderiModel: true,
+    },
   )
   const barcodeLog =
     commonBarcodeResult.shipment?.suratCreateLog ??
     commonBarcodeResult.suratCreateLog
   const dispatchRegistrationSummary = {
-    ok: registrationAccepted,
-    providerRegistrationConfirmed: registrationAccepted,
+    ok: shipmentRegistered,
+    createAccepted: registrationAccepted,
+    shipmentRegistered,
+    providerRegistrationConfirmed: shipmentRegistered,
     serdendipVerified: Boolean(
       dispatchRegistration.shipment?.verifiedShipment,
     ),
@@ -2256,8 +2970,8 @@ async function createSuratRegisteredCommonBarcode(config, order, reference) {
     },
     shipment: {
       ...resolvedCommonBarcodeResult.shipment,
-      dispatchRegistrationConfirmed: true,
-      providerRegistrationConfirmed: true,
+      dispatchRegistrationConfirmed: shipmentRegistered,
+      providerRegistrationConfirmed: shipmentRegistered,
       dispatchRegistration: dispatchRegistrationSummary,
     },
   }
@@ -2268,39 +2982,30 @@ async function runAutomaticSuratTrackingVerification(
   order,
   { shipmentId, internalWebBarcode, zplAnalysis } = {},
 ) {
-  const candidates = Array.from(
-    new Set(
-      [
-        order?.cargoTrackingNumber,
-        internalWebBarcode,
-        ...(zplAnalysis?.dataMatrixCandidates ?? []),
-        order?.orderNumber,
-        order?.packageId,
-        order?.shipmentPackageId,
-      ]
-        .map((value) => String(value ?? '').trim())
-        .filter(Boolean),
-    ),
+  void internalWebBarcode
+  void zplAnalysis
+  const queryReference = buildSuratQueryReference(
+    order?.cargoTrackingNumber,
+    'WEB_SIPARIS_KODU',
+    'order.cargoTrackingNumber -> createRequest.OzelKargoTakipNo',
   )
-  let result
-  const trackingAttempts = []
-  for (const webSiparisKodu of candidates) {
-    result =
-      config.trackingServiceType === 'KargoTakipHareketDetayiRest'
-        ? await trackShipmentRest(config, webSiparisKodu, {
-            orderId: order?.id,
-            shipmentId,
-          })
-        : await trackShipmentSoap(config, webSiparisKodu, {
-            orderId: order?.id,
-            shipmentId,
-          })
-    result.trackingReference = webSiparisKodu
-    trackingAttempts.push(buildTrackingAttemptDebug(webSiparisKodu, result))
-    result.trackingAttempts = trackingAttempts
-    if (shouldStopTrackingCandidateSearch(result)) break
+  if (!queryReference.ok) return undefined
+  const requestBody = {
+    orderId: order?.id,
+    shipmentId,
+    webSiparisKodu: queryReference.value,
+    queryReference,
   }
-  if (result) result.trackingAttempts = trackingAttempts
+  const result =
+    config.trackingServiceType === 'KargoTakipHareketDetayiRest'
+      ? await trackShipmentRest(config, queryReference.value, requestBody)
+      : await trackShipmentSoap(config, queryReference.value, requestBody)
+  result.trackingReference = queryReference.value
+  result.trackingReferenceType = queryReference.type
+  result.trackingReferenceSource = queryReference.source
+  result.trackingAttempts = [
+    buildTrackingAttemptDebug(queryReference.value, result, queryReference),
+  ]
   return result
 }
 
@@ -2309,32 +3014,85 @@ async function resolveSuratOperationalBarcode(
   order,
   { shipmentId, internalWebBarcode, zplAnalysis } = {},
 ) {
-  const candidates = Array.from(
-    new Set(
-      [
-        order?.cargoTrackingNumber,
-        order?.packageId,
-        order?.shipmentPackageId,
-        order?.orderNumber,
-        internalWebBarcode,
-        ...(zplAnalysis?.dataMatrixCandidates ?? []),
-      ]
-        .map((value) => String(value ?? '').trim())
-        .filter(Boolean),
-    ),
-  )
+  void internalWebBarcode
+  void zplAnalysis
+  const ozelKargoTakipNo = String(order?.cargoTrackingNumber ?? '').trim()
+  if (!ozelKargoTakipNo) {
+    return {
+      ok: false,
+      source: 'real',
+      operationType: 'RESOLVE_OPERATIONAL_BARCODE',
+      endpoint: 'KargoBarkodu',
+      serviceType: 'KargoBarkoduSoap',
+      attempts: [],
+      operationalBarcodeVerified: false,
+      KargoTakipNo: '',
+      BarkodNo: '',
+      queryReferenceType: 'OZEL_KARGO_TAKIP_NO',
+      queryReferenceSource:
+        'order.cargoTrackingNumber -> createRequest.OzelKargoTakipNo',
+      message:
+        'KargoBarkodu sorgusu için createRequest.OzelKargoTakipNo bulunamadı.',
+    }
+  }
   const attempts = []
-  for (const ozelKargoTakipNo of candidates) {
-    const result = await callSuratKargoBarkodu(config, ozelKargoTakipNo, {
+  const registeredShipment = await callSuratWebSiparisKodu(
+    config,
+    ozelKargoTakipNo,
+    {
       orderId: order?.id,
       shipmentId,
-    })
-    attempts.push(result)
-    if (result.operationalBarcodeVerified) {
-      return {
-        ...result,
-        attempts: attempts.map(({ attempts: _attempts, ...attempt }) => attempt),
-      }
+    },
+  )
+  const registeredShipmentAttempt = {
+    ...registeredShipment,
+    queryReferenceType: 'WEB_SIPARIS_KODU',
+    queryReferenceSource:
+      'order.cargoTrackingNumber -> createRequest.OzelKargoTakipNo',
+  }
+  attempts.push(registeredShipmentAttempt)
+  if (registeredShipment.operationalBarcodeVerified) {
+    return {
+      ...registeredShipmentAttempt,
+      attempts,
+    }
+  }
+
+  const webPasswordInfo = resolveSuratWebPassword(config)
+  if (!webPasswordInfo.value || webPasswordInfo.matchesShipmentPassword) {
+    return {
+      ok: false,
+      source: 'real',
+      operationType: 'RESOLVE_OPERATIONAL_BARCODE',
+      endpoint: 'WebSiparisKodu',
+      serviceType: 'WebSiparisKoduSoap',
+      attempts,
+      operationalBarcodeVerified: false,
+      KargoTakipNo: '',
+      BarkodNo: '',
+      queryReferenceType: 'WEB_SIPARIS_KODU',
+      queryReferenceSource:
+        'order.cargoTrackingNumber -> createRequest.OzelKargoTakipNo',
+      message:
+        'WebSiparisKodu servisi kayitli T.No/Barkod dondurmedi. Ayrica ayri e-Surat WebPassword tanimli olmadigi icin KargoBarkodu yedek sorgusu calistirilmadi.',
+    }
+  }
+
+  const result = await callSuratKargoBarkodu(config, ozelKargoTakipNo, {
+    orderId: order?.id,
+    shipmentId,
+  })
+  const attempt = {
+    ...result,
+    queryReferenceType: 'OZEL_KARGO_TAKIP_NO',
+    queryReferenceSource:
+      'order.cargoTrackingNumber -> createRequest.OzelKargoTakipNo',
+  }
+  attempts.push(attempt)
+  if (result.operationalBarcodeVerified) {
+    return {
+      ...attempt,
+      attempts,
     }
   }
   return {
@@ -2347,8 +3105,106 @@ async function resolveSuratOperationalBarcode(
     operationalBarcodeVerified: false,
     KargoTakipNo: '',
     BarkodNo: '',
+    queryReferenceType: 'OZEL_KARGO_TAKIP_NO',
+    queryReferenceSource:
+      'order.cargoTrackingNumber -> createRequest.OzelKargoTakipNo',
     message:
-      'KargoBarkodu servisi aday referanslarla numeric final barkod/T.No dÃ¶ndÃ¼rmedi.',
+      'KargoBarkodu servisi createRequest.OzelKargoTakipNo ile numeric final barkod/T.No döndürmedi.',
+  }
+}
+
+async function callSuratWebSiparisKodu(
+  config,
+  webSiparisKodu,
+  { orderId = '', shipmentId = '' } = {},
+) {
+  const soap = await callSuratSoap(
+    'WebSiparisKodu',
+    `
+      <GonderenCariKodu>${xmlEscape(config.kullaniciAdi)}</GonderenCariKodu>
+      <Sifre>${xmlEscape(config.sifre)}</Sifre>
+      <WebSiparisKodu>${xmlEscape(webSiparisKodu)}</WebSiparisKodu>
+    `,
+  )
+  const parsed = parseSuratWebSiparisKoduResult(soap.text)
+  const referenceMatches = Boolean(
+    parsed.WebSiparisKodu &&
+      normalizeSuratCodeForComparison(parsed.WebSiparisKodu) ===
+        normalizeSuratCodeForComparison(webSiparisKodu),
+  )
+  const operationalBarcodeVerified = Boolean(
+    soap.ok &&
+      parsed.rowCount > 0 &&
+      referenceMatches &&
+      isOperationalSuratTNo(parsed.KargoTakipNo) &&
+      isNumericSuratOperationalCode(parsed.BarkodNo),
+  )
+
+  return {
+    ok: soap.ok,
+    source: 'real',
+    operationType: 'RESOLVE_OPERATIONAL_BARCODE',
+    operationName: 'WebSiparisKodu',
+    endpoint: 'WebSiparisKodu',
+    serviceType: 'WebSiparisKoduSoap',
+    payloadFormat: 'SOAP/XML',
+    statusCode: soap.statusCode,
+    responseStatus: soap.statusCode,
+    contentType: soap.contentType,
+    orderId,
+    shipmentId,
+    queryValue: webSiparisKodu,
+    WebSiparisKodu: parsed.WebSiparisKodu,
+    KargoTakipNo: parsed.KargoTakipNo,
+    BarkodNo: parsed.BarkodNo,
+    rowCount: parsed.rowCount,
+    referenceMatches,
+    operationalBarcodeVerified,
+    trackingSource: 'surat.WebSiparisKodu.TakipNo',
+    barcodeSource: 'surat.WebSiparisKodu.Barkod',
+    rawRequest: redactSuratRawRequest(soap.body),
+    rawResponse: soap.text,
+    parsedResponse: parsed,
+    message: operationalBarcodeVerified
+      ? 'WebSiparisKodu servisi ayni musteri referansi icin T.No ve ana barkodu dondurdu.'
+      : parsed.rowCount > 0
+        ? 'WebSiparisKodu kaydi bulundu ancak referans/T.No/Barkod dogrulamasi gecmedi.'
+        : 'WebSiparisKodu servisi bu musteri referansi icin kayit dondurmedi.',
+  }
+}
+
+function parseSuratWebSiparisKoduResult(responseXml = '') {
+  const text = decodeXml(String(responseXml ?? ''))
+  const rows = Array.from(
+    text.matchAll(
+      /<(?:[^:>]+:)?Table(?:\s[^>]*)?>([\s\S]*?)<\/(?:[^:>]+:)?Table>/gi,
+    ),
+    (match) => match[1],
+  )
+  const rowCount = rows.length
+  const firstRow = rows[0] || ''
+  return {
+    rowCount,
+    WebSiparisKodu:
+      rowCount > 0
+        ? decodeXml(extractTag(firstRow, 'WebSiparisKodu')).trim()
+        : '',
+    KargoTakipNo:
+      rowCount > 0
+        ? firstNonEmpty(
+            decodeXml(extractTag(firstRow, 'TakipNo')).trim(),
+            decodeXml(extractTag(firstRow, 'KargoTakipNo')).trim(),
+          )
+        : '',
+    BarkodNo:
+      rowCount > 0
+        ? firstNonEmpty(
+            decodeXml(extractTag(firstRow, 'Barkod')).trim(),
+            decodeXml(extractTag(firstRow, 'BarkodNo')).trim(),
+          )
+        : '',
+    Durum:
+      rowCount > 0 ? decodeXml(extractTag(firstRow, 'Durum')).trim() : '',
   }
 }
 
@@ -2465,8 +3321,12 @@ async function createSuratBarcodeOrderSoap(config, order, reference) {
       isNumericSuratOperationalCode(parsed.BarkodNo),
   )
   const objectReferenceFailure = /object reference/i.test(parsed.Aciklama || '')
+  const integrationContractConfigured =
+    Number(payload.EntegrasyonSozlesme ?? 0) > 0
   const failureCode = objectReferenceFailure
-    ? 'SURAT_WEB_PASSWORD_INVALID_OR_PERMISSION_MISSING'
+    ? integrationContractConfigured
+      ? 'SURAT_WEB_PASSWORD_INVALID_OR_PERMISSION_MISSING'
+      : 'SURAT_BARCODE_SERVICE_ACCOUNT_SETUP_OR_CONTRACT_MISSING'
     : 'SURAT_KARGO_BARKODU_SIPARIS_NO_CODES'
   const noTrackingReason = operationalBarcodeVerified
     ? ''
@@ -2924,7 +3784,64 @@ function buildKargoBarkoduSiparisNoTrackingReason(parsed, webPasswordInfo) {
   return reasons.join(' ')
 }
 
-function buildTrackingAttemptDebug(reference, result) {
+function buildSuratQueryReference(value, type, source) {
+  const normalizedValue = String(value ?? '').trim()
+  const normalizedType = String(type ?? '').trim().toUpperCase()
+  const normalizedSource = String(source ?? '').trim()
+  if (!normalizedValue) {
+    return {
+      ok: false,
+      value: '',
+      type: normalizedType,
+      source: normalizedSource,
+      message:
+        'Takip sorgusu için createRequest.OzelKargoTakipNo kaynaklı WebSiparisKodu gerekli.',
+    }
+  }
+  if (normalizedType !== 'WEB_SIPARIS_KODU') {
+    return {
+      ok: false,
+      value: normalizedValue,
+      type: normalizedType,
+      source: normalizedSource,
+      message: `KargoTakipHareketDetayi yalnız WEB_SIPARIS_KODU kabul eder; ${normalizedType || 'TİPSİZ'} referans gönderilmedi.`,
+    }
+  }
+  return {
+    ok: true,
+    value: normalizedValue,
+    type: 'WEB_SIPARIS_KODU',
+    source: normalizedSource || 'createRequest.OzelKargoTakipNo',
+  }
+}
+
+function resolveSuratTrackingQueryReference(requestBody = {}) {
+  const explicit =
+    requestBody.queryReference && typeof requestBody.queryReference === 'object'
+      ? requestBody.queryReference
+      : undefined
+  const reference = explicit
+    ? buildSuratQueryReference(
+        explicit.value,
+        explicit.type,
+        explicit.source,
+      )
+    : buildSuratQueryReference(
+        requestBody.webSiparisKodu,
+        requestBody.referenceType || 'WEB_SIPARIS_KODU',
+        requestBody.referenceSource || 'request.webSiparisKodu (legacy typed)',
+      )
+  return {
+    ...reference,
+    ignoredLegacyFields: [
+      requestBody.webSiparisKoduCandidates ? 'webSiparisKoduCandidates' : '',
+      requestBody.shipmentCode ? 'shipmentCode' : '',
+      requestBody.trackingNumber ? 'trackingNumber' : '',
+    ].filter(Boolean),
+  }
+}
+
+function buildTrackingAttemptDebug(reference, result, queryReference = {}) {
   const tracking = result?.tracking ?? result?.suratTrackingLog ?? {}
   const tNo = firstNonEmpty(
     tracking.TNo,
@@ -2937,6 +3854,9 @@ function buildTrackingAttemptDebug(reference, result) {
   )
   return {
     queryValue: reference,
+    queryType: queryReference.type || 'WEB_SIPARIS_KODU',
+    querySource:
+      queryReference.source || 'createRequest.OzelKargoTakipNo',
     endpoint: result?.endpoint ?? 'KargoTakipHareketDetayi',
     serviceType: result?.serviceType,
     responseStatus: result?.statusCode ?? result?.responseStatus,
@@ -3024,9 +3944,10 @@ async function createSuratCommonBarcodeSoap(
   order,
   reference,
   {
-    operationName = 'OrtakBarkodOlustur',
-    serviceType = 'OrtakBarkodOlusturSoap',
-    strictGonderiModel = false,
+    operationName = 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+    serviceType =
+      'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
+    strictGonderiModel = true,
   } = {},
 ) {
   const shipmentPayload = buildSuratShipmentPayload(order, reference, {
@@ -3065,12 +3986,29 @@ async function createSuratCommonBarcodeSoap(
     soap.body,
     operationName,
   )
+  const isCombinedCreateOperation =
+    operationName === 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur'
+  const responseIsError = parseBoolean(
+    readSuratField(parsedResponse, ['IsError', 'isError']),
+  )
+  const createAccepted = Boolean(
+    isCombinedCreateOperation &&
+      soap.ok &&
+      responseIsError !== true &&
+      !classifiedOutcome.retryable &&
+      !classifiedOutcome.duplicateShipment &&
+      !operationCheck.wrongServiceCalled,
+  )
   const outcome = {
     ...classifiedOutcome,
     ...operationCheck,
+    createAccepted,
+    verificationStage: createAccepted
+      ? 'create_accepted'
+      : classifiedOutcome.verificationStage || 'failed',
     hardError: classifiedOutcome.hardError || operationCheck.wrongServiceCalled,
     message: operationCheck.wrongServiceCalled
-      ? 'Canlı ortak barkod için yanlış servis çağrıldı. Beklenen: OrtakBarkodOlustur, gelen: GonderiyiKargoyaGonder.'
+      ? `Canlı ortak barkod için yanlış servis çağrıldı. Beklenen: ${operationName}.`
       : classifiedOutcome.message,
   }
   const authError = isSuratAuthError(outcome.message)
@@ -3099,12 +4037,16 @@ async function createSuratCommonBarcodeSoap(
     !soap.ok ||
     authError ||
     outcome.hardError ||
-    (!outcome.verifiedShipment && !outcome.technicalZplReceived)
+    (isCombinedCreateOperation
+      ? !createAccepted
+      : !outcome.technicalZplReceived)
   ) {
     const createError = mapSuratCreateError(outcome.message || resultText)
-    const missingCommonBarcode =
-      !isValidSuratCode(outcome.officialTrackingNumber) ||
-      !isValidSuratCode(outcome.officialBarcode)
+    const missingCommonBarcode = Boolean(
+      !isCombinedCreateOperation &&
+        (!isValidSuratCode(outcome.officialTrackingNumber) ||
+          !isValidSuratCode(outcome.officialBarcode)),
+    )
     return buildSuratCreateFailure({
       message:
         missingCommonBarcode
@@ -3156,19 +4098,220 @@ async function createSuratCommonBarcodeSoap(
   })
 }
 
+async function createSuratGonderiyiKargoyaGonderYeniSoap(
+  config,
+  order,
+  reference,
+) {
+  const operationName = 'GonderiyiKargoyaGonderYeni'
+  const serviceType = 'GonderiyiKargoyaGonderYeniSoap'
+  const shipmentPayload = buildSuratShipmentPayload(order, reference, {
+    commonBarcode: true,
+  })
+  const requestValidation = validateSuratRequestMapping(order, shipmentPayload)
+  const trendyolPreflight = buildTrendyolShipmentPreflight(order)
+  const addressNormalization = buildAddressNormalizationDebug(order)
+  const soap = await callSuratSoap(
+    operationName,
+    `
+      <KullaniciAdi>${xmlEscape(config.kullaniciAdi)}</KullaniciAdi>
+      <Sifre>${xmlEscape(config.sifre)}</Sifre>
+      ${buildSuratGonderiXml(shipmentPayload, {
+        commonBarcode: true,
+        strictGonderiModel: true,
+      })}
+    `,
+  )
+  const resultText =
+    decodeXml(extractTag(soap.text, `${operationName}Result`)) || soap.text
+  const parsedResponse = parseSuratStringCreateResponse(
+    operationName,
+    resultText,
+    reference,
+  )
+  const classifiedOutcome = classifySuratCreateResponse(
+    resultText,
+    parsedResponse,
+    serviceType,
+    {
+      ...config,
+      marketplaceIntegrationCode: shipmentPayload.MarketplaceIntegrationCode,
+    },
+  )
+  const operationCheck = inspectSuratCreateOperation(soap.body, operationName)
+  const createAccepted = isSuratStringCreateAccepted({
+    soapOk: soap.ok,
+    resultText,
+    parsedResponse,
+    classifiedOutcome,
+  })
+  const outcome = {
+    ...classifiedOutcome,
+    ...operationCheck,
+    createAccepted,
+    verificationStage: createAccepted
+      ? 'create_accepted'
+      : classifiedOutcome.verificationStage || 'failed',
+    errorCategory: createAccepted ? '' : classifiedOutcome.errorCategory,
+    hardError:
+      !createAccepted ||
+      classifiedOutcome.hardError ||
+      operationCheck.wrongServiceCalled,
+  }
+  const createLog = buildSuratCreateLog({
+    rawRequest: soap.body,
+    rawResponse: soap.text,
+    responseStatus: soap.statusCode,
+    contentType: soap.contentType,
+    parsedResponse,
+    orderId: order.id ?? '',
+    shipmentId: reference,
+    serviceType,
+    serviceMode: 'GONDERI_YENI_SOAP',
+    operationName,
+    endpoint: operationName,
+    payloadFormat: 'SOAP/XML',
+    outcome,
+    requestReference: reference,
+    requestValidation,
+    trendyolPreflight,
+    addressNormalization,
+  })
+
+  if (!createAccepted) {
+    const createError = mapSuratCreateError(outcome.message || resultText)
+    return buildSuratCreateFailure({
+      message:
+        createError.userMessage ||
+        outcome.message ||
+        `Sürat ${operationName} isteği kabul edilmedi.`,
+      errorCode: createError.code || outcome.code,
+      errorSource: createError.source,
+      endpoint: operationName,
+      statusCode: soap.statusCode,
+      contentType: soap.contentType,
+      rawRequest: soap.body,
+      rawResponse: soap.text,
+      parsedResponse,
+      createLog,
+      serviceType,
+      payloadFormat: 'SOAP/XML',
+      reference,
+      operationName,
+      marketplaceIntegrationCode:
+        shipmentPayload.MarketplaceIntegrationCode,
+    })
+  }
+
+  const createResult = buildSuratCreateSuccess({
+    serviceType,
+    endpoint: operationName,
+    payloadFormat: 'SOAP/XML',
+    statusCode: soap.statusCode,
+    rawResponse: soap.text,
+    parsedResponse,
+    createLog,
+    outcome,
+    reference,
+    marketplaceIntegrationCode:
+      shipmentPayload.MarketplaceIntegrationCode,
+  })
+  return verifySuratCreateResultWithTracking({
+    config,
+    order,
+    reference,
+    createResult,
+    shipmentPayload,
+    createLog,
+    outcome,
+  })
+}
+
+function parseSuratStringCreateResponse(
+  operationName,
+  resultText,
+  fallbackCode,
+) {
+  const parsed = mapSuratCreateResponse(resultText, fallbackCode)
+  return {
+    ...parsed,
+    operationName,
+    resultText: String(resultText ?? '').trim(),
+  }
+}
+
+function isSuratStringCreateAccepted({
+  soapOk,
+  resultText,
+  parsedResponse,
+  classifiedOutcome,
+}) {
+  if (!soapOk || classifiedOutcome?.hardError) return false
+  if (parseBoolean(readSuratField(parsedResponse, ['IsError', 'isError'])) === true) {
+    return false
+  }
+  const normalized = String(resultText ?? '')
+    .trim()
+    .toLocaleLowerCase('tr-TR')
+  return Boolean(
+    normalized === 'tamam' ||
+      normalized.includes('kayıt başarıyla oluşturuldu') ||
+      normalized.includes('kayit basariyla olusturuldu') ||
+      ['BARCODE_SUCCESS', 'PARTIAL'].includes(
+        classifiedOutcome?.responseCategory,
+      ),
+  )
+}
+
+function isSuratRestCreateAccepted({
+  httpOk,
+  rawResponse,
+  parsedResponse,
+  classifiedOutcome,
+}) {
+  if (
+    !httpOk ||
+    classifiedOutcome?.hardError ||
+    classifiedOutcome?.retryable ||
+    classifiedOutcome?.duplicateShipment
+  ) {
+    return false
+  }
+  if (
+    parseBoolean(readSuratField(parsedResponse, ['IsError', 'isError'])) ===
+    true
+  ) {
+    return false
+  }
+  const message = firstNonEmpty(
+    extractSuratMessage(parsedResponse),
+    extractSuratMessage(rawResponse),
+    readSuratField(parsedResponse, ['Message', 'message']),
+  )
+  const normalized = String(message ?? '')
+    .trim()
+    .toLocaleLowerCase('tr-TR')
+  return Boolean(
+    normalized === 'tamam' ||
+      normalized.includes('kayıt başarıyla oluşturuldu') ||
+      normalized.includes('kayit basariyla olusturuldu') ||
+      normalized.includes('başarıyla oluşturuldu') ||
+      normalized.includes('basariyla olusturuldu') ||
+      ['BARCODE_SUCCESS', 'PARTIAL'].includes(
+        classifiedOutcome?.responseCategory,
+      ),
+  )
+}
+
 async function createSuratLegacyRestJson(config, order, reference) {
   const shipmentPayload = buildSuratShipmentPayload(order, reference)
   const requestValidation = validateSuratRequestMapping(order, shipmentPayload)
   const trendyolPreflight = buildTrendyolShipmentPreflight(order)
   const addressNormalization = buildAddressNormalizationDebug(order)
-  const { OdemeTipi, ...restShipmentPayload } = shipmentPayload
   const payload = {
     KullaniciAdi: config.kullaniciAdi,
     Sifre: config.sifre,
-    Gonderi: {
-      ...restShipmentPayload,
-      Odemetipi: OdemeTipi,
-    },
+    Gonderi: buildOfficialSuratRestShipment(shipmentPayload),
   }
   const baseUrl = resolveSuratRestBaseUrl(config)
   const path = '/api/GonderiyiKargoyaGonder'
@@ -3190,7 +4333,7 @@ async function createSuratLegacyRestJson(config, order, reference) {
     const parsedBody = text ? safeJson(text) : null
     const rawResponse = parsedBody ?? text
     const parsedResponse = mapSuratCreateResponse(rawResponse, reference)
-    const outcome = classifySuratCreateResponse(
+    const classifiedOutcome = classifySuratCreateResponse(
       rawResponse,
       parsedResponse,
       'GonderiyiKargoyaGonderRestJson',
@@ -3199,6 +4342,19 @@ async function createSuratLegacyRestJson(config, order, reference) {
         marketplaceIntegrationCode: shipmentPayload.MarketplaceIntegrationCode,
       },
     )
+    const createAccepted = isSuratRestCreateAccepted({
+      httpOk: apiResponse.ok,
+      rawResponse,
+      parsedResponse,
+      classifiedOutcome,
+    })
+    const outcome = {
+      ...classifiedOutcome,
+      createAccepted,
+      verificationStage: createAccepted
+        ? 'create_accepted'
+        : classifiedOutcome.verificationStage || 'failed',
+    }
     const contentType = apiResponse.headers.get('content-type') || ''
     const createLog = buildSuratCreateLog({
       rawRequest: payload,
@@ -3221,18 +4377,15 @@ async function createSuratLegacyRestJson(config, order, reference) {
       addressNormalization,
     })
 
-    const missingCreateBarcodeSuccess =
-      outcome.responseCategory === 'BARCODE_SUCCESS' &&
-      (!outcome.officialTrackingNumber || !outcome.officialBarcode)
-    const duplicateShipmentAccepted = Boolean(
-      outcome.duplicateShipment &&
-        shipmentPayload.MarketplaceIntegrationCode,
-    )
+    // A duplicate response proves only that Sürat rejected a second create.
+    // It is not a usable shipment until the existing record is returned by a
+    // read operation. Never advance to label generation on this response alone.
+    const duplicateShipmentAccepted = false
     if (
       (!apiResponse.ok && !duplicateShipmentAccepted) ||
       (outcome.hardError && !duplicateShipmentAccepted) ||
       outcome.retryable ||
-      missingCreateBarcodeSuccess
+      !createAccepted
     ) {
       const createError = mapSuratCreateError(outcome.message || text)
       if (
@@ -3275,9 +4428,7 @@ async function createSuratLegacyRestJson(config, order, reference) {
           `Sürat GonderiyiKargoyaGonder HTTP ${apiResponse.status}`
       const visibleFailureMessage = outcome.retryable
         ? failureMessage
-        : missingCreateBarcodeSuccess
-          ? SURAT_INVALID_CODES_MESSAGE
-          : `Sürat gönderisi oluşturulamadı. API response: ${apiFailureMessage}`
+        : `Sürat gönderisi oluşturulamadı. API response: ${apiFailureMessage}`
       return buildSuratCreateFailure({
         legacyMessage:
           createError.userMessage ||
@@ -3299,7 +4450,7 @@ async function createSuratLegacyRestJson(config, order, reference) {
         marketplaceIntegrationCode:
           shipmentPayload.MarketplaceIntegrationCode,
         retryPolicy: outcome.retryPolicy,
-        failedBarcodeValidation: missingCreateBarcodeSuccess,
+        failedBarcodeValidation: false,
       })
     }
 
@@ -3390,11 +4541,10 @@ function resolveSuratMarketplaceRegistration(createResult, shipmentPayload) {
   return {
     accepted: Boolean(
       barcode &&
-        ((isError === false &&
-          (statusCode === 200 || createResult?.statusCode === 200) &&
-          mentionsBarcode &&
-          successMessage) ||
-          duplicateShipment),
+        isError === false &&
+        (statusCode === 200 || createResult?.statusCode === 200) &&
+        mentionsBarcode &&
+        successMessage,
     ),
     barcode,
     source: 'trendyol.cargoTrackingNumber',
@@ -3429,17 +4579,12 @@ async function verifySuratCreateResultWithTracking({
   createLog,
   outcome,
 }) {
-  const webSiparisKodu = String(shipmentPayload.WebSiparisKodu ?? '').trim()
+  const webSiparisKodu = firstNonEmpty(
+    shipmentPayload.OzelKargoTakipNo,
+    order?.cargoTrackingNumber,
+  )
   const trackingCandidates = uniqueStrings([
     webSiparisKodu,
-    shipmentPayload.SatisKodu,
-    shipmentPayload.ReferansNo,
-    shipmentPayload.OzelKargoTakipNo,
-    shipmentPayload.MarketplaceIntegrationCode,
-    order?.orderNumber,
-    order?.packageId,
-    order?.shipmentPackageId,
-    order?.cargoTrackingNumber,
   ])
   let trackingVerification
   const trackingAttempts = []
@@ -3479,18 +4624,31 @@ async function verifySuratCreateResultWithTracking({
     if (trackingSearchFinished) break
   }
   if (trackingVerification) trackingVerification.trackingAttempts = trackingAttempts
+  const registrationLookup = webSiparisKodu
+    ? await callSuratWebSiparisKodu(config, webSiparisKodu, {
+        orderId: order?.id,
+        shipmentId: reference,
+      })
+    : undefined
   const tracking = trackingVerification?.tracking ?? {}
   const gonderilerLength = Number(trackingVerification?.gonderilerLength ?? 0)
-  const trackingNumber = firstNonEmpty(
+  const trackingResponseNumber = firstNonEmpty(
     tracking.KargoTakipNo,
     tracking.TakipUrlTrackingNo,
+  )
+  const trackingNumber = firstNonEmpty(
+    trackingResponseNumber,
+    registrationLookup?.KargoTakipNo,
     createResult.shipment?.trackingNumber,
   )
-  const barcode = firstNonEmpty(
+  const trackingBarcode = firstNonEmpty(
     isNumericSuratOperationalCode(tracking.BarkodNo)
       ? tracking.BarkodNo
       : '',
     isNumericSuratOperationalCode(tracking.Barkod) ? tracking.Barkod : '',
+  )
+  const registrationBarcode = firstNonEmpty(registrationLookup?.BarkodNo)
+  const expectedBarcode = firstNonEmpty(
     isNumericSuratOperationalCode(createResult.shipment?.barkodNo)
       ? createResult.shipment?.barkodNo
       : '',
@@ -3498,34 +4656,103 @@ async function verifySuratCreateResultWithTracking({
       ? createResult.shipment?.barcode
       : '',
   )
+  const barcode = firstNonEmpty(trackingBarcode, expectedBarcode)
   const expectedTrackingNumber = firstNonEmpty(
     createResult.shipment?.tNo,
     createResult.shipment?.kargoTakipNo,
     createResult.shipment?.trackingNumber,
   )
   const trackingNumberMatchesCreate = Boolean(
-    !expectedTrackingNumber ||
-      normalizeSuratCodeForComparison(expectedTrackingNumber) ===
-        normalizeSuratCodeForComparison(trackingNumber),
+    trackingNumber &&
+      (!expectedTrackingNumber ||
+        normalizeSuratCodeForComparison(expectedTrackingNumber) ===
+          normalizeSuratCodeForComparison(trackingNumber)),
+  )
+  const registrationReferenceMatches = Boolean(
+    registrationLookup?.rowCount > 0 && registrationLookup?.referenceMatches,
+  )
+  const shipmentRegistered = Boolean(
+    registrationReferenceMatches || gonderilerLength > 0,
+  )
+  const responseWebSiparisKodu = firstNonEmpty(
+    tracking.WebSiparisKodu,
+    tracking.Satiskodu,
+    tracking.SatisKodu,
+    tracking.OzelKargoTakipNo,
+  )
+  const trackingReferenceMatchesCreate = Boolean(
+    responseWebSiparisKodu &&
+      normalizeSuratCodeForComparison(responseWebSiparisKodu) ===
+        normalizeSuratCodeForComparison(webSiparisKodu),
+  )
+  const trackingBarcodeMatchesCreate = Boolean(
+    trackingBarcode &&
+      (!expectedBarcode ||
+        normalizeSuratCodeForComparison(trackingBarcode) ===
+          normalizeSuratCodeForComparison(expectedBarcode)),
   )
   const trackingConfirmed = Boolean(
     trackingVerification?.ok &&
       gonderilerLength > 0 &&
-      isOperationalSuratTNo(trackingNumber) &&
-      trackingNumberMatchesCreate,
+      isOperationalSuratTNo(trackingResponseNumber) &&
+      trackingNumberMatchesCreate &&
+      trackingReferenceMatchesCreate,
   )
+  const labelCreated = Boolean(
+    (createResult.shipment?.technicalZplReceived &&
+      createResult.shipment?.barcodeRaw) ||
+      (createResult.shipment?.pdfReady &&
+        createResult.shipment?.labelPdfBase64),
+  )
+  const trackingActive = Boolean(
+    trackingVerification?.ok &&
+      gonderilerLength > 0 &&
+      isOperationalSuratTNo(trackingResponseNumber),
+  )
+  const preassignedCodesPresent = Boolean(
+    expectedTrackingNumber &&
+      isOperationalSuratTNo(expectedTrackingNumber) &&
+      expectedBarcode,
+  )
+  const lifecycle = deriveSuratLifecycleState({
+    createAccepted: outcome.createAccepted !== false,
+    shipmentRegistered,
+    labelCreated,
+    trackingActive,
+    preassignedCodesPresent,
+    serendipVerified:
+      trackingConfirmed &&
+      Boolean(
+        trackingBarcodeMatchesCreate ||
+          (registrationBarcode &&
+            expectedBarcode &&
+            normalizeSuratCodeForComparison(registrationBarcode) ===
+              normalizeSuratCodeForComparison(expectedBarcode)),
+      ),
+  })
   const verificationDebug = {
     required: true,
     serviceType: trackingVerification?.serviceType,
     endpoint: trackingVerification?.endpoint,
     webSiparisKodu,
+    responseWebSiparisKodu,
+    trackingReferenceMatchesCreate,
     ok: Boolean(trackingVerification?.ok),
     gonderilerLength,
     KargoTakipNo: trackingNumber,
     BarkodNo: firstNonEmpty(tracking.BarkodNo, tracking.Barkod),
     expectedKargoTakipNo: expectedTrackingNumber,
     trackingNumberMatchesCreate,
-    serdendipVerified: trackingConfirmed,
+    expectedBarkodNo: expectedBarcode,
+    barcodeNumberMatchesCreate: trackingBarcodeMatchesCreate,
+    serdendipVerified:
+      trackingConfirmed && trackingBarcodeMatchesCreate,
+    registrationLookup,
+    shipmentRegistered,
+    labelCreated,
+    trackingActive,
+    lifecycleStage: lifecycle.state,
+    lifecycleMilestones: lifecycle.milestones,
     responseStatus: trackingVerification?.responseStatus,
     trackingState: trackingVerification?.trackingState,
     message: trackingVerification?.message,
@@ -3540,7 +4767,7 @@ async function verifySuratCreateResultWithTracking({
     shipmentPayload,
   )
   const operationalBarcodeResolution =
-    trackingConfirmed && !barcode
+    trackingConfirmed && !trackingBarcode
       ? await resolveSuratOperationalBarcode(config, order, {
           shipmentId: reference,
           internalWebBarcode: marketplaceRegistration.barcode,
@@ -3548,10 +4775,31 @@ async function verifySuratCreateResultWithTracking({
         })
       : undefined
 
-  if (
-    trackingConfirmed &&
-    operationalBarcodeResolution?.operationalBarcodeVerified
-  ) {
+  const resolvedTrackingMatches = Boolean(
+    operationalBarcodeResolution?.operationalBarcodeVerified &&
+      normalizeSuratCodeForComparison(
+        operationalBarcodeResolution.KargoTakipNo,
+      ) === normalizeSuratCodeForComparison(trackingNumber) &&
+      (!expectedTrackingNumber ||
+        normalizeSuratCodeForComparison(
+          operationalBarcodeResolution.KargoTakipNo,
+        ) === normalizeSuratCodeForComparison(expectedTrackingNumber)),
+  )
+  const resolvedBarcodeMatches = Boolean(
+    operationalBarcodeResolution?.operationalBarcodeVerified &&
+      normalizeSuratCodeForComparison(
+        operationalBarcodeResolution.BarkodNo,
+      ) === normalizeSuratCodeForComparison(expectedBarcode),
+  )
+
+  if (trackingConfirmed && resolvedTrackingMatches && resolvedBarcodeMatches) {
+    const verifiedLifecycle = deriveSuratLifecycleState({
+      createAccepted: true,
+      shipmentRegistered: true,
+      labelCreated: true,
+      trackingActive: true,
+      serendipVerified: true,
+    })
     const operationalVerificationDebug = {
       ...verificationDebug,
       serviceType: operationalBarcodeResolution.serviceType,
@@ -3563,15 +4811,22 @@ async function verifySuratCreateResultWithTracking({
       responseStatus: operationalBarcodeResolution.responseStatus,
       trackingState: 'TRACKING_CONFIRMED',
       message: operationalBarcodeResolution.message,
+      expectedKargoTakipNo: expectedTrackingNumber,
+      trackingNumberMatchesCreate: resolvedTrackingMatches,
+      expectedBarkodNo: expectedBarcode,
+      barcodeNumberMatchesCreate: resolvedBarcodeMatches,
+      serdendipVerified: true,
       attempts: trackingAttempts,
       operationalBarcodeResolution,
+      lifecycleStage: verifiedLifecycle.state,
+      lifecycleMilestones: verifiedLifecycle.milestones,
     }
     return {
       ...createResult,
       ok: true,
       message: outcome.duplicateShipment
-        ? 'Sürat gönderisi daha önce oluşmuş; mevcut barkod KargoBarkodu servisiyle doğrulandı.'
-        : 'Sürat gönderisi oluşturuldu; barkod KargoBarkodu servisiyle doğrulandı.',
+        ? 'Sürat gönderisi daha önce oluşmuş; mevcut barkod resmî Sürat sorgu servisiyle doğrulandı.'
+        : 'Sürat gönderisi oluşturuldu; barkod resmî Sürat sorgu servisiyle doğrulandı.',
       trackingVerification: operationalVerificationDebug,
       operationalBarcodeResolution,
       suratCreateLog: {
@@ -3591,11 +4846,15 @@ async function verifySuratCreateResultWithTracking({
             trackingNumber: operationalBarcodeResolution.KargoTakipNo,
             kargoTakipNo: operationalBarcodeResolution.KargoTakipNo,
             tNo: operationalBarcodeResolution.KargoTakipNo,
-            trackingSource: 'surat.KargoBarkodu.KargoTakipNo',
+            trackingSource:
+              operationalBarcodeResolution.trackingSource ||
+              'surat.KargoBarkodu.KargoTakipNo',
             barcode: operationalBarcodeResolution.BarkodNo,
             barkodNo: operationalBarcodeResolution.BarkodNo,
             barcodeValue: operationalBarcodeResolution.BarkodNo,
-            barcodeSource: 'surat.KargoBarkodu.BarkodNo',
+            barcodeSource:
+              operationalBarcodeResolution.barcodeSource ||
+              'surat.KargoBarkodu.BarkodNo',
             finalSuratBarcode: operationalBarcodeResolution.BarkodNo,
             trackingUrl: `https://www.suratkargo.com.tr/KargoTakip/?kargotakipno=${encodeURIComponent(
               operationalBarcodeResolution.KargoTakipNo,
@@ -3606,7 +4865,10 @@ async function verifySuratCreateResultWithTracking({
           operationalBarcodeVerified: true,
           serdendipVerified: true,
           trackingConfirmationPending: false,
-            verificationStage: 'operational_barcode_verified',
+            verificationStage: 'serdendip_verified',
+            lifecycleStage: verifiedLifecycle.state,
+            lifecycleMilestones: verifiedLifecycle.milestones,
+            lifecycleEvidence: verifiedLifecycle,
             errorCategory: '',
             lifecycleStatus: 'LABEL_READY',
             labelStatus: 'READY',
@@ -3625,6 +4887,72 @@ async function verifySuratCreateResultWithTracking({
 
   if (!trackingConfirmed) {
     if (marketplaceRegistration.accepted) {
+      // Kanıt (17.07.2026): create/label yanıtındaki T.No ve barkod, fiziksel
+      // tesellümde birebir korunuyor (4/4 canlı eşleşme). Kayıt yüzeyleri
+      // yalnız tesellümde dolduğu için kabul öncesi Gonderiler=0 normaldir;
+      // ön-atanmış kodlar ve ZPL varsa etiket yazdırılabilir.
+      if (lifecycle.preassignedPrintAllowed) {
+        return {
+          ...createResult,
+          ok: true,
+          message:
+            'Sürat etiketi ön-atanmış T.No/barkod ile hazır. Gönderi kaydı fiziksel kargo kabulünde (tesellüm) doğrulanacak.',
+          trackingVerification: verificationDebug,
+          suratCreateLog: {
+            ...createResult.suratCreateLog,
+            verifiedShipment: false,
+            dispatchRegistrationConfirmed: shipmentRegistered,
+            trackingConfirmationPending: true,
+            trackingVerification: verificationDebug,
+          },
+          createDiagnostics: {
+            ...createResult.createDiagnostics,
+            marketplaceRegistration,
+            trackingVerification: verificationDebug,
+            operationalBarcodeResolution,
+          },
+          shipment: createResult.shipment
+            ? {
+                ...createResult.shipment,
+                trackingNumber: expectedTrackingNumber,
+                kargoTakipNo: expectedTrackingNumber,
+                tNo: expectedTrackingNumber,
+                trackingSource: 'surat.create.preassignedTNo',
+                barcode: expectedBarcode,
+                barkodNo: expectedBarcode,
+                barcodeValue: expectedBarcode,
+                barcodeSource: 'surat.create.preassignedBarkod',
+                finalSuratBarcode: expectedBarcode,
+                candidateTNo: expectedTrackingNumber,
+                candidateBarkodNo: expectedBarcode,
+                candidateVerificationStatus:
+                  'PREASSIGNED_AWAITING_ACCEPTANCE',
+                trendyolCargoTrackingNumber: marketplaceRegistration.barcode,
+                verifiedShipment: false,
+                dispatchRegistrationConfirmed: shipmentRegistered,
+                operationalBarcodeVerified: false,
+                trackingConfirmationPending: true,
+                verificationStage: 'preassigned_awaiting_acceptance',
+                lifecycleStage: lifecycle.state,
+                lifecycleMilestones: lifecycle.milestones,
+                lifecycleEvidence: lifecycle,
+                errorCategory: '',
+                lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+                labelStatus: 'READY',
+                printEnabled: true,
+                zplReady: Boolean(createResult.shipment.barcodeRaw),
+                diagnosticMessage:
+                  'Serendip kaydı fiziksel kargo kabulünde oluşur; ön-atanmış kodlar tesellümde doğrulanır.',
+                noTrackingReason: '',
+                labelBlockedReason: '',
+                zplDisabledReason: '',
+                suratOperationalBarcodeLog: operationalBarcodeResolution,
+                suratTrackingLog: trackingVerification?.suratTrackingLog,
+                trackingVerification: verificationDebug,
+              }
+            : createResult.shipment,
+        }
+      }
       return {
         ...createResult,
         ok: false,
@@ -3636,7 +4964,7 @@ async function verifySuratCreateResultWithTracking({
         suratCreateLog: {
           ...createResult.suratCreateLog,
           verifiedShipment: false,
-          dispatchRegistrationConfirmed: false,
+          dispatchRegistrationConfirmed: shipmentRegistered,
           trackingConfirmationPending: true,
           trackingVerification: verificationDebug,
         },
@@ -3658,14 +4986,26 @@ async function verifySuratCreateResultWithTracking({
               barcodeValue: '',
               barcodeSource: '',
               finalSuratBarcode: '',
+              candidateTNo: expectedTrackingNumber,
+              candidateBarkodNo: expectedBarcode,
+              candidateVerificationStatus: 'PENDING_VERIFICATION',
               trendyolCargoTrackingNumber: marketplaceRegistration.barcode,
               verifiedShipment: false,
-              dispatchRegistrationConfirmed: false,
+              dispatchRegistrationConfirmed: shipmentRegistered,
               operationalBarcodeVerified: false,
               trackingConfirmationPending: true,
               verificationStage: 'tracking_confirmation_missing',
+              lifecycleStage: lifecycle.state,
+              lifecycleMilestones: lifecycle.milestones,
+              lifecycleEvidence: lifecycle,
               errorCategory: 'SURAT_TRACKING_CONFIRMATION_MISSING',
-              lifecycleStatus: 'SURAT_TRACKING_MISSING',
+              lifecycleStatus: shipmentRegistered
+                ? labelCreated
+                  ? 'SURAT_TRACKING_MISSING'
+                  : 'SHIPMENT_CREATED'
+                : labelCreated
+                  ? 'SURAT_TRACKING_MISSING'
+                  : 'SURAT_CREATED_NO_TRACKING',
               labelStatus: 'BLOCKED',
               printEnabled: false,
               zplReady: false,
@@ -3714,12 +5054,24 @@ async function verifySuratCreateResultWithTracking({
             barcodeValue: '',
             barcodeSource: '',
             verifiedShipment: false,
-            dispatchRegistrationConfirmed: false,
+            dispatchRegistrationConfirmed: shipmentRegistered,
             operationalBarcodeVerified: false,
             verificationStage: 'tracking_confirmation_missing',
+            lifecycleStage: lifecycle.state,
+            lifecycleMilestones: lifecycle.milestones,
+            lifecycleEvidence: lifecycle,
             errorCategory: 'SURAT_TRACKING_CONFIRMATION_MISSING',
             finalSuratBarcode: '',
-            lifecycleStatus: 'SURAT_TRACKING_MISSING',
+            candidateTNo: expectedTrackingNumber,
+            candidateBarkodNo: expectedBarcode,
+            candidateVerificationStatus: 'PENDING_VERIFICATION',
+            lifecycleStatus: shipmentRegistered
+              ? labelCreated
+                ? 'SURAT_TRACKING_MISSING'
+                : 'SHIPMENT_CREATED'
+              : labelCreated
+                ? 'SURAT_TRACKING_MISSING'
+                : 'SURAT_CREATED_NO_TRACKING',
             labelStatus: 'BLOCKED',
             printEnabled: false,
             zplReady: false,
@@ -3732,12 +5084,89 @@ async function verifySuratCreateResultWithTracking({
     }
   }
 
-  if (!barcode) {
+  if (!labelCreated) {
+    const registeredBarcode = firstNonEmpty(
+      trackingBarcode,
+      registrationBarcode,
+    )
+    const labelRequiredLifecycle = deriveSuratLifecycleState({
+      createAccepted: true,
+      shipmentRegistered: true,
+      labelCreated: false,
+      trackingActive,
+    })
+    const labelRequiredVerification = {
+      ...verificationDebug,
+      serdendipVerified: true,
+      lifecycleStage: labelRequiredLifecycle.state,
+      lifecycleMilestones: labelRequiredLifecycle.milestones,
+    }
+    return {
+      ...createResult,
+      ok: false,
+      errorCode: 'SURAT_LABEL_REQUIRED',
+      errorSource: 'CargoFlow',
+      message:
+        'Sürat shipment kaydı doğrulandı; ortak barkod/ZPL için ayrı label operation gerekli.',
+      trackingVerification: labelRequiredVerification,
+      suratCreateLog: {
+        ...createResult.suratCreateLog,
+        verifiedShipment: false,
+        dispatchRegistrationConfirmed: true,
+        trackingVerification: labelRequiredVerification,
+      },
+      createDiagnostics: {
+        ...createResult.createDiagnostics,
+        trackingVerification: labelRequiredVerification,
+      },
+      shipment: createResult.shipment
+        ? {
+            ...createResult.shipment,
+            trackingNumber,
+            kargoTakipNo: trackingNumber,
+            tNo: trackingNumber,
+            trackingSource: registrationReferenceMatches
+              ? 'surat.WebSiparisKodu.TakipNo'
+              : 'surat.KargoTakipHareketDetayi.KargoTakipNo',
+            barcode: registeredBarcode,
+            barkodNo: registeredBarcode,
+            barcodeValue: registeredBarcode,
+            barcodeSource: registrationBarcode
+              ? 'surat.WebSiparisKodu.Barkod'
+              : 'surat.KargoTakipHareketDetayi.BarkodNo',
+            finalSuratBarcode: registeredBarcode,
+            verifiedShipment: false,
+            dispatchRegistrationConfirmed: true,
+            operationalBarcodeVerified: Boolean(registeredBarcode),
+            serdendipVerified: true,
+            verificationStage: 'shipment_registered_label_required',
+            lifecycleStage: labelRequiredLifecycle.state,
+            lifecycleMilestones: labelRequiredLifecycle.milestones,
+            lifecycleEvidence: labelRequiredLifecycle,
+            errorCategory: 'SURAT_LABEL_REQUIRED',
+            lifecycleStatus: 'SHIPMENT_REGISTERED_LABEL_REQUIRED',
+            labelStatus: 'BLOCKED',
+            printEnabled: false,
+            zplReady: false,
+            diagnosticMessage:
+              'Shipment kaydı ve canonical kodlar bulundu; ZPL henüz üretilmedi.',
+            labelBlockedReason:
+              'Ortak barkod/ZPL label operation tamamlanmadan yazdırılamaz.',
+            suratTrackingLog: trackingVerification?.suratTrackingLog,
+            trackingVerification: labelRequiredVerification,
+          }
+        : createResult.shipment,
+    }
+  }
+
+  if (!trackingBarcode || !trackingBarcodeMatchesCreate) {
     return {
       ...createResult,
       ok: false,
       message:
-        'Sürat kaydı T.No ile doğrulandı ancak ana BarkodNo alınamadı. Etiket basılamaz.',
+        trackingBarcode
+          ? 'Sürat kaydı T.No ile bulundu ancak Serendip BarkodNo, ZPL ana barkoduyla eşleşmedi. Etiket basılamaz.'
+          : 'Sürat kaydı T.No ile doğrulandı ancak ana BarkodNo alınamadı. Etiket basılamaz.',
       errorCode: 'SURAT_OPERATIONAL_BARCODE_MISSING',
       errorSource: 'Sürat',
       trackingVerification: verificationDebug,
@@ -3764,17 +5193,25 @@ async function verifySuratCreateResultWithTracking({
             barcodeValue: '',
             barcodeSource: '',
             finalSuratBarcode: '',
+            candidateTNo: expectedTrackingNumber,
+            candidateBarkodNo: expectedBarcode,
+            candidateVerificationStatus: 'PENDING_VERIFICATION',
             verifiedShipment: false,
             dispatchRegistrationConfirmed: true,
             operationalBarcodeVerified: false,
             verificationStage: 'operational_barcode_missing',
+            lifecycleStage: lifecycle.state,
+            lifecycleMilestones: lifecycle.milestones,
+            lifecycleEvidence: lifecycle,
             errorCategory: 'SURAT_OPERATIONAL_BARCODE_MISSING',
             lifecycleStatus: 'SURAT_BARCODE_FAILED',
             labelStatus: 'BLOCKED',
             printEnabled: false,
             zplReady: false,
             diagnosticMessage:
-              'Serendip kaydı bulundu; KargoBarkodu servisi numeric BarkodNo döndürmedi.',
+              trackingBarcode
+                ? 'Serendip BarkodNo ile ZPL BarkodNo eşleşmedi.'
+                : 'Serendip kaydı bulundu; KargoBarkodu servisi numeric ve ZPL ile eşleşen BarkodNo döndürmedi.',
             labelBlockedReason:
               'Sürat ana BarkodNo alınmadan etiket yazdırılamaz.',
             suratOperationalBarcodeLog: operationalBarcodeResolution,
@@ -3826,6 +5263,14 @@ async function verifySuratCreateResultWithTracking({
           operationalBarcodeVerified: true,
           serdendipVerified: true,
           verificationStage: 'serdendip_verified',
+          lifecycleStage: 'VERIFIED',
+          lifecycleMilestones: [
+            'CREATE_ACCEPTED',
+            'SHIPMENT_REGISTERED',
+            'LABEL_CREATED',
+            'TRACKING_ACTIVE',
+            'VERIFIED',
+          ],
           errorCategory: '',
           lifecycleStatus: 'LABEL_READY',
           labelStatus: 'READY',
@@ -3841,10 +5286,20 @@ async function verifySuratCreateResultWithTracking({
 
 async function createSuratRestShipment(config, order, reference) {
   const firstItem = order.items?.[0] ?? {}
-  const marketplaceOrderNumber = String(order.orderNumber ?? '').trim()
+  const recipientName = splitName(order.customerName)
   const marketplaceIntegrationCode = String(
     order.cargoTrackingNumber ?? '',
   ).trim()
+  const normalizedDesi =
+    toPositiveNumber(order.desi) ?? toPositiveNumber(order.weightKg) ?? 1
+  const normalizedWeightKg =
+    toPositiveNumber(order.weightKg) ?? normalizedDesi
+  const recipientCityId = Number(
+    readSuratField(
+      [order.shipmentAddress, order.rawOrder, order],
+      ['cityId', 'IlId', 'ilId'],
+    ),
+  )
   const totalQuantity = Math.max(
     1,
     (order.items ?? []).reduce(
@@ -3855,29 +5310,42 @@ async function createSuratRestShipment(config, order, reference) {
   const baseUrl =
     resolveSuratRestBaseUrl(config)
   const path = config.createShipmentPath || '/api/Gonderi/GonderiOlustur'
+  const basicAuthorization = Buffer.from(
+    `${config.restBasicUsername}:${config.restBasicPassword}`,
+    'utf8',
+  ).toString('base64')
   const payload = {
     KullaniciAdi: config.kullaniciAdi,
     Sifre: config.sifre,
     FirmaId: config.firmaId,
     Data: [
       {
-        Desi: 1,
-        Kg: 1,
+        Desi: normalizedDesi,
+        Kg: normalizedWeightKg,
         Adet: totalQuantity,
         KimOder: 1,
-        SatisKodu: marketplaceOrderNumber,
-        WebSiparisKodu: marketplaceOrderNumber,
-        OzelKargoTakipNo: marketplaceIntegrationCode,
-        MarketplaceIntegrationCode: marketplaceIntegrationCode,
-        ReferansNo: reference,
+        SatisKodu: marketplaceIntegrationCode,
+        Gonderen: {
+          MusteriId: config.restSenderMusteriId,
+          Adi: config.restSenderAdi,
+          Soyadi: config.restSenderSoyadi,
+          Telefon: config.restSenderTelefon,
+          Email: config.restSenderEmail ?? '',
+          Adres: config.restSenderAdres,
+          IlId: Number(config.restSenderIlId),
+          IlceAdi: config.restSenderIlceAdi,
+        },
         Alici: {
-          MusteriId: '',
-          Adi: splitName(order.customerName).firstName,
-          Soyadi: splitName(order.customerName).lastName,
+          MusteriId: firstNonEmpty(
+            order.customerEmail,
+            marketplaceIntegrationCode,
+          ),
+          Adi: recipientName.firstName,
+          Soyadi: recipientName.lastName,
           Telefon: order.customerPhone,
           Email: order.customerEmail ?? '',
           Adres: resolveSingleShipmentAddress(order),
-          IlId: 0,
+          IlId: Number.isFinite(recipientCityId) ? recipientCityId : 0,
           IlceAdi: order.district,
         },
         GonderiDurumu: 1,
@@ -3897,6 +5365,7 @@ async function createSuratRestShipment(config, order, reference) {
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',
+        Authorization: `Basic ${basicAuthorization}`,
       },
       body: JSON.stringify(payload),
     })
@@ -3916,7 +5385,7 @@ async function createSuratRestShipment(config, order, reference) {
       'GonderiOlusturV2',
       {
         ...config,
-        marketplaceIntegrationCode: payload.MarketplaceIntegrationCode,
+        marketplaceIntegrationCode,
       },
     )
     const createLog = buildSuratCreateLog({
@@ -3973,11 +5442,7 @@ async function createSuratRestShipment(config, order, reference) {
         suratCreateLog: createLog,
         requestFieldMapping: {
           shipmentReference: reference,
-          SatisKodu: marketplaceOrderNumber,
-          WebSiparisKodu: marketplaceOrderNumber,
-          OzelKargoTakipNo: marketplaceIntegrationCode,
-          ReferansNo: reference,
-          MarketplaceIntegrationCode: marketplaceIntegrationCode,
+          SatisKodu: marketplaceIntegrationCode,
         },
       }
     }
@@ -4002,11 +5467,7 @@ async function createSuratRestShipment(config, order, reference) {
       createDiagnostics: outcome,
       requestFieldMapping: {
         shipmentReference: reference,
-        SatisKodu: marketplaceOrderNumber,
-        WebSiparisKodu: marketplaceOrderNumber,
-        OzelKargoTakipNo: marketplaceIntegrationCode,
-        ReferansNo: reference,
-        MarketplaceIntegrationCode: marketplaceIntegrationCode,
+        SatisKodu: marketplaceIntegrationCode,
       },
       shipment: {
         provider: 'surat-kargo',
@@ -4017,8 +5478,8 @@ async function createSuratRestShipment(config, order, reference) {
             )}`
           : '',
         shipmentCode,
-        satisKodu: marketplaceOrderNumber,
-        webSiparisKodu: marketplaceOrderNumber,
+        satisKodu: marketplaceIntegrationCode,
+        webSiparisKodu: marketplaceIntegrationCode,
         ozelKargoTakipNo: marketplaceIntegrationCode,
         barcode: barcodeValue,
         barcodeValue,
@@ -4256,7 +5717,7 @@ function buildSuratTrackingResult({
     isError === true ||
     Boolean(documentationWarning)
   const userMessage = transferredButNoBarcode
-    ? 'Sürat veriyi aldı ancak ortak barkod/takip no dönmedi. Gönderi oluşturma servisi ortak barkod üretmiyor veya parametre/servis tipi yanlış olabilir.'
+    ? 'Sürat gönderi verisini aldı; kargo kabulü bekleniyor. Hareket servisi henüz Gonderiler kaydı döndürmedi.'
     : documentationWarning ||
       trackingError.userMessage ||
       message ||
@@ -4352,8 +5813,7 @@ function buildSuratShipmentPayload(
   const packageId = String(
     order.packageId ?? order.shipmentPackageId ?? reference,
   ).trim()
-  const trendyolReference =
-    marketplaceIntegrationCode || packageId || orderNumber || reference
+  const trendyolReference = packageId || orderNumber || reference
 
   return {
     KisiKurum: String(order.customerName ?? ''),
@@ -4393,47 +5853,93 @@ function buildSuratShipmentPayload(
   }
 }
 
+function buildOfficialSuratRestShipment(payload) {
+  return {
+    KisiKurum: payload.KisiKurum,
+    SahisBirim: payload.SahisBirim,
+    AliciAdresi: payload.AliciAdresi,
+    Il: payload.Il,
+    Ilce: payload.Ilce,
+    TelefonEv: payload.TelefonEv,
+    TelefonIs: payload.TelefonIs,
+    TelefonCep: payload.TelefonCep,
+    Email: payload.Email,
+    AliciKodu: payload.AliciKodu,
+    KargoTuru: payload.KargoTuru,
+    Odemetipi: payload.OdemeTipi,
+    IrsaliyeSeriNo: payload.IrsaliyeSeriNo,
+    IrsaliyeSiraNo: payload.IrsaliyeSiraNo,
+    ReferansNo: payload.ReferansNo,
+    OzelKargoTakipNo: payload.OzelKargoTakipNo,
+    Adet: payload.Adet,
+    BirimDesi: payload.BirimDesi,
+    BirimKg: payload.BirimKg,
+    KargoIcerigi: payload.KargoIcerigi,
+    KapidanOdemeTahsilatTipi: payload.KapidanOdemeTahsilatTipi,
+    KapidanOdemeTutari: payload.KapidanOdemeTutari,
+    EkHizmetler: payload.EkHizmetler,
+    TasimaSekli: payload.TasimaSekli,
+    TeslimSekli: payload.TeslimSekli,
+    SevkAdresi: payload.SevkAdresi,
+    GonderiSekli: payload.GonderiSekli,
+    TeslimSubeKodu: payload.TeslimSubeKodu,
+    Pazaryerimi: payload.Pazaryerimi,
+    EntegrasyonFirmasi: payload.EntegrasyonFirmasi,
+    Iademi: payload.Iademi,
+  }
+}
+
 function buildSuratGonderiXml(
   payload,
   { commonBarcode = false, strictGonderiModel = false } = {},
 ) {
   const paymentTag = commonBarcode ? 'OdemeTipi' : 'Odemetipi'
   const shipmentAddressTag = commonBarcode ? 'SevkAdresi' : 'SevkAdresiAdi'
+  const optionalStringTag = (tagName, value) =>
+    strictGonderiModel
+      ? optionalXmlTag(tagName, value)
+      : `<${tagName}>${xmlEscape(value)}</${tagName}>`
+  const codAmountTag = strictGonderiModel
+    ? Number(payload.KapidanOdemeTahsilatTipi ?? 0) > 0 ||
+      Number(payload.KapidanOdemeTutari ?? 0) > 0
+      ? optionalXmlTag('KapidanOdemeTutari', payload.KapidanOdemeTutari)
+      : ''
+    : `<KapidanOdemeTutari>${payload.KapidanOdemeTutari}</KapidanOdemeTutari>`
   return `
       <Gonderi>
-        <KisiKurum>${xmlEscape(payload.KisiKurum)}</KisiKurum>
-        <SahisBirim>${xmlEscape(payload.SahisBirim)}</SahisBirim>
-        <AliciAdresi>${xmlEscape(payload.AliciAdresi)}</AliciAdresi>
-        <Il>${xmlEscape(payload.Il)}</Il>
-        <Ilce>${xmlEscape(payload.Ilce)}</Ilce>
-        <TelefonEv>${xmlEscape(payload.TelefonEv)}</TelefonEv>
-        <TelefonIs>${xmlEscape(payload.TelefonIs)}</TelefonIs>
-        <TelefonCep>${xmlEscape(payload.TelefonCep)}</TelefonCep>
-        <Email>${xmlEscape(payload.Email)}</Email>
-        <AliciKodu>${xmlEscape(payload.AliciKodu)}</AliciKodu>
+        ${optionalStringTag('KisiKurum', payload.KisiKurum)}
+        ${optionalStringTag('SahisBirim', payload.SahisBirim)}
+        ${optionalStringTag('AliciAdresi', payload.AliciAdresi)}
+        ${optionalStringTag('Il', payload.Il)}
+        ${optionalStringTag('Ilce', payload.Ilce)}
+        ${optionalStringTag('TelefonEv', payload.TelefonEv)}
+        ${optionalStringTag('TelefonIs', payload.TelefonIs)}
+        ${optionalStringTag('TelefonCep', payload.TelefonCep)}
+        ${optionalStringTag('Email', payload.Email)}
+        ${optionalStringTag('AliciKodu', payload.AliciKodu)}
         <KargoTuru>${payload.KargoTuru}</KargoTuru>
         <${paymentTag}>${payload.OdemeTipi}</${paymentTag}>
-        <IrsaliyeSeriNo>${xmlEscape(payload.IrsaliyeSeriNo)}</IrsaliyeSeriNo>
-        <IrsaliyeSiraNo>${xmlEscape(payload.IrsaliyeSiraNo)}</IrsaliyeSiraNo>
+        ${optionalStringTag('IrsaliyeSeriNo', payload.IrsaliyeSeriNo)}
+        ${optionalStringTag('IrsaliyeSiraNo', payload.IrsaliyeSiraNo)}
         ${strictGonderiModel ? '' : `<WebSiparisKodu>${xmlEscape(payload.WebSiparisKodu)}</WebSiparisKodu>`}
         ${strictGonderiModel ? '' : `<SatisKodu>${xmlEscape(payload.SatisKodu)}</SatisKodu>`}
-        <ReferansNo>${xmlEscape(payload.ReferansNo)}</ReferansNo>
-        <OzelKargoTakipNo>${xmlEscape(payload.OzelKargoTakipNo)}</OzelKargoTakipNo>
+        ${optionalStringTag('ReferansNo', payload.ReferansNo)}
+        ${optionalStringTag('OzelKargoTakipNo', payload.OzelKargoTakipNo)}
         ${strictGonderiModel ? '' : `<MarketplaceIntegrationCode>${xmlEscape(payload.MarketplaceIntegrationCode)}</MarketplaceIntegrationCode>`}
         <Adet>${payload.Adet}</Adet>
-        <BirimDesi>${payload.BirimDesi}</BirimDesi>
-        <BirimKg>${payload.BirimKg}</BirimKg>
-        <KargoIcerigi>${xmlEscape(payload.KargoIcerigi)}</KargoIcerigi>
+        ${optionalStringTag('BirimDesi', payload.BirimDesi)}
+        ${optionalStringTag('BirimKg', payload.BirimKg)}
+        ${optionalStringTag('KargoIcerigi', payload.KargoIcerigi)}
         <KapidanOdemeTahsilatTipi>${payload.KapidanOdemeTahsilatTipi}</KapidanOdemeTahsilatTipi>
-        <KapidanOdemeTutari>${payload.KapidanOdemeTutari}</KapidanOdemeTutari>
-        <EkHizmetler>${xmlEscape(payload.EkHizmetler)}</EkHizmetler>
+        ${codAmountTag}
+        ${optionalStringTag('EkHizmetler', payload.EkHizmetler)}
         <TasimaSekli>${payload.TasimaSekli}</TasimaSekli>
         <TeslimSekli>${payload.TeslimSekli}</TeslimSekli>
-        <${shipmentAddressTag}>${xmlEscape(payload.SevkAdresi)}</${shipmentAddressTag}>
+        ${optionalStringTag(shipmentAddressTag, payload.SevkAdresi)}
         <GonderiSekli>${payload.GonderiSekli}</GonderiSekli>
-        <TeslimSubeKodu>${xmlEscape(payload.TeslimSubeKodu)}</TeslimSubeKodu>
+        ${optionalStringTag('TeslimSubeKodu', payload.TeslimSubeKodu)}
         <Pazaryerimi>${payload.Pazaryerimi}</Pazaryerimi>
-        <EntegrasyonFirmasi>${xmlEscape(payload.EntegrasyonFirmasi)}</EntegrasyonFirmasi>
+        ${optionalStringTag('EntegrasyonFirmasi', payload.EntegrasyonFirmasi)}
         <Iademi>${payload.Iademi}</Iademi>
       </Gonderi>
   `
@@ -4444,29 +5950,29 @@ function buildSuratGonderiEntityXml(payload) {
       <Gonderientity>
         <GonderiSekli>${toIntegerXml(payload.GonderiSekli, 0)}</GonderiSekli>
         <KisiKurum>${xmlEscape(payload.KisiKurum)}</KisiKurum>
-        <SahisBirim>${xmlEscape(payload.SahisBirim)}</SahisBirim>
+        ${optionalXmlTag('SahisBirim', payload.SahisBirim)}
         <AliciAdresi>${xmlEscape(payload.AliciAdresi)}</AliciAdresi>
         <Il>${xmlEscape(payload.Il)}</Il>
         <Ilce>${xmlEscape(payload.Ilce)}</Ilce>
-        <TelefonEv>${xmlEscape(payload.TelefonEv)}</TelefonEv>
-        <TelefonIs>${xmlEscape(payload.TelefonIs)}</TelefonIs>
-        <TelefonCep>${xmlEscape(payload.TelefonCep)}</TelefonCep>
-        <Email>${xmlEscape(payload.Email)}</Email>
-        <AliciKodu>${xmlEscape(payload.AliciKodu)}</AliciKodu>
+        ${optionalXmlTag('TelefonEv', payload.TelefonEv)}
+        ${optionalXmlTag('TelefonIs', payload.TelefonIs)}
+        ${optionalXmlTag('TelefonCep', payload.TelefonCep)}
+        ${optionalXmlTag('Email', payload.Email)}
+        ${optionalXmlTag('AliciKodu', payload.AliciKodu)}
         <KargoTuru>${payload.KargoTuru}</KargoTuru>
         <Odemetipi>${payload.OdemeTipi}</Odemetipi>
-        <IrsaliyeSeriNo>${xmlEscape(payload.IrsaliyeSeriNo)}</IrsaliyeSeriNo>
-        <IrsaliyeSiraNo>${xmlEscape(payload.IrsaliyeSiraNo)}</IrsaliyeSiraNo>
-        <ReferansNo>${xmlEscape(payload.ReferansNo)}</ReferansNo>
-        <OzelKargoTakipNo>${xmlEscape(payload.OzelKargoTakipNo)}</OzelKargoTakipNo>
+        ${optionalXmlTag('IrsaliyeSeriNo', payload.IrsaliyeSeriNo)}
+        ${optionalXmlTag('IrsaliyeSiraNo', payload.IrsaliyeSiraNo)}
+        ${optionalXmlTag('ReferansNo', payload.ReferansNo)}
+        ${optionalXmlTag('OzelKargoTakipNo', payload.OzelKargoTakipNo)}
         <Adet>${payload.Adet}</Adet>
         <BirimDesi>${payload.BirimDesi}</BirimDesi>
         <BirimKg>${payload.BirimKg}</BirimKg>
-        <KargoIcerigi>${xmlEscape(payload.KargoIcerigi)}</KargoIcerigi>
+        ${optionalXmlTag('KargoIcerigi', payload.KargoIcerigi)}
         <KapidanOdemeTahsilatTipi>${payload.KapidanOdemeTahsilatTipi}</KapidanOdemeTahsilatTipi>
         <KapidanOdemeTutari>${payload.KapidanOdemeTutari}</KapidanOdemeTutari>
-        <EkHizmetler>${xmlEscape(payload.EkHizmetler)}</EkHizmetler>
-        <SevkAdresiAdi>${xmlEscape(payload.SevkAdresi)}</SevkAdresiAdi>
+        ${optionalXmlTag('EkHizmetler', payload.EkHizmetler)}
+        ${optionalXmlTag('SevkAdresiAdi', payload.SevkAdresi)}
         <TeslimSekli>${payload.TeslimSekli}</TeslimSekli>
         <TasimaSekli>${payload.TasimaSekli}</TasimaSekli>
         ${optionalXmlTag('BayiNo', payload.BayiNo)}
@@ -4487,11 +5993,11 @@ function buildSuratGonderiEntityXml(payload) {
         ${optionalXmlTag('UniqueTextHash', payload.UniqueTextHash)}
         ${optionalXmlTag('OrtakBarkotDesi', payload.OrtakBarkotDesi)}
         ${optionalXmlTag('OrtakBarkotKg', payload.OrtakBarkotKg)}
-        <TeslimSubeKodu>${xmlEscape(payload.TeslimSubeKodu)}</TeslimSubeKodu>
+        ${optionalXmlTag('TeslimSubeKodu', payload.TeslimSubeKodu)}
         <Pazaryerimi>${payload.Pazaryerimi}</Pazaryerimi>
         ${optionalXmlTag('WhoPays', payload.WhoPays)}
         ${optionalXmlTag('EntegrasyonMusteri', payload.EntegrasyonMusteri)}
-        <EntegrasyonFirmasi>${xmlEscape(payload.EntegrasyonFirmasi)}</EntegrasyonFirmasi>
+        ${optionalXmlTag('EntegrasyonFirmasi', payload.EntegrasyonFirmasi)}
         <EntegrasyonSozlesme>${toIntegerXml(payload.EntegrasyonSozlesme, 0)}</EntegrasyonSozlesme>
         <Iademi>${payload.Iademi}</Iademi>
         <KWebGonderiGirisiKaynak>${xmlEscape(payload.KWebGonderiGirisiKaynak || 'PazaryeriOrtakBarkod')}</KWebGonderiGirisiKaynak>
@@ -5181,14 +6687,12 @@ function buildSuratCreateSuccess({
           ? 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur'
       : serviceType === 'GonderiyiKargoyaGonderRestJson'
         ? 'GonderiyiKargoyaGonder'
+        : serviceType === 'GonderiyiKargoyaGonderYeniSoap'
+          ? 'GonderiyiKargoyaGonderYeni'
         : 'GonderiOlusturV2'
   const trackingNumber = outcome.officialTrackingNumber
   const barcode = outcome.officialBarcode
   const tNo = outcome.codeMapping?.tNoValue || ''
-  const marketplaceOrderNumber = firstNonEmpty(
-    readSuratField(createLog?.rawRequest, ['WebSiparisKodu']),
-    readSuratField(createLog?.rawRequest, ['SatisKodu']),
-  )
   const sentReferansNo = firstNonEmpty(
     readSuratField(createLog?.rawRequest, ['ReferansNo']),
     reference,
@@ -5199,11 +6703,14 @@ function buildSuratCreateSuccess({
   )
   const sentMarketplaceIntegrationCode = firstNonEmpty(
     readSuratField(createLog?.rawRequest, ['MarketplaceIntegrationCode']),
-    marketplaceIntegrationCode,
   )
   const barcodeRaw = normalizeSuratRawZpl(outcome.officialBarcodeRaw)
   const verifiedShipment = Boolean(outcome.operationalBarcodeVerified)
   const technicalZplReceived = Boolean(outcome.technicalZplReceived)
+  const lifecycle = deriveSuratLifecycleState({
+    createAccepted: outcome.createAccepted !== false,
+    labelCreated: technicalZplReceived,
+  })
   const barcodeValue = barcode
   const barcodeSource = barcode
     ? `surat.response.${outcome.codeMapping?.barcodeField || 'Barcode'}`
@@ -5252,18 +6759,20 @@ function buildSuratCreateSuccess({
     createDiagnostics: outcome,
     requestFieldMapping: {
       shipmentReference: reference,
-      SatisKodu: marketplaceOrderNumber,
-      WebSiparisKodu: marketplaceOrderNumber,
+      SatisKodu: '',
+      WebSiparisKodu: '',
+      TrackingWebSiparisKodu: sentOzelKargoTakipNo,
       OzelKargoTakipNo: sentOzelKargoTakipNo,
       ReferansNo: sentReferansNo,
       MarketplaceIntegrationCode: sentMarketplaceIntegrationCode,
       marketplaceIntegrationCode: sentMarketplaceIntegrationCode,
       marketplaceIntegrationCodeSource: 'trendyol.cargoTrackingNumber',
       mappingDescription: {
-        orderNumber: 'WebSiparisKodu / SatisKodu',
-        packageId: 'shipmentCode / debug reference',
+        orderNumber:
+          'Pazaryeri sipariş numarası; GonderiModel WSDL içine WebSiparisKodu/SatisKodu olarak eklenmez.',
+        packageId: 'ReferansNo / shipmentCode',
         cargoTrackingNumber:
-          'ReferansNo / MarketplaceIntegrationCode / OzelKargoTakipNo',
+          'OzelKargoTakipNo; takipte KargoTakipHareketDetayi.WebSiparisKodu',
       },
       Pazaryerimi: 1,
       EntegrasyonFirmasi: 'Trendyol',
@@ -5292,6 +6801,9 @@ function buildSuratCreateSuccess({
       responseDescription: outcome.responseDescription,
       responseDocumented: outcome.responseDocumented,
       verificationStage: outcome.verificationStage,
+      lifecycleStage: lifecycle.state,
+      lifecycleMilestones: lifecycle.milestones,
+      lifecycleEvidence: lifecycle,
       errorCategory: outcome.errorCategory,
       dispatchRegistrationConfirmed: verifiedShipment,
       technicalZplReceived,
@@ -5313,8 +6825,8 @@ function buildSuratCreateSuccess({
         : '',
       shipmentCode: reference,
       shipmentReference: reference,
-      satisKodu: marketplaceOrderNumber,
-      webSiparisKodu: marketplaceOrderNumber,
+      satisKodu: '',
+      webSiparisKodu: sentOzelKargoTakipNo,
       ozelKargoTakipNo: marketplaceIntegrationCode,
       barcodeValue,
       desi: toPositiveNumber(
@@ -5782,23 +7294,101 @@ async function callSuratSoap(operation, innerXml) {
 
 async function callTrendyolOrdersByStatuses(credentials, query = {}) {
   const statuses = normalizeTrendyolStatusQuery(query)
+  const filteredResult = await callTrendyolOrdersByStatusesFiltered(
+    credentials,
+    query,
+  )
+  const discoveryStatuses = statuses.filter((status) =>
+    ACTIVE_TRENDYOL_ORDER_STATUSES.includes(status),
+  )
+  const unfilteredQuery = clampTrendyolRecentDiscoveryWindow(
+    query,
+    discoveryStatuses,
+  )
+  const unfilteredResult =
+    discoveryStatuses.length > 0
+      ? await callTrendyolOrdersAllPages(credentials, {
+          ...unfilteredQuery,
+          status: undefined,
+          statuses: undefined,
+          page: undefined,
+        })
+      : {
+          ok: true,
+          source: 'real',
+          statusCode: 200,
+          message: 'Unfiltered active-order discovery was not required.',
+          data: { content: [] },
+          debug: {},
+        }
+  const filteredContent = filteredResult.ok
+    ? getTrendyolOrderPackagesArray(filteredResult.data)
+    : []
+  const unfilteredContent = unfilteredResult.ok
+    ? getTrendyolOrderPackagesArray(unfilteredResult.data)
+    : []
+  const matchingUnfilteredContent = unfilteredContent.filter((item) =>
+    isTrendyolPackageInStatuses(item, discoveryStatuses),
+  )
+
+  if (!filteredResult.ok && !unfilteredResult.ok) return filteredResult
+  if (filteredContent.length === 0 && !unfilteredResult.ok) {
+    return {
+      ...unfilteredResult,
+      ok: false,
+      source: 'real',
+      message:
+        'Trendyol status requests were empty and the unfiltered recent-order verification failed.',
+      debug: {
+        ...(filteredResult.debug ?? {}),
+        unfilteredFallback: summarizeTrendyolUnfilteredFallback(
+          unfilteredResult,
+          0,
+          0,
+        ),
+      },
+    }
+  }
+
+  const combinedContent = mergeTrendyolPackageCollections(
+    filteredContent,
+    matchingUnfilteredContent,
+  )
+  const addedCount = Math.max(0, combinedContent.length - filteredContent.length)
+  const baseResult = filteredResult.ok ? filteredResult : unfilteredResult
+  return {
+    ...baseResult,
+    ok: true,
+    source: 'real',
+    message: `${baseResult.message} Unfiltered discovery added ${addedCount} package(s).`,
+    data: {
+      ...(baseResult.data ?? {}),
+      content: combinedContent,
+      totalElements: combinedContent.length,
+      totalPages: 1,
+    },
+    debug: {
+      ...(filteredResult.debug ?? {}),
+      unfilteredFallback: summarizeTrendyolUnfilteredFallback(
+        unfilteredResult,
+        unfilteredContent.length,
+        matchingUnfilteredContent.length,
+        addedCount,
+      ),
+    },
+  }
+}
+
+async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
+  const statuses = normalizeTrendyolStatusQuery(query)
 
   if (statuses.length <= 1) {
-    return callTrendyolOrdersAllPages(credentials, {
-      ...query,
-      status: statuses[0],
-      statuses: undefined,
-    })
+    return callTrendyolOrdersForStatus(credentials, query, statuses[0])
   }
 
   const results = []
   for (const status of statuses) {
-    const result = await callTrendyolOrdersAllPages(credentials, {
-      ...query,
-      status,
-      statuses: undefined,
-      page: undefined,
-    })
+    const result = await callTrendyolOrdersForStatus(credentials, query, status)
     results.push({ status, result })
   }
 
@@ -5830,8 +7420,10 @@ async function callTrendyolOrdersByStatuses(credentials, query = {}) {
     }
   }
 
-  const combinedContent = successes.flatMap((entry) =>
-    getTrendyolOrderPackagesArray(entry.result.data),
+  const combinedContent = mergeTrendyolPackageCollections(
+    ...successes.map((entry) =>
+      getTrendyolOrderPackagesArray(entry.result.data),
+    ),
   )
   const firstData = successes[0]?.result.data ?? {}
 
@@ -5865,6 +7457,120 @@ async function callTrendyolOrdersByStatuses(credentials, query = {}) {
         parsedError: entry.result.debug?.parsedError,
       })),
     },
+  }
+}
+
+function clampTrendyolRecentDiscoveryWindow(query, statuses) {
+  if (!statuses.some((status) => ACTIVE_TRENDYOL_ORDER_STATUSES.includes(status))) {
+    return query
+  }
+  const endDate = Number(query.endDate ?? Date.now())
+  const requestedStartDate = Number(
+    query.startDate ?? endDate - TRENDYOL_ACTIVE_STATUS_WINDOW_MS,
+  )
+  return {
+    ...query,
+    startDate: Math.max(
+      requestedStartDate,
+      endDate - TRENDYOL_ACTIVE_STATUS_WINDOW_MS,
+    ),
+    endDate,
+  }
+}
+
+async function callTrendyolOrdersForStatus(credentials, query, status) {
+  if (
+    !ACTIVE_TRENDYOL_ORDER_STATUSES.includes(status) ||
+    query.orderNumber
+  ) {
+    return callTrendyolOrdersAllPages(credentials, {
+      ...query,
+      status,
+      statuses: undefined,
+      page: undefined,
+    })
+  }
+
+  const endDate = Number(query.endDate ?? Date.now())
+  const startDate = Number(
+    query.startDate ?? endDate - TRENDYOL_ACTIVE_STATUS_WINDOW_MS,
+  )
+  if (
+    !Number.isFinite(startDate) ||
+    !Number.isFinite(endDate) ||
+    endDate - startDate <= TRENDYOL_ACTIVE_STATUS_WINDOW_MS
+  ) {
+    return callTrendyolOrdersAllPages(credentials, {
+      ...query,
+      status,
+      statuses: undefined,
+      page: undefined,
+    })
+  }
+
+  const windowResults = []
+  let cursor = startDate
+  while (cursor <= endDate) {
+    const windowEnd = Math.min(endDate, cursor + TRENDYOL_ACTIVE_STATUS_WINDOW_MS)
+    const result = await callTrendyolOrdersAllPages(credentials, {
+      ...query,
+      startDate: cursor,
+      endDate: windowEnd,
+      status,
+      statuses: undefined,
+      page: undefined,
+    })
+    windowResults.push({ startDate: cursor, endDate: windowEnd, result })
+    if (!result.ok) {
+      return {
+        ...result,
+        debug: {
+          ...(result.debug ?? {}),
+          statusWindows: windowResults.map(summarizeTrendyolStatusWindow),
+        },
+      }
+    }
+    if (windowEnd === endDate) break
+    cursor = windowEnd + 1
+  }
+
+  const content = mergeTrendyolPackageCollections(
+    ...windowResults.map((entry) =>
+      getTrendyolOrderPackagesArray(entry.result.data),
+    ),
+  )
+  const firstResult = windowResults[0]?.result ?? {
+    ok: true,
+    source: 'real',
+    statusCode: 200,
+    message: 'Trendyol status window returned no data.',
+    data: {},
+  }
+  return {
+    ...firstResult,
+    data: {
+      ...(firstResult.data ?? {}),
+      content,
+      totalElements: content.length,
+      totalPages: 1,
+    },
+    debug: {
+      ...(firstResult.debug ?? {}),
+      pageRequests: windowResults.flatMap(
+        (entry) => entry.result.debug?.pageRequests ?? [],
+      ),
+      statusWindows: windowResults.map(summarizeTrendyolStatusWindow),
+    },
+  }
+}
+
+function summarizeTrendyolStatusWindow(entry) {
+  return {
+    startDate: entry.startDate,
+    endDate: entry.endDate,
+    ok: entry.result.ok,
+    statusCode: entry.result.statusCode,
+    contentCount: getTrendyolOrderPackagesArray(entry.result.data).length,
   }
 }
 
@@ -5961,7 +7667,7 @@ function normalizeTrendyolStatusQuery(query = {}) {
   const statuses =
     requestedStatuses.length > 0
       ? requestedStatuses
-      : ACTIVE_TRENDYOL_ORDER_STATUSES
+      : ALL_TRENDYOL_ORDER_STATUSES
 
   const normalized = Array.from(
     new Set(
@@ -5971,7 +7677,7 @@ function normalizeTrendyolStatusQuery(query = {}) {
     ),
   )
 
-  return normalized.length > 0 ? normalized : ACTIVE_TRENDYOL_ORDER_STATUSES
+  return normalized.length > 0 ? normalized : ALL_TRENDYOL_ORDER_STATUSES
 }
 
 async function callTrendyolOrders(credentials, query) {
@@ -6348,16 +8054,44 @@ function resolveSuratCredentialSet(config = {}, order = {}) {
   }
 }
 
-function validateSuratRestCredentials(config) {
+function validateSuratRestCredentials(config, order = {}) {
   const soapValidation = validateSuratSoapCredentials(config)
   if (soapValidation) return soapValidation
-  if (config.firmaId) return null
+  const missing = []
+  if (!config.firmaId) missing.push('FirmaId')
+  if (!config.restBasicUsername) missing.push('REST Basic Auth kullanici adi')
+  if (!config.restBasicPassword) missing.push('REST Basic Auth sifresi')
+  if (!config.restSenderMusteriId) missing.push('Gonderen.MusteriId')
+  if (!config.restSenderAdi) missing.push('Gonderen.Adi')
+  if (!config.restSenderSoyadi) missing.push('Gonderen.Soyadi')
+  if (!config.restSenderTelefon) missing.push('Gonderen.Telefon')
+  if (!config.restSenderAdres) missing.push('Gonderen.Adres')
+  if (!(Number(config.restSenderIlId) > 0)) missing.push('Gonderen.IlId')
+  if (!config.restSenderIlceAdi) missing.push('Gonderen.IlceAdi')
+  const recipientCityId = Number(
+    readSuratField(
+      [order.shipmentAddress, order.rawOrder, order],
+      ['cityId', 'IlId', 'ilId'],
+    ),
+  )
+  const recipientName = splitName(order.customerName)
+  if (!firstNonEmpty(order.customerEmail, order.cargoTrackingNumber)) {
+    missing.push('Alici.MusteriId')
+  }
+  if (!recipientName.firstName) missing.push('Alici.Adi')
+  if (!recipientName.lastName) missing.push('Alici.Soyadi')
+  if (!String(order.customerPhone || '').trim()) missing.push('Alici.Telefon')
+  if (!resolveSingleShipmentAddress(order)) missing.push('Alici.Adres')
+  if (!(recipientCityId > 0)) missing.push('Alici.IlId')
+  if (!String(order.district || '').trim()) missing.push('Alici.IlceAdi')
+  if (missing.length === 0) return null
 
   return {
     provider: 'surat-kargo',
     ok: false,
     source: 'real',
-    message: 'REST/V2 gönderi oluşturma için firmaId gerekli.',
+    errorCode: 'SURAT_GONDERI_V2_CONTRACT_INCOMPLETE',
+    message: `REST/V2 resmi request sozlesmesi icin eksik alanlar: ${missing.join(', ')}. Tasiyiciya istek gonderilmedi.`,
     checkedAt: new Date().toISOString(),
   }
 }
@@ -6400,6 +8134,9 @@ function normalizeSuratConfig(value = {}) {
       ? 'ORTAK_BARKOD_SOAP'
       : value.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP'
         ? 'KARGO_BARKODU_SIPARIS_SOAP'
+        : value.serviceMode === 'GONDERI_YENI_SOAP' ||
+            value.serviceType === 'GonderiyiKargoyaGonderYeniSoap'
+          ? 'GONDERI_YENI_SOAP'
         : allowPreRegistrationRest &&
             (value.serviceMode === 'PRE_REGISTRATION_REST' ||
               value.serviceType === 'GonderiyiKargoyaGonderRestJson')
@@ -6429,7 +8166,7 @@ function normalizeSuratConfig(value = {}) {
   const scopedWebPassword =
     ortam === 'live' ? value.liveWebPassword : value.testWebPassword
   const scopedFirmaId = ortam === 'live' ? value.liveFirmaId : value.testFirmaId
-  const createRoute = resolveSuratCreateRoute(serviceMode)
+  const createRoute = resolveSuratCreateRoute(serviceMode, value)
   return {
     kullaniciAdi: String(
       envKullaniciAdi ||
@@ -6467,6 +8204,46 @@ function normalizeSuratConfig(value = {}) {
       value.codWebPassword ?? value.cashOnDeliveryWebPassword ?? '',
     ).trim(),
     firmaId: String(envFirmaId || scopedFirmaId || value.firmaId || '').trim(),
+    restBasicUsername: String(
+      process.env.SURAT_REST_BASIC_USERNAME ||
+        value.restBasicUsername ||
+        '',
+    ).trim(),
+    restBasicPassword: String(
+      process.env.SURAT_REST_BASIC_PASSWORD ||
+        value.restBasicPassword ||
+        '',
+    ).trim(),
+    restSenderMusteriId: String(
+      process.env.SURAT_REST_SENDER_MUSTERI_ID ||
+        value.restSenderMusteriId ||
+        '',
+    ).trim(),
+    restSenderAdi: String(
+      process.env.SURAT_REST_SENDER_ADI || value.restSenderAdi || '',
+    ).trim(),
+    restSenderSoyadi: String(
+      process.env.SURAT_REST_SENDER_SOYADI || value.restSenderSoyadi || '',
+    ).trim(),
+    restSenderTelefon: String(
+      process.env.SURAT_REST_SENDER_TELEFON ||
+        value.restSenderTelefon ||
+        '',
+    ).trim(),
+    restSenderEmail: String(
+      process.env.SURAT_REST_SENDER_EMAIL || value.restSenderEmail || '',
+    ).trim(),
+    restSenderAdres: String(
+      process.env.SURAT_REST_SENDER_ADRES || value.restSenderAdres || '',
+    ).trim(),
+    restSenderIlId: Number(
+      process.env.SURAT_REST_SENDER_IL_ID || value.restSenderIlId || 0,
+    ),
+    restSenderIlceAdi: String(
+      process.env.SURAT_REST_SENDER_ILCE_ADI ||
+        value.restSenderIlceAdi ||
+        '',
+    ).trim(),
     testKullaniciAdi: String(value.testKullaniciAdi ?? '').trim(),
     testSifre: String(value.testSifre ?? '').trim(),
     testWebPassword: String(value.testWebPassword ?? '').trim(),
@@ -6510,6 +8287,11 @@ function normalizeSuratConfig(value = {}) {
           .map((delay) => Math.max(0, Number(delay) || 0))
           .slice(0, 5)
       : [0, 3000, 10000, 30000, 60000],
+    labelRegistrationGraceMs: Number.isFinite(
+      Number(value.labelRegistrationGraceMs),
+    )
+      ? Math.max(0, Number(value.labelRegistrationGraceMs))
+      : SURAT_LABEL_REGISTRATION_GRACE_MS,
   }
 }
 
@@ -6528,10 +8310,13 @@ function resolveSuratServiceMode(serviceType) {
   if (serviceType === 'GonderiyiKargoyaGonderRestJson') {
     return 'PRE_REGISTRATION_REST'
   }
+  if (serviceType === 'GonderiyiKargoyaGonderYeniSoap') {
+    return 'GONDERI_YENI_SOAP'
+  }
   return 'GONDERI_OLUSTUR_V2_EXPERIMENTAL'
 }
 
-function resolveSuratCreateRoute(serviceMode) {
+function resolveSuratCreateRoute(serviceMode, value = {}) {
   if (serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP') {
     return {
       serviceType: 'KargoBarkoduSiparisSoap',
@@ -6544,15 +8329,32 @@ function resolveSuratCreateRoute(serviceMode) {
       createShipmentPath: '/api/GonderiyiKargoyaGonder',
     }
   }
+  if (serviceMode === 'GONDERI_YENI_SOAP') {
+    return {
+      serviceType: 'GonderiyiKargoyaGonderYeniSoap',
+      createShipmentPath: '/api/GonderiyiKargoyaGonderYeni',
+    }
+  }
   if (serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL') {
     return {
       serviceType: 'GonderiOlusturV2',
       createShipmentPath: '/api/Gonderi/GonderiOlustur',
     }
   }
+  if (
+    value.serviceType === 'OrtakBarkodOlusturSoap' ||
+    String(value.createShipmentPath || '').endsWith('/OrtakBarkodOlustur')
+  ) {
+    return {
+      serviceType: 'OrtakBarkodOlusturSoap',
+      createShipmentPath: '/api/OrtakBarkodOlustur',
+    }
+  }
   return {
-    serviceType: 'OrtakBarkodOlusturSoap',
-    createShipmentPath: '/api/OrtakBarkodOlustur',
+    serviceType:
+      'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
+    createShipmentPath:
+      '/api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
   }
 }
 
@@ -6568,9 +8370,7 @@ function inspectSuratCreateOperation(rawRequest, expectedOperation) {
     rawRequestContainsExpectedOperation,
     rawRequestContainsLegacyOperation,
     wrongServiceCalled:
-      expectedOperation === 'OrtakBarkodOlustur' &&
-      (!rawRequestContainsExpectedOperation ||
-        rawRequestContainsLegacyOperation),
+      !rawRequestContainsExpectedOperation || rawRequestContainsLegacyOperation,
   }
 }
 
@@ -7424,6 +9224,57 @@ function getTrendyolPackageDedupKey(item) {
   return String(
     item.packageId ?? item.shipmentPackageId ?? item.orderNumber ?? item.id ?? '',
   )
+}
+
+function isTrendyolPackageInStatuses(item, statuses) {
+  const rawStatus = [
+    item?.status,
+    item?.packageStatus,
+    item?.shipmentPackageStatus,
+  ]
+    .map((value) => String(value ?? '').trim())
+    .find((value) => ALL_TRENDYOL_ORDER_STATUSES.includes(value))
+  return Boolean(rawStatus && statuses.includes(rawStatus))
+}
+
+function mergeTrendyolPackageCollections(...collections) {
+  const packages = new Map()
+  for (const collection of collections) {
+    for (const item of collection) {
+      const key = getTrendyolPackageDedupKey(item)
+      if (!key) continue
+      if (!packages.has(key)) {
+        packages.set(key, item)
+        continue
+      }
+      const existing = packages.get(key)
+      packages.set(key, {
+        ...existing,
+        ...item,
+        lines: mergeTrendyolLines(existing.lines, item.lines),
+      })
+    }
+  }
+  return Array.from(packages.values())
+}
+
+function summarizeTrendyolUnfilteredFallback(
+  result,
+  contentCount,
+  matchingCount,
+  addedCount = 0,
+) {
+  return {
+    attempted: true,
+    ok: result.ok,
+    statusCode: result.statusCode,
+    message: result.message,
+    requestUrl: result.debug?.requestUrl,
+    pageRequests: result.debug?.pageRequests,
+    contentCount,
+    matchingCount,
+    addedCount,
+  }
 }
 
 function getTrendyolOrderPackagesArray(data) {

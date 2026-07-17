@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import http from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -49,6 +49,10 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       path: request.url,
       contentType: request.headers['content-type'],
       soapAction,
+      authorizationPresent: Boolean(request.headers.authorization),
+      authorizationScheme: String(request.headers.authorization ?? '')
+        .split(' ')[0]
+        .trim(),
       body,
     })
 
@@ -69,6 +73,19 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       }
       response.writeHead(200, { 'Content-Type': 'application/json' })
       response.end(JSON.stringify({ status: 'Picking' }))
+      return
+    }
+
+    if (request.url === '/api/Gonderi/GonderiOlustur') {
+      response.writeHead(200, { 'Content-Type': 'application/json' })
+      response.end(
+        JSON.stringify({
+          ResponseId: '016',
+          Message: '[016] Barkod Gonderilmistir',
+          KargoTakipNo: '25220148446194',
+          BarkodNo: '01231201026',
+        }),
+      )
       return
     }
 
@@ -97,6 +114,18 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
         )
         return
       }
+      if (body.includes('7270039999999911')) {
+        response.writeHead(200, { 'Content-Type': 'application/json' })
+        response.end(
+          JSON.stringify({
+            ResponseId: '016',
+            Message: '[016] Barkod GÃ¶nderilmiÅŸtir',
+            KargoTakipNo: '25220148446193',
+            BarkodNo: '01231201025',
+          }),
+        )
+        return
+      }
       const result = legacyResponses.shift() ?? {
         ResponseId: '016',
         Message: '[016] Barkod Gönderilmiştir',
@@ -108,11 +137,47 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       return
     }
 
-    if (soapAction.includes('OrtakBarkodOlustur')) {
+    if (soapAction.includes('/OrtakBarkodOlustur"')) {
+      sendSoapComplex(
+        response,
+        'OrtakBarkodOlustur',
+        `<isError>false</isError>
+         <Message>016</Message>
+         <KargoTakipNo>25220148446193</KargoTakipNo>
+         <Barcode><anyType>^XA ^FO20,20^A0N,30,30^FDT.No: 25220148446193^FS ^FT48,300^BCN,,Y,N ^FD&gt;:01231201025^FS ^XZ</anyType></Barcode>`,
+      )
+      return
+    }
+
+    if (soapAction.includes('/GonderiyiKargoyaGonderYeni"')) {
+      sendSoapString(response, 'GonderiyiKargoyaGonderYeni', 'Tamam')
+      return
+    }
+
+    if (
+      soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      )
+    ) {
+      if (
+        body.includes(
+          '<OzelKargoTakipNo>7270039999999997</OzelKargoTakipNo>',
+        )
+      ) {
+        sendSoapComplex(
+          response,
+          'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+          `<isError>false</isError>
+           <Message>016</Message>
+           <KargoTakipNo>24510610424923</KargoTakipNo>
+           <Barcode><anyType>^XA ^FT48,300^BCN,,Y,N ^FD&gt;:01249492893^FS ^XZ</anyType></Barcode>`,
+        )
+        return
+      }
       if (body.includes('<ReferansNo>FAILBARCODE</ReferansNo>')) {
         sendSoapComplex(
           response,
-          'OrtakBarkodOlustur',
+          'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
           `<isError>true</isError>
            <Message>Bilgiler güncellenirken hata oluştu.</Message>
            <KargoTakipNo />`,
@@ -122,10 +187,11 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       if (body.includes('<ReferansNo>KARGOBARKODU</ReferansNo>')) {
         sendSoapComplex(
           response,
-          'OrtakBarkodOlustur',
+          'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
           `<isError>false</isError>
-           <Message>Teknik ZPL oluÅŸturuldu</Message>
-           <Barcode><anyType>^XA ^FT48,300^BCN,,Y,N ^FDWeb00155729156^FS ^XZ</anyType></Barcode>`,
+           <Message>016</Message>
+           <KargoTakipNo>25220148446193</KargoTakipNo>
+           <Barcode><anyType>^XA ^FO20,20^A0N,30,30^FDT.No: 25220148446193^FS ^FT48,300^BCN,,Y,N ^FD&gt;:01231201025^FS ^XZ</anyType></Barcode>`,
         )
         return
       }
@@ -135,7 +201,7 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       ) {
         sendSoapComplex(
           response,
-          'OrtakBarkodOlustur',
+          'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
           `<isError>false</isError>
            <Message>Teknik ZPL oluşturuldu</Message>
            <Barcode><anyType>^XA ^FT48,300^BCN,,Y,N ^FDWebWEBONLY^FS ^XZ</anyType></Barcode>`,
@@ -144,33 +210,12 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       }
       sendSoapComplex(
         response,
-        'OrtakBarkodOlustur',
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
         `<isError>false</isError>
          <Message>Barkod oluşturuldu</Message>
          <KargoTakipNo>25220148446193</KargoTakipNo>
          <TNo>TNO25220148446193</TNo>
          <Barcode><anyType>^XA ^FT48,300^BCN,,Y,N ^FD&gt;:01231201025^FS ^XZ</anyType></Barcode>`,
-      )
-      return
-    }
-
-    if (
-      soapAction.includes(
-        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
-      )
-    ) {
-      sendSoapComplex(
-        response,
-        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
-        `<isError>false</isError>
-         <Message>014</Message>
-         <Barcode>^XA
-          ^FT514,79^A0N,28,28^FH\^FD89815102462541^FS
-          ^FT453,79^A0N,23,24^FH\^FDT.No:^FS
-          ^FT25,706^A0B,20,28^FH\^FDSiparis No: 7270039999999998^FS
-          ^BY4,4,143 ^FT48,300^BCN,,Y,N ^FD&gt;:01249329179^FS
-          ^BY256,256 ^FT690,650 ^BQN,4,4 ^FDQA,7270039999999998^FS
-          ^XZ</Barcode>`,
       )
       return
     }
@@ -200,13 +245,33 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       return
     }
 
+    if (soapAction.includes('/WebSiparisKodu"')) {
+      if (body.includes('7270039999999999')) {
+        sendSoapComplex(
+          response,
+          'WebSiparisKodu',
+          `<NewDataSet>
+             <Table>
+               <WebSiparisKodu>7270039999999999</WebSiparisKodu>
+               <TakipNo>25220148446193</TakipNo>
+               <Barkod>01231201025</Barkod>
+               <Durum>Hazirlanıyor</Durum>
+             </Table>
+           </NewDataSet>`,
+        )
+        return
+      }
+      sendSoapComplex(response, 'WebSiparisKodu', '<NewDataSet />')
+      return
+    }
+
     if (soapAction.includes('KargoBarkodu')) {
       if (body.includes('7270039999999999')) {
         sendSoapComplex(
           response,
           'KargoBarkodu',
           `<OzelKargoTakipNo>7270039999999999</OzelKargoTakipNo>
-           <KargoTakipNo>253220148446193</KargoTakipNo>
+           <KargoTakipNo>25220148446193</KargoTakipNo>
            <Aciklama>Operasyonel barkod oluÅŸturuldu</Aciklama>
            <BarkodNo><string>01231201025</string></BarkodNo>`,
         )
@@ -224,6 +289,45 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     }
 
     if (soapAction.includes('KargoTakipHareketDetayi')) {
+      if (body.includes('7270039999999912')) {
+        sendSoapString(
+          response,
+          'KargoTakipHareketDetayi',
+          JSON.stringify({
+            IsError: false,
+            errorMessage: '',
+            Gonderiler: [
+              {
+                WebSiparisKodu: '7270039999999912',
+                KargoTakipNo: '25220148446194',
+                BarkodNo: '01231201026',
+                KargonunDurumu: 'Evrak Olusturuldu',
+                KargonunDurumuSayi: '1',
+              },
+            ],
+          }),
+        )
+        return
+      }
+      if (body.includes('7270039999999999')) {
+        sendSoapString(
+          response,
+          'KargoTakipHareketDetayi',
+          JSON.stringify({
+            IsError: false,
+            errorMessage: '',
+            Gonderiler: [
+              {
+                WebSiparisKodu: '7270039999999999',
+                KargoTakipNo: '25220148446193',
+                KargonunDurumu: 'Evrak Olusturuldu',
+                KargonunDurumuSayi: '1',
+              },
+            ],
+          }),
+        )
+        return
+      }
       if (body.includes('MISSING-TRACKING')) {
         sendSoapString(
           response,
@@ -239,7 +343,12 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       if (
         body.includes('WEBONLY') ||
         body.includes('CARRIERLABEL') ||
-        body.includes('7270039999999998')
+        body.includes('7270039999999998') ||
+        body.includes('UNVERIFIEDCODES') ||
+        body.includes('ORDER-UNVERIFIED-CODES') ||
+        body.includes('7270039999999997') ||
+        body.includes('24510610424923') ||
+        body.includes('01249492893')
       ) {
         sendSoapString(
           response,
@@ -266,6 +375,9 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
         )
         return
       }
+      const requestedWebSiparisKodu =
+        body.match(/<WebSiparisKodu>([^<]+)<\/WebSiparisKodu>/i)?.[1] ||
+        'PKG123'
       sendSoapString(
         response,
         'KargoTakipHareketDetayi',
@@ -274,9 +386,9 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
           errorMessage: '',
           Gonderiler: [
             {
-              WebSiparisKodu: 'PKG123',
-              SatisKodu: 'PKG123',
-              OzelKargoTakipNo: 'PKG123',
+              WebSiparisKodu: requestedWebSiparisKodu,
+              SatisKodu: requestedWebSiparisKodu,
+              OzelKargoTakipNo: requestedWebSiparisKodu,
               KargoTakipNo: '25220148446193',
               BarkodNo: '01231201025',
               KargonunDurumu: 'Teslim Edildi',
@@ -332,12 +444,33 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     createShipmentPath: '/api/GonderiyiKargoyaGonder',
   })
 
-  for (const expectedCode of ['013', '014', '015', '016', '009']) {
+  for (const [codeIndex, expectedCode] of [
+    '013',
+    '014',
+    '015',
+    '016',
+    '009',
+  ].entries()) {
+    const codeOrder =
+      codeIndex === 0
+        ? order
+        : {
+            ...order,
+            id: `${order.id}-${expectedCode}`,
+            orderNumber: `${order.orderNumber}-${expectedCode}`,
+            packageId: `${order.packageId}-${expectedCode}`,
+            shipmentPackageId: `${order.shipmentPackageId}-${expectedCode}`,
+            cargoTrackingNumber: `${order.cargoTrackingNumber}${codeIndex}`,
+          }
     const response = await postJson(apiPort, '/api/shipments/surat/create', {
       config: legacyConfig,
-      order,
+      order: codeOrder,
     })
-    assert.equal(response.ok, true)
+    assert.equal(
+      response.ok,
+      false,
+      JSON.stringify(response),
+    )
     assert.equal(response.serviceType, 'GonderiyiKargoyaGonderRestJson')
     assert.equal(response.payloadFormat, 'JSON')
     assert.equal(response.suratCreateLog.responseCode, expectedCode)
@@ -347,10 +480,35 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     )
     assert.equal(response.suratCreateLog.hasTrackingNumber, expectedCode !== '009')
     assert.equal(response.suratCreateLog.preRegistrationOnly, true)
-    assert.equal(
-      response.shipment.lifecycleStatus,
-      'LABEL_READY',
-    )
+    if (expectedCode === '009') {
+      assert.equal(response.shipment, undefined)
+    } else {
+      assert.equal(
+        response.shipment.lifecycleStatus,
+        codeIndex === 0
+          ? 'SURAT_CREATED_NO_TRACKING'
+          : 'SHIPMENT_REGISTERED_LABEL_REQUIRED',
+      )
+      assert.equal(response.shipment.labelStatus, 'BLOCKED')
+      assert.equal(response.shipment.printEnabled, false)
+    }
+    if (codeIndex === 0) {
+      assert.equal(
+        response.errorCode,
+        'SURAT_TRACKING_CONFIRMATION_MISSING',
+      )
+      assert.equal(
+        response.suratCreateLog.codeMapping.trackingValue,
+        '25220148446193',
+      )
+      assert.equal(
+        response.suratCreateLog.codeMapping.barcodeValue,
+        '01231201025',
+      )
+    } else if (expectedCode === '009') {
+      assert.equal(response.suratCreateLog.codeMapping.trackingValue, '')
+      assert.equal(response.suratCreateLog.codeMapping.barcodeValue, '')
+    }
     assert.ok(response.message)
   }
 
@@ -360,13 +518,10 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   const legacyBody = JSON.parse(legacyRequest.body)
   assert.match(legacyRequest.contentType, /application\/json/)
   assert.equal(legacyBody.Gonderi.OzelKargoTakipNo, '7270033563324593')
-  assert.equal(legacyBody.Gonderi.ReferansNo, '7270033563324593')
-  assert.equal(legacyBody.Gonderi.WebSiparisKodu, 'ORDER123')
-  assert.equal(legacyBody.Gonderi.SatisKodu, 'ORDER123')
-  assert.equal(
-    legacyBody.Gonderi.MarketplaceIntegrationCode,
-    '7270033563324593',
-  )
+  assert.equal(legacyBody.Gonderi.ReferansNo, 'PKG123')
+  assert.equal('WebSiparisKodu' in legacyBody.Gonderi, false)
+  assert.equal('SatisKodu' in legacyBody.Gonderi, false)
+  assert.equal('MarketplaceIntegrationCode' in legacyBody.Gonderi, false)
   assert.equal(legacyBody.Gonderi.Pazaryerimi, 1)
   assert.equal(legacyBody.Gonderi.EntegrasyonFirmasi, 'Trendyol')
   assert.equal(legacyBody.Gonderi.Iademi, false)
@@ -389,7 +544,17 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   const missingContractResponse = await postJson(
     apiPort,
     '/api/shipments/surat/create',
-    { config: missingContractConfig, order },
+    {
+      config: missingContractConfig,
+      order: {
+        ...order,
+        id: 'order-missing-contract',
+        orderNumber: 'ORDER-MISSING-CONTRACT',
+        packageId: 'PACKAGE-MISSING-CONTRACT',
+        shipmentPackageId: 'PACKAGE-MISSING-CONTRACT',
+        cargoTrackingNumber: '72700335633245939',
+      },
+    },
   )
   assert.equal(missingContractResponse.ok, true)
   const missingContractSoapRequest = requests
@@ -445,8 +610,35 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     .slice(requestCountBeforePdfBarcode)
     .find((item) => item.soapAction.includes('KargoBarkoduSiparis'))
   assert.ok(pdfSoapRequest)
+  const pdfCreateRequests = requests.slice(requestCountBeforePdfBarcode)
+  assert.equal(
+    pdfCreateRequests.filter((item) =>
+      item.soapAction.includes('KargoBarkoduSiparis'),
+    ).length,
+    1,
+  )
+  assert.equal(
+    pdfCreateRequests.some(
+      (item) => item.path === '/api/GonderiyiKargoyaGonder',
+    ),
+    false,
+  )
+  assert.equal(
+    pdfCreateRequests.some((item) =>
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ),
+    ),
+    false,
+  )
+  assert.match(pdfSoapRequest.contentType, /text\/xml/)
+  assert.match(
+    pdfSoapRequest.soapAction,
+    /http:\/\/tempuri\.org\/KargoBarkoduSiparis/,
+  )
+  assert.match(pdfSoapRequest.body, /<KargoBarkoduSiparis xmlns="http:\/\/tempuri\.org\/">/)
   assert.match(pdfSoapRequest.body, /<WebPassword>TEST_WEB_PASSWORD<\/WebPassword>/)
-  assert.match(pdfSoapRequest.body, /<ReferansNo>7270034129020027<\/ReferansNo>/)
+  assert.match(pdfSoapRequest.body, /<ReferansNo>3986108535<\/ReferansNo>/)
   assert.match(pdfSoapRequest.body, /<OzelKargoTakipNo>7270034129020027<\/OzelKargoTakipNo>/)
   assert.match(pdfSoapRequest.body, /<SiparisObjId>0<\/SiparisObjId>/)
   assert.match(
@@ -454,6 +646,53 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     /<EntegrasyonSozlesme>12345<\/EntegrasyonSozlesme>/,
   )
   assert.doesNotMatch(pdfSoapRequest.body, /<EntegrasyonMusteri>/)
+  assert.doesNotMatch(
+    pdfSoapRequest.body,
+    /<WebSiparisKodu>|<SatisKodu>|<MarketplaceIntegrationCode>|<DesiSource>/,
+  )
+  assert.doesNotMatch(
+    pdfSoapRequest.body,
+    /<SahisBirim><\/SahisBirim>|<TelefonEv><\/TelefonEv>|<TelefonIs><\/TelefonIs>|<AliciKodu><\/AliciKodu>|<IrsaliyeSeriNo><\/IrsaliyeSeriNo>|<IrsaliyeSiraNo><\/IrsaliyeSiraNo>|<EkHizmetler><\/EkHizmetler>|<TeslimSubeKodu><\/TeslimSubeKodu>/,
+  )
+  const officialKargoBarkoduSiparisSequence = [
+    'GonderiSekli',
+    'KisiKurum',
+    'AliciAdresi',
+    'Il',
+    'Ilce',
+    'TelefonCep',
+    'Email',
+    'KargoTuru',
+    'Odemetipi',
+    'ReferansNo',
+    'OzelKargoTakipNo',
+    'Adet',
+    'BirimDesi',
+    'BirimKg',
+    'KargoIcerigi',
+    'KapidanOdemeTahsilatTipi',
+    'KapidanOdemeTutari',
+    'SevkAdresiAdi',
+    'TeslimSekli',
+    'TasimaSekli',
+    'VarisSubeObjId',
+    'EvrakSiraNo',
+    'SiparisObjId',
+    'Pazaryerimi',
+    'EntegrasyonFirmasi',
+    'EntegrasyonSozlesme',
+    'Iademi',
+    'KWebGonderiGirisiKaynak',
+  ]
+  let previousKargoBarkoduSiparisFieldIndex = -1
+  for (const field of officialKargoBarkoduSiparisSequence) {
+    const fieldIndex = pdfSoapRequest.body.indexOf(`<${field}>`)
+    assert.ok(
+      fieldIndex > previousKargoBarkoduSiparisFieldIndex,
+      `${field} KargoBarkoduSiparis WSDL sirasinda olmali`,
+    )
+    previousKargoBarkoduSiparisFieldIndex = fieldIndex
+  }
   assert.ok(
     pdfSoapRequest.body.indexOf('<GonderiSekli>') <
       pdfSoapRequest.body.indexOf('<KisiKurum>'),
@@ -465,6 +704,76 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   assert.ok(
     pdfSoapRequest.body.indexOf('<EntegrasyonSozlesme>') <
       pdfSoapRequest.body.indexOf('<Iademi>'),
+  )
+
+  const officialCommonConfig = buildConfig({
+    serviceMode: 'ORTAK_BARKOD_SOAP',
+    serviceType: 'OrtakBarkodOlusturSoap',
+    createShipmentPath: '/api/OrtakBarkodOlustur',
+  })
+  const officialCommonRequestStart = requests.length
+  const officialCommonResponse = await postJson(
+    apiPort,
+    '/api/shipments/surat/create',
+    {
+      config: officialCommonConfig,
+      order: {
+        ...order,
+        id: 'order-official-common-barcode',
+        orderNumber: 'OFFICIAL-COMMON-ORDER',
+        packageId: 'OFFICIAL-COMMON-PACKAGE',
+        shipmentPackageId: 'OFFICIAL-COMMON-PACKAGE',
+        cargoTrackingNumber: '7270039999999911',
+      },
+    },
+  )
+  assert.equal(officialCommonResponse.ok, true)
+  assert.equal(officialCommonResponse.operationName, 'OrtakBarkodOlustur')
+  assert.equal(officialCommonResponse.serviceType, 'OrtakBarkodOlusturSoap')
+  assert.equal(
+    officialCommonResponse.trackingVerification.responseWebSiparisKodu,
+    '7270039999999911',
+  )
+  assert.equal(
+    officialCommonResponse.trackingVerification.trackingReferenceMatchesCreate,
+    true,
+  )
+  const officialCommonRequests = requests.slice(officialCommonRequestStart)
+  const officialCommonSoap = officialCommonRequests.find((item) =>
+    item.soapAction.includes('/OrtakBarkodOlustur"'),
+  )
+  assert.ok(officialCommonSoap)
+  assert.match(
+    officialCommonSoap.soapAction,
+    /http:\/\/tempuri\.org\/OrtakBarkodOlustur/,
+  )
+  assert.match(
+    officialCommonSoap.body,
+    /<OrtakBarkodOlustur xmlns="http:\/\/tempuri\.org\/">/,
+  )
+  assert.doesNotMatch(
+    officialCommonSoap.body,
+    /<WebSiparisKodu>|<SatisKodu>|<MarketplaceIntegrationCode>|<DesiSource>/,
+  )
+  assert.equal(
+    officialCommonRequests.some(
+      (item) => item.path === '/api/GonderiyiKargoyaGonder',
+    ),
+    true,
+  )
+  assert.equal(
+    officialCommonRequests.some((item) =>
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ),
+    ),
+    false,
+  )
+  assert.equal(
+    officialCommonRequests.filter((item) =>
+      item.soapAction.includes('/OrtakBarkodOlustur"'),
+    ).length,
+    1,
   )
 
   const idempotencyRequestStart = requests.length
@@ -580,10 +889,12 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     '/api/diagnostics/surat/common-barcode-loop',
     {
       config: buildConfig({
-        serviceMode: 'KARGO_BARKODU_SIPARIS_SOAP',
-        serviceType: 'KargoBarkoduSiparisSoap',
-        createShipmentPath: '/api/KargoBarkoduSiparis',
-        webPassword: '',
+        serviceMode: 'ORTAK_BARKOD_SOAP',
+        serviceType:
+          'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
+        createShipmentPath:
+          '/api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+        sifre: '',
       }),
       order: {
         ...order,
@@ -607,7 +918,7 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   )
   assert.equal(
     diagnosticLoop.steps.find((step) => step.id === 'credentials').evidence
-      .normalShipmentPasswordUsedAsWebPassword,
+      .shipmentPasswordConfigured,
     false,
   )
 
@@ -616,9 +927,11 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     '/api/diagnostics/surat/common-barcode-loop',
     {
       config: buildConfig({
-        serviceMode: 'KARGO_BARKODU_SIPARIS_SOAP',
-        serviceType: 'KargoBarkoduSiparisSoap',
-        createShipmentPath: '/api/KargoBarkoduSiparis',
+        serviceMode: 'ORTAK_BARKOD_SOAP',
+        serviceType:
+          'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
+        createShipmentPath:
+          '/api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
         webPassword: 'TEST_SIFRE',
       }),
       order: {
@@ -632,11 +945,12 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   const samePasswordCredentialStep = samePasswordDiagnostic.steps.find(
     (step) => step.id === 'credentials',
   )
-  assert.equal(samePasswordCredentialStep.status, 'WARN')
+  assert.equal(samePasswordCredentialStep.status, 'PASS')
   assert.equal(
-    samePasswordCredentialStep.evidence.webPasswordMatchesShipmentPassword,
-    true,
+    samePasswordCredentialStep.evidence.webPasswordRequired,
+    false,
   )
+  assert.equal(samePasswordDiagnostic.canAttemptLiveSuratCall, true)
 
   const carrierLabelFallbackRequestCount = requests.length
   const carrierLabelFallbackResponse = await postJson(
@@ -685,24 +999,34 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     false,
   )
 
+  const duplicateRequestStart = requests.length
   const duplicateResponse = await postJson(
     apiPort,
     '/api/shipments/surat/create',
     { config: legacyConfig, order },
   )
-  assert.equal(duplicateResponse.ok, true)
-  assert.equal(duplicateResponse.suratCreateLog.duplicateShipment, true)
-  assert.equal(duplicateResponse.shipment.trackingNumber, '25220148446193')
+  assert.equal(duplicateResponse.ok, false)
+  assert.equal(duplicateResponse.idempotency.carrierCreateCalled, false)
+  assert.equal(duplicateResponse.idempotency.createCallCount, 1)
+  assert.match(duplicateResponse.message, /create|Ã§aÄŸrÄ±sÄ±|SÃ¼rat/i)
+  assert.equal(
+    requests.slice(duplicateRequestStart).some((item) =>
+      item.soapAction.includes('OrtakBarkodOlustur') ||
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ),
+    ),
+    false,
+  )
 
   const tamamResponse = await postJson(
     apiPort,
     '/api/shipments/surat/create',
     { config: legacyConfig, order },
   )
-  assert.equal(tamamResponse.shipment.verifiedShipment, true)
-  assert.equal(tamamResponse.shipment.lifecycleStatus, 'LABEL_READY')
-  assert.match(tamamResponse.message, /doğrulandı/i)
-
+  assert.equal(tamamResponse.ok, false)
+  assert.equal(tamamResponse.idempotency.carrierCreateCalled, false)
+  assert.equal(tamamResponse.idempotency.createCallCount, 1)
   const staleLegacyConfigWithoutServiceMode = buildConfig({
     webPassword: 'TEST_WEB_PASSWORD',
     serviceType: 'GonderiyiKargoyaGonderRestJson',
@@ -712,10 +1036,22 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   const migratedDefaultResponse = await postJson(
     apiPort,
     '/api/shipments/surat/create',
-    { config: staleLegacyConfigWithoutServiceMode, order },
+    {
+      config: staleLegacyConfigWithoutServiceMode,
+      order: {
+        ...order,
+        id: 'order-migrated-default',
+        orderNumber: 'ORDER-MIGRATED-DEFAULT',
+        packageId: 'MIGRATEDDEFAULT',
+        shipmentPackageId: 'MIGRATEDDEFAULT',
+      },
+    },
   )
   assert.equal(migratedDefaultResponse.serviceMode, 'ORTAK_BARKOD_SOAP')
-  assert.equal(migratedDefaultResponse.operationName, 'OrtakBarkodOlustur')
+  assert.equal(
+    migratedDefaultResponse.operationName,
+    'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+  )
   assert.equal(migratedDefaultResponse.shipment.verifiedShipment, true)
 
   const transferredTracking = await postJson(
@@ -723,7 +1059,7 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     '/api/shipments/surat/track',
     {
       config: legacyConfig.surat,
-      webSiparisKodu: 'PKG123',
+      webSiparisKodu: order.cargoTrackingNumber,
       orderId: order.id,
       shipmentId: 'shipment-legacy',
     },
@@ -736,6 +1072,30 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   assert.equal(transferredTracking.gonderilerLength, 1)
   assert.equal(transferredTracking.tracking.KargoTakipNo, '25220148446193')
   assert.ok(transferredTracking.message)
+  const persistedCreateStore = JSON.parse(
+    await readFile(
+      join(configDirectory, 'surat-create-operations.json'),
+      'utf8',
+    ),
+  )
+  const enrichedCreateRecord = Object.values(
+    persistedCreateStore.operations,
+  ).find((record) => record.orderId === order.id)
+  assert.equal(enrichedCreateRecord.maxCreateCalls, 1)
+  assert.equal(
+    enrichedCreateRecord.soapAction,
+    `http://tempuri.org/${enrichedCreateRecord.operation}`,
+  )
+  assert.equal(enrichedCreateRecord.requestRoot, enrichedCreateRecord.operation)
+  assert.equal(enrichedCreateRecord.ozelKargoTakipNo, '7270033563324593')
+  assert.equal(enrichedCreateRecord.referansNo, 'PKG123')
+  assert.equal(enrichedCreateRecord.desi, 2)
+  assert.equal(enrichedCreateRecord.desiSource, 'MANUAL_USER_CONFIRMED')
+  assert.equal(
+    enrichedCreateRecord.verificationStatus,
+    'VERIFIED',
+    JSON.stringify(enrichedCreateRecord),
+  )
 
   const missingTracking = await postJson(
     apiPort,
@@ -753,17 +1113,131 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
 
   const commonBarcodeConfig = buildConfig({
     allowPreRegistrationRest: true,
+    webPassword: 'TEST_WEB_PASSWORD',
     serviceMode: 'ORTAK_BARKOD_SOAP',
-    serviceType: 'OrtakBarkodOlusturSoap',
-    createShipmentPath: '/api/OrtakBarkodOlustur',
+    serviceType:
+      'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
+    createShipmentPath:
+      '/api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
   })
+  const v2RequestStart = requests.length
+  const v2Response = await postJson(apiPort, '/api/shipments/surat/create', {
+    config: buildConfig({
+      serviceMode: 'GONDERI_OLUSTUR_V2_EXPERIMENTAL',
+      serviceType: 'GonderiOlusturV2',
+      createShipmentPath: '/api/Gonderi/GonderiOlustur',
+      firmaId: 'TEST_FIRMA',
+    }),
+    order: {
+      ...order,
+      id: 'order-v2-request-snapshot',
+      orderNumber: 'ORDER-V2-SNAPSHOT',
+      packageId: 'V2SNAPSHOT',
+      shipmentPackageId: 'V2SNAPSHOT',
+      cargoTrackingNumber: '7270039999999912',
+      desi: 2.5,
+      weightKg: 1.75,
+      shipmentAddress: {
+        ...order.shipmentAddress,
+        cityId: 34,
+      },
+    },
+  })
+  assert.equal(v2Response.ok, true, JSON.stringify(v2Response))
+  const v2WireRequest = requests
+    .slice(v2RequestStart)
+    .find((item) => item.path === '/api/Gonderi/GonderiOlustur')
+  assert.ok(v2WireRequest)
+  const v2WirePayload = JSON.parse(v2WireRequest.body)
+  assert.equal(v2WirePayload.Data[0].Desi, 2.5)
+  assert.equal(v2WirePayload.Data[0].Kg, 1.75)
+  assert.equal(v2WirePayload.Data[0].SatisKodu, '7270039999999912')
+  assert.equal(v2WireRequest.authorizationPresent, true)
+  assert.equal(v2WireRequest.authorizationScheme, 'Basic')
+  assert.deepEqual(v2WirePayload.Data[0].Gonderen, {
+    MusteriId: 'TEST_SENDER',
+    Adi: 'Test',
+    Soyadi: 'Gonderen',
+    Telefon: '5551111111',
+    Email: 'sender@example.test',
+    Adres: 'Test gonderen adresi',
+    IlId: 34,
+    IlceAdi: 'Kadikoy',
+  })
+  assert.equal(v2WirePayload.Data[0].Alici.MusteriId, 'test@example.com')
+  assert.equal(v2WirePayload.Data[0].Alici.IlId, 34)
+  for (const undocumentedField of [
+    'WebSiparisKodu',
+    'OzelKargoTakipNo',
+    'MarketplaceIntegrationCode',
+    'ReferansNo',
+  ]) {
+    assert.equal(
+      Object.hasOwn(v2WirePayload.Data[0], undocumentedField),
+      false,
+      `${undocumentedField} GonderiOlustur v2 PDF modelinde yok`,
+    )
+  }
+  const requestCountBeforeInvalidV2Contract = requests.length
+  const invalidV2Contract = await postJson(
+    apiPort,
+    '/api/shipments/surat/create',
+    {
+      config: {
+        surat: {
+          ...buildConfig({
+            serviceMode: 'GONDERI_OLUSTUR_V2_EXPERIMENTAL',
+            serviceType: 'GonderiOlusturV2',
+            createShipmentPath: '/api/Gonderi/GonderiOlustur',
+            firmaId: 'TEST_FIRMA',
+          }).surat,
+          restBasicUsername: '',
+          restBasicPassword: '',
+          restSenderMusteriId: '',
+          restSenderAdi: '',
+          restSenderSoyadi: '',
+          restSenderTelefon: '',
+          restSenderAdres: '',
+          restSenderIlId: 0,
+          restSenderIlceAdi: '',
+        },
+      },
+      order: {
+        ...order,
+        id: 'order-v2-contract-incomplete',
+        orderNumber: 'ORDER-V2-CONTRACT-INCOMPLETE',
+        packageId: 'V2CONTRACTINCOMPLETE',
+        shipmentPackageId: 'V2CONTRACTINCOMPLETE',
+        cargoTrackingNumber: '7270039999999913',
+        customerPhone: '',
+        shipmentAddress: {
+          ...order.shipmentAddress,
+          cityId: 34,
+        },
+      },
+    },
+  )
+  assert.equal(invalidV2Contract.ok, false)
+  assert.equal(
+    invalidV2Contract.errorCode,
+    'SURAT_GONDERI_V2_CONTRACT_INCOMPLETE',
+  )
+  assert.match(invalidV2Contract.message, /Tasiyiciya istek gonderilmedi/i)
+  assert.equal(requests.length, requestCountBeforeInvalidV2Contract)
   const requestCountBeforeMissingTracking = requests.length
   const missingCargoTrackingResponse = await postJson(
     apiPort,
     '/api/shipments/surat/create',
     {
       config: commonBarcodeConfig,
-      order: { ...order, cargoTrackingNumber: '' },
+      order: {
+        ...order,
+        id: 'order-missing-cargo-tracking',
+        orderNumber: 'ORDER-MISSING-CARGO-TRACKING',
+        packageId: 'MISSINGCARGOTRACKING',
+        shipmentPackageId: 'MISSINGCARGOTRACKING',
+        cargoTrackingNumber: '',
+      },
     },
   )
   assert.equal(missingCargoTrackingResponse.ok, false)
@@ -774,16 +1248,29 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   assert.equal(requests.length, requestCountBeforeMissingTracking)
 
   const commonBarcodeFlowRequestStart = requests.length
+  const directCommonBarcodeOrder = {
+    ...order,
+    id: 'order-direct-common-barcode',
+    orderNumber: 'ORDER-DIRECT-COMMON',
+    packageId: 'DIRECTCOMMON',
+    shipmentPackageId: 'DIRECTCOMMON',
+  }
   const commonBarcodeResponse = await postJson(
     apiPort,
     '/api/shipments/surat/create',
-    { config: commonBarcodeConfig, order },
+    { config: commonBarcodeConfig, order: directCommonBarcodeOrder },
   )
   assert.equal(commonBarcodeResponse.ok, true)
-  assert.equal(commonBarcodeResponse.serviceType, 'OrtakBarkodOlusturSoap')
+  assert.equal(
+    commonBarcodeResponse.serviceType,
+    'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
+  )
   assert.equal(commonBarcodeResponse.payloadFormat, 'SOAP/XML')
   assert.equal(commonBarcodeResponse.serviceMode, 'ORTAK_BARKOD_SOAP')
-  assert.equal(commonBarcodeResponse.operationName, 'OrtakBarkodOlustur')
+  assert.equal(
+    commonBarcodeResponse.operationName,
+    'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+  )
   assert.equal(commonBarcodeResponse.shipment.trackingNumber, '25220148446193')
   assert.equal(commonBarcodeResponse.shipment.kargoTakipNo, '25220148446193')
   assert.equal(commonBarcodeResponse.shipment.tNo, '25220148446193')
@@ -830,11 +1317,79 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     (item) => item.path === '/api/GonderiyiKargoyaGonder',
   )
   const commonLabelIndex = commonBarcodeFlowRequests.findIndex((item) =>
-    item.soapAction.includes('OrtakBarkodOlustur'),
+    item.soapAction.includes(
+      'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+    ),
   )
-  assert.ok(dispatchRegistrationIndex >= 0)
+  assert.equal(dispatchRegistrationIndex, -1)
   assert.ok(commonLabelIndex >= 0)
-  assert.ok(dispatchRegistrationIndex < commonLabelIndex)
+  assert.equal(
+    commonBarcodeFlowRequests.filter((item) =>
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ),
+    ).length,
+    1,
+  )
+  const officialBarcodeRequest =
+    commonBarcodeFlowRequests[commonLabelIndex].body
+  assert.match(
+    officialBarcodeRequest,
+    /<ReferansNo>DIRECTCOMMON<\/ReferansNo>/,
+  )
+  assert.match(
+    officialBarcodeRequest,
+    /<OzelKargoTakipNo>7270033563324593<\/OzelKargoTakipNo>/,
+  )
+  assert.doesNotMatch(officialBarcodeRequest, /<WebSiparisKodu>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<SatisKodu>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<MarketplaceIntegrationCode>/)
+  assert.match(officialBarcodeRequest, /<BirimDesi>2<\/BirimDesi>/)
+  assert.match(officialBarcodeRequest, /<BirimKg>2<\/BirimKg>/)
+  assert.match(officialBarcodeRequest, /<OdemeTipi>1<\/OdemeTipi>/)
+  assert.match(
+    officialBarcodeRequest,
+    /<KapidanOdemeTahsilatTipi>0<\/KapidanOdemeTahsilatTipi>/,
+  )
+  assert.doesNotMatch(officialBarcodeRequest, /<KapidanOdemeTutari>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<SahisBirim>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<TelefonEv>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<TelefonIs>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<AliciKodu>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<IrsaliyeSeriNo>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<IrsaliyeSiraNo>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<EkHizmetler>/)
+  assert.doesNotMatch(officialBarcodeRequest, /<TeslimSubeKodu>/)
+  const officialGonderiModelSequence = [
+    'KisiKurum',
+    'AliciAdresi',
+    'Il',
+    'Ilce',
+    'TelefonCep',
+    'Email',
+    'KargoTuru',
+    'OdemeTipi',
+    'ReferansNo',
+    'OzelKargoTakipNo',
+    'Adet',
+    'BirimDesi',
+    'BirimKg',
+    'KargoIcerigi',
+    'KapidanOdemeTahsilatTipi',
+    'TasimaSekli',
+    'TeslimSekli',
+    'SevkAdresi',
+    'GonderiSekli',
+    'Pazaryerimi',
+    'EntegrasyonFirmasi',
+    'Iademi',
+  ]
+  let previousGonderiFieldIndex = -1
+  for (const field of officialGonderiModelSequence) {
+    const fieldIndex = officialBarcodeRequest.indexOf(`<${field}>`)
+    assert.ok(fieldIndex > previousGonderiFieldIndex, `${field} WSDL sırasında olmalı`)
+    previousGonderiFieldIndex = fieldIndex
+  }
   assert.equal(
     commonBarcodeResponse.suratCreateLog.rawRequestContainsExpectedOperation,
     true,
@@ -844,6 +1399,278 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     false,
   )
   assert.equal(commonBarcodeResponse.suratCreateLog.wrongServiceCalled, false)
+
+  const gonderiYeniRequestStart = requests.length
+  const gonderiYeniOrder = {
+    ...order,
+    id: 'order-gonderi-yeni-soap',
+    orderNumber: 'ORDER-GONDERI-YENI',
+    packageId: 'PACKAGE-GONDERI-YENI',
+    shipmentPackageId: 'PACKAGE-GONDERI-YENI',
+    cargoTrackingNumber: '7270039999999999',
+  }
+  const gonderiYeniResponse = await postJson(
+    apiPort,
+    '/api/shipments/surat/create',
+    {
+      config: buildConfig({
+        serviceMode: 'GONDERI_YENI_SOAP',
+        serviceType: 'GonderiyiKargoyaGonderYeniSoap',
+        createShipmentPath: '/api/GonderiyiKargoyaGonderYeni',
+      }),
+      order: gonderiYeniOrder,
+    },
+  )
+  assert.equal(gonderiYeniResponse.ok, false)
+  assert.equal(gonderiYeniResponse.serviceMode, 'GONDERI_YENI_SOAP')
+  assert.equal(
+    gonderiYeniResponse.serviceType,
+    'GonderiyiKargoyaGonderYeniSoap',
+  )
+  assert.equal(
+    gonderiYeniResponse.operationName,
+    'GonderiyiKargoyaGonderYeni',
+  )
+  assert.equal(
+    gonderiYeniResponse.shipment.lifecycleStage,
+    'SHIPMENT_REGISTERED_LABEL_REQUIRED',
+  )
+  assert.equal(gonderiYeniResponse.shipment.printEnabled, false)
+  assert.deepEqual(gonderiYeniResponse.shipment.lifecycleMilestones, [
+    'CREATE_ACCEPTED',
+    'SHIPMENT_REGISTERED',
+    'TRACKING_ACTIVE',
+  ])
+  const gonderiYeniRequests = requests.slice(gonderiYeniRequestStart)
+  const gonderiYeniSoapRequests = gonderiYeniRequests.filter((item) =>
+    item.soapAction.includes('/GonderiyiKargoyaGonderYeni"'),
+  )
+  assert.equal(gonderiYeniSoapRequests.length, 1)
+  assert.match(
+    gonderiYeniSoapRequests[0].soapAction,
+    /http:\/\/tempuri\.org\/GonderiyiKargoyaGonderYeni/,
+  )
+  assert.match(
+    gonderiYeniSoapRequests[0].body,
+    /<GonderiyiKargoyaGonderYeni xmlns="http:\/\/tempuri\.org\/">/,
+  )
+  assert.match(
+    gonderiYeniSoapRequests[0].body,
+    /<ReferansNo>PACKAGE-GONDERI-YENI<\/ReferansNo>/,
+  )
+  assert.match(
+    gonderiYeniSoapRequests[0].body,
+    /<OzelKargoTakipNo>7270039999999999<\/OzelKargoTakipNo>/,
+  )
+  assert.doesNotMatch(
+    gonderiYeniSoapRequests[0].body,
+    /<WebSiparisKodu>|<SatisKodu>|<MarketplaceIntegrationCode>/,
+  )
+
+  const registeredLabelRequestStart = requests.length
+  const registeredLabelResponse = await postJson(
+    apiPort,
+    '/api/shipments/surat/label',
+    {
+      config: buildConfig({
+        serviceMode: 'ORTAK_BARKOD_SOAP',
+        serviceType: 'OrtakBarkodOlusturSoap',
+        createShipmentPath: '/api/OrtakBarkodOlustur',
+      }),
+      order: gonderiYeniOrder,
+    },
+  )
+  assert.equal(registeredLabelResponse.ok, true)
+  assert.equal(registeredLabelResponse.shipment.verifiedShipment, true)
+  assert.equal(registeredLabelResponse.shipment.printEnabled, true)
+  assert.equal(registeredLabelResponse.shipment.tNo, '25220148446193')
+  assert.equal(registeredLabelResponse.shipment.barkodNo, '01231201025')
+  assert.equal(registeredLabelResponse.labelIdempotency.labelCallCount, 1)
+  assert.equal(
+    registeredLabelResponse.labelIdempotency.shipmentCreateCallCount,
+    1,
+  )
+  assert.equal(
+    registeredLabelResponse.labelIdempotency.shipmentCreateRepeated,
+    false,
+  )
+  const registeredLabelRequests = requests.slice(registeredLabelRequestStart)
+  assert.equal(
+    registeredLabelRequests.filter((item) =>
+      item.soapAction.includes('/OrtakBarkodOlustur"'),
+    ).length,
+    1,
+  )
+  assert.equal(
+    registeredLabelRequests.filter((item) =>
+      item.soapAction.includes('/GonderiyiKargoyaGonderYeni"'),
+    ).length,
+    0,
+  )
+  const duplicateRegisteredLabelResponse = await postJson(
+    apiPort,
+    '/api/shipments/surat/label',
+    {
+      config: buildConfig({
+        serviceMode: 'ORTAK_BARKOD_SOAP',
+        serviceType: 'OrtakBarkodOlusturSoap',
+        createShipmentPath: '/api/OrtakBarkodOlustur',
+      }),
+      order: gonderiYeniOrder,
+    },
+  )
+  assert.equal(duplicateRegisteredLabelResponse.ok, false)
+  assert.equal(
+    duplicateRegisteredLabelResponse.errorCode,
+    'SURAT_LABEL_IDEMPOTENCY_BLOCKED',
+  )
+
+  const directCommonIdempotencyStart = requests.length
+  const directCommonIdempotencyBody = {
+    config: commonBarcodeConfig,
+    order: {
+      ...order,
+      id: 'order-direct-common-idempotency',
+      orderNumber: 'ORDER-DIRECT-IDEMPOTENCY',
+      packageId: 'DIRECTIDEMPOTENCY',
+      shipmentPackageId: 'DIRECTIDEMPOTENCY',
+    },
+  }
+  const [directCommonCreateA, directCommonCreateB] = await Promise.all([
+    postJson(apiPort, '/api/shipments/surat/create', directCommonIdempotencyBody),
+    postJson(apiPort, '/api/shipments/surat/create', directCommonIdempotencyBody),
+  ])
+  assert.equal(directCommonCreateA.ok, true)
+  assert.equal(directCommonCreateB.ok, true)
+  assert.equal(
+    requests
+      .slice(directCommonIdempotencyStart)
+      .filter((item) =>
+        item.soapAction.includes(
+          'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+        ),
+      )
+      .length,
+    1,
+  )
+  assert.equal(
+    [directCommonCreateA, directCommonCreateB].some(
+      (item) => item.idempotency.reusedInFlight === true,
+    ),
+    true,
+  )
+  const unverifiedCodesBody = {
+    config: commonBarcodeConfig,
+    order: {
+      ...order,
+      id: 'order-unverified-codes',
+      orderNumber: 'ORDER-UNVERIFIED-CODES',
+      packageId: 'UNVERIFIEDCODES',
+      shipmentPackageId: 'UNVERIFIEDCODES',
+      cargoTrackingNumber: '7270039999999997',
+    },
+  }
+  const unverifiedCodesFirst = await postJson(
+    apiPort,
+    '/api/shipments/surat/create',
+    unverifiedCodesBody,
+  )
+  assert.equal(unverifiedCodesFirst.ok, false)
+  assert.equal(
+    unverifiedCodesFirst.errorCode,
+    'SURAT_TRACKING_CONFIRMATION_MISSING',
+  )
+  assert.equal(unverifiedCodesFirst.shipment.candidateTNo, '24510610424923')
+  assert.equal(unverifiedCodesFirst.shipment.candidateBarkodNo, '01249492893')
+  assert.equal(
+    unverifiedCodesFirst.shipment.candidateVerificationStatus,
+    'PENDING_VERIFICATION',
+  )
+  assert.equal(unverifiedCodesFirst.shipment.printEnabled, false)
+  const unverifiedTrackingAfterGrace = await postJson(
+    apiPort,
+    '/api/shipments/surat/track',
+    {
+      config: {
+        ...commonBarcodeConfig.surat,
+        labelRegistrationGraceMs: 0,
+      },
+      orderId: 'order-unverified-codes',
+      shipmentId: 'UNVERIFIEDCODES',
+      webSiparisKodu: '7270039999999997',
+      queryReference: {
+        value: '7270039999999997',
+        type: 'WEB_SIPARIS_KODU',
+        source: 'test.createRequest.OzelKargoTakipNo',
+      },
+    },
+  )
+  assert.equal(unverifiedTrackingAfterGrace.gonderilerLength, 0)
+  assert.equal(
+    unverifiedTrackingAfterGrace.verificationPersistence.verificationStatus,
+    'LABEL_CREATED_NOT_REGISTERED',
+  )
+  assert.equal(
+    unverifiedTrackingAfterGrace.verificationPersistence.status,
+    'FAILED_SAFE',
+  )
+  assert.equal(
+    unverifiedTrackingAfterGrace.verificationPersistence.carrierTrackingNumber,
+    '',
+  )
+  const requestsBeforeUnverifiedReplay = requests.length
+  const unverifiedCodesReplay = await postJson(
+    apiPort,
+    '/api/shipments/surat/create',
+    unverifiedCodesBody,
+  )
+  assert.equal(unverifiedCodesReplay.ok, false)
+  assert.equal(
+    unverifiedCodesReplay.errorCode,
+    'SURAT_CREATE_IDEMPOTENCY_BLOCKED',
+  )
+  assert.equal(unverifiedCodesReplay.serviceMode, 'ORTAK_BARKOD_SOAP')
+  assert.equal(
+    unverifiedCodesReplay.operationName,
+    'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+  )
+  // 17.07.2026 kanıtı: ön-atanmış kodlar tesellümde birebir korunur;
+  // kabul bekleyen etiket bu kodlarla yazdırılabilir, create tekrarı yine yasaktır.
+  assert.equal(
+    unverifiedCodesReplay.shipment.lifecycleStatus,
+    'LABEL_READY_AWAITING_ACCEPTANCE',
+  )
+  assert.equal(
+    unverifiedCodesReplay.shipment.candidateVerificationStatus,
+    'PREASSIGNED_AWAITING_ACCEPTANCE',
+  )
+  assert.equal(
+    unverifiedCodesReplay.shipment.verificationStage,
+    'preassigned_awaiting_acceptance',
+  )
+  assert.equal(unverifiedCodesReplay.shipment.errorCategory, '')
+  assert.equal(
+    unverifiedCodesReplay.shipment.suratCreateLog.operationName,
+    'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+  )
+  assert.equal(unverifiedCodesReplay.idempotency.carrierCreateCalled, false)
+  assert.deepEqual(unverifiedCodesReplay.idempotency.candidateIdentifiers, [
+    '24510610424923',
+    '01249492893',
+  ])
+  assert.equal(
+    unverifiedCodesReplay.shipment.codeCandidates.unverifiedTNoCandidate,
+    '24510610424923',
+  )
+  assert.equal(
+    unverifiedCodesReplay.shipment.codeCandidates.unverifiedBarcodeCandidate,
+    '01249492893',
+  )
+  assert.equal(unverifiedCodesReplay.shipment.printEnabled, true)
+  assert.equal(unverifiedCodesReplay.shipment.tNo, '24510610424923')
+  assert.equal(unverifiedCodesReplay.shipment.barkodNo, '01249492893')
+  assert.equal(unverifiedCodesReplay.shipment.verifiedShipment, false)
+  assert.equal(requests.length, requestsBeforeUnverifiedReplay)
   const commonBarcodeConfigWithTrendyol = {
     ...commonBarcodeConfig,
     trendyol: {
@@ -855,7 +1682,10 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     },
   }
   const suratCallsBeforePickingFlow = requests.filter(
-    (item) => item.soapAction.includes('OrtakBarkodOlustur'),
+    (item) =>
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ),
   ).length
   const createdToPickingResponse = await postJson(
     apiPort,
@@ -902,18 +1732,27 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   const firstNewSuratCallIndex = requests.findIndex(
     (item, index) =>
       index > requests.indexOf(pickingRequest) &&
-      item.soapAction.includes('OrtakBarkodOlustur') &&
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ) &&
       item.body.includes('7270031111111111'),
   )
   assert.ok(firstNewSuratCallIndex > requests.indexOf(pickingRequest))
   assert.equal(
-    requests.filter((item) => item.soapAction.includes('OrtakBarkodOlustur'))
+    requests.filter((item) =>
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ),
+    )
       .length,
     suratCallsBeforePickingFlow + 1,
   )
 
   const suratCallsBeforeFailedPicking = requests.filter(
-    (item) => item.soapAction.includes('OrtakBarkodOlustur'),
+    (item) =>
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ),
   ).length
   const failedPickingResponse = await postJson(
     apiPort,
@@ -946,7 +1785,11 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   )
   assert.match(failedPickingResponse.message, /işleme alınamadı/i)
   assert.equal(
-    requests.filter((item) => item.soapAction.includes('OrtakBarkodOlustur'))
+    requests.filter((item) =>
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ),
+    )
       .length,
     suratCallsBeforeFailedPicking,
   )
@@ -966,7 +1809,11 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       },
     },
   )
-  assert.equal(resolvedByKargoBarkoduResponse.ok, true)
+  assert.equal(
+    resolvedByKargoBarkoduResponse.ok,
+    true,
+    JSON.stringify(resolvedByKargoBarkoduResponse),
+  )
   assert.equal(
     resolvedByKargoBarkoduResponse.shipment.operationalBarcodeVerified,
     true,
@@ -989,11 +1836,11 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   )
   assert.equal(
     resolvedByKargoBarkoduResponse.shipment.barcodeSource,
-    'surat.KargoTakipHareketDetayi.BarkodNo',
+    'surat.WebSiparisKodu.Barkod',
   )
   assert.equal(
     resolvedByKargoBarkoduResponse.shipment.trackingSource,
-    'surat.KargoTakipHareketDetayi.KargoTakipNo',
+    'surat.WebSiparisKodu.TakipNo',
   )
   assert.equal(
     resolvedByKargoBarkoduResponse.shipment.lifecycleStatus,
@@ -1004,10 +1851,33 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     resolvedByKargoBarkoduResponse.trackingVerification.serdendipVerified,
     true,
   )
-  const kargoBarkoduSoap = requests.find((item) =>
-    item.soapAction.includes('/KargoBarkodu"'),
+  assert.equal(
+    resolvedByKargoBarkoduResponse.operationalBarcodeResolution.WebSiparisKodu,
+    '7270039999999999',
   )
-  assert.equal(kargoBarkoduSoap, undefined)
+  assert.equal(
+    resolvedByKargoBarkoduResponse.operationalBarcodeResolution.referenceMatches,
+    true,
+  )
+  const webSiparisKoduSoap = requests.find(
+    (item) =>
+      item.soapAction.includes('/WebSiparisKodu"') &&
+      item.body.includes('7270039999999999'),
+  )
+  assert.ok(webSiparisKoduSoap)
+  assert.match(
+    webSiparisKoduSoap.body,
+    /<WebSiparisKodu>7270039999999999<\/WebSiparisKodu>/,
+  )
+  assert.doesNotMatch(webSiparisKoduSoap.body, /11360466937|KARGOBARKODU/)
+  assert.equal(
+    requests.some(
+      (item) =>
+        item.soapAction.includes('/KargoBarkodu"') &&
+        item.body.includes('7270039999999999'),
+    ),
+    false,
+  )
   const webOnlyResponse = await postJson(
     apiPort,
     '/api/shipments/surat/create',
@@ -1051,22 +1921,27 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   )
 
   const actualCommonBarcodeSoap = requests
-    .filter((item) => item.soapAction.includes('OrtakBarkodOlustur'))
+    .filter((item) =>
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ),
+    )
     .at(-1)
   assert.ok(actualCommonBarcodeSoap)
   assert.match(actualCommonBarcodeSoap.body, /<BirimDesi>2<\/BirimDesi>/)
   assert.match(actualCommonBarcodeSoap.body, /<BirimKg>2<\/BirimKg>/)
-  assert.match(actualCommonBarcodeSoap.body, /<ReferansNo>WEBONLY-CARGO<\/ReferansNo>/)
-  assert.match(actualCommonBarcodeSoap.body, /<WebSiparisKodu>WEBONLY-ORDER<\/WebSiparisKodu>/)
-  assert.match(actualCommonBarcodeSoap.body, /<SatisKodu>WEBONLY-ORDER<\/SatisKodu>/)
+  assert.match(actualCommonBarcodeSoap.body, /<ReferansNo>WEBONLY<\/ReferansNo>/)
+  assert.doesNotMatch(actualCommonBarcodeSoap.body, /<WebSiparisKodu>/)
+  assert.doesNotMatch(actualCommonBarcodeSoap.body, /<SatisKodu>/)
   assert.match(actualCommonBarcodeSoap.body, /<OzelKargoTakipNo>WEBONLY-CARGO<\/OzelKargoTakipNo>/)
-  assert.match(actualCommonBarcodeSoap.body, /<MarketplaceIntegrationCode>WEBONLY-CARGO<\/MarketplaceIntegrationCode>/)
+  assert.doesNotMatch(actualCommonBarcodeSoap.body, /<MarketplaceIntegrationCode>/)
   assert.match(actualCommonBarcodeSoap.body, /<KisiKurum>/)
   assert.match(actualCommonBarcodeSoap.body, /<AliciAdresi>Test adresi<\/AliciAdresi>/)
   assert.match(actualCommonBarcodeSoap.body, /2x/)
 
   const requestedMappingOrder = {
     ...order,
+    id: 'order-requested-mapping',
     orderNumber: '11357347675',
     packageId: '3952033136',
     shipmentPackageId: '3952033136',
@@ -1088,7 +1963,9 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   assert.equal(requestedMappingResponse.ok, true)
   const requestedRestRequest = requests.find(
     (item) =>
-      item.soapAction.includes('OrtakBarkodOlustur') &&
+      item.soapAction.includes(
+        'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      ) &&
       item.body.includes('7270033753100082'),
   )
   assert.ok(requestedRestRequest)
@@ -1104,31 +1981,32 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       AliciAdresi: requestedXmlField('AliciAdresi'),
     },
   }
-  assert.equal(requestedRestBody.Gonderi.ReferansNo, '7270033753100082')
-  assert.equal(requestedRestBody.Gonderi.WebSiparisKodu, '11357347675')
-  assert.equal(requestedRestBody.Gonderi.SatisKodu, '11357347675')
+  assert.equal(requestedRestBody.Gonderi.ReferansNo, '3952033136')
+  assert.equal(requestedRestBody.Gonderi.WebSiparisKodu, '')
+  assert.equal(requestedRestBody.Gonderi.SatisKodu, '')
   assert.equal(
     requestedRestBody.Gonderi.OzelKargoTakipNo,
     '7270033753100082',
   )
-  assert.equal(
-    requestedRestBody.Gonderi.MarketplaceIntegrationCode,
-    '7270033753100082',
-  )
+  assert.equal(requestedRestBody.Gonderi.MarketplaceIntegrationCode, '')
   assert.equal(
     requestedRestBody.Gonderi.AliciAdresi,
     'Dumlupınar mahallesi Selçuklu Konya',
   )
   assert.equal(
     requestedMappingResponse.requestFieldMapping.WebSiparisKodu,
-    '11357347675',
+    '',
   )
   assert.equal(
     requestedMappingResponse.requestFieldMapping.ReferansNo,
-    '7270033753100082',
+    '3952033136',
   )
   assert.equal(
     requestedMappingResponse.requestFieldMapping.MarketplaceIntegrationCode,
+    '',
+  )
+  assert.equal(
+    requestedMappingResponse.requestFieldMapping.TrackingWebSiparisKodu,
     '7270033753100082',
   )
 
@@ -1216,7 +2094,14 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     '/api/shipments/surat/create',
     {
       config: legacyConfig,
-      order: { ...order, cargoTrackingNumber: 'FAILREGISTER' },
+      order: {
+        ...order,
+        id: 'order-failed-registration',
+        orderNumber: 'ORDER-FAILED-REGISTRATION',
+        packageId: 'PACKAGE-FAILED-REGISTRATION',
+        shipmentPackageId: 'PACKAGE-FAILED-REGISTRATION',
+        cargoTrackingNumber: 'FAILREGISTER',
+      },
     },
   )
   assert.equal(failedRegistrationResponse.ok, false)
@@ -1237,21 +2122,64 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     '/api/shipments/surat/create',
     {
       config: commonBarcodeConfig,
-      order: { ...order, cargoTrackingNumber: 'FAILBARCODE' },
+      order: {
+        ...order,
+        id: 'order-failed-common-barcode',
+        orderNumber: 'ORDER-FAILED-COMMON-BARCODE',
+        packageId: 'FAILBARCODE',
+        shipmentPackageId: 'FAILBARCODE',
+        cargoTrackingNumber: 'FAILBARCODE',
+      },
     },
   )
   assert.equal(failedBarcodeResponse.ok, false)
-  assert.equal(
-    failedBarcodeResponse.shipment.lifecycleStatus,
-    'SURAT_BARCODE_FAILED',
-  )
-  assert.equal(failedBarcodeResponse.shipment.labelStatus, 'BLOCKED')
-  assert.equal(failedBarcodeResponse.shipment.verifiedShipment, false)
-  assert.equal(failedBarcodeResponse.shipment.trackingNumber, '')
-  assert.equal(failedBarcodeResponse.shipment.barcode, '')
+  assert.equal(failedBarcodeResponse.shipment, undefined)
   assert.match(
     failedBarcodeResponse.message,
-    /geçerli takip\/barkod kodu alınamadı/i,
+    /hata oluştu/i,
+  )
+
+  const trackingSoapCallsBeforeInvalid = requests.filter((item) =>
+    item.soapAction.includes('KargoTakipHareketDetayi'),
+  ).length
+  const invalidTNoResponse = await fetch(
+    `http://${host}:${apiPort}/api/shipments/surat/track`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config: commonBarcodeConfig.surat,
+        queryReference: {
+          value: '07414623015915',
+          type: 'T_NO',
+          source: 'negative-control',
+        },
+      }),
+    },
+  )
+  assert.equal(invalidTNoResponse.status, 400)
+  const invalidTNo = await invalidTNoResponse.json()
+  assert.equal(invalidTNo.errorCode, 'SURAT_TRACKING_REFERENCE_INVALID')
+  assert.equal(invalidTNo.rejectedReferenceType, 'T_NO')
+
+  const invalidLegacyFallbackResponse = await fetch(
+    `http://${host}:${apiPort}/api/shipments/surat/track`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        config: commonBarcodeConfig.surat,
+        trackingNumber: '07414623015915',
+        shipmentCode: 'PKG123',
+      }),
+    },
+  )
+  assert.equal(invalidLegacyFallbackResponse.status, 400)
+  assert.equal(
+    requests.filter((item) =>
+      item.soapAction.includes('KargoTakipHareketDetayi'),
+    ).length,
+    trackingSoapCallsBeforeInvalid,
   )
 
   const confirmedTracking = await postJson(
@@ -1260,6 +2188,18 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     {
       config: commonBarcodeConfig.surat,
       webSiparisKodu: 'PKG123',
+      queryReference: {
+        value: 'PKG123',
+        type: 'WEB_SIPARIS_KODU',
+        source: 'createRequest.OzelKargoTakipNo',
+      },
+      webSiparisKoduCandidates: [
+        '07414623015915',
+        '01231201025',
+        'ORDER123',
+      ],
+      trackingNumber: '07414623015915',
+      shipmentCode: 'PKG123-WRONG-FALLBACK',
       orderId: order.id,
       shipmentId: 'shipment-common',
     },
@@ -1269,6 +2209,28 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   assert.equal(confirmedTracking.gonderilerLength, 1)
   assert.equal(confirmedTracking.tracking.KargoTakipNo, '25220148446193')
   assert.equal(confirmedTracking.tracking.BarkodNo, '01231201025')
+  assert.equal(confirmedTracking.trackingReferenceType, 'WEB_SIPARIS_KODU')
+  assert.equal(
+    confirmedTracking.trackingReferenceSource,
+    'createRequest.OzelKargoTakipNo',
+  )
+  assert.equal(confirmedTracking.trackingAttempts.length, 1)
+  assert.equal(confirmedTracking.trackingAttempts[0].queryValue, 'PKG123')
+  assert.equal(
+    confirmedTracking.trackingAttempts[0].queryType,
+    'WEB_SIPARIS_KODU',
+  )
+  const typedTrackingSoap = requests
+    .filter((item) => item.soapAction.includes('KargoTakipHareketDetayi'))
+    .at(-1)
+  assert.match(
+    typedTrackingSoap.body,
+    /<WebSiparisKodu>PKG123<\/WebSiparisKodu>/,
+  )
+  assert.doesNotMatch(
+    typedTrackingSoap.body,
+    /07414623015915|01231201025|ORDER123|PKG123-WRONG-FALLBACK/,
+  )
   assert.equal(confirmedTracking.tracking.KargonunDurumuSayi, '6')
   assert.equal(confirmedTracking.carrierStatus.key, 'DELIVERED')
   assert.equal(confirmedTracking.carrierStatus.label, 'Teslim Edildi')
@@ -1292,6 +2254,16 @@ function buildConfig(overrides) {
       kullaniciAdi: 'TEST_CARI',
       sifre: 'TEST_SIFRE',
       firmaId: '',
+      restBasicUsername: 'TEST_BASIC_USER',
+      restBasicPassword: 'TEST_BASIC_PASSWORD',
+      restSenderMusteriId: 'TEST_SENDER',
+      restSenderAdi: 'Test',
+      restSenderSoyadi: 'Gonderen',
+      restSenderTelefon: '5551111111',
+      restSenderEmail: 'sender@example.test',
+      restSenderAdres: 'Test gonderen adresi',
+      restSenderIlId: 34,
+      restSenderIlceAdi: 'Kadikoy',
       entegrasyonSozlesme: '12345',
       ortam: 'test',
       trackingServiceType: 'KargoTakipHareketDetayiSoap',

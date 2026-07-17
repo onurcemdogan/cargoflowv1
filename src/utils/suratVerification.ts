@@ -253,6 +253,7 @@ export function verifySuratShipment(
     SatisKodu,
     OzelKargoTakipNo,
     packageId,
+    cargoTrackingNumber: trendyolCargoTrackingNumber,
   })
   const legacyConfirmedOfficialShipment = Boolean(
     effectiveShipment &&
@@ -266,8 +267,16 @@ export function verifySuratShipment(
         OzelKargoTakipNo,
       ),
   )
+  const explicitCreateFailure = Boolean(
+    effectiveShipment?.lifecycleStatus === 'SURAT_BARCODE_FAILED' ||
+      effectiveShipment?.lifecycleStatus === 'FAILED' ||
+      effectiveShipment?.errorCategory ||
+      createLog?.hardError === true ||
+      createLog?.failedBarcodeValidation === true,
+  )
   const hasSuratShipment = Boolean(
     effectiveShipment &&
+      !explicitCreateFailure &&
       (legacyConfirmedOfficialShipment ||
         (createLog &&
           [
@@ -335,22 +344,17 @@ export function verifySuratShipment(
     trackingLog.gonderilerLength == null ||
     gonderilerLength > 0
   const serdendipVerified = Boolean(
-    effectiveShipment?.serdendipVerified === true ||
-      effectiveShipment?.verificationStage === 'serdendip_verified' ||
-      (hasTrackingQuery &&
-        gonderilerLength > 0 &&
-        hasSuratTrackingNumber),
+    hasTrackingQuery &&
+      gonderilerLength > 0 &&
+      hasSuratTrackingNumber &&
+      (effectiveShipment?.serdendipVerified === true ||
+        effectiveShipment?.verificationStage === 'serdendip_verified' ||
+        effectiveShipment?.lifecycleStage === 'VERIFIED'),
   )
   const legacyIsLiveBarcodeReady = Boolean(
     serviceMode === 'ORTAK_BARKOD_SOAP' &&
       createKargoTakipNo &&
       createBarcode,
-  )
-  const legacyVerifiedShipment = Boolean(
-    hasSuratShipment &&
-      match.matched &&
-      (legacyIsLiveBarcodeReady ||
-        (hasTrackingQuery && hasTrackingRows && hasSuratTrackingNumber)),
   )
   const legacyMatchReason = !hasSuratShipment
     ? 'Sürat gönderisi oluşturulmadı'
@@ -423,38 +427,27 @@ export function verifySuratShipment(
       createLog?.zplAnalysis?.hasBarcodeRaw ||
       barcodeRaw,
   )
-  const officialZplBarcodeReady = Boolean(
-    serviceMode === 'ORTAK_BARKOD_SOAP' &&
-      technicalZplReceived &&
-      isAcceptedOperationalBarcode(effectiveOfficialBarcodeSelection.value) &&
-      !isMarketplaceIntegrationBarcode(
-        effectiveOfficialBarcodeSelection.value,
-        trendyolCargoTrackingNumber,
-        OzelKargoTakipNo,
-      ) &&
-      (effectiveShipment?.operationalBarcodeVerified === true ||
-        effectiveShipment?.verifiedShipment === true ||
-        effectiveShipment?.labelStatus === 'READY'),
-  )
   const operationalBarcodeVerified = Boolean(
     hasSuratShipment &&
       serdendipVerified &&
+      hasTrackingQuery &&
+      gonderilerLength > 0 &&
       !['SURAT_BARCODE_FAILED', 'FAILED'].includes(
         String(effectiveShipment?.lifecycleStatus ?? ''),
       ) &&
       effectiveShipment?.dispatchRegistrationConfirmed === true &&
       match.matched &&
       technicalZplReceived &&
-      (officialZplBarcodeReady ||
-        (isNumericOperationalCode(effectiveOfficialBarcodeSelection.value) &&
-      ((registeredMarketplaceBarcodeReady &&
-        effectiveShipment?.operationalBarcodeVerified === true) ||
-        (isOperationalTNo(tNoSelection.value) &&
-          (effectiveShipment?.operationalBarcodeVerified === true ||
-            effectiveShipment?.verifiedShipment === true ||
-            serviceMode === 'ORTAK_BARKOD_SOAP' ||
-            (hasTrackingQuery && hasTrackingRows && hasSuratTrackingNumber) ||
-            legacyVerifiedShipment))))),
+      isAcceptedOperationalBarcode(effectiveOfficialBarcodeSelection.value) &&
+      isNumericOperationalCode(effectiveOfficialBarcodeSelection.value) &&
+      !isMarketplaceIntegrationBarcode(
+        effectiveOfficialBarcodeSelection.value,
+        trendyolCargoTrackingNumber,
+        OzelKargoTakipNo,
+      ) &&
+      isOperationalTNo(tNoSelection.value) &&
+      (effectiveShipment?.operationalBarcodeVerified === true ||
+        effectiveShipment?.verifiedShipment === true),
   )
   const isLiveBarcodeReady = operationalBarcodeVerified
   const verifiedShipment = operationalBarcodeVerified
@@ -464,8 +457,17 @@ export function verifySuratShipment(
         'TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS' ||
       createLog?.errorCategory === 'TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS',
   )
+  const labelCreatedNotRegistered = Boolean(
+    effectiveShipment?.lifecycleStatus === 'LABEL_CREATED_NOT_REGISTERED' ||
+      effectiveShipment?.candidateVerificationStatus ===
+        'LABEL_CREATED_NOT_REGISTERED' ||
+      effectiveShipment?.errorCategory ===
+        'SURAT_LABEL_CREATED_NOT_REGISTERED',
+  )
   const verificationStage: SuratVerificationStage =
-    dispatchRejected
+    labelCreatedNotRegistered
+      ? 'label_created_not_registered'
+      : dispatchRejected
       ? 'dispatch_rejected'
       : operationalBarcodeVerified
       ? 'serdendip_verified'
@@ -478,6 +480,8 @@ export function verifySuratShipment(
     ? registeredMarketplaceBarcodeReady
       ? 'GonderiyiKargoyaGonder kaydı başarılı; Trendyol/Sürat cargoTrackingNumber barkodu doğrulandı'
       : 'Sürat numeric ana barkodu ve T.No operasyonel olarak doğrulandı'
+    : labelCreatedNotRegistered
+      ? 'Etiket oluşturuldu ancak doğru WebSiparisKodu ile Serendip gönderi kaydı açılmadı.'
     : dispatchRejected
       ? 'Trendyol/Sürat bu paketin mevcut statüsünde gönderi oluşturulmasına izin vermiyor. Mapping doğru, fakat kargo uygun statüde değil.'
     : technicalZplReceived
@@ -552,7 +556,7 @@ export function verifySuratShipment(
     operationalBarcodeVerified,
     serdendipVerified,
     operationalPrintAllowed: operationalBarcodeVerified,
-    technicalPrintAllowed: technicalZplReceived,
+    technicalPrintAllowed: operationalBarcodeVerified,
     verificationStage,
     errorCategory:
       effectiveShipment?.errorCategory ??
@@ -573,12 +577,34 @@ function resolveMatchReason({
   SatisKodu,
   OzelKargoTakipNo,
   packageId,
+  cargoTrackingNumber,
 }: {
   WebSiparisKodu: string
   SatisKodu: string
   OzelKargoTakipNo: string
   packageId: string
+  cargoTrackingNumber: string
 }): { matched: boolean; reason: string } {
+  if (
+    WebSiparisKodu &&
+    cargoTrackingNumber &&
+    WebSiparisKodu === cargoTrackingNumber
+  ) {
+    return {
+      matched: true,
+      reason: 'WebSiparisKodu == Trendyol cargoTrackingNumber',
+    }
+  }
+  if (
+    OzelKargoTakipNo &&
+    cargoTrackingNumber &&
+    OzelKargoTakipNo === cargoTrackingNumber
+  ) {
+    return {
+      matched: true,
+      reason: 'OzelKargoTakipNo == Trendyol cargoTrackingNumber',
+    }
+  }
   if (WebSiparisKodu && SatisKodu && WebSiparisKodu === SatisKodu) {
     return { matched: true, reason: 'WebSiparisKodu == SatisKodu' }
   }
@@ -824,6 +850,9 @@ function serviceModeFromType(
   }
   if (serviceType === 'GonderiyiKargoyaGonderRestJson') {
     return 'PRE_REGISTRATION_REST'
+  }
+  if (serviceType === 'GonderiyiKargoyaGonderYeniSoap') {
+    return 'GONDERI_YENI_SOAP'
   }
   if (serviceType === 'GonderiOlusturV2') {
     return 'GONDERI_OLUSTUR_V2_EXPERIMENTAL'

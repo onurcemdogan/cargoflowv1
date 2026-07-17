@@ -27,6 +27,7 @@ export const LABEL_ACTION_OPERATION_STATUSES: OperationStatus[] = [
   'SURAT_DISPATCH_REJECTED',
   'SURAT_BARCODE_FAILED',
   'SURAT_TRACKING_MISSING',
+  'LABEL_CREATED_NOT_REGISTERED',
   'TECHNICAL_ZPL_RECEIVED',
   'ZPL_NOT_OPERATIONALLY_VERIFIED',
   'TRACKING_CONFIRMED',
@@ -101,6 +102,7 @@ export function hasCarrierTracking(order: CargoOrder): boolean {
     order.shipment?.trackingNumber ||
       order.shipment?.shipmentCode ||
       order.shipment?.barcodeValue ||
+      Object.values(order.shipment?.codeCandidates ?? {}).some(Boolean) ||
       order.shipment?.suratTrackingLog?.KargoTakipNo ||
       order.shipment?.suratTrackingLog?.TakipUrlTrackingNo ||
       order.shipment?.suratTrackingLog?.extractedKargoTakipNo,
@@ -302,9 +304,8 @@ export function canDownloadZpl(order: CargoOrder): boolean {
   const verification = verifySuratShipment(order)
   return (
     isOrderOperationallyActive(order) &&
-    !['SURAT_BARCODE_FAILED', 'SURAT_DISPATCH_REJECTED', 'FAILED'].includes(
-      String(order.shipment?.lifecycleStatus ?? ''),
-    ) &&
+    hasVerifiedSuratShipment(order) &&
+    verification.operationalPrintAllowed &&
     verification.technicalZplReceived &&
     Boolean(verification.barcodeRaw)
   )

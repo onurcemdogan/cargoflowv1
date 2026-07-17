@@ -62,7 +62,7 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
   order.shipment = shipment
 
   const labelData = buildLabelData(order, shipment, buildTemplate())
-  assert.equal(labelData.tNo, 'TNO25220148446193')
+  assert.equal(labelData.tNo, '25220148446193')
   assert.equal(labelData.trackingNumber, '25220148446193')
   assert.equal(labelData.barcodeValue, '01231201025')
   assert.equal(labelData.mainBarcodeValue, '01231201025')
@@ -79,7 +79,7 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
     template: buildTemplate(),
   })
   assert.equal(label.barcodeValue, '01231201025')
-  assert.match(label.zplContent, /FDT\.No: TNO25220148446193/)
+  assert.match(label.zplContent, /FDT\.No: 25220148446193/)
   assert.match(label.zplContent, /\^FD01231201025\^FS/)
   assert.match(label.zplContent, /Ref No: PKG123/)
   assert.equal(label.zplSource, 'generated')
@@ -184,16 +184,25 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
     barcode: '',
     barcodeValue: '',
     barcodeSource: '',
+    barcodeRaw: '',
     verifiedShipment: false,
+    operationalBarcodeVerified: false,
+    lifecycleStage: 'SHIPMENT_REGISTERED_LABEL_REQUIRED',
+    suratTrackingLog: {
+      ...shipment.suratTrackingLog,
+      BarkodNo: '',
+    },
     suratCreateLog: {
       ...shipment.suratCreateLog,
       Barcode: '',
+      BarcodeRaw: '',
       hasBarcode: false,
       verifiedShipment: false,
       parsedResponse: {
         ...shipment.suratCreateLog.parsedResponse,
         Barcode: '',
         Barkod: '',
+        BarcodeRaw: '',
       },
     },
   }
@@ -277,11 +286,11 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
   assert.equal(migratedConfig.surat.serviceMode, 'ORTAK_BARKOD_SOAP')
   assert.equal(
     migratedConfig.surat.serviceType,
-    'OrtakBarkodOlusturSoap',
+    'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
   )
   assert.equal(
     migratedConfig.surat.createShipmentPath,
-    '/api/OrtakBarkodOlustur',
+    '/api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
   )
   const explicitLegacyConfig = configService.saveIntegrationConfig({
     ...migratedConfig,
@@ -292,18 +301,18 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
       createShipmentPath: '/api/OrtakBarkodOlustur',
     },
   })
-  assert.equal(explicitLegacyConfig.surat.serviceMode, 'ORTAK_BARKOD_SOAP')
+  assert.equal(explicitLegacyConfig.surat.serviceMode, 'PRE_REGISTRATION_REST')
   assert.equal(
     explicitLegacyConfig.surat.serviceType,
-    'OrtakBarkodOlusturSoap',
+    'GonderiyiKargoyaGonderRestJson',
   )
   assert.equal(
     explicitLegacyConfig.surat.createShipmentPath,
-    '/api/OrtakBarkodOlustur',
+    '/api/GonderiyiKargoyaGonder',
   )
   assert.equal(
     configService.loadIntegrationConfig().surat.serviceMode,
-    'ORTAK_BARKOD_SOAP',
+    'PRE_REGISTRATION_REST',
   )
 
   const workflow = new OrderWorkflowService(
@@ -430,17 +439,7 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
     operationStatus: 'SURAT_CREATED_NO_TRACKING',
     status: 'Ön Kayıt Yapıldı',
   }
-  assert.equal(canCreateShipment(legacyOrder), true)
-  const upgradedResult = await workflow.createShipments(
-    [legacyOrder],
-    [legacyOrder.id],
-    buildConfig(),
-  )
-  assert.equal(
-    upgradedResult.orders[0].shipment.serviceMode,
-    'ORTAK_BARKOD_SOAP',
-  )
-  assert.equal(upgradedResult.orders[0].operationStatus, 'LABEL_READY')
+  assert.equal(canCreateShipment(legacyOrder), false)
 
   const failedShipment = {
     ...buildShipment(),
@@ -488,6 +487,64 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
   assert.equal(failedOrder.labelStatus, 'BLOCKED')
   assert.equal(canDownloadZpl(failedOrder), false)
   assert.equal(canMarkPrinted(failedOrder), false)
+
+  const uncertainShipment = {
+    ...buildShipment(),
+    status: 'failed',
+    lifecycleStatus: 'SURAT_CREATE_UNCERTAIN',
+    labelStatus: 'BLOCKED',
+    verifiedShipment: false,
+    dispatchRegistrationConfirmed: false,
+    operationalBarcodeVerified: false,
+    technicalZplReceived: false,
+    trackingNumber: '',
+    kargoTakipNo: '',
+    tNo: '',
+    barcode: '',
+    barkodNo: '',
+    barcodeValue: '',
+    barcodeRaw: '',
+    rawResponse: {},
+    printEnabled: false,
+    verificationStage: 'tracking_confirmation_missing',
+    errorCategory: 'SURAT_TRACKING_CONFIRMATION_MISSING',
+    codeCandidates: {
+      unverifiedTNoCandidate: '24510610424923',
+      unverifiedBarcodeCandidate: '01249492893',
+    },
+    noTrackingReason:
+      'Serendip Gonderiler=1 teyidi yok. Aday kodlar yazdirilamaz.',
+    suratCreateLog: {
+      serviceMode: 'ORTAK_BARKOD_SOAP',
+      serviceType: 'OrtakBarkodOlusturSoap',
+      operationName: 'OrtakBarkodOlustur',
+      verifiedShipment: false,
+      codeCandidates: {
+        unverifiedTNoCandidate: '24510610424923',
+        unverifiedBarcodeCandidate: '01249492893',
+      },
+    },
+  }
+  const uncertainWorkflow = new OrderWorkflowService(
+    {},
+    { createShipment: async () => uncertainShipment },
+    provider,
+    {},
+    { append: () => [] },
+  )
+  const uncertainOrderResult = await uncertainWorkflow.createShipments(
+    [buildOrder()],
+    ['order-1'],
+    buildConfig(),
+  )
+  const uncertainOrder = uncertainOrderResult.orders[0]
+  assert.equal(uncertainOrder.operationStatus, 'SURAT_TRACKING_MISSING')
+  assert.equal(uncertainOrder.labelStatus, 'BLOCKED')
+  assert.equal(uncertainOrder.shipment.printEnabled, false)
+  assert.equal(uncertainOrder.shipment.trackingNumber, '')
+  assert.equal(uncertainOrder.shipment.barcode, '')
+  assert.equal(canDownloadZpl(uncertainOrder), false)
+  assert.equal(canMarkPrinted(uncertainOrder), false)
 
   const webOnlyZpl =
     '^XA^FO20,20^A0N,25,25^FDT.No:^FS^FO20,55^BCN,80,Y,N,N^FDWeb3952033136^FS^XZ'
@@ -541,7 +598,7 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
     JSON.stringify(webVerification),
   )
   assert.equal(webVerification.operationalPrintAllowed, false)
-  assert.equal(canDownloadZpl(webOnlyOrder), true)
+  assert.equal(canDownloadZpl(webOnlyOrder), false)
   assert.equal(canMarkPrinted(webOnlyOrder), false)
   const webPrintable = resolvePrintableLabel(webOnlyOrder)
   assert.equal(webPrintable.canPreview, false)
@@ -666,7 +723,7 @@ function buildShipment() {
     '^XA\n^FO20,20^A0N,30,30^FDSURAT LABEL^FS\n^FO20,70^BCN,80,Y,N,N^FD01231201025^FS\n^XZ'
   const parsedResponse = {
     KargoTakipNo: '25220148446193',
-    TNo: 'TNO25220148446193',
+    TNo: '25220148446193',
     Barcode: '01231201025',
     BarcodeRaw: barcodeRaw,
     Barkod: '01231201025',
@@ -679,16 +736,16 @@ function buildShipment() {
     operationName: 'OrtakBarkodOlustur',
     trackingNumber: '25220148446193',
     kargoTakipNo: '25220148446193',
-    tNo: 'TNO25220148446193',
+    tNo: '25220148446193',
     barcode: '01231201025',
     barcodeRaw,
     zplSource: 'surat.ortakBarkod.BarcodeRaw',
     trackingUrl:
       'https://www.suratkargo.com.tr/KargoTakip/?kargotakipno=25220148446193',
     shipmentCode: 'PKG123',
-    satisKodu: 'PKG123',
-    webSiparisKodu: 'PKG123',
-    ozelKargoTakipNo: 'PKG123',
+    satisKodu: 'ORDER123',
+    webSiparisKodu: '7270033563324593',
+    ozelKargoTakipNo: '7270033563324593',
     barcodeValue: '01231201025',
     barcodeSource: 'surat.ortakBarkod.Barcode',
     labelStatus: 'READY',
@@ -697,8 +754,17 @@ function buildShipment() {
     source: 'real',
     verifiedShipment: true,
     dispatchRegistrationConfirmed: true,
+    operationalBarcodeVerified: true,
     serdendipVerified: true,
     verificationStage: 'serdendip_verified',
+    lifecycleStage: 'VERIFIED',
+    suratTrackingLog: {
+      gonderilerLength: 1,
+      KargoTakipNo: '25220148446193',
+      BarkodNo: '01231201025',
+      WebSiparisKodu: '7270033563324593',
+      OzelKargoTakipNo: '7270033563324593',
+    },
     rawResponse: { parsedResponse },
     suratCreateLog: {
       rawRequest: '<soap:Envelope />',
@@ -724,7 +790,7 @@ function buildShipment() {
         tNoField: 'TNo',
         trackingValue: '25220148446193',
         barcodeValue: '01231201025',
-        tNoValue: 'TNO25220148446193',
+        tNoValue: '25220148446193',
       },
       Barcode: '01231201025',
       BarcodeRaw: barcodeRaw,

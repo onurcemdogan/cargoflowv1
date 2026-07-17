@@ -35,6 +35,16 @@ export const defaultIntegrationConfig: IntegrationConfig = {
     codSifre: '',
     codWebPassword: '',
     firmaId: '',
+    restBasicUsername: '',
+    restBasicPassword: '',
+    restSenderMusteriId: '',
+    restSenderAdi: '',
+    restSenderSoyadi: '',
+    restSenderTelefon: '',
+    restSenderEmail: '',
+    restSenderAdres: '',
+    restSenderIlId: 0,
+    restSenderIlceAdi: '',
     testKullaniciAdi: '',
     testSifre: '',
     testWebPassword: '',
@@ -51,14 +61,16 @@ export const defaultIntegrationConfig: IntegrationConfig = {
     kWebGonderiGirisiKaynak: 'PazaryeriOrtakBarkod',
     ortam: 'test',
     serviceMode: 'ORTAK_BARKOD_SOAP',
-    serviceType: 'OrtakBarkodOlusturSoap',
-    createShipmentPath: '/api/OrtakBarkodOlustur',
-    trackingServiceType: 'KargoTakipHareketDetayiRest',
+    serviceType: 'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
+    createShipmentPath:
+      '/api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+    trackingServiceType: 'KargoTakipHareketDetayiSoap',
     trackingPath: '/api/KargoTakipHareketDetayi',
     trackingCodeField: 'auto',
     barcodeCodeField: 'auto',
     tNoCodeField: 'auto',
     trackingVerificationDelaysMs: [0, 3000, 10000, 30000, 60000],
+    labelRegistrationGraceMs: 30 * 60 * 1000,
   },
 }
 
@@ -337,6 +349,8 @@ function normalizeSuratConfig(
   const serviceMode =
     surat?.serviceMode === 'ORTAK_BARKOD_SOAP' ||
     surat?.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP' ||
+    surat?.serviceMode === 'PRE_REGISTRATION_REST' ||
+    surat?.serviceMode === 'GONDERI_YENI_SOAP' ||
     surat?.serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL'
       ? surat.serviceMode
       : 'ORTAK_BARKOD_SOAP'
@@ -347,6 +361,7 @@ function normalizeSuratConfig(
     ...surat,
     serviceMode,
     ...route,
+    trackingServiceType: 'KargoTakipHareketDetayiSoap',
   }
 }
 
@@ -365,6 +380,12 @@ export function routeFromServiceMode(
       createShipmentPath: '/api/GonderiyiKargoyaGonder',
     }
   }
+  if (serviceMode === 'GONDERI_YENI_SOAP') {
+    return {
+      serviceType: 'GonderiyiKargoyaGonderYeniSoap',
+      createShipmentPath: '/api/GonderiyiKargoyaGonderYeni',
+    }
+  }
   if (serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL') {
     return {
       serviceType: 'GonderiOlusturV2',
@@ -372,7 +393,8 @@ export function routeFromServiceMode(
     }
   }
   return {
-    serviceType: 'OrtakBarkodOlusturSoap',
-    createShipmentPath: '/api/OrtakBarkodOlustur',
+    serviceType: 'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
+    createShipmentPath:
+      '/api/GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
   }
 }

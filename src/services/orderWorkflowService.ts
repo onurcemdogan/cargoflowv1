@@ -39,6 +39,78 @@ import { apiDebugService } from './apiDebugService'
 
 const ORDERS_KEY = 'cargoFlow_orders_v3'
 const PRODUCTS_KEY = 'cargoFlow_products_v3'
+const ACTIVE_MARKETPLACE_ACCOUNT_KEY = 'cargoFlow_active_marketplace_account_v2'
+const LEGACY_ACTIVE_MARKETPLACE_ACCOUNT_KEYS = [
+  'cargoFlow_active_marketplace_account_v1',
+]
+const MAX_PERSISTED_ORDER_CACHE = 120
+
+function normalizeCarrierIdentifier(value: unknown): string {
+  return String(value ?? '').replace(/[^0-9A-Za-z]/g, '')
+}
+
+function normalizeMarketplaceAccountScope(
+  value: string | number | undefined,
+): string {
+  return String(value ?? '')
+    .trim()
+    .toLocaleLowerCase('tr-TR')
+    .replace(/[^a-z0-9_-]/g, '_')
+}
+
+function scopedStorageKey(baseKey: string, accountScope: string): string {
+  return accountScope ? `${baseKey}:${accountScope}` : baseKey
+}
+
+function prepareMarketplaceAccountCaches(activeScope: string): void {
+  if (
+    typeof window === 'undefined' ||
+    typeof window.localStorage?.key !== 'function'
+  ) {
+    return
+  }
+  const activeKeys = new Set([
+    scopedStorageKey(ORDERS_KEY, activeScope),
+    scopedStorageKey(PRODUCTS_KEY, activeScope),
+  ])
+  const previousScope =
+    window.localStorage.getItem(ACTIVE_MARKETPLACE_ACCOUNT_KEY) ?? ''
+  const marketplaceAccountChanged = previousScope !== activeScope
+  const removableKeys: string[] = []
+  for (let index = 0; index < window.localStorage.length; index += 1) {
+    const key = window.localStorage.key(index)
+    if (
+      key &&
+      (key === ORDERS_KEY ||
+        key.startsWith(`${ORDERS_KEY}:`) ||
+        key === PRODUCTS_KEY ||
+        key.startsWith(`${PRODUCTS_KEY}:`)) &&
+      (marketplaceAccountChanged || !activeKeys.has(key))
+    ) {
+      removableKeys.push(key)
+    }
+  }
+  removableKeys.forEach((key) => window.localStorage.removeItem(key))
+  LEGACY_ACTIVE_MARKETPLACE_ACCOUNT_KEYS.forEach((key) =>
+    window.localStorage.removeItem(key),
+  )
+  window.localStorage.setItem(ACTIVE_MARKETPLACE_ACCOUNT_KEY, activeScope)
+}
+
+function buildPersistedOrderCache(orders: CargoOrder[]): CargoOrder[] {
+  const byNewest = [...orders].sort((left, right) => {
+    const leftTime = new Date(left.orderDate || left.createdAt || 0).getTime()
+    const rightTime = new Date(right.orderDate || right.createdAt || 0).getTime()
+    return (Number.isNaN(rightTime) ? 0 : rightTime) -
+      (Number.isNaN(leftTime) ? 0 : leftTime)
+  })
+  const active = byNewest.filter((order) => isOrderOperationallyActive(order))
+  const activeIds = new Set(active.map((order) => order.id))
+  const recentClosed = byNewest
+    .filter((order) => !activeIds.has(order.id))
+    .slice(0, Math.max(0, MAX_PERSISTED_ORDER_CACHE - active.length))
+  return [...active, ...recentClosed]
+}
 
 function selectedOrders(orders: CargoOrder[], selectedIds: string[]): CargoOrder[] {
   const selected = new Set(selectedIds)
@@ -105,6 +177,7 @@ export class OrderWorkflowService {
   private readonly labelProvider: LabelProvider
   private readonly printProvider: PrintProvider
   private readonly auditLogService: AuditLogService
+  private marketplaceAccountScope = ''
 
   constructor(
     marketplaceProvider: MarketplaceProvider,
@@ -120,8 +193,30 @@ export class OrderWorkflowService {
     this.auditLogService = auditLogService
   }
 
+  setMarketplaceAccount(sellerId: string | number | undefined): boolean {
+    const nextScope = normalizeMarketplaceAccountScope(sellerId)
+    const changed = nextScope !== this.marketplaceAccountScope
+    this.marketplaceAccountScope = nextScope
+    if (changed && nextScope) {
+      prepareMarketplaceAccountCaches(nextScope)
+    }
+    return changed
+  }
+
+  private ordersStorageKey(): string {
+    return scopedStorageKey(ORDERS_KEY, this.marketplaceAccountScope)
+  }
+
+  private productsStorageKey(): string {
+    return scopedStorageKey(PRODUCTS_KEY, this.marketplaceAccountScope)
+  }
+
+  private persistOrders(orders: CargoOrder[]): void {
+    saveToStorage(this.ordersStorageKey(), buildPersistedOrderCache(orders))
+  }
+
   loadOrders(): CargoOrder[] {
-    const orders = loadFromStorage<CargoOrder[]>(ORDERS_KEY, [])
+    const orders = loadFromStorage<CargoOrder[]>(this.ordersStorageKey(), [])
     return enrichStoredOrders(orders)
   }
 
@@ -130,12 +225,12 @@ export class OrderWorkflowService {
     products: CargoProduct[],
   ): CargoOrder[] {
     const enriched = enrichOrdersWithProductImages(orders, products)
-    saveToStorage(ORDERS_KEY, enriched)
+    this.persistOrders(enriched)
     return enriched
   }
 
   loadProducts(): CargoProduct[] {
-    const products = loadFromStorage<CargoProduct[]>(PRODUCTS_KEY, [])
+    const products = loadFromStorage<CargoProduct[]>(this.productsStorageKey(), [])
     return enrichStoredProducts(products)
   }
 
@@ -166,7 +261,7 @@ export class OrderWorkflowService {
           }
         : order,
     )
-    saveToStorage(ORDERS_KEY, nextOrders)
+    this.persistOrders(nextOrders)
     return nextOrders
   }
 
@@ -262,6 +357,7 @@ export class OrderWorkflowService {
       endDate?: Date
     } = {},
   ): Promise<{ orders: CargoOrder[]; result: WorkflowResult }> {
+    this.setMarketplaceAccount(config.trendyol.sellerId)
     const response = await this.marketplaceProvider.fetchOrders({
       credentials: config.trendyol,
       size: 200,
@@ -279,7 +375,7 @@ export class OrderWorkflowService {
     if (response.debug) {
       console.log('Trendyol order normalization debug', response.debug)
     }
-    saveToStorage(ORDERS_KEY, nextOrders)
+    this.persistOrders(nextOrders)
     this.auditLogService.append({
       action: 'Siparişler çekildi',
       level: 'success',
@@ -303,12 +399,13 @@ export class OrderWorkflowService {
   async fetchProducts(
     config: IntegrationConfig,
   ): Promise<{ products: CargoProduct[]; result: WorkflowResult }> {
+    this.setMarketplaceAccount(config.trendyol.sellerId)
     const response = await this.marketplaceProvider.fetchProducts(config.trendyol)
     const nextProducts = mergeProductsWithCache(
       response.products,
       this.loadProducts(),
     )
-    saveToStorage(PRODUCTS_KEY, nextProducts)
+    saveToStorage(this.productsStorageKey(), nextProducts)
     this.auditLogService.append({
       action: 'Ürünler çekildi',
       level: response.products.length > 0 ? 'success' : 'warning',
@@ -429,9 +526,19 @@ export class OrderWorkflowService {
         const dispatchRejected =
           shipment.lifecycleStatus === 'SURAT_DISPATCH_REJECTED' ||
           shipment.errorCategory === 'TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS'
+        const createUncertain =
+          shipment.lifecycleStatus === 'SURAT_CREATE_UNCERTAIN' ||
+          shipment.errorCategory === 'SURAT_TRACKING_CONFIRMATION_MISSING'
+        const labelCreatedNotRegistered =
+          shipment.lifecycleStatus === 'LABEL_CREATED_NOT_REGISTERED' ||
+          shipment.errorCategory === 'SURAT_LABEL_CREATED_NOT_REGISTERED'
         const createOperationStatus =
           liveBarcodeReady
             ? 'LABEL_READY'
+            : labelCreatedNotRegistered
+              ? 'LABEL_CREATED_NOT_REGISTERED'
+            : createUncertain
+              ? 'SURAT_TRACKING_MISSING'
             : dispatchRejected
               ? 'SURAT_DISPATCH_REJECTED'
             : barcodeFailed
@@ -476,6 +583,8 @@ export class OrderWorkflowService {
             matchStatus: liveBarcodeReady,
             statusComputedFrom: liveBarcodeReady
               ? 'ORTAK_BARKOD_SUCCESS'
+              : labelCreatedNotRegistered
+                ? 'SURAT_LABEL_NOT_REGISTERED'
               : dispatchRejected
                 ? 'SURAT_REJECTED'
               : 'SURAT_RESPONSE',
@@ -486,6 +595,10 @@ export class OrderWorkflowService {
               : false,
             tabBucket: liveBarcodeReady
               ? 'ETIKET_BASILACAKLAR'
+              : labelCreatedNotRegistered
+                ? 'SORUNLU_GONDERILER'
+              : createUncertain
+                ? 'SORUNLU_GONDERILER'
               : dispatchRejected
                 ? 'DURUM_UYGUN_DEGIL'
               : trackingMissing
@@ -513,6 +626,8 @@ export class OrderWorkflowService {
           label: order.label,
           labelStatus: dispatchRejected
             ? 'BLOCKED'
+            : createUncertain
+            ? 'BLOCKED'
             : barcodeFailed
             ? 'BLOCKED'
             : technicalZplOnly
@@ -521,6 +636,8 @@ export class OrderWorkflowService {
               ? 'READY'
               : order.labelStatus,
           status: dispatchRejected
+            ? 'Hata'
+            : createUncertain
             ? 'Hata'
             : barcodeFailed
             ? 'Hata'
@@ -534,6 +651,10 @@ export class OrderWorkflowService {
           operationStatus: createOperationStatus,
           errorMessage: dispatchRejected
             ? shipment.diagnosticMessage || verification.matchReason
+            : createUncertain
+            ? shipment.noTrackingReason ||
+              shipment.diagnosticMessage ||
+              'Sürat aday kodlar döndürdü ancak Serendip kaydı doğrulanamadı. Etiket basılamaz.'
             : barcodeFailed
             ? shipment.diagnosticMessage
             : trackingMissing
@@ -573,7 +694,7 @@ export class OrderWorkflowService {
           : responseOrder
         nextOrders = replaceOrder(nextOrders, updatedOrder)
         processedOrderNumbers.push(order.orderNumber)
-        if (barcodeFailed || dispatchRejected) {
+        if (barcodeFailed || dispatchRejected || createUncertain) {
           failedBarcodeCount += 1
           failedOrderNumbers.push(order.orderNumber)
         } else {
@@ -590,6 +711,7 @@ export class OrderWorkflowService {
           level: liveBarcodeReady
             ? 'success'
             : legacyPreRegistration ||
+                createUncertain ||
                 barcodeFailed ||
                 technicalZplOnly ||
                 dispatchRejected
@@ -598,6 +720,9 @@ export class OrderWorkflowService {
           details: dispatchRejected
             ? shipment.diagnosticMessage ||
               'Trendyol/Sürat paket statüsünü reddetti.'
+            : createUncertain
+            ? shipment.noTrackingReason ||
+              'Sürat aday kodlar döndürdü ancak Serendip kaydı doğrulanamadı.'
             : barcodeFailed
             ? shipment.diagnosticMessage ||
               'OrtakBarkodOlustur KargoTakipNo/Barcode döndürmedi.'
@@ -656,7 +781,7 @@ export class OrderWorkflowService {
       }
     }
 
-    saveToStorage(ORDERS_KEY, nextOrders)
+    this.persistOrders(nextOrders)
 
     return {
       orders: nextOrders,
@@ -767,7 +892,7 @@ export class OrderWorkflowService {
       })
     }
 
-    saveToStorage(ORDERS_KEY, nextOrders)
+    this.persistOrders(nextOrders)
 
     return {
       orders: nextOrders,
@@ -1177,7 +1302,7 @@ export class OrderWorkflowService {
         orderNumber: currentOrder.orderNumber,
       })
     }
-    saveToStorage(ORDERS_KEY, nextOrders)
+    this.persistOrders(nextOrders)
     return {
       orders: nextOrders,
       result: {
@@ -1322,6 +1447,9 @@ export class OrderWorkflowService {
             data.suratTrackingLog?.Gonderiler?.length ??
             0,
         )
+        const labelCreatedNotRegistered =
+          data.verificationPersistence?.verificationStatus ===
+          'LABEL_CREATED_NOT_REGISTERED'
         const carrierStatus =
           gonderilerCount > 0
             ? mapSuratCarrierStatus(
@@ -1346,14 +1474,61 @@ export class OrderWorkflowService {
               data.suratTrackingLog?.SonHareketTarihi || undefined
           }
         }
-        const verification = verifySuratShipment(order, updatedShipment)
+        const expectedTrackingNumber = String(
+          shipment.tNo ||
+            shipment.kargoTakipNo ||
+            shipment.codeMapping?.tNoValue ||
+            shipment.zplAnalysis?.acceptedTNo ||
+            '',
+        ).trim()
+        const expectedBarcodeNumber = String(
+          shipment.barkodNo ||
+            shipment.barcode ||
+            shipment.codeMapping?.barcodeValue ||
+            shipment.zplAnalysis?.acceptedFinalBarcode ||
+            '',
+        ).trim()
+        const trackingNumberMatches = Boolean(
+          expectedTrackingNumber &&
+            officialTrackingNumber &&
+            normalizeCarrierIdentifier(expectedTrackingNumber) ===
+              normalizeCarrierIdentifier(officialTrackingNumber),
+        )
+        const barcodeNumberMatches = Boolean(
+          expectedBarcodeNumber &&
+            trackingBarcode &&
+            normalizeCarrierIdentifier(expectedBarcodeNumber) ===
+              normalizeCarrierIdentifier(trackingBarcode),
+        )
+        updatedShipment.serdendipVerified = Boolean(
+          gonderilerCount > 0 &&
+            trackingNumberMatches &&
+            barcodeNumberMatches,
+        )
+        const baseVerification = verifySuratShipment(order, updatedShipment)
+        const verification = updatedShipment.serdendipVerified
+          ? baseVerification
+          : {
+              ...baseVerification,
+              verifiedShipment: false,
+              matchReason:
+                gonderilerCount === 0
+                  ? 'Serendip henüz gönderi kaydı döndürmedi.'
+                  : !trackingNumberMatches
+                    ? 'Serendip KargoTakipNo ile ZPL T.No eşleşmedi.'
+                    : 'Serendip BarkodNo ile ZPL ana barkodu eşleşmedi.',
+            }
         const transferredButNoBarcode =
           data.trackingState === 'SURAT_TRANSFERRED_BUT_NO_BARCODE' ||
           data.suratTrackingLog?.trackingState ===
             'SURAT_TRANSFERRED_BUT_NO_BARCODE'
         updatedShipment.lifecycleStatus =
-          gonderilerCount === 0
-            ? shipment.lifecycleStatus
+          labelCreatedNotRegistered
+            ? 'LABEL_CREATED_NOT_REGISTERED'
+            : gonderilerCount === 0
+            ? transferredButNoBarcode
+              ? 'SURAT_TRANSFERRED_BUT_NO_BARCODE'
+              : shipment.lifecycleStatus
             : verification.verifiedShipment
               ? 'TRACKING_CONFIRMED'
               : transferredButNoBarcode
@@ -1361,13 +1536,27 @@ export class OrderWorkflowService {
                 : 'SHIPMENT_CREATED'
         updatedShipment.diagnosticMessage = verification.verifiedShipment
           ? undefined
+          : labelCreatedNotRegistered
+            ? 'Etiket oluşturuldu ancak doğru WebSiparisKodu ile Serendip gönderi kaydı açılmadı.'
           : transferredButNoBarcode
-            ? 'Sürat veriyi aldı ancak ortak barkod/takip no dönmedi. Debug panelinden create response ve takip response’u kontrol edin.'
+            ? 'Sürat gönderi verisini aldı; kargo kabulü bekleniyor. Serendip hareket kaydı oluşana kadar doğrulama beklemede kalır.'
             : verification.matchReason
         if (verification.verifiedShipment) verifiedCount += 1
         const nextOperationStatus =
-          gonderilerCount === 0
-            ? order.operationStatus
+          labelCreatedNotRegistered
+            ? 'LABEL_CREATED_NOT_REGISTERED'
+            : gonderilerCount === 0
+            ? transferredButNoBarcode &&
+              ![
+                'LABEL_PRINTED',
+                'SHIPPED',
+                'HANDED_TO_CARGO',
+                'DELIVERED',
+                'RETURNING',
+                'DELIVERED_SPECIAL',
+              ].includes(order.operationStatus)
+              ? 'SURAT_TRANSFERRED_BUT_NO_BARCODE'
+              : order.operationStatus
             : carrierStatus?.operationStatus ??
               (verification.verifiedShipment
                 ? 'TRACKING_CONFIRMED'
@@ -1376,8 +1565,24 @@ export class OrderWorkflowService {
                   : 'SHIPMENT_CREATED')
         nextOrders = replaceOrder(nextOrders, {
           ...order,
+          status:
+            nextOperationStatus === 'SURAT_TRANSFERRED_BUT_NO_BARCODE'
+              ? 'Takip no/T.No Alınamadı'
+              : order.status,
           shipment: {
             ...updatedShipment,
+            candidateVerificationStatus: labelCreatedNotRegistered
+              ? 'LABEL_CREATED_NOT_REGISTERED'
+              : updatedShipment.candidateVerificationStatus,
+            verificationStage: labelCreatedNotRegistered
+              ? 'label_created_not_registered'
+              : updatedShipment.verificationStage,
+            errorCategory: labelCreatedNotRegistered
+              ? 'SURAT_LABEL_CREATED_NOT_REGISTERED'
+              : updatedShipment.errorCategory,
+            printEnabled: labelCreatedNotRegistered
+              ? false
+              : updatedShipment.printEnabled,
             verifiedShipment: verification.verifiedShipment,
             verificationMatchReason: verification.matchReason,
             trendyolCargoTrackingNumber: verification.trendyolCargoTrackingNumber,
@@ -1417,7 +1622,7 @@ export class OrderWorkflowService {
       }
     }
 
-    saveToStorage(ORDERS_KEY, nextOrders)
+    this.persistOrders(nextOrders)
 
     return {
       orders: nextOrders,
@@ -1480,7 +1685,7 @@ export class OrderWorkflowService {
       })
     }
 
-    saveToStorage(ORDERS_KEY, nextOrders)
+    this.persistOrders(nextOrders)
 
     return {
       orders: nextOrders,
