@@ -1575,18 +1575,42 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     '/api/shipments/surat/create',
     unverifiedCodesBody,
   )
-  assert.equal(unverifiedCodesFirst.ok, false)
+  // 17.07.2026 politikası: ilk create yanıtı 016/014 + geçerli ZPL + numeric
+  // T.No/barkod içeriyorsa etiket ön-atanmış kodlarla hemen yazdırılabilir;
+  // Gonderiler=0 fiziksel kabul öncesi normaldir ve hata sayılmaz.
+  assert.equal(unverifiedCodesFirst.ok, true)
+  assert.equal(unverifiedCodesFirst.errorCode, undefined)
   assert.equal(
-    unverifiedCodesFirst.errorCode,
-    'SURAT_TRACKING_CONFIRMATION_MISSING',
+    unverifiedCodesFirst.shipment.lifecycleStatus,
+    'LABEL_READY_AWAITING_ACCEPTANCE',
   )
+  assert.equal(
+    unverifiedCodesFirst.shipment.verificationStage,
+    'preassigned_awaiting_acceptance',
+  )
+  assert.equal(unverifiedCodesFirst.shipment.errorCategory, '')
   assert.equal(unverifiedCodesFirst.shipment.candidateTNo, '24510610424923')
   assert.equal(unverifiedCodesFirst.shipment.candidateBarkodNo, '01249492893')
+  assert.equal(unverifiedCodesFirst.shipment.tNo, '24510610424923')
+  assert.equal(
+    unverifiedCodesFirst.shipment.trackingNumber,
+    '24510610424923',
+  )
+  assert.equal(unverifiedCodesFirst.shipment.kargoTakipNo, '24510610424923')
+  assert.equal(unverifiedCodesFirst.shipment.barkodNo, '01249492893')
+  assert.equal(unverifiedCodesFirst.shipment.finalSuratBarcode, '01249492893')
   assert.equal(
     unverifiedCodesFirst.shipment.candidateVerificationStatus,
-    'PENDING_VERIFICATION',
+    'PREASSIGNED_AWAITING_ACCEPTANCE',
   )
-  assert.equal(unverifiedCodesFirst.shipment.printEnabled, false)
+  assert.equal(unverifiedCodesFirst.shipment.printEnabled, true)
+  assert.equal(unverifiedCodesFirst.shipment.labelStatus, 'READY')
+  assert.equal(unverifiedCodesFirst.shipment.verifiedShipment, false)
+  assert.equal(
+    unverifiedCodesFirst.shipment.operationalBarcodeVerified,
+    false,
+  )
+  assert.equal(unverifiedCodesFirst.idempotency.createCallCount, 1)
   const unverifiedTrackingAfterGrace = await postJson(
     apiPort,
     '/api/shipments/surat/track',

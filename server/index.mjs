@@ -1356,6 +1356,37 @@ function buildPersistedSuratCreateResponse(record, operation) {
   )
 }
 
+// İlk create ve replay/idempotency-blocked yanıtları aynı ön-atanmış baskı
+// durumunu bu ortak patch ile üretir (tek politika).
+function buildSuratPreassignedShipmentPatch(tNo, barkod) {
+  return {
+    trackingNumber: tNo,
+    kargoTakipNo: tNo,
+    tNo,
+    trackingSource: 'surat.create.preassignedTNo',
+    barcode: barkod,
+    barkodNo: barkod,
+    barcodeValue: barkod,
+    barcodeSource: 'surat.create.preassignedBarkod',
+    finalSuratBarcode: barkod,
+    candidateTNo: tNo,
+    candidateBarkodNo: barkod,
+    candidateVerificationStatus: 'PREASSIGNED_AWAITING_ACCEPTANCE',
+    verifiedShipment: false,
+    operationalBarcodeVerified: false,
+    verificationStage: 'preassigned_awaiting_acceptance',
+    errorCategory: '',
+    lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+    labelStatus: 'READY',
+    printEnabled: true,
+    diagnosticMessage:
+      'Etiket yazdırılabilir; Serendip kaydı fiziksel tesellümden sonra doğrulanacaktır.',
+    noTrackingReason: 'Etiket hazır; fiziksel Sürat kabulü bekleniyor.',
+    labelBlockedReason: '',
+    zplDisabledReason: '',
+  }
+}
+
 function buildSuratIdempotencyBlockedResponse(record, operation, message) {
   const candidateIdentifiers = uniqueStrings(record?.candidateIdentifiers ?? [])
   const operationName = firstNonEmpty(
@@ -1411,28 +1442,29 @@ function buildSuratIdempotencyBlockedResponse(record, operation, message) {
         'LABEL_CREATED_PENDING_VERIFICATION',
       ].includes(String(record?.verificationStatus ?? '')),
   )
-  const noTrackingReason = preassignedPrintAllowed
-    ? 'Serendip kaydi fiziksel kargo kabulunde olusur; on-atanmis T.No/barkod tesellumde dogrulanir.'
-    : record?.verificationStatus === 'LABEL_CREATED_NOT_REGISTERED'
-      ? 'Etiket olusturuldu ancak dogru WebSiparisKodu ile Serendip gonderi kaydi acilmadi. Aday kodlar yazdirilamaz.'
-      : 'Surat create cevabi aday kodlar dondurdu ancak Serendip Gonderiler=1 teyidi yok. Bu kodlar yazdirilamaz.'
   const labelCreatedNotRegistered =
     record?.verificationStatus === 'LABEL_CREATED_NOT_REGISTERED'
-  const verificationStage = preassignedPrintAllowed
-    ? 'preassigned_awaiting_acceptance'
+  const preassignedPatch = preassignedPrintAllowed
+    ? buildSuratPreassignedShipmentPatch(
+        unverifiedTNoCandidate,
+        unverifiedBarcodeCandidate,
+      )
+    : undefined
+  const noTrackingReason = preassignedPatch
+    ? preassignedPatch.noTrackingReason
+    : labelCreatedNotRegistered
+      ? 'Etiket olusturuldu ancak dogru WebSiparisKodu ile Serendip gonderi kaydi acilmadi. Aday kodlar yazdirilamaz.'
+      : 'Surat create cevabi aday kodlar dondurdu ancak Serendip Gonderiler=1 teyidi yok. Bu kodlar yazdirilamaz.'
+  const verificationStage = preassignedPatch
+    ? preassignedPatch.verificationStage
     : labelCreatedNotRegistered
       ? 'label_created_not_registered'
       : 'tracking_confirmation_missing'
-  const errorCategory = preassignedPrintAllowed
+  const errorCategory = preassignedPatch
     ? ''
     : labelCreatedNotRegistered
       ? 'SURAT_LABEL_CREATED_NOT_REGISTERED'
       : 'SURAT_TRACKING_CONFIRMATION_MISSING'
-  const lifecycleStatus = preassignedPrintAllowed
-    ? 'LABEL_READY_AWAITING_ACCEPTANCE'
-    : labelCreatedNotRegistered
-      ? 'LABEL_CREATED_NOT_REGISTERED'
-      : 'SURAT_CREATE_UNCERTAIN'
   return withSuratIdempotencyDebug(
     {
       ok: false,
@@ -1455,29 +1487,17 @@ function buildSuratIdempotencyBlockedResponse(record, operation, message) {
           unverifiedTNoCandidate,
           unverifiedBarcodeCandidate,
         },
-        ...(preassignedPrintAllowed
-          ? {
-              trackingNumber: unverifiedTNoCandidate,
-              kargoTakipNo: unverifiedTNoCandidate,
-              tNo: unverifiedTNoCandidate,
-              trackingSource: 'surat.create.preassignedTNo',
-              barcode: unverifiedBarcodeCandidate,
-              barkodNo: unverifiedBarcodeCandidate,
-              barcodeValue: unverifiedBarcodeCandidate,
-              barcodeSource: 'surat.create.preassignedBarkod',
-              finalSuratBarcode: unverifiedBarcodeCandidate,
-            }
-          : {}),
-        labelStatus: preassignedPrintAllowed ? 'READY' : 'BLOCKED',
-        printEnabled: preassignedPrintAllowed,
-        lifecycleStatus,
-        candidateVerificationStatus: preassignedPrintAllowed
-          ? 'PREASSIGNED_AWAITING_ACCEPTANCE'
-          : labelCreatedNotRegistered
-            ? 'LABEL_CREATED_NOT_REGISTERED'
-            : 'PENDING_VERIFICATION',
+        labelStatus: 'BLOCKED',
+        printEnabled: false,
+        lifecycleStatus: labelCreatedNotRegistered
+          ? 'LABEL_CREATED_NOT_REGISTERED'
+          : 'SURAT_CREATE_UNCERTAIN',
+        candidateVerificationStatus: labelCreatedNotRegistered
+          ? 'LABEL_CREATED_NOT_REGISTERED'
+          : 'PENDING_VERIFICATION',
         noTrackingReason,
         diagnosticMessage: String(record?.businessMessage ?? '').slice(0, 600),
+        ...(preassignedPatch ?? {}),
         suratCreateLog: {
           serviceMode,
           serviceType,
@@ -4648,6 +4668,17 @@ async function verifySuratCreateResultWithTracking({
     isNumericSuratOperationalCode(tracking.Barkod) ? tracking.Barkod : '',
   )
   const registrationBarcode = firstNonEmpty(registrationLookup?.BarkodNo)
+  // Ön-atanmış kodlar create yanıtının typed alanlarında olmayabilir;
+  // combined operasyonda ZPL analizi (acceptedTNo/acceptedFinalBarcode)
+  // canonical kaynaklardır (17.07.2026 canlı kanıtı: 11423172909).
+  const createZplAnalysis =
+    createResult.shipment?.zplAnalysis ??
+    createResult.createDiagnostics?.zplAnalysis ??
+    {}
+  const createCodeMapping =
+    createResult.shipment?.codeMapping ??
+    createResult.createDiagnostics?.codeMapping ??
+    {}
   const expectedBarcode = firstNonEmpty(
     isNumericSuratOperationalCode(createResult.shipment?.barkodNo)
       ? createResult.shipment?.barkodNo
@@ -4655,12 +4686,20 @@ async function verifySuratCreateResultWithTracking({
     isNumericSuratOperationalCode(createResult.shipment?.barcode)
       ? createResult.shipment?.barcode
       : '',
+    isNumericSuratOperationalCode(createZplAnalysis.acceptedFinalBarcode)
+      ? createZplAnalysis.acceptedFinalBarcode
+      : '',
+    isNumericSuratOperationalCode(createCodeMapping.barcodeValue)
+      ? createCodeMapping.barcodeValue
+      : '',
   )
   const barcode = firstNonEmpty(trackingBarcode, expectedBarcode)
   const expectedTrackingNumber = firstNonEmpty(
     createResult.shipment?.tNo,
     createResult.shipment?.kargoTakipNo,
     createResult.shipment?.trackingNumber,
+    createCodeMapping.tNoValue,
+    createZplAnalysis.acceptedTNo,
   )
   const trackingNumberMatchesCreate = Boolean(
     trackingNumber &&
@@ -4886,73 +4925,53 @@ async function verifySuratCreateResultWithTracking({
   }
 
   if (!trackingConfirmed) {
-    if (marketplaceRegistration.accepted) {
-      // Kanıt (17.07.2026): create/label yanıtındaki T.No ve barkod, fiziksel
-      // tesellümde birebir korunuyor (4/4 canlı eşleşme). Kayıt yüzeyleri
-      // yalnız tesellümde dolduğu için kabul öncesi Gonderiler=0 normaldir;
-      // ön-atanmış kodlar ve ZPL varsa etiket yazdırılabilir.
-      if (lifecycle.preassignedPrintAllowed) {
-        return {
-          ...createResult,
-          ok: true,
-          message:
-            'Sürat etiketi ön-atanmış T.No/barkod ile hazır. Gönderi kaydı fiziksel kargo kabulünde (tesellüm) doğrulanacak.',
+    // Kanıt (17.07.2026): create/label yanıtındaki T.No ve barkod, fiziksel
+    // tesellümde birebir korunuyor (6/6 canlı eşleşme). Kayıt yüzeyleri
+    // yalnız tesellümde dolduğu için kabul öncesi Gonderiler=0 normaldir;
+    // ön-atanmış kodlar ve ZPL varsa etiket, pazaryeri kayıt bayrağından
+    // bağımsız olarak ilk create yanıtında da yazdırılabilir.
+    if (lifecycle.preassignedPrintAllowed) {
+      return {
+        ...createResult,
+        ok: true,
+        message:
+          'Sürat etiketi ön-atanmış T.No/barkod ile hazır. Gönderi kaydı fiziksel kargo kabulünde (tesellüm) doğrulanacak.',
+        trackingVerification: verificationDebug,
+        suratCreateLog: {
+          ...createResult.suratCreateLog,
+          verifiedShipment: false,
+          dispatchRegistrationConfirmed: shipmentRegistered,
+          trackingConfirmationPending: true,
           trackingVerification: verificationDebug,
-          suratCreateLog: {
-            ...createResult.suratCreateLog,
-            verifiedShipment: false,
-            dispatchRegistrationConfirmed: shipmentRegistered,
-            trackingConfirmationPending: true,
-            trackingVerification: verificationDebug,
-          },
-          createDiagnostics: {
-            ...createResult.createDiagnostics,
-            marketplaceRegistration,
-            trackingVerification: verificationDebug,
-            operationalBarcodeResolution,
-          },
-          shipment: createResult.shipment
-            ? {
-                ...createResult.shipment,
-                trackingNumber: expectedTrackingNumber,
-                kargoTakipNo: expectedTrackingNumber,
-                tNo: expectedTrackingNumber,
-                trackingSource: 'surat.create.preassignedTNo',
-                barcode: expectedBarcode,
-                barkodNo: expectedBarcode,
-                barcodeValue: expectedBarcode,
-                barcodeSource: 'surat.create.preassignedBarkod',
-                finalSuratBarcode: expectedBarcode,
-                candidateTNo: expectedTrackingNumber,
-                candidateBarkodNo: expectedBarcode,
-                candidateVerificationStatus:
-                  'PREASSIGNED_AWAITING_ACCEPTANCE',
-                trendyolCargoTrackingNumber: marketplaceRegistration.barcode,
-                verifiedShipment: false,
-                dispatchRegistrationConfirmed: shipmentRegistered,
-                operationalBarcodeVerified: false,
-                trackingConfirmationPending: true,
-                verificationStage: 'preassigned_awaiting_acceptance',
-                lifecycleStage: lifecycle.state,
-                lifecycleMilestones: lifecycle.milestones,
-                lifecycleEvidence: lifecycle,
-                errorCategory: '',
-                lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
-                labelStatus: 'READY',
-                printEnabled: true,
-                zplReady: Boolean(createResult.shipment.barcodeRaw),
-                diagnosticMessage:
-                  'Serendip kaydı fiziksel kargo kabulünde oluşur; ön-atanmış kodlar tesellümde doğrulanır.',
-                noTrackingReason: '',
-                labelBlockedReason: '',
-                zplDisabledReason: '',
-                suratOperationalBarcodeLog: operationalBarcodeResolution,
-                suratTrackingLog: trackingVerification?.suratTrackingLog,
-                trackingVerification: verificationDebug,
-              }
-            : createResult.shipment,
-        }
+        },
+        createDiagnostics: {
+          ...createResult.createDiagnostics,
+          marketplaceRegistration,
+          trackingVerification: verificationDebug,
+          operationalBarcodeResolution,
+        },
+        shipment: createResult.shipment
+          ? {
+              ...createResult.shipment,
+              ...buildSuratPreassignedShipmentPatch(
+                expectedTrackingNumber,
+                expectedBarcode,
+              ),
+              trendyolCargoTrackingNumber: marketplaceRegistration.barcode,
+              dispatchRegistrationConfirmed: shipmentRegistered,
+              trackingConfirmationPending: true,
+              lifecycleStage: lifecycle.state,
+              lifecycleMilestones: lifecycle.milestones,
+              lifecycleEvidence: lifecycle,
+              zplReady: Boolean(createResult.shipment.barcodeRaw),
+              suratOperationalBarcodeLog: operationalBarcodeResolution,
+              suratTrackingLog: trackingVerification?.suratTrackingLog,
+              trackingVerification: verificationDebug,
+            }
+          : createResult.shipment,
       }
+    }
+    if (marketplaceRegistration.accepted) {
       return {
         ...createResult,
         ok: false,
