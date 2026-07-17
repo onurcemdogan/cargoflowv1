@@ -31,6 +31,10 @@ import {
 } from '../utils/orderStatus'
 import { loadFromStorage, saveToStorage } from '../utils/storage'
 import { verifySuratShipment } from '../utils/suratVerification'
+import {
+  isPreassignedAwaitingAcceptance,
+  resolveSuratPrintEligibility,
+} from '../utils/suratPrintEligibility'
 import { applyProductImageResolution } from '../utils/productImage'
 import { mapSuratCarrierStatus } from '../utils/shipmentStatus'
 import { buildDesiDebug, resolveNormalizedDesi } from '../utils/desi'
@@ -504,10 +508,36 @@ export class OrderWorkflowService {
       }
 
       try {
-        const shipment = await this.shippingProvider.createShipment({
+        let shipment = await this.shippingProvider.createShipment({
           order: normalizedOrder,
           config,
         })
+        const preassignedAwaiting = Boolean(
+          shipment.printEnabled === true &&
+            (shipment.lifecycleStatus === 'LABEL_READY_AWAITING_ACCEPTANCE' ||
+              shipment.candidateVerificationStatus ===
+                'PREASSIGNED_AWAITING_ACCEPTANCE'),
+        )
+        // Idempotency-blocked cevapta yeni create yapılmaz; mevcut hazır
+        // etiketin ZPL'i ve create logu korunur.
+        if (
+          preassignedAwaiting &&
+          !shipment.barcodeRaw &&
+          order.shipment?.barcodeRaw
+        ) {
+          shipment = {
+            ...shipment,
+            barcodeRaw: order.shipment.barcodeRaw,
+            zplSource: order.shipment.zplSource ?? shipment.zplSource,
+            zplAnalysis: shipment.zplAnalysis ?? order.shipment.zplAnalysis,
+            suratCreateLog:
+              shipment.suratCreateLog ?? order.shipment.suratCreateLog,
+            rawSuratCreateResponse:
+              shipment.rawSuratCreateResponse ??
+              order.shipment.rawSuratCreateResponse,
+            technicalZplReceived: true,
+          }
+        }
         const verification = verifySuratShipment(normalizedOrder, shipment)
         const liveBarcodeReady =
           shipment.dispatchRegistrationConfirmed === true &&
@@ -533,7 +563,7 @@ export class OrderWorkflowService {
           shipment.lifecycleStatus === 'LABEL_CREATED_NOT_REGISTERED' ||
           shipment.errorCategory === 'SURAT_LABEL_CREATED_NOT_REGISTERED'
         const createOperationStatus =
-          liveBarcodeReady
+          liveBarcodeReady || preassignedAwaiting
             ? 'LABEL_READY'
             : labelCreatedNotRegistered
               ? 'LABEL_CREATED_NOT_REGISTERED'
@@ -550,6 +580,9 @@ export class OrderWorkflowService {
             : shipment.lifecycleStatus === 'SURAT_CREATED_NO_TRACKING'
             ? 'SURAT_CREATED_NO_TRACKING'
             : 'SHIPMENT_CREATED'
+        const labelReadyState = liveBarcodeReady || preassignedAwaiting
+        const preassignedDiagnostic =
+          'Etiket yazdırılabilir; Serendip kaydı fiziksel tesellümden sonra doğrulanacaktır.'
         const responseOrder: CargoOrder = {
           ...normalizedOrder,
           shipment: {
@@ -579,7 +612,7 @@ export class OrderWorkflowService {
                 ? 'FAILED'
                 : 'PENDING',
             zplReady: verification.technicalZplReceived,
-            printEnabled: liveBarcodeReady,
+            printEnabled: labelReadyState,
             matchStatus: liveBarcodeReady,
             statusComputedFrom: liveBarcodeReady
               ? 'ORTAK_BARKOD_SUCCESS'
@@ -590,10 +623,10 @@ export class OrderWorkflowService {
               : 'SURAT_RESPONSE',
             previousStatus: order.operationStatus,
             newStatus: createOperationStatus,
-            previousErrorCleared: liveBarcodeReady
+            previousErrorCleared: labelReadyState
               ? Boolean(order.error || order.errorMessage)
               : false,
-            tabBucket: liveBarcodeReady
+            tabBucket: labelReadyState
               ? 'ETIKET_BASILACAKLAR'
               : labelCreatedNotRegistered
                 ? 'SORUNLU_GONDERILER'
@@ -607,14 +640,16 @@ export class OrderWorkflowService {
             zplSource: verification.zplSource,
             diagnosticMessage: liveBarcodeReady
               ? undefined
-              : shipment.diagnosticMessage,
-            noTrackingReason: liveBarcodeReady
+              : preassignedAwaiting
+                ? preassignedDiagnostic
+                : shipment.diagnosticMessage,
+            noTrackingReason: labelReadyState
               ? undefined
               : shipment.noTrackingReason,
-            labelBlockedReason: liveBarcodeReady
+            labelBlockedReason: labelReadyState
               ? undefined
               : shipment.labelBlockedReason,
-            zplDisabledReason: liveBarcodeReady
+            zplDisabledReason: labelReadyState
               ? undefined
               : shipment.zplDisabledReason,
             desi: normalizedDesi.desi,
@@ -624,7 +659,9 @@ export class OrderWorkflowService {
             apiRequestDesi: normalizedDesi.desi,
           },
           label: order.label,
-          labelStatus: dispatchRejected
+          labelStatus: labelReadyState
+            ? 'READY'
+            : dispatchRejected
             ? 'BLOCKED'
             : createUncertain
             ? 'BLOCKED'
@@ -632,24 +669,24 @@ export class OrderWorkflowService {
             ? 'BLOCKED'
             : technicalZplOnly
               ? 'BLOCKED'
-            : liveBarcodeReady
-              ? 'READY'
               : order.labelStatus,
-          status: dispatchRejected
+          status: labelReadyState
+            ? 'Etiket Hazır'
+            : dispatchRejected
             ? 'Hata'
             : createUncertain
             ? 'Hata'
             : barcodeFailed
             ? 'Hata'
-            : liveBarcodeReady
-              ? 'Etiket Hazır'
             : trackingMissing
               ? 'Takip no/T.No Alınamadı'
             : legacyPreRegistration
               ? 'Ön Kayıt Yapıldı'
               : 'Kargo Oluşturuldu',
           operationStatus: createOperationStatus,
-          errorMessage: dispatchRejected
+          errorMessage: labelReadyState
+            ? undefined
+            : dispatchRejected
             ? shipment.diagnosticMessage || verification.matchReason
             : createUncertain
             ? shipment.noTrackingReason ||
@@ -662,14 +699,14 @@ export class OrderWorkflowService {
             : technicalZplOnly
               ? verification.matchReason
               : undefined,
-          error: liveBarcodeReady ? undefined : order.error,
-          noTrackingReason: liveBarcodeReady
+          error: labelReadyState ? undefined : order.error,
+          noTrackingReason: labelReadyState
             ? undefined
             : shipment.noTrackingReason ?? order.noTrackingReason,
-          labelBlockedReason: liveBarcodeReady
+          labelBlockedReason: labelReadyState
             ? undefined
             : shipment.labelBlockedReason ?? order.labelBlockedReason,
-          zplDisabledReason: liveBarcodeReady
+          zplDisabledReason: labelReadyState
             ? undefined
             : shipment.zplDisabledReason ?? order.zplDisabledReason,
           shipmentStatus: liveBarcodeReady
@@ -683,7 +720,7 @@ export class OrderWorkflowService {
               ? 'FAILED'
               : 'PENDING',
           zplReady: verification.technicalZplReceived,
-          printEnabled: liveBarcodeReady,
+          printEnabled: labelReadyState,
           matchStatus: liveBarcodeReady,
           matchReason: verification.matchReason || (liveBarcodeReady
             ? 'OrtakBarkodOlustur KargoTakipNo + Barcode doğrulandı'
@@ -717,7 +754,9 @@ export class OrderWorkflowService {
                 dispatchRejected
               ? 'warning'
               : 'success',
-          details: dispatchRejected
+          details: preassignedAwaiting
+            ? `Etiket hazır — fiziksel Sürat kabulü bekleniyor. T.No ${shipment.tNo || shipment.trackingNumber}, Barkod ${shipment.barkodNo || shipment.barcode}.`
+            : dispatchRejected
             ? shipment.diagnosticMessage ||
               'Trendyol/Sürat paket statüsünü reddetti.'
             : createUncertain
@@ -1053,13 +1092,11 @@ export class OrderWorkflowService {
     const printedBy = options.printedBy || 'local user'
     const selected = selectedOrders(orders, selectedIds)
     const candidates = selected.filter((order) => {
-      const verification = verifySuratShipment(order)
+      const eligibility = resolveSuratPrintEligibility(order)
       const alreadyPrinted =
         order.labelStatus === 'PRINTED' && Boolean(order.label?.printedAt)
       return Boolean(
-        verification.verifiedShipment &&
-          verification.operationalPrintAllowed &&
-          (verification.barcode || verification.finalSuratBarcode) &&
+        eligibility.canPrint &&
           (!alreadyPrinted || options.includePreviouslyPrinted),
       )
     })
@@ -1761,6 +1798,12 @@ function shipmentCreationBlockedReason(order: CargoOrder): string {
   }
   if (verification.verifiedShipment && verification.barcodeRaw) {
     return 'Bu sipariş için doğrulanmış Sürat ortak barkodu zaten oluşturulmuş.'
+  }
+  if (
+    isPreassignedAwaitingAcceptance(order.shipment) &&
+    resolveSuratPrintEligibility(order).canPrint
+  ) {
+    return 'Mevcut etiket kullanılıyor; yeni create yapılmadı. Etiket ön-atanmış kodlarla yazdırılabilir.'
   }
   if (
     order.operationStatus === 'SURAT_DISPATCH_REJECTED' ||

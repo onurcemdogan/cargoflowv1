@@ -215,6 +215,7 @@ export interface Shipment {
   candidateVerificationStatus?:
     | 'PENDING_VERIFICATION'
     | 'LABEL_CREATED_NOT_REGISTERED'
+    | 'PREASSIGNED_AWAITING_ACCEPTANCE'
   internalWebBarcode?: string
   zplAnalysis?: SuratZplAnalysis
   requestValidation?: SuratRequestValidation
@@ -288,6 +289,7 @@ export interface Shipment {
     | 'ZPL_NOT_OPERATIONALLY_VERIFIED'
     | 'TRACKING_CONFIRMED'
     | 'LABEL_READY'
+    | 'LABEL_READY_AWAITING_ACCEPTANCE'
     | 'FAILED'
   source: ApiDataSource
   rawResponse: unknown
@@ -362,6 +364,7 @@ export type SuratVerificationStage =
   | 'serdendip_verified'
   | 'tracking_confirmation_missing'
   | 'label_created_not_registered'
+  | 'preassigned_awaiting_acceptance'
   | 'operational_barcode_missing'
   | 'zpl_received_but_not_operationally_verified'
   | 'failed'

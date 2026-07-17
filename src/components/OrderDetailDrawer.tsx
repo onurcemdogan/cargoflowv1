@@ -14,6 +14,7 @@ import {
   canMarkPrinted,
 } from '../utils/orderStatus'
 import { verifySuratShipment } from '../utils/suratVerification'
+import { resolveSuratPrintEligibility } from '../utils/suratPrintEligibility'
 import {
   mapMarketplaceStatus,
   mapOperationStatus,
@@ -50,6 +51,7 @@ export function OrderDetailDrawer({
   onDesiChange,
 }: OrderDetailDrawerProps) {
   const suratVerification = verifySuratShipment(order)
+  const printEligibility = resolveSuratPrintEligibility(order)
   const operationStatus = mapOperationStatus(order)
   const marketplaceStatus = mapMarketplaceStatus(
     order.marketplace,
@@ -117,8 +119,8 @@ export function OrderDetailDrawer({
             disabled={busy || !canMarkPrinted(order)}
             title={
               canMarkPrinted(order)
-                ? 'Sadece gerçek kargo etiketini yazdır'
-                : 'Önce Sürat gönderisi oluşturulmalı.'
+                ? printEligibility.reason
+                : printEligibility.reason || 'Önce Sürat gönderisi oluşturulmalı.'
             }
             onClick={() => onPrintLabel(order.id)}
           >
@@ -251,8 +253,15 @@ export function OrderDetailDrawer({
                   label="CargoFlow iç referansı"
                   value={order.shipment?.shipmentCode}
                 />
-                {order.shipment?.candidateVerificationStatus ===
-                'PENDING_VERIFICATION' ? (
+                {printEligibility.awaitingAcceptance ? (
+                  <div className="detail-warning" role="status">
+                    Etiket hazır — fiziksel Sürat kabulü bekleniyor. Serendip
+                    kaydı tesellümden sonra doğrulanacaktır.
+                  </div>
+                ) : null}
+                {!printEligibility.awaitingAcceptance &&
+                order.shipment?.candidateVerificationStatus ===
+                  'PENDING_VERIFICATION' ? (
                   <div className="detail-warning" role="status">
                     Bu kodlar Serendip kaydı doğrulanmadan yazdırılamaz.
                   </div>
@@ -318,7 +327,9 @@ export function OrderDetailDrawer({
                   value={
                     suratVerification.verifiedShipment
                       ? `Doğrulandı - ${suratVerification.matchReason}`
-                      : `Doğrulanmadı - ${suratVerification.matchReason}`
+                      : printEligibility.awaitingAcceptance
+                        ? 'Fiziksel kabul bekleniyor'
+                        : `Doğrulanmadı - ${suratVerification.matchReason}`
                   }
                 />
                 <Detail

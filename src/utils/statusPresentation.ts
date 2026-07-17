@@ -1,6 +1,7 @@
 import type { CargoOrder } from '../types/cargoflow'
 import { getOrderOperationStatus } from './orderStatus'
 import { verifySuratShipment } from './suratVerification'
+import { isPreassignedAwaitingAcceptance } from './suratPrintEligibility'
 import {
   resolveOrderStatus,
   type OrderStatusSource,
@@ -173,6 +174,19 @@ export function mapOperationStatus(order: CargoOrder): StatusPresentation {
       label: 'Etiket Hazır',
       description: 'Takip no, barkod ve ZPL verisi hazır.',
       color: 'teal',
+      source: 'localOperation',
+      sourceLabel: 'CargoFlow',
+    }
+  }
+  if (
+    isPreassignedAwaitingAcceptance(order.shipment) &&
+    verification.barcodeRaw
+  ) {
+    return {
+      label: 'Etiket Hazır',
+      description:
+        'Etiket hazır — fiziksel Sürat kabulü bekleniyor. Serendip kaydı tesellümden sonra doğrulanacaktır.',
+      color: 'yellow',
       source: 'localOperation',
       sourceLabel: 'CargoFlow',
     }

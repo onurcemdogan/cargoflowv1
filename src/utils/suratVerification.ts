@@ -290,6 +290,7 @@ export function verifySuratShipment(
             'ZPL_NOT_OPERATIONALLY_VERIFIED',
             'TRACKING_CONFIRMED',
             'LABEL_READY',
+            'LABEL_READY_AWAITING_ACCEPTANCE',
           ].includes(String(effectiveShipment.lifecycleStatus ?? '')))),
   )
   const hasTrackingQuery = Boolean(trackingLog)
@@ -464,13 +465,40 @@ export function verifySuratShipment(
       effectiveShipment?.errorCategory ===
         'SURAT_LABEL_CREATED_NOT_REGISTERED',
   )
+  // Kanıt (17.07.2026): ön-atanmış T.No/barkod fiziksel tesellümde birebir
+  // korunuyor; bu durum bir hata değil, kabul öncesi hazır etiket durumudur.
+  const preassignedAwaitingAcceptance = Boolean(
+    effectiveShipment?.printEnabled === true &&
+      (effectiveShipment?.lifecycleStatus ===
+        'LABEL_READY_AWAITING_ACCEPTANCE' ||
+        effectiveShipment?.candidateVerificationStatus ===
+          'PREASSIGNED_AWAITING_ACCEPTANCE'),
+  )
+  const preassignedTNo = preassignedAwaitingAcceptance
+    ? firstNonEmpty(
+        effectiveShipment?.tNo,
+        effectiveShipment?.kargoTakipNo,
+        effectiveShipment?.trackingNumber,
+        effectiveShipment?.candidateTNo,
+      )
+    : ''
+  const preassignedBarcode = preassignedAwaitingAcceptance
+    ? firstNonEmpty(
+        effectiveShipment?.barkodNo,
+        effectiveShipment?.barcode,
+        effectiveShipment?.barcodeValue,
+        effectiveShipment?.candidateBarkodNo,
+      )
+    : ''
   const verificationStage: SuratVerificationStage =
-    labelCreatedNotRegistered
-      ? 'label_created_not_registered'
+    operationalBarcodeVerified
+      ? 'serdendip_verified'
+      : preassignedAwaitingAcceptance
+        ? 'preassigned_awaiting_acceptance'
+      : labelCreatedNotRegistered
+        ? 'label_created_not_registered'
       : dispatchRejected
       ? 'dispatch_rejected'
-      : operationalBarcodeVerified
-      ? 'serdendip_verified'
       : technicalZplReceived
         ? 'zpl_received_but_not_operationally_verified'
         : hasSuratShipment
@@ -480,6 +508,8 @@ export function verifySuratShipment(
     ? registeredMarketplaceBarcodeReady
       ? 'GonderiyiKargoyaGonder kaydı başarılı; Trendyol/Sürat cargoTrackingNumber barkodu doğrulandı'
       : 'Sürat numeric ana barkodu ve T.No operasyonel olarak doğrulandı'
+    : preassignedAwaitingAcceptance
+      ? 'Etiket hazır — fiziksel Sürat kabulü bekleniyor'
     : labelCreatedNotRegistered
       ? 'Etiket oluşturuldu ancak doğru WebSiparisKodu ile Serendip gönderi kaydı açılmadı.'
     : dispatchRejected
@@ -510,12 +540,18 @@ export function verifySuratShipment(
     Satiskodu: SatisKodu,
     trackingNumber: serdendipVerified
       ? trackingNumberSelection.value
-      : '',
+      : preassignedTNo,
     trackingNumberSource: serdendipVerified
       ? trackingNumberSelection.source
-      : '',
-    tNo: serdendipVerified ? tNoSelection.value : '',
-    tNoSource: serdendipVerified ? tNoSelection.source : '',
+      : preassignedTNo
+        ? 'surat.create.preassignedTNo'
+        : '',
+    tNo: serdendipVerified ? tNoSelection.value : preassignedTNo,
+    tNoSource: serdendipVerified
+      ? tNoSelection.source
+      : preassignedTNo
+        ? 'surat.create.preassignedTNo'
+        : '',
     gonderiNo: firstNonEmpty(
       firstField(allSources, ['GonderiNo', 'GönderiNo', 'GonderiKodu']),
       effectiveShipment?.gonderiNo,
@@ -534,20 +570,26 @@ export function verifySuratShipment(
     ),
     officialBarcodeValue: operationalBarcodeVerified
       ? effectiveOfficialBarcodeSelection.value
-      : '',
+      : preassignedBarcode,
     officialBarcodeSource: operationalBarcodeVerified
       ? effectiveOfficialBarcodeSelection.source
-      : '',
+      : preassignedBarcode
+        ? 'surat.create.preassignedBarkod'
+        : '',
     serviceMode,
     operationName,
-    kargoTakipNo: serdendipVerified ? trackingNumberSelection.value : '',
+    kargoTakipNo: serdendipVerified
+      ? trackingNumberSelection.value
+      : preassignedTNo,
     barcode: operationalBarcodeVerified
       ? effectiveOfficialBarcodeSelection.value
-      : '',
+      : preassignedBarcode,
     barcodeRaw,
     barcodeSource: operationalBarcodeVerified
       ? effectiveOfficialBarcodeSelection.source
-      : '',
+      : preassignedBarcode
+        ? 'surat.create.preassignedBarkod'
+        : '',
     zplSource: barcodeRaw
       ? 'surat.ortakBarkod.BarcodeRaw'
       : 'generated',

@@ -1,5 +1,9 @@
 import type { CargoOrder, MarketplaceStatus, OperationStatus } from '../types/cargoflow'
 import { verifySuratShipment } from './suratVerification'
+import {
+  isPreassignedAwaitingAcceptance,
+  resolveSuratPrintEligibility,
+} from './suratPrintEligibility'
 import { resolveOrderStatus } from './shipmentStatus'
 
 export const ACTIVE_MARKETPLACE_STATUSES: MarketplaceStatus[] = [
@@ -82,6 +86,7 @@ export function getOrderOperationStatus(order: CargoOrder): OperationStatus {
     return 'LABEL_PRINTED'
   }
   if (hasLiveOrtakBarkodShipment(order)) return 'LABEL_READY'
+  if (isPreassignedAwaitingAcceptance(order.shipment)) return 'LABEL_READY'
   if (order.operationStatus) return order.operationStatus
   if (order.status === 'Hata') return 'ERROR'
   if (
@@ -243,6 +248,14 @@ export function isOrderOperationallyActive(order: CargoOrder): boolean {
 export function canCreateShipment(order: CargoOrder): boolean {
   const operationStatus = getOrderOperationStatus(order)
   const verification = verifySuratShipment(order)
+  // Ön-atanmış kodlarla hazır etiket varken ikinci create açılmaz;
+  // mevcut etiket kullanılır (17.07.2026 kabul-öncesi baskı politikası).
+  if (
+    isPreassignedAwaitingAcceptance(order.shipment) &&
+    resolveSuratPrintEligibility(order).canPrint
+  ) {
+    return false
+  }
   const commonBarcodeIncomplete = Boolean(
     order.shipment &&
       (order.shipment.dispatchRegistrationConfirmed !== true ||
@@ -300,27 +313,19 @@ export function canGenerateLabel(order: CargoOrder): boolean {
   return canPreviewLabel(order) && hasVerifiedSuratShipment(order)
 }
 
+// ZPL İndir ve Etiketi Yazdır aynı yetkinlik helper'ını kullanır; birinin
+// aktif diğerinin pasif olması mümkün değildir.
 export function canDownloadZpl(order: CargoOrder): boolean {
-  const verification = verifySuratShipment(order)
   return (
     isOrderOperationallyActive(order) &&
-    hasVerifiedSuratShipment(order) &&
-    verification.operationalPrintAllowed &&
-    verification.technicalZplReceived &&
-    Boolean(verification.barcodeRaw)
+    resolveSuratPrintEligibility(order).canDownloadZpl
   )
 }
 
 export function canMarkPrinted(order: CargoOrder): boolean {
-  const operationStatus = getOrderOperationStatus(order)
-  const verification = verifySuratShipment(order)
   return (
     isOrderOperationallyActive(order) &&
-    ['TRACKING_CONFIRMED', 'LABEL_READY', 'LABEL_PRINTED'].includes(
-      operationStatus,
-    ) &&
-    hasVerifiedSuratShipment(order) &&
-    Boolean(verification.barcode || verification.finalSuratBarcode)
+    resolveSuratPrintEligibility(order).canPrint
   )
 }
 
@@ -363,6 +368,15 @@ export function isSuratVerificationPending(order: CargoOrder): boolean {
 }
 
 export function isLabelReadyForPrint(order: CargoOrder): boolean {
+  const eligibility = resolveSuratPrintEligibility(order)
+  if (
+    isOrderOperationallyActive(order) &&
+    eligibility.awaitingAcceptance &&
+    eligibility.canPrint &&
+    !isLabelPrinted(order)
+  ) {
+    return true
+  }
   const verification = verifySuratShipment(order)
   return (
     isOrderOperationallyActive(order) &&
@@ -430,6 +444,9 @@ export function migrateUnconfirmedSerendipState(
   order: CargoOrder,
 ): CargoOrder {
   const shipment = order.shipment
+  // Ön-atanmış kodlarla kabul bekleyen etiket geçerli bir durumdur;
+  // Serendip kanıtı yok diye kodları/ZPL'i silme.
+  if (isPreassignedAwaitingAcceptance(shipment)) return order
   const trackingLog = shipment?.suratTrackingLog
   const trackingRows = Math.max(
     Number(trackingLog?.gonderilerLength ?? 0),

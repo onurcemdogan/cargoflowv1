@@ -7,6 +7,7 @@ import type {
 import { buildLabelData, type LabelData } from './labelData'
 import { resolveSuratBarcodeRawZpl } from './zpl'
 import { verifySuratShipment } from './suratVerification'
+import { isPreassignedAwaitingAcceptance } from './suratPrintEligibility'
 
 export interface PrintableLabelContext {
   orders?: CargoOrder[]
@@ -195,9 +196,7 @@ export function resolvePrintableLabel(
   // fiziksel tesellümde birebir korunuyor; sunucu printEnabled verdiyse
   // kabul öncesi etiket bu kodlarla yazdırılabilir.
   const preassignedPrintReady = Boolean(
-    readBoolean(shipment, ['printEnabled']) &&
-      firstString(readPath(shipment, ['candidateVerificationStatus'])) ===
-        'PREASSIGNED_AWAITING_ACCEPTANCE' &&
+    isPreassignedAwaitingAcceptance(shipment) &&
       tracking.value &&
       barcode.value &&
       barcodeRaw.value,

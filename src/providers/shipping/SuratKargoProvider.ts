@@ -251,6 +251,7 @@ export class SuratKargoProvider implements ShippingProvider {
           'SURAT_CREATE_UNCERTAIN',
           'SURAT_TRACKING_MISSING',
           'LABEL_CREATED_NOT_REGISTERED',
+          'LABEL_READY_AWAITING_ACCEPTANCE',
         ].includes(String(data?.shipment?.lifecycleStatus ?? ''))
       ) {
         throw new Error(data.message ?? 'Sürat gönderisi oluşturulamadı.')
@@ -360,9 +361,12 @@ export class SuratKargoProvider implements ShippingProvider {
             data.shipment.candidateVerificationStatus ??
             (candidateTNo || candidateBarkodNo
               ? data.shipment.lifecycleStatus ===
-                'LABEL_CREATED_NOT_REGISTERED'
-                ? 'LABEL_CREATED_NOT_REGISTERED'
-                : 'PENDING_VERIFICATION'
+                'LABEL_READY_AWAITING_ACCEPTANCE'
+                ? 'PREASSIGNED_AWAITING_ACCEPTANCE'
+                : data.shipment.lifecycleStatus ===
+                    'LABEL_CREATED_NOT_REGISTERED'
+                  ? 'LABEL_CREATED_NOT_REGISTERED'
+                  : 'PENDING_VERIFICATION'
               : undefined),
           internalWebBarcode:
             data.shipment.internalWebBarcode ??
