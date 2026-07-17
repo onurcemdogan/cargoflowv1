@@ -50,6 +50,8 @@ export function resolveSuratPrintEligibility(
   )
   const awaitingAcceptance =
     !verified && isPreassignedAwaitingAcceptance(shipment)
+  const zplAnalysis =
+    shipment?.zplAnalysis ?? shipment?.suratCreateLog?.zplAnalysis
   const trackingNumber = verified
     ? firstNonEmpty(
         verification.kargoTakipNo,
@@ -62,16 +64,26 @@ export function resolveSuratPrintEligibility(
           shipment?.kargoTakipNo,
           shipment?.trackingNumber,
           shipment?.candidateTNo,
+          zplAnalysis?.acceptedTNo,
         )
       : ''
+  // Barkod önceliği ZPL analizindedir; T.No ile çakışan aday reddedilir
+  // (016 yanıtında üst seviye Barcode alanına T.No sızabiliyor).
+  const rejectTrackingCollision = (value: string): string =>
+    value && value === trackingNumber ? '' : value
   const barcode = verified
     ? firstNonEmpty(verification.barcode, verification.finalSuratBarcode)
     : awaitingAcceptance
       ? firstNonEmpty(
-          shipment?.barkodNo,
-          shipment?.barcode,
-          shipment?.barcodeValue,
-          shipment?.candidateBarkodNo,
+          rejectTrackingCollision(
+            firstNonEmpty(zplAnalysis?.acceptedFinalBarcode),
+          ),
+          rejectTrackingCollision(firstNonEmpty(shipment?.barkodNo)),
+          rejectTrackingCollision(firstNonEmpty(shipment?.barcode)),
+          rejectTrackingCollision(firstNonEmpty(shipment?.barcodeValue)),
+          rejectTrackingCollision(
+            firstNonEmpty(shipment?.candidateBarkodNo),
+          ),
         )
       : ''
   const eligible = Boolean(

@@ -6,7 +6,255 @@ import type {
   SuratLabelMappingConfig,
 } from '../types/cargoflow'
 import { buildLabelData, type LabelData } from './labelData'
+import { resolveSuratPrintEligibility } from './suratPrintEligibility'
 import { formatDesi } from './desi'
+
+// Her etiket sayfası kendi bağımsız (immutable) modelini kullanır; bir
+// siparişin kodları başka siparişe sızamaz.
+export interface SuratPrintPageModel {
+  orderNumber: string
+  trackingNumber: string
+  barcodeNumber: string
+  ozelKargoTakipNo: string
+  zpl: string
+  recipient: string
+  address: string
+  desi: number | null
+  packageCount: number
+}
+
+export interface SuratPrintSkip {
+  orderNumber: string
+  reason: string
+}
+
+export interface SuratPrintSelection {
+  printable: Array<{ order: CargoOrder; model: SuratPrintPageModel }>
+  skipped: SuratPrintSkip[]
+}
+
+export interface SuratBulkPrintResult {
+  printedOrderNumbers: string[]
+  models: SuratPrintPageModel[]
+  skipped: SuratPrintSkip[]
+  printCalled: boolean
+  debug?: BrowserLabelPrintDebug
+}
+
+export function buildSuratPrintPageModel(order: CargoOrder): {
+  model?: SuratPrintPageModel
+  reason?: string
+} {
+  const eligibility = resolveSuratPrintEligibility(order)
+  if (!eligibility.canPrint) {
+    return { reason: eligibility.reason }
+  }
+  const shipment = order.shipment
+  const zplAnalysis =
+    shipment?.zplAnalysis ?? shipment?.suratCreateLog?.zplAnalysis
+  // T.No ve barkod bağımsız kaynak ailelerinden çözülür; birbirinin yerine
+  // kullanılamaz. Kanıt (11424170556): eski parser 016 ZPL'indeki ilk numeric
+  // ^FD'yi (T.No) üst seviye Barcode alanlarına da yazabiliyor. Bu yüzden
+  // canonical barkod önceliği zplAnalysis.acceptedFinalBarcode'dadır ve
+  // T.No ile çakışan barkod adayları reddedilir.
+  const trackingNumber = firstString(
+    shipment?.trackingNumber,
+    shipment?.tNo,
+    shipment?.kargoTakipNo,
+    zplAnalysis?.acceptedTNo,
+  )
+  const collidesWithTracking = (value: string): boolean =>
+    Boolean(
+      value &&
+        (value === trackingNumber ||
+          value === firstString(zplAnalysis?.acceptedTNo)),
+    )
+  const barcodeCandidates = [
+    zplAnalysis?.acceptedFinalBarcode,
+    shipment?.codeMapping?.barcodeValue,
+    shipment?.barkodNo,
+    shipment?.barcode,
+    shipment?.barcodeValue,
+    shipment?.finalSuratBarcode,
+  ]
+  const barcodeNumber = firstString(
+    ...barcodeCandidates.map((value) =>
+      collidesWithTracking(firstString(value)) ? '' : value,
+    ),
+  )
+  const ozelKargoTakipNo = firstString(
+    shipment?.ozelKargoTakipNo,
+    order.cargoTrackingNumber,
+  )
+  if (!trackingNumber || !barcodeNumber) {
+    suratPrintTrace('PRINT_SKIPPED_REASON', {
+      reason: 'FIELD_MAPPING_COLLISION',
+      orderNumber: String(order.orderNumber ?? ''),
+      trackingNumber,
+      barcodeNumber,
+      acceptedTNo: firstString(zplAnalysis?.acceptedTNo),
+      acceptedFinalBarcode: firstString(zplAnalysis?.acceptedFinalBarcode),
+    })
+    return {
+      reason:
+        'Etiket yazdırılamadı: T.No ve barkod alanları yanlış eşleştirilmiş.',
+    }
+  }
+  if (trackingNumber === barcodeNumber) {
+    suratPrintTrace('PRINT_SKIPPED_REASON', {
+      reason: 'FIELD_MAPPING_COLLISION',
+      orderNumber: String(order.orderNumber ?? ''),
+      trackingNumber,
+      barcodeNumber,
+      acceptedTNo: firstString(zplAnalysis?.acceptedTNo),
+      acceptedFinalBarcode: firstString(zplAnalysis?.acceptedFinalBarcode),
+    })
+    return {
+      reason:
+        'Etiket yazdırılamadı: T.No ve barkod alanları yanlış eşleştirilmiş.',
+    }
+  }
+  return {
+    model: {
+      orderNumber: String(order.orderNumber ?? ''),
+      trackingNumber,
+      barcodeNumber,
+      ozelKargoTakipNo,
+      zpl: eligibility.barcodeRaw,
+      recipient: String(order.customerName ?? ''),
+      address: String(order.address ?? ''),
+      desi: order.desi ?? null,
+      packageCount: order.packageCount ?? 1,
+    },
+  }
+}
+
+export function resolveSuratPrintableSelection(
+  orders: CargoOrder[],
+): SuratPrintSelection {
+  const printable: SuratPrintSelection['printable'] = []
+  const skipped: SuratPrintSkip[] = []
+  const seen = new Set<string>()
+  for (const order of orders) {
+    const dedupeKey = String(order.id || order.orderNumber || '')
+    if (dedupeKey && seen.has(dedupeKey)) continue
+    if (dedupeKey) seen.add(dedupeKey)
+    const { model, reason } = buildSuratPrintPageModel(order)
+    suratPrintTrace('PAGE_RESOLUTION_RESULT', {
+      orderNumber: String(order.orderNumber ?? order.id ?? '-'),
+      lifecycleStatus: order.shipment?.lifecycleStatus ?? '',
+      printEnabled: order.shipment?.printEnabled === true,
+      canPrint: Boolean(model),
+      trackingNumber: model?.trackingNumber ?? '',
+      barcode: model?.barcodeNumber ?? '',
+      hasZpl: Boolean(model?.zpl),
+      reason: reason ?? '',
+    })
+    if (model) {
+      printable.push({ order, model })
+    } else {
+      const skipReason = reason || 'Etiket yazdırmaya uygun değil.'
+      suratPrintTrace('PRINT_SKIPPED_REASON', {
+        orderNumber: String(order.orderNumber ?? order.id ?? '-'),
+        reason: skipReason,
+      })
+      skipped.push({
+        orderNumber: String(order.orderNumber ?? order.id ?? '-'),
+        reason: skipReason,
+      })
+    }
+  }
+  return { printable, skipped }
+}
+
+export interface SuratZplDownload {
+  fileName: string
+  content: string
+  models: SuratPrintPageModel[]
+  skipped: SuratPrintSkip[]
+}
+
+// ZPL İndir: yalnız .zpl dosyası içeriğini çözer. Modal açmaz, window.print
+// çağırmaz, create tetiklemez. Print ile aynı eligibility/seçim mantığını
+// kullanır ki iki aksiyon tutarlı olsun.
+export function buildSuratZplDownload(
+  orders: CargoOrder[],
+): SuratZplDownload | null {
+  const selection = resolveSuratPrintableSelection(orders)
+  if (selection.printable.length === 0) {
+    return null
+  }
+  const models = selection.printable.map((item) => item.model)
+  const content = models.map((model) => model.zpl).join('\n')
+  const fileName =
+    models.length === 1
+      ? `surat-${sanitizeFilePart(models[0].orderNumber)}-${sanitizeFilePart(
+          models[0].barcodeNumber,
+        )}.zpl`
+      : `surat-toplu-${models.length}.zpl`
+  return { fileName, content, models, skipped: selection.skipped }
+}
+
+function sanitizeFilePart(value: string): string {
+  return String(value ?? '')
+    .trim()
+    .replace(/[^\w.-]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'label'
+}
+
+// Tekli ve toplu yazdırmanın tek giriş noktası. Uygun etiketleri tek print
+// dokümanında toplar, window.print() yalnız bir kez çağrılır ve pencere
+// otomatik kapatılmaz.
+export async function printSuratLabels(
+  orders: CargoOrder[],
+  template: LabelTemplate,
+  mappingConfig: SuratLabelMappingConfig = {},
+): Promise<SuratBulkPrintResult> {
+  const selection = resolveSuratPrintableSelection(orders)
+  if (selection.printable.length === 0) {
+    return {
+      printedOrderNumbers: [],
+      models: [],
+      skipped: selection.skipped,
+      printCalled: false,
+    }
+  }
+  try {
+    const debug = await printCleanLabelDocument(
+      selection.printable.map((item) => item.order),
+      template,
+      mappingConfig,
+    )
+    return {
+      printedOrderNumbers: selection.printable.map(
+        (item) => item.model.orderNumber,
+      ),
+      models: selection.printable.map((item) => item.model),
+      skipped: selection.skipped,
+      printCalled: debug.printCalled,
+      debug,
+    }
+  } catch (error) {
+    const reason =
+      error instanceof Error
+        ? error.message
+        : 'Yazdırma başlatılamadı.'
+    return {
+      printedOrderNumbers: [],
+      models: [],
+      skipped: [
+        ...selection.skipped,
+        ...selection.printable.map((item) => ({
+          orderNumber: item.model.orderNumber,
+          reason,
+        })),
+      ],
+      printCalled: false,
+      debug:
+        error instanceof BrowserLabelPrintError ? error.debug : undefined,
+    }
+  }
+}
 
 export interface BrowserLabelPrintDebug {
   printRequested: boolean
@@ -31,28 +279,77 @@ export class BrowserLabelPrintError extends Error {
   }
 }
 
-let reservedPrintWindow: Window | null = null
+// ---------------------------------------------------------------------------
+// Print motoru: KALICI gizli iframe. Popup yaklaşımı tamamen kaldırıldı.
+// Kurallar:
+// - iframe DOM'da kalıcıdır; her print aynı iframe'i yeniden kullanır.
+// - Başarılı print yolunda HİÇBİR cleanup yoktur: window.close yok,
+//   iframe.remove yok, afterprint yalnız tanı logu üretir.
+// - Tek click = tek execution: activePrintExecution guard'ı çift çağrıyı
+//   (React StrictMode dahil) engeller.
+// - Her yaşam döngüsü adımı timestamp + executionId ile console'a loglanır.
+// ---------------------------------------------------------------------------
 
+let printExecutionCounter = 0
+let activePrintExecution: string | null = null
+let persistentPrintFrame: HTMLIFrameElement | null = null
+
+export function suratPrintTrace(
+  event: string,
+  details: Record<string, unknown> = {},
+): void {
+  try {
+    console.info(`[surat-print] ${new Date().toISOString()} ${event}`, details)
+  } catch {
+    // console erişilemiyorsa akışı bozma
+  }
+}
+
+function ensurePersistentPrintFrame(executionId: string): HTMLIFrameElement {
+  if (
+    persistentPrintFrame &&
+    persistentPrintFrame.isConnected !== false &&
+    persistentPrintFrame.contentWindow
+  ) {
+    suratPrintTrace('IFRAME_REUSED', { executionId })
+    return persistentPrintFrame
+  }
+  const iframe = document.createElement('iframe')
+  iframe.setAttribute('aria-hidden', 'true')
+  iframe.setAttribute('data-surat-print-frame', 'persistent')
+  iframe.style.position = 'fixed'
+  iframe.style.left = '0'
+  iframe.style.bottom = '0'
+  iframe.style.width = '0'
+  iframe.style.height = '0'
+  iframe.style.border = '0'
+  iframe.style.visibility = 'hidden'
+  document.body.appendChild(iframe)
+  persistentPrintFrame = iframe
+  suratPrintTrace('WINDOW_REFERENCE_CREATED', {
+    executionId,
+    mode: 'persistent-iframe',
+  })
+  return iframe
+}
+
+// Geriye dönük uyumluluk: popup rezervasyonu kaldırıldı. Bu fonksiyonlar
+// artık pencere AÇMAZ ve KAPATMAZ; yalnız tanı logu üretir.
 export function reserveCleanLabelPrintWindow(): Window | null {
-  if (typeof window === 'undefined') return null
-  const printWindow = openPrintWindow()
-  if (!printWindow) return null
-  reservedPrintWindow = printWindow
-  writePrintDocument(
-    printWindow.document,
-    '<!doctype html><html lang="tr"><head><meta charset="utf-8"><title>CargoFlow Etiket</title></head><body style="font-family:Arial,sans-serif;padding:16px">Etiket hazırlanıyor...</body></html>',
-  )
-  return printWindow
+  suratPrintTrace('WINDOW_RESERVED', {
+    deprecated: true,
+    mode: 'persistent-iframe',
+    note: 'Popup rezervasyonu kaldırıldı; kalıcı iframe kullanılıyor.',
+  })
+  return null
 }
 
 export function cancelReservedCleanLabelPrintWindow(): void {
-  try {
-    reservedPrintWindow?.close()
-  } catch {
-    // ignore
-  } finally {
-    reservedPrintWindow = null
-  }
+  suratPrintTrace('CANCEL_RESERVED_CALLED', {
+    deprecated: true,
+    action: 'none',
+    note: 'Kapatılacak popup yok; kalıcı iframe DOM\'da bırakılır.',
+  })
 }
 
 export async function printCleanLabelDocument(
@@ -60,6 +357,8 @@ export async function printCleanLabelDocument(
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
 ): Promise<BrowserLabelPrintDebug> {
+  const executionId = `print-${++printExecutionCounter}`
+  const orderNumbers = orders.map((order) => String(order.orderNumber ?? ''))
   const debug: BrowserLabelPrintDebug = {
     printRequested: true,
     printMode: 'chrome-html',
@@ -73,6 +372,24 @@ export async function printCleanLabelDocument(
     printWindowOpened: false,
     printCalled: false,
   }
+  suratPrintTrace('PRINT_FLOW_START', {
+    executionId,
+    orderNumbers,
+    activePrintExecution,
+  })
+
+  if (activePrintExecution) {
+    suratPrintTrace('PRINT_ERROR', {
+      executionId,
+      orderNumbers,
+      reason: 'in-flight-guard',
+      activePrintExecution,
+    })
+    return failPrint(
+      debug,
+      'Devam eden bir yazdırma işlemi var; aynı anda ikinci yazdırma başlatılmadı.',
+    )
+  }
 
   if (typeof document === 'undefined') {
     return failPrint(
@@ -84,39 +401,121 @@ export async function printCleanLabelDocument(
     return failPrint(debug, 'Yazdırılacak etiket bulunamadı.')
   }
 
-  const printHtml = buildCleanLabelHtml(orders, template, mappingConfig)
-  debug.labelHtmlGenerated = Boolean(printHtml.trim())
-  debug.labelHtmlLength = printHtml.length
-  debug.barcodeValue = firstString(
-    orders[0]?.shipment?.barcode,
-    orders[0]?.shipment?.barcodeValue,
-    orders[0]?.label?.barcodeValue,
-  )
-  debug.printableContentPreview = previewPrintableContent(printHtml)
+  activePrintExecution = executionId
+  try {
+    suratPrintTrace('HTML_BUILD_START', { executionId, orderNumbers })
+    const printHtml = buildCleanLabelHtml(orders, template, mappingConfig)
+    debug.labelHtmlGenerated = Boolean(printHtml.trim())
+    debug.labelHtmlLength = printHtml.length
+    debug.barcodeValue = firstString(
+      orders[0]?.shipment?.barcode,
+      orders[0]?.shipment?.barcodeValue,
+      orders[0]?.label?.barcodeValue,
+    )
+    debug.printableContentPreview = previewPrintableContent(printHtml)
+    suratPrintTrace('HTML_BUILD_SUCCESS', {
+      executionId,
+      htmlLength: printHtml.length,
+    })
 
-  if (!isPrintableLabelHtml(printHtml)) {
-    return failPrint(debug, 'Yazdırılacak etiket içeriği oluşturulamadı.')
-  }
+    if (!isPrintableLabelHtml(printHtml)) {
+      return failPrint(debug, 'Yazdırılacak etiket içeriği oluşturulamadı.')
+    }
 
-  const printWindow = consumeReservedPrintWindow() || openPrintWindow()
-  if (printWindow) {
+    const iframe = ensurePersistentPrintFrame(executionId)
+    const frameDocument = iframe.contentDocument
+    const frameWindow = iframe.contentWindow
+    if (!frameDocument || !frameWindow) {
+      suratPrintTrace('PRINT_ERROR', {
+        executionId,
+        reason: 'iframe-content-unavailable',
+      })
+      return failPrint(debug, 'Baskı iframe belgesi oluşturulamadı.')
+    }
     debug.printWindowOpened = true
-    writePrintDocument(printWindow.document, printHtml)
-    await waitForPrintDocument(printWindow.document)
-    printWindow.focus()
-    printWindow.print()
+
+    suratPrintTrace('DOCUMENT_WRITE_START', { executionId })
+    writePrintDocument(frameDocument, printHtml)
+    suratPrintTrace('DOCUMENT_WRITE_END', { executionId })
+    await waitForPrintDocument(frameDocument)
+
+    // Tanı: afterprint/beforeunload yalnız LOGLANIR; hiçbir cleanup yapılmaz.
+    try {
+      frameWindow.onafterprint = () =>
+        suratPrintTrace('AFTERPRINT_FIRED', {
+          executionId,
+          action: 'none',
+          windowClosed: false,
+        })
+      frameWindow.onbeforeunload = () =>
+        suratPrintTrace('WINDOW_BEFOREUNLOAD', { executionId })
+    } catch {
+      // bazı ortamlarda listener atanamayabilir; kritik değil
+    }
+
+    const frameFonts = (
+      frameDocument as Document & { fonts?: { ready?: Promise<unknown> } }
+    ).fonts
+    if (frameFonts?.ready) {
+      await frameFonts.ready
+    }
+    suratPrintTrace('FONTS_READY', { executionId })
+
+    // Kritik (canlı enstrümantasyonla doğrulandı): gizli/0x0 iframe'in kendi
+    // rAF'i Chrome'da HİÇ tetiklenmez; arka plan sekmelerde PARENT rAF de
+    // duraklatılır. Akış RAF beklemesinde asılı kalıyordu. Bu yüzden rAF her
+    // zaman kısa bir timeout ile YARIŞTIRILIR — hangisi önce gelirse akış
+    // ilerler, asla asılı kalmaz.
+    const raf =
+      typeof window !== 'undefined' &&
+      typeof window.requestAnimationFrame === 'function'
+        ? window.requestAnimationFrame.bind(window)
+        : typeof frameWindow.requestAnimationFrame === 'function'
+          ? frameWindow.requestAnimationFrame.bind(frameWindow)
+          : null
+    const nextPaintTick = (): Promise<'raf' | 'timeout'> =>
+      new Promise((resolve) => {
+        let settled = false
+        const settle = (source: 'raf' | 'timeout') => {
+          if (settled) return
+          settled = true
+          resolve(source)
+        }
+        if (raf) raf(() => settle('raf'))
+        setTimeout(() => settle('timeout'), 100)
+      })
+    suratPrintTrace('RAF_1', { executionId, source: await nextPaintTick() })
+    suratPrintTrace('RAF_2', { executionId, source: await nextPaintTick() })
+    await new Promise<void>((resolve) => setTimeout(resolve, 250))
+
+    frameWindow.focus()
+    suratPrintTrace('PRINT_CALL_START', {
+      executionId,
+      orderNumbers,
+      printTriggered: true,
+    })
+    frameWindow.print()
     debug.printCalled = true
+    suratPrintTrace('PRINT_CALL_END', {
+      executionId,
+      orderNumbers,
+      printTriggered: true,
+      cleanup: 'none',
+    })
+    // Print sonrası HİÇBİR cleanup yok: iframe DOM'da kalır, pencere
+    // kapatılmaz; Chrome dialogunu kullanıcı kapatır.
     return debug
+  } catch (error) {
+    if (!(error instanceof BrowserLabelPrintError)) {
+      suratPrintTrace('PRINT_ERROR', {
+        executionId,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+    }
+    throw error
+  } finally {
+    activePrintExecution = null
   }
-
-  await printWithIframe(printHtml, debug)
-  return debug
-}
-
-function consumeReservedPrintWindow(): Window | null {
-  const printWindow = reservedPrintWindow
-  reservedPrintWindow = null
-  return printWindow && !printWindow.closed ? printWindow : null
 }
 
 export function buildCleanLabelHtml(
@@ -126,20 +525,25 @@ export function buildCleanLabelHtml(
 ): string {
   const widthMm = template.widthMm || 100
   const heightMm = template.heightMm || 100
-  const pages = orders.map((order) => {
-    const shipment = order.shipment
-    if (
-      !shipment?.dispatchRegistrationConfirmed
-    ) {
-      throw new Error(
-        `${order.orderNumber}: Önce Sürat gönderisi gerçek API üzerinden oluşturulmalı.`,
-      )
-    }
-    const data = buildLabelData(order, shipment, template, mappingConfig)
-    if (!data.verifiedShipment || !data.barcodeValue) {
-      throw new Error(`${order.orderNumber}: Sürat barkod değeri bulunamadı.`)
-    }
-    return renderPrintableLabelHtml(data)
+  const selection = resolveSuratPrintableSelection(orders)
+  if (selection.printable.length === 0) {
+    const reasons = selection.skipped
+      .map((item) => `${item.orderNumber}: ${item.reason}`)
+      .join(' | ')
+    throw new Error(reasons || 'Yazdırılacak etiket içeriği oluşturulamadı.')
+  }
+  const pages = selection.printable.map(({ order, model }) => {
+    const data = buildLabelData(order, order.shipment, template, mappingConfig)
+    return renderPrintableLabelHtml({
+      ...data,
+      tNo: model.trackingNumber,
+      trackingNumber: model.trackingNumber,
+      kargoTakipNo: model.trackingNumber,
+      barcodeValue: model.barcodeNumber,
+      mainBarcodeValue: model.barcodeNumber,
+      barcode: model.barcodeNumber,
+      qrPayload: model.ozelKargoTakipNo,
+    })
   })
 
   if (pages.length === 0 || !pages.join('').trim()) {
@@ -387,7 +791,7 @@ export function renderPrintableLabelHtml(data: LabelData): string {
             <div><span>Top Ds/Kg</span><strong>${formatDesi(data.desi)}</strong></div>
           </section>
           <section class="surat-section surat-delivery">
-            ${renderQrSvg(`${data.orderNumber}|${data.barcodeValue}`, 'surat-qr-large')}
+            ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-large')}
             <div class="surat-delivery-copy">
               <span>Parca Adedi</span>
               <b>1 / 1</b>
@@ -395,7 +799,7 @@ export function renderPrintableLabelHtml(data: LabelData): string {
               <em>${escapeHtml(routeCenter)}</em>
               <strong class="surat-transfer">${escapeHtml(transferCenter)}</strong>
             </div>
-            ${renderQrSvg(data.barcodeValue, 'surat-qr-small')}
+            ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-small')}
           </section>
           <footer class="surat-section surat-product">
             <strong>${escapeHtml(productTitle)}</strong>
@@ -455,50 +859,6 @@ export function renderLegacyPrintableLabelHtml(data: LabelData): string {
     `
 }
 
-function openPrintWindow(): Window | null {
-  try {
-    return window.open('', '_blank', 'width=460,height=720')
-  } catch {
-    return null
-  }
-}
-
-async function printWithIframe(
-  printHtml: string,
-  debug: BrowserLabelPrintDebug,
-): Promise<void> {
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('aria-hidden', 'true')
-  iframe.style.position = 'fixed'
-  iframe.style.left = '-10000px'
-  iframe.style.top = '0'
-  iframe.style.width = '100mm'
-  iframe.style.height = '100mm'
-  iframe.style.border = '0'
-  iframe.style.opacity = '1'
-  iframe.style.pointerEvents = 'none'
-  iframe.style.background = '#fff'
-
-  const cleanup = () => {
-    window.setTimeout(() => iframe.remove(), 1000)
-  }
-
-  document.body.appendChild(iframe)
-  const frameDocument = iframe.contentDocument
-  const frameWindow = iframe.contentWindow
-  if (!frameDocument || !frameWindow) {
-    cleanup()
-    failPrint(debug, 'Baskı iframe belgesi oluşturulamadı.')
-  }
-
-  writePrintDocument(frameDocument, printHtml)
-  await waitForPrintDocument(frameDocument)
-  frameWindow.onafterprint = cleanup
-  frameWindow.focus()
-  frameWindow.print()
-  debug.printCalled = true
-}
-
 function failPrint(
   debug: BrowserLabelPrintDebug,
   message: string,
@@ -508,10 +868,13 @@ function failPrint(
 }
 
 function renderBarcodeSvg(value: string): string {
-  if (typeof document === 'undefined') {
-    return `<svg xmlns="http://www.w3.org/2000/svg" aria-label="${escapeHtml(
+  if (
+    typeof document === 'undefined' ||
+    typeof document.createElementNS !== 'function'
+  ) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" data-barcode-value="${escapeHtml(
       value,
-    )}"></svg>`
+    )}" aria-label="${escapeHtml(value)}"></svg>`
   }
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   JsBarcode(svg, value, {
@@ -523,6 +886,7 @@ function renderBarcodeSvg(value: string): string {
     fontSize: 16,
     textMargin: 3,
   })
+  svg.setAttribute('data-barcode-value', value)
   return svg.outerHTML
 }
 
@@ -545,7 +909,7 @@ function renderQrSvg(value: string, className: string): string {
     }
   }
 
-  return `<svg class="${className}" viewBox="0 0 ${viewBoxSize} ${viewBoxSize}" shape-rendering="crispEdges" role="img" aria-label="QR"><rect width="${viewBoxSize}" height="${viewBoxSize}" fill="#fff" />${cells.join('')}</svg>`
+  return `<svg class="${className}" data-qr-value="${escapeHtml(value)}" viewBox="0 0 ${viewBoxSize} ${viewBoxSize}" shape-rendering="crispEdges" role="img" aria-label="QR"><rect width="${viewBoxSize}" height="${viewBoxSize}" fill="#fff" />${cells.join('')}</svg>`
 }
 
 function splitAddress(address: string): string[] {
@@ -579,13 +943,13 @@ function writePrintDocument(targetDocument: Document, html: string): void {
 async function waitForPrintDocument(targetDocument: Document): Promise<void> {
   if (targetDocument.readyState !== 'complete') {
     await new Promise<void>((resolve) => {
-      targetDocument.defaultView?.addEventListener('load', () => resolve(), {
+      targetDocument.defaultView?.addEventListener?.('load', () => resolve(), {
         once: true,
       })
-      window.setTimeout(resolve, 250)
+      setTimeout(resolve, 250)
     })
   }
-  await new Promise<void>((resolve) => window.setTimeout(resolve, 180))
+  await new Promise<void>((resolve) => setTimeout(resolve, 180))
 }
 
 function isPrintableLabelHtml(html: string): boolean {

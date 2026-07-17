@@ -1091,23 +1091,44 @@ export class OrderWorkflowService {
     const requestedAt = new Date().toISOString()
     const printedBy = options.printedBy || 'local user'
     const selected = selectedOrders(orders, selectedIds)
+    const skippedWithReasons: Array<{ orderNumber: string; reason: string }> =
+      []
     const candidates = selected.filter((order) => {
       const eligibility = resolveSuratPrintEligibility(order)
       const alreadyPrinted =
         order.labelStatus === 'PRINTED' && Boolean(order.label?.printedAt)
-      return Boolean(
-        eligibility.canPrint &&
-          (!alreadyPrinted || options.includePreviouslyPrinted),
-      )
+      if (!eligibility.canPrint) {
+        skippedWithReasons.push({
+          orderNumber: order.orderNumber,
+          reason: eligibility.reason,
+        })
+        return false
+      }
+      if (alreadyPrinted && !options.includePreviouslyPrinted) {
+        skippedWithReasons.push({
+          orderNumber: order.orderNumber,
+          reason: 'Daha önce basılmış; tekrar baskı onayı verilmedi.',
+        })
+        return false
+      }
+      return true
     })
+    const skippedSummary =
+      skippedWithReasons.length > 0
+        ? ` ${skippedWithReasons.length} sipariş atlandı: ${skippedWithReasons
+            .map((item) => `${item.orderNumber} (${item.reason})`)
+            .join('; ')}`
+        : ''
 
     if (candidates.length === 0) {
       return {
         orders,
         result: {
           level: 'warning',
-          message:
-            'Sürat kaydı doğrulanmış gerçek barkod bulunamadığı için etiket yazdırılamaz. Önce Sürat gönderisi oluşturulmalı.',
+          message: `Yazdırılabilir etiket bulunamadı.${
+            skippedSummary ||
+            ' Önce Sürat gönderisi oluşturulmalı veya etiket hazır olmalı.'
+          }`,
           bulkActionDebug: buildBulkActionDebug(
             'PRINT_LABELS',
             selected,
@@ -1343,14 +1364,19 @@ export class OrderWorkflowService {
     return {
       orders: nextOrders,
       result: {
-        level: failedPrintableOrders.length > 0 ? 'warning' : 'success',
-        message: failedPrintableOrders.length > 0
-          ? `${successfulPrintableOrders.length} etiket yazdırıldı, ${failedPrintableOrders.length} etiket gönderilemedi. Başarısız etiketlerin durumu değiştirilmedi.`
-          : successfulPrintableOrders.some(
-            (order) => order.labelStatus === 'PRINTED',
-          )
-            ? `${successfulPrintableOrders.length} etiket tekrar basıldı.`
-            : `${successfulPrintableOrders.length} etiket Zebra yazıcıya gönderildi.`,
+        level:
+          failedPrintableOrders.length > 0 || skippedWithReasons.length > 0
+            ? 'warning'
+            : 'success',
+        message: `${
+          failedPrintableOrders.length > 0
+            ? `${successfulPrintableOrders.length} etiket yazdırıldı, ${failedPrintableOrders.length} etiket gönderilemedi. Başarısız etiketlerin durumu değiştirilmedi.`
+            : successfulPrintableOrders.some(
+                  (order) => order.labelStatus === 'PRINTED',
+                )
+              ? `${successfulPrintableOrders.length} etiket tekrar basıldı.`
+              : `${successfulPrintableOrders.length} etiket yazdırıldı.`
+        }${skippedSummary}`,
         bulkActionDebug: buildBulkActionDebug(
           'PRINT_LABELS',
           selected,

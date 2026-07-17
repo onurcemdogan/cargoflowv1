@@ -2,6 +2,7 @@ import type { Label } from '../../types/cargoflow'
 import { createId } from '../../utils/ids'
 import { buildLabelData, type LabelData, type LabelDataItem } from '../../utils/labelData'
 import { verifySuratShipment } from '../../utils/suratVerification'
+import { resolveSuratPrintEligibility } from '../../utils/suratPrintEligibility'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
 import {
   buildDesiDebug,
@@ -158,29 +159,42 @@ export class ZebraZplLabelProvider implements LabelProvider {
     const labelData = buildLabelData(order, shipment, template, mappingConfig)
     const verification = verifySuratShipment(order, shipment)
     const normalizedDesi = resolveNormalizedDesi(order, shipment)
+    // Render ve click AYNI eligibility helper'ını kullanır: VERIFIED veya
+    // LABEL_READY_AWAITING_ACCEPTANCE + T.No + barkod etiket üretebilir.
+    // Eski verifiedShipment / dispatchRegistrationConfirmed / Serendip
+    // zorunluluğu kaldırıldı. Not: bu sağlayıcı ZPL'i KENDİSİ ürettiği için
+    // Sürat ham ZPL'inin varlığı burada şart değildir.
+    const eligibility = resolveSuratPrintEligibility(order, shipment)
+    const printableState =
+      eligibility.verified || eligibility.awaitingAcceptance
     if (
-      !verification.verifiedShipment ||
-      shipment.dispatchRegistrationConfirmed !== true ||
-      !verification.barcode
+      !printableState ||
+      !eligibility.trackingNumber ||
+      !eligibility.barcode
     ) {
-      throw new Error(
-        'Canlı ZPL yalnızca Sürat gönderi kaydı ve doğrulanmış barkod cevabı olduğunda üretilebilir.',
-      )
+      const reason = !printableState
+        ? 'Etiket doğrulanmış veya kabul-bekleyen (LABEL_READY_AWAITING_ACCEPTANCE) durumda değil.'
+        : 'T.No veya barkod çözülemedi.'
+      throw new Error(`Etiket yazdırılamadı: ${reason}`)
     }
     if (normalizedDesi.desi == null) {
       throw new Error(
         'Desi bilgisi eksik. Etiket oluşturmadan önce sipariş desisini girin.',
       )
     }
-    const officialSource = verification.barcodeSource || 'surat.verifiedBarcode'
+    const officialSource = eligibility.verified
+      ? verification.barcodeSource || 'surat.verifiedBarcode'
+      : 'surat.create.preassignedBarkod'
     const liveLabelData: LabelData = {
       ...labelData,
-      tNo: verification.tNo,
-      trackingNumber: verification.trackingNumber,
-      barcodeValue: verification.barcode,
-      mainBarcodeValue: verification.barcode,
+      tNo: eligibility.trackingNumber,
+      trackingNumber: eligibility.trackingNumber,
+      barcodeValue: eligibility.barcode,
+      mainBarcodeValue: eligibility.barcode,
       barcodeSource: officialSource,
-      tNoSource: verification.tNoSource,
+      tNoSource: eligibility.verified
+        ? verification.tNoSource
+        : 'surat.create.preassignedTNo',
       mainBarcodeSource: officialSource,
     }
     const apiBarcodeRaw = resolveSuratBarcodeRawZpl(
@@ -212,7 +226,7 @@ export class ZebraZplLabelProvider implements LabelProvider {
       id: createId('lbl'),
       labelType: 'zpl',
       barcodeFormat: 'Code128',
-      barcodeValue: verification.barcode,
+      barcodeValue: eligibility.barcode,
       templateId: template.id,
       zplContent,
       zplSource,

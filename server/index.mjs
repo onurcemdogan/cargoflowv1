@@ -4606,9 +4606,51 @@ async function verifySuratCreateResultWithTracking({
   const trackingCandidates = uniqueStrings([
     webSiparisKodu,
   ])
+  // Ön-atanmış canonical kodlar (ZPL analizinden) create yanıtında hazırsa,
+  // tesellüm öncesi Gonderiler=0 normaldir ve etiket zaten yazdırılabilir.
+  // Bu durumda uzun takip polling'ini (0/3/10/30/60 sn) beklemek gereksiz
+  // gecikme yaratır; yalnız tek bir hızlı sorgu (offset 0) yapılır ve kayıt
+  // varsa VERIFIED'e terfi edilir, yoksa hemen preassigned dala düşülür.
+  const createZplAnalysisForPolling =
+    createResult.shipment?.zplAnalysis ??
+    createResult.createDiagnostics?.zplAnalysis ??
+    {}
+  const createCodeMappingForPolling =
+    createResult.shipment?.codeMapping ??
+    createResult.createDiagnostics?.codeMapping ??
+    {}
+  const preassignedTNoForPolling = firstNonEmpty(
+    createResult.shipment?.tNo,
+    createResult.shipment?.kargoTakipNo,
+    createResult.shipment?.trackingNumber,
+    createCodeMappingForPolling.tNoValue,
+    createZplAnalysisForPolling.acceptedTNo,
+  )
+  const preassignedBarcodeForPolling = firstNonEmpty(
+    isNumericSuratOperationalCode(createResult.shipment?.barkodNo)
+      ? createResult.shipment?.barkodNo
+      : '',
+    isNumericSuratOperationalCode(createResult.shipment?.barcode)
+      ? createResult.shipment?.barcode
+      : '',
+    isNumericSuratOperationalCode(createZplAnalysisForPolling.acceptedFinalBarcode)
+      ? createZplAnalysisForPolling.acceptedFinalBarcode
+      : '',
+    isNumericSuratOperationalCode(createCodeMappingForPolling.barcodeValue)
+      ? createCodeMappingForPolling.barcodeValue
+      : '',
+  )
+  const preassignedReadyForPolling = Boolean(
+    outcome.createAccepted !== false &&
+      createResult.shipment?.barcodeRaw &&
+      isOperationalSuratTNo(preassignedTNoForPolling) &&
+      preassignedBarcodeForPolling,
+  )
   let trackingVerification
   const trackingAttempts = []
-  const verificationOffsets = resolveTrackingVerificationOffsets(config)
+  const verificationOffsets = preassignedReadyForPolling
+    ? [0]
+    : resolveTrackingVerificationOffsets(config)
   let previousOffset = 0
   let trackingSearchFinished = false
   for (const offsetMs of verificationOffsets) {
@@ -6507,10 +6549,6 @@ function classifySuratCreateResponse(
   const isOperationalResponseCode = (value) =>
     isNumericSuratOperationalCode(value) &&
     String(value ?? '').trim() !== marketplaceIntegrationCode
-  const directBarcode = cleanZplCode(initialCodeMapping.barcodeValue)
-  const officialBarcode = isOperationalResponseCode(directBarcode)
-    ? directBarcode
-    : zplAnalysis.acceptedFinalBarcode
   const acceptedTNo = firstNonEmpty(
     isOperationalSuratTNo(initialCodeMapping.tNoValue)
       ? initialCodeMapping.tNoValue
@@ -6523,13 +6561,42 @@ function classifySuratCreateResponse(
       : '',
     acceptedTNo,
   )
+  // Kanıt (18.07.2026, sipariş 11424170556): 016 ZPL'inde ilk numeric ^FD
+  // değeri T.No'dur; barkod ^BC sonrasındaki ^FD'dir. Bu yüzden canonical
+  // barkod kaynağı zplAnalysis.acceptedFinalBarcode'dur ve T.No ile çakışan
+  // hiçbir değer barkod olarak kabul edilmez.
+  const collidesWithTrackingNumber = (value) => {
+    const cleaned = cleanZplCode(value)
+    if (!cleaned) return false
+    return [
+      cleanZplCode(initialCodeMapping.tNoValue),
+      cleanZplCode(initialCodeMapping.trackingValue),
+      cleanZplCode(zplAnalysis.acceptedTNo),
+      cleanZplCode(acceptedTNo),
+      cleanZplCode(officialTrackingNumber),
+    ].some((trackingValue) => trackingValue && trackingValue === cleaned)
+  }
+  const zplBarcode = cleanZplCode(zplAnalysis.acceptedFinalBarcode)
+  const rawDirectBarcode = cleanZplCode(initialCodeMapping.barcodeValue)
+  const directBarcode =
+    isOperationalResponseCode(rawDirectBarcode) &&
+    !collidesWithTrackingNumber(rawDirectBarcode)
+      ? rawDirectBarcode
+      : ''
+  const officialBarcode = firstNonEmpty(
+    isOperationalResponseCode(zplBarcode) &&
+      !collidesWithTrackingNumber(zplBarcode)
+      ? zplBarcode
+      : '',
+    directBarcode,
+  )
   const codeMapping = {
     ...initialCodeMapping,
     trackingField: officialTrackingNumber
       ? initialCodeMapping.trackingField || 'BarcodeRaw.TNo'
       : '',
     barcodeField: officialBarcode
-      ? isOperationalResponseCode(directBarcode)
+      ? officialBarcode === directBarcode
         ? initialCodeMapping.barcodeField
         : 'BarcodeRaw.Code128'
       : '',

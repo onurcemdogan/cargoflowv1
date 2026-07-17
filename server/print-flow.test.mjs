@@ -52,31 +52,18 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
     globalThis.window = previousWindow
   })
 
-  let reservedHtml = ''
+  // Popup rezervasyonu kaldırıldı: reserve artık pencere AÇMAZ, cancel
+  // hiçbir şey KAPATMAZ (kalıcı iframe print motoru kullanılır).
   let openedPrintWindow = false
-  const fakePrintWindow = {
-    closed: false,
-    document: {
-      open: () => {},
-      write: (html) => {
-        reservedHtml = html
-      },
-      close: () => {},
-    },
-    close() {
-      this.closed = true
-    },
-  }
   globalThis.window.open = () => {
     openedPrintWindow = true
-    return fakePrintWindow
+    return null
   }
   const reservedWindow = reserveCleanLabelPrintWindow()
-  assert.equal(openedPrintWindow, true)
-  assert.equal(reservedWindow, fakePrintWindow)
-  assert.match(reservedHtml, /Etiket/)
+  assert.equal(reservedWindow, null)
+  assert.equal(openedPrintWindow, false)
   cancelReservedCleanLabelPrintWindow()
-  assert.equal(fakePrintWindow.closed, true)
+  assert.equal(openedPrintWindow, false)
 
   const labelProvider = new ZebraZplLabelProvider()
   const audit = { append: () => [] }
@@ -158,7 +145,7 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   assert.equal(marketplaceCodeResolution.canPrint, false)
   assert.throws(
     () => buildCleanLabelHtml([marketplaceCodeOrder], buildTemplate()),
-    /S.rat barkod de.eri/,
+    /ZPL bulunamad/,
   )
 
   // Test 2: Önizleme label üretir ama sipariş state'ini değiştirmez.
@@ -438,15 +425,11 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   assert.equal(missingRawResolution.canPreview, true)
   assert.equal(missingRawResolution.canPrint, true)
   assert.equal(missingRawResolution.debug.hasBarcodeRaw, false)
-  const missingRawCleanPrintHtml = buildCleanLabelHtml(
-    [missingRawOrder],
-    buildTemplate(),
+  // Yeni politika: geçerli ZPL olmadan hiçbir etiket print dokümanına girmez.
+  assert.throws(
+    () => buildCleanLabelHtml([missingRawOrder], buildTemplate()),
+    /ZPL bulunamad/,
   )
-  assert.equal(
-    (missingRawCleanPrintHtml.match(/class="label-page"/g) ?? []).length,
-    1,
-  )
-  assert.match(missingRawCleanPrintHtml, /01231201024/)
 
   // Selected row shipment taşımıyorsa canonical order state kullanılır.
   const canonicalShipment = buildShipment('5')
@@ -593,6 +576,333 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   })
   assert.equal(suspiciousOldDownload.labelStatus, 'READY')
   assert.equal(suspiciousOldDownload.operationStatus, 'LABEL_READY')
+})
+
+test('Toplu yazdırma tek dokümanda doğru alan eşlemesiyle çalışır', async (t) => {
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+  })
+  t.after(() => vite.close())
+
+  const { printSuratLabels, buildCleanLabelHtml, buildSuratZplDownload } =
+    await vite.ssrLoadModule('/src/utils/browserLabelPrint.ts')
+
+  const previousWindow = globalThis.window
+  const previousDocument = globalThis.document
+  let printCalls = 0
+  let writtenHtml = ''
+  let iframeCreateCount = 0
+  let iframeRemoved = false
+  let windowCloseCalls = 0
+  const fakeFrameWindow = {
+    closed: false,
+    focus: () => {},
+    print: () => {
+      printCalls += 1
+    },
+    close() {
+      windowCloseCalls += 1
+      this.closed = true
+    },
+  }
+  const fakeIframe = {
+    style: {},
+    isConnected: true,
+    setAttribute: () => {},
+    contentDocument: {
+      open: () => {},
+      write: (html) => {
+        writtenHtml = html
+      },
+      close: () => {},
+      readyState: 'complete',
+    },
+    contentWindow: fakeFrameWindow,
+    remove: () => {
+      iframeRemoved = true
+    },
+  }
+  globalThis.window = {
+    localStorage: {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    },
+  }
+  globalThis.document = {
+    createElement: (tag) => {
+      assert.equal(tag, 'iframe')
+      iframeCreateCount += 1
+      return fakeIframe
+    },
+    body: { appendChild: () => {} },
+  }
+  t.after(() => {
+    globalThis.window = previousWindow
+    globalThis.document = previousDocument
+  })
+
+  const stripZpl = (shipment) => ({
+    ...withoutBarcodeRaw(shipment),
+    zplAnalysis: undefined,
+  })
+  const preassignedOrder = (suffix, overrides = {}) => {
+    const base = buildShipment(suffix)
+    return {
+      ...buildOrder(suffix),
+      shipment: {
+        ...base,
+        verifiedShipment: false,
+        dispatchRegistrationConfirmed: false,
+        operationalBarcodeVerified: false,
+        serdendipVerified: false,
+        lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+        candidateVerificationStatus: 'PREASSIGNED_AWAITING_ACCEPTANCE',
+        verificationStage: 'preassigned_awaiting_acceptance',
+        lifecycleStage: 'LABEL_CREATED_UNVERIFIED',
+        printEnabled: true,
+        labelStatus: 'READY',
+        suratTrackingLog: undefined,
+        ...overrides,
+      },
+      status: 'Etiket Hazır',
+      operationStatus: 'LABEL_READY',
+      labelStatus: 'READY',
+    }
+  }
+
+  // Alan eşleme testi: T.No, Code128 ve QR üç farklı değerdir ve karışmaz.
+  const mappingOrder = preassignedOrder('MAP1', {
+    trackingNumber: '',
+    tNo: '',
+    kargoTakipNo: '',
+    barcode: '',
+    barkodNo: '',
+    finalSuratBarcode: '',
+    barcodeValue: '',
+    candidateTNo: '',
+    candidateBarkodNo: '',
+    ozelKargoTakipNo: '7270034518943203',
+    zplAnalysis: {
+      acceptedTNo: '23418093205124',
+      acceptedFinalBarcode: '01249974986',
+    },
+  })
+  mappingOrder.cargoTrackingNumber = '7270034518943203'
+
+  const mappingResult = await printSuratLabels(
+    [mappingOrder],
+    buildTemplate(),
+  )
+  assert.equal(mappingResult.printCalled, true)
+  assert.equal(printCalls, 1)
+  assert.equal(mappingResult.models.length, 1)
+  assert.equal(mappingResult.models[0].trackingNumber, '23418093205124')
+  assert.equal(mappingResult.models[0].barcodeNumber, '01249974986')
+  assert.equal(mappingResult.models[0].ozelKargoTakipNo, '7270034518943203')
+  assert.match(writtenHtml, /T\.No: <strong>23418093205124<\/strong>/)
+  assert.match(writtenHtml, /data-barcode-value="01249974986"/)
+  assert.doesNotMatch(writtenHtml, /data-barcode-value="23418093205124"/)
+  assert.match(writtenHtml, /data-qr-value="7270034518943203"/)
+  assert.doesNotMatch(writtenHtml, /data-qr-value="01249974986"/)
+  assert.equal(fakeFrameWindow.closed, false)
+
+  // ZPL İndir: print'ten bağımsız; .zpl içeriği ve barkodlu dosya adı üretir,
+  // window.print çağrılmaz.
+  const printCallsBeforeDownload = printCalls
+  const zplDownload = buildSuratZplDownload([mappingOrder])
+  assert.ok(zplDownload)
+  assert.equal(zplDownload.models.length, 1)
+  assert.match(zplDownload.content, /\^XA/)
+  assert.match(zplDownload.content, /\^XZ/)
+  assert.equal(zplDownload.fileName, 'surat-ORDER-MAP1-01249974986.zpl')
+  assert.equal(printCalls, printCallsBeforeDownload)
+  // Uygun ZPL yoksa indirme null döner (dosya oluşmaz).
+  const emptyZplDownload = buildSuratZplDownload([
+    preassignedOrder('D1', stripZpl(buildShipment('D1'))),
+  ])
+  assert.equal(emptyZplDownload, null)
+
+  // Üç uygun sipariş: tek print çağrısı, üç sayfa, kod sızması yok.
+  printCalls = 0
+  writtenHtml = ''
+  const bulkOrders = [
+    preassignedOrder('11'),
+    preassignedOrder('12'),
+    preassignedOrder('13'),
+  ]
+  const bulkResult = await printSuratLabels(bulkOrders, buildTemplate())
+  assert.equal(printCalls, 1)
+  assert.equal(bulkResult.models.length, 3)
+  assert.equal(bulkResult.skipped.length, 0)
+  assert.equal(
+    (writtenHtml.match(/class="label-page"/g) ?? []).length,
+    3,
+  )
+  for (const model of bulkResult.models) {
+    assert.equal(
+      (writtenHtml.match(
+        new RegExp(`data-barcode-value="${model.barcodeNumber}"`, 'g'),
+      ) ?? []).length,
+      1,
+    )
+    assert.equal(
+      (writtenHtml.match(
+        new RegExp(`T\\.No: <strong>${model.trackingNumber}</strong>`, 'g'),
+      ) ?? []).length,
+      1,
+    )
+  }
+  assert.match(writtenHtml, /\.label-page:last-child \{ break-after: auto/)
+  assert.equal(fakeFrameWindow.closed, false)
+
+  // Karma seçim: uygun olmayanlar nedenleriyle atlanır, print bir kez çağrılır.
+  printCalls = 0
+  const mixedResult = await printSuratLabels(
+    [
+      preassignedOrder('21'),
+      preassignedOrder('22'),
+      preassignedOrder('23', stripZpl(buildShipment('23'))),
+      preassignedOrder('24', {
+        barcode: '',
+        barkodNo: '',
+        finalSuratBarcode: '',
+        barcodeValue: '',
+        candidateBarkodNo: '',
+        zplAnalysis: undefined,
+        rawResponse: {},
+        suratCreateLog: undefined,
+      }),
+    ],
+    buildTemplate(),
+  )
+  assert.equal(printCalls, 1)
+  assert.equal(mixedResult.models.length, 2)
+  assert.equal(mixedResult.skipped.length, 2)
+  assert.ok(
+    mixedResult.skipped.every((item) => item.orderNumber && item.reason),
+  )
+
+  // Hiç uygun sipariş yoksa print çağrılmaz.
+  printCalls = 0
+  const emptyResult = await printSuratLabels(
+    [preassignedOrder('31', stripZpl(buildShipment('31')))],
+    buildTemplate(),
+  )
+  assert.equal(printCalls, 0)
+  assert.equal(emptyResult.printCalled, false)
+  assert.equal(emptyResult.models.length, 0)
+  assert.equal(emptyResult.skipped.length, 1)
+
+  // Duplicate seçim tek etikete indirgenir.
+  printCalls = 0
+  writtenHtml = ''
+  const duplicate = preassignedOrder('41')
+  const duplicateResult = await printSuratLabels(
+    [duplicate, duplicate],
+    buildTemplate(),
+  )
+  assert.equal(printCalls, 1)
+  assert.equal(duplicateResult.models.length, 1)
+  assert.equal(
+    (writtenHtml.match(/class="label-page"/g) ?? []).length,
+    1,
+  )
+
+  // buildCleanLabelHtml de aynı seçimi kullanır (tek politika).
+  assert.throws(
+    () =>
+      buildCleanLabelHtml(
+        [preassignedOrder('51', stripZpl(buildShipment('51')))],
+        buildTemplate(),
+      ),
+    /ZPL bulunamad/,
+  )
+
+  // Regresyon (11424170556): 016 yanıtında üst seviye Barcode alanlarına
+  // T.No sızsa bile canonical model ZPL analizinden doğru barkodu çözer.
+  printCalls = 0
+  writtenHtml = ''
+  const collisionOrder = preassignedOrder('COLL1', {
+    trackingNumber: '99718621452161',
+    tNo: '99718621452161',
+    kargoTakipNo: '99718621452161',
+    // Eski parser hatası: barkod alanları da T.No değerini taşıyor.
+    barcode: '99718621452161',
+    barkodNo: '99718621452161',
+    barcodeValue: '99718621452161',
+    finalSuratBarcode: '99718621452161',
+    candidateTNo: '99718621452161',
+    candidateBarkodNo: '99718621452161',
+    ozelKargoTakipNo: '7270034532270019',
+    codeMapping: {
+      trackingValue: '99718621452161',
+      tNoValue: '99718621452161',
+      barcodeValue: '99718621452161',
+    },
+    zplAnalysis: {
+      acceptedTNo: '99718621452161',
+      acceptedFinalBarcode: '01250077333',
+    },
+  })
+  collisionOrder.cargoTrackingNumber = '7270034532270019'
+  const collisionResult = await printSuratLabels(
+    [collisionOrder],
+    buildTemplate(),
+  )
+  assert.equal(collisionResult.printCalled, true)
+  assert.equal(printCalls, 1)
+  assert.equal(collisionResult.models[0].trackingNumber, '99718621452161')
+  assert.equal(collisionResult.models[0].barcodeNumber, '01250077333')
+  assert.equal(
+    collisionResult.models[0].ozelKargoTakipNo,
+    '7270034532270019',
+  )
+  assert.notEqual(
+    collisionResult.models[0].trackingNumber,
+    collisionResult.models[0].barcodeNumber,
+  )
+  assert.match(writtenHtml, /T\.No: <strong>99718621452161<\/strong>/)
+  assert.match(writtenHtml, /data-barcode-value="01250077333"/)
+  assert.doesNotMatch(writtenHtml, /data-barcode-value="99718621452161"/)
+  assert.match(writtenHtml, /data-qr-value="7270034532270019"/)
+
+  // Kalıcı iframe garantileri: tüm printler boyunca iframe BİR kez
+  // oluşturulur, hiç kaldırılmaz, hiçbir pencere kapatılmaz.
+  assert.equal(iframeCreateCount, 1)
+  assert.equal(iframeRemoved, false)
+  assert.equal(windowCloseCalls, 0)
+  assert.equal(fakeFrameWindow.closed, false)
+
+  // In-flight guard: aynı anda ikinci çağrı print üretmez; ilk çağrı
+  // tamamlanınca yeni print normal çalışır.
+  printCalls = 0
+  const guardFirst = printSuratLabels([preassignedOrder('61')], buildTemplate())
+  const guardSecond = printSuratLabels(
+    [preassignedOrder('62')],
+    buildTemplate(),
+  )
+  const [guardFirstResult, guardSecondResult] = await Promise.all([
+    guardFirst,
+    guardSecond,
+  ])
+  assert.equal(printCalls, 1)
+  assert.equal(guardFirstResult.printCalled, true)
+  assert.equal(guardSecondResult.printCalled, false)
+  assert.match(
+    guardSecondResult.skipped.map((item) => item.reason).join(' '),
+    /Devam eden bir yazdırma/,
+  )
+  const afterGuard = await printSuratLabels(
+    [preassignedOrder('63')],
+    buildTemplate(),
+  )
+  assert.equal(afterGuard.printCalled, true)
+  assert.equal(printCalls, 2)
+  assert.equal(iframeCreateCount, 1)
+  assert.equal(iframeRemoved, false)
+  assert.equal(windowCloseCalls, 0)
 })
 
 function createPrintProvider(ok) {

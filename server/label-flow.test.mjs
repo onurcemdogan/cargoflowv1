@@ -213,7 +213,7 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
         shipment: missingBarcodeShipment,
         template: buildTemplate(),
       }),
-    /doğrulanmış barkod/,
+    /Etiket yazdırılamadı/,
   )
   assert.equal(
     canCreateShipment({

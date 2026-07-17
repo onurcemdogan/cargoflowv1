@@ -22,9 +22,10 @@ import { apiDebugService } from './services/apiDebugService'
 import { IntegrationConfigService } from './services/integrationConfigService'
 import { OrderWorkflowService } from './services/orderWorkflowService'
 import {
-  cancelReservedCleanLabelPrintWindow,
-  reserveCleanLabelPrintWindow,
+  buildSuratZplDownload,
+  suratPrintTrace,
 } from './utils/browserLabelPrint'
+import { resolveSuratPrintEligibility } from './utils/suratPrintEligibility'
 import type {
   AuditLog,
   ApiDebugLog,
@@ -427,68 +428,60 @@ function App() {
     )
   }
 
+  // ZPL İndir: yalnız .zpl dosyası indirir; modal açmaz, print/create tetiklemez.
   async function handleDownloadZpl() {
-    openPrintPreview('download', selectedIds)
+    await handleDownloadZplForIds(selectedIds)
   }
 
-  async function handleDownloadZplForOrder(
+  function handleDownloadZplForOrder(
     orderId: string,
     mappingConfig = labelMappingConfig,
   ) {
     setLabelMappingConfig(mappingConfig)
-    openPrintPreview('download', [orderId])
+    handleDownloadZplForIds([orderId])
   }
 
-  async function handleDownloadZplForIds(
-    ids: string[],
-    mappingConfig = labelMappingConfig,
-  ) {
-    setOrdersState((current) => ({
-      ...current,
-      ordersLoading: true,
-      ordersError: undefined,
-    }))
-    try {
-      const response = await workflowService.prepareZplDownload(
-        orders,
-        ids,
-        integrationConfig,
-        printerSettings,
-        labelTemplate,
-        mappingConfig,
-      )
-      setOrdersState((current) => ({
-        ...current,
-        orders: response.orders,
-        ordersMessage: response.result,
-        ordersError:
-          response.result.level === 'error' ? response.result.message : undefined,
-        ordersDebug: response.result.debug,
-      }))
-      if (response.printResult?.content) {
-        downloadTextFile(
-          response.printResult.fileName,
-          response.printResult.content,
-        )
-      }
-    } finally {
-      refreshLogs()
-      setOrdersState((current) => ({ ...current, ordersLoading: false }))
-    }
-  }
-
-  function openPrintPreview(mode: PrintPreviewMode, orderIds: string[]) {
-    if (orderIds.length === 0) {
+  // ZPL İndir: shipment.barcodeRaw içeriğini doğrudan .zpl dosyası olarak
+  // indirir. Modal/print/create akışı çağrılmaz.
+  function handleDownloadZplForIds(ids: string[]) {
+    if (ids.length === 0) {
       setOrdersState((current) => ({
         ...current,
         ordersMessage: {
           level: 'warning',
-          message: 'Önizleme için en az bir sipariş seçmelisin.',
+          message: 'ZPL indirmek için en az bir sipariş seçmelisin.',
         },
       }))
       return
     }
-    setPrintPreview({ mode, orderIds })
+    const selectedDownloadOrders = orders.filter((order) =>
+      ids.includes(order.id),
+    )
+    const download = buildSuratZplDownload(selectedDownloadOrders)
+    if (!download || !download.content.trim()) {
+      const reason =
+        download?.skipped?.[0]?.reason ||
+        'Yazdırılabilir ZPL bulunamadı. Önce Sürat etiketi hazır olmalı.'
+      setOrdersState((current) => ({
+        ...current,
+        ordersMessage: { level: 'warning', message: reason },
+      }))
+      refreshLogs()
+      return
+    }
+    downloadTextFile(download.fileName, download.content)
+    const skippedSummary =
+      download.skipped.length > 0
+        ? ` ${download.skipped.length} sipariş atlandı.`
+        : ''
+    setOrdersState((current) => ({
+      ...current,
+      ordersMessage: {
+        level: download.skipped.length > 0 ? 'warning' : 'success',
+        message: `${download.models.length} etiket için ${download.fileName} indirildi.${skippedSummary}`,
+      },
+    }))
+    refreshLogs()
   }
 
   function handleMarkPrinted() {
@@ -499,9 +492,10 @@ function App() {
     void handlePrintLabelsForIds([orderId])
   }
 
+  // Tekli ve toplu yazdırma aynı doğrudan akışı kullanır: ara önizleme
+  // modalı açılmaz, Chrome print dialogu bir kez açılır ve otomatik
+  // kapatılmaz.
   async function handlePrintLabelsForIds(orderIds: string[]) {
-    openPrintPreview('print', orderIds)
-    return
     if (orderIds.length === 0) {
       setOrdersState((current) => ({
         ...current,
@@ -513,6 +507,45 @@ function App() {
       return
     }
 
+    const selectedOrders = orders.filter((order) =>
+      orderIds.includes(order.id),
+    )
+    const allPreviouslyPrinted =
+      selectedOrders.length > 0 &&
+      selectedOrders.every(
+        (order) =>
+          order.labelStatus === 'PRINTED' && Boolean(order.label?.printedAt),
+      )
+    const effectivePrinterSettings = {
+      ...printerSettings,
+      mode: 'browser-print' as const,
+    }
+    // Popup rezervasyonu yok; print motoru kalıcı gizli iframe kullanır ve
+    // başarılı yolda hiçbir pencere/iframe kapatılmaz.
+    suratPrintTrace('PRINT_BUTTON_CLICK', {
+      orderNumbers: selectedOrders.map((order) => order.orderNumber),
+      orderIds,
+      allPreviouslyPrinted,
+    })
+    // Render ile click aynı helper'ı kullanır; sonuç click anında loglanır.
+    for (const order of selectedOrders) {
+      const eligibility = resolveSuratPrintEligibility(order)
+      suratPrintTrace('PRINT_ELIGIBILITY_RESULT', {
+        orderNumber: order.orderNumber,
+        lifecycleStatus: order.shipment?.lifecycleStatus ?? '',
+        printEnabled: order.shipment?.printEnabled === true,
+        verifiedShipment: order.shipment?.verifiedShipment === true,
+        operationalBarcodeVerified:
+          order.shipment?.operationalBarcodeVerified === true,
+        dispatchRegistrationConfirmed:
+          order.shipment?.dispatchRegistrationConfirmed === true,
+        hasZpl: Boolean(eligibility.barcodeRaw),
+        trackingNumber: eligibility.trackingNumber,
+        barcode: eligibility.barcode,
+        canPrint: eligibility.canPrint,
+        reason: eligibility.reason,
+      })
+    }
     setOrdersState((current) => ({
       ...current,
       ordersLoading: true,
@@ -523,13 +556,13 @@ function App() {
       const response = await workflowService.printLabels(
         orders,
         orderIds,
-        printerSettings,
+        effectivePrinterSettings,
         labelTemplate,
         labelMappingConfig,
         {
           confirmedAt,
           printedBy: 'local user',
-          includePreviouslyPrinted: true,
+          includePreviouslyPrinted: allPreviouslyPrinted,
         },
       )
       setOrdersState((current) => ({
@@ -540,6 +573,25 @@ function App() {
           response.result.level === 'error'
             ? response.result.message
             : undefined,
+      }))
+    } catch (error) {
+      suratPrintTrace('PRINT_ERROR', {
+        source: 'handlePrintLabelsForIds',
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      setOrdersState((current) => ({
+        ...current,
+        ordersMessage: {
+          level: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Etiket yazdırma başarısız oldu.',
+        },
+        ordersError:
+          error instanceof Error
+            ? error.message
+            : 'Etiket yazdırma başarısız oldu.',
       }))
     } finally {
       refreshLogs()
@@ -563,7 +615,6 @@ function App() {
       ...printerSettings,
       mode: 'browser-print' as const,
     }
-    const reservedPrintWindow = reserveCleanLabelPrintWindow()
     setOrdersState((current) => ({
       ...current,
       ordersLoading: true,
@@ -583,9 +634,6 @@ function App() {
           includePreviouslyPrinted,
         },
       )
-      if (reservedPrintWindow && !response.printResult?.browserPrintDebug?.printCalled) {
-        cancelReservedCleanLabelPrintWindow()
-      }
       setOrdersState((current) => ({
         ...current,
         orders: response.orders,
@@ -600,9 +648,8 @@ function App() {
       }
     } finally {
       refreshLogs()
-      if (reservedPrintWindow) {
-        cancelReservedCleanLabelPrintWindow()
-      }
+      // Not: Print motoru kalıcı iframe kullanır; başarılı yolda hiçbir
+      // pencere/iframe kapatılmaz.
       setOrdersState((current) => ({ ...current, ordersLoading: false }))
     }
   }

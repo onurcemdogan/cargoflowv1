@@ -107,6 +107,8 @@ export interface LabelData {
   leftVerticalReference: string
   barcodeValue: string
   mainBarcodeValue: string
+  // QR payload'ı müşteri referansıdır (OzelKargoTakipNo); barkod/T.No değildir.
+  qrPayload?: string
   barcodeSource: string
   tNoSource: string
   mainBarcodeSource: string
