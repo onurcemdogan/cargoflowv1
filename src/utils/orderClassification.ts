@@ -2,6 +2,10 @@ import type { CargoOrder } from '../types/cargoflow'
 import type { QuickTab } from './ordersTabs'
 import { hasCarrierTracking } from './orderStatus'
 import { resolveOrderStatus } from './shipmentStatus'
+import {
+  isPreassignedAwaitingAcceptance,
+  resolveSuratPrintEligibility,
+} from './suratPrintEligibility'
 import { verifySuratShipment } from './suratVerification'
 
 export interface OrderTabClassification {
@@ -94,7 +98,8 @@ export function classifyOrderForTabs(
   )
   const labelStatus = normalizedToken(order.labelStatus)
   const isLabelPrinted = Boolean(
-    shipment?.dispatchRegistrationConfirmed === true &&
+    (shipment?.dispatchRegistrationConfirmed === true ||
+      isPreassignedAwaitingAcceptance(order.shipment)) &&
       labelStatus === 'printed' &&
       order.label?.printedAt,
   )
@@ -103,6 +108,14 @@ export function classifyOrderForTabs(
   const verifiedShipment = Boolean(
     dispatchRegistrationConfirmed && verification.verifiedShipment,
   )
+  // LABEL_READY_AWAITING_ACCEPTANCE: ön-atanmış kodlarla etiket hazır;
+  // fiziksel tesellüm bekleniyor. Barkod Bekleyen DEĞİLDİR, Etiket Hazır
+  // grubundadır, Kargoya Verilen değildir (bölüm 5 lifecycle sözleşmesi).
+  const preassignedReady = Boolean(
+    isPreassignedAwaitingAcceptance(order.shipment) &&
+      resolveSuratPrintEligibility(order).canPrint,
+  )
+  const printableShipment = verifiedShipment || preassignedReady
   const barcodeRaw = String(
     verification.barcodeRaw || shipment?.barcodeRaw || '',
   ).trim()
@@ -137,8 +150,10 @@ export function classifyOrderForTabs(
         printError ||
         (verifiedShipment && !printableBarcode) ||
         wrongServiceCalled ||
-        noTrackingReason ||
-        providerResponseError),
+        // Ön-atanmış hazır etiketin "fiziksel kabul bekleniyor" bilgi metni
+        // hata değildir; sayaçlara hata olarak sızmaz.
+        (!preassignedReady && noTrackingReason) ||
+        (!preassignedReady && providerResponseError)),
   )
   const processClosed = Boolean(
     isCanceledOrReturned ||
@@ -150,7 +165,7 @@ export function classifyOrderForTabs(
   const isOpenOperation = !processClosed
   const isBarcodeWaiting = Boolean(
     isOpenOperation &&
-      !verifiedShipment &&
+      !printableShipment &&
       (!dispatchRegistrationConfirmed || !barcodeRaw) &&
       !isLabelPrinted,
   )
@@ -170,14 +185,14 @@ export function classifyOrderForTabs(
   )
   const isLabelReady = Boolean(
     isOpenOperation &&
-      verifiedShipment &&
+      printableShipment &&
       printableBarcode &&
       !isLabelPrinted &&
       (['ready', 'generated'].includes(labelStatus) ||
         ['labelready', 'trackingconfirmed'].includes(operationStatus)),
   )
   const isReadyForCargo = Boolean(
-    isOpenOperation && verifiedShipment && printableBarcode,
+    isOpenOperation && printableShipment && printableBarcode,
   )
 
   return {

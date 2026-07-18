@@ -324,7 +324,139 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
   assert.doesNotMatch(html, /başarı oranı/i)
   assert.doesNotMatch(html, /Kalıcı operasyon listesindeki tüm siparişler/i)
   assert.doesNotMatch(html, /Toplam Sipariş/)
+
+  // Lifecycle uyumu: LABEL_READY_AWAITING_ACCEPTANCE (ön-atanmış kodlar +
+  // ZPL) Barkod Bekleyen DEĞİLDİR, Etiket Hazır'dır, hata sayılmaz.
+  const preassignedOrder = buildPreassignedOrder('PRE1')
+  const preassignedSummary = buildDashboardSummary({
+    orders: [preassignedOrder],
+    ...integrations,
+    printerSettings,
+  })
+  assert.equal(preassignedSummary.barcodeWaiting, 0)
+  assert.equal(preassignedSummary.labelReady, 1)
+  assert.equal(preassignedSummary.errors, 0)
+  assert.equal(preassignedSummary.openOperations, 1)
+  assert.equal(preassignedSummary.recentOrders[0].status, 'Etiket Hazır')
+  const preassignedTabs = buildVisibleOrders({
+    persistentOrders: [preassignedOrder],
+    selectedTab: 'labelReady',
+    marketplaceFilter: 'all',
+    operationStatusFilter: 'all',
+    cargoFilter: 'all',
+    dateFilter: { preset: 'all' },
+    searchQuery: '',
+  })
+  assert.equal(preassignedTabs.visibleOrders.length, 1)
+  const preassignedBarcodeTab = buildVisibleOrders({
+    persistentOrders: [preassignedOrder],
+    selectedTab: 'barcodePending',
+    marketplaceFilter: 'all',
+    operationStatusFilter: 'all',
+    cargoFilter: 'all',
+    dateFilter: { preset: 'all' },
+    searchQuery: '',
+  })
+  assert.equal(preassignedBarcodeTab.visibleOrders.length, 0)
+
+  // Preassigned + gerçekten basılmış → Etiket Basıldı sayılır.
+  const preassignedPrinted = {
+    ...preassignedOrder,
+    status: 'Etiket Basıldı',
+    operationStatus: 'LABEL_PRINTED',
+    labelStatus: 'PRINTED',
+    label: {
+      id: 'label-pre-printed',
+      labelType: 'zpl',
+      barcodeFormat: 'Code128',
+      barcodeValue: preassignedOrder.shipment.barkodNo,
+      templateId: 'tpl',
+      zplContent: preassignedOrder.shipment.barcodeRaw,
+      zplSource: 'surat.ortakBarkod.BarcodeRaw',
+      createdAt: new Date().toISOString(),
+      printedAt: new Date().toISOString(),
+      printCount: 1,
+    },
+  }
+  const preassignedPrintedSummary = buildDashboardSummary({
+    orders: [preassignedPrinted],
+    ...integrations,
+    printerSettings,
+  })
+  assert.equal(preassignedPrintedSummary.labelPrinted, 1)
+  assert.equal(preassignedPrintedSummary.labelReady, 0)
+
+  // printEnabled=true ama printedAt yok → basıldı SAYILMAZ.
+  assert.equal(preassignedSummary.labelPrinted, 0)
+
+  // Aynı packageId iki satırdan gelirse sayaçlar bir kez sayar.
+  const duplicateSummary = buildDashboardSummary({
+    orders: [
+      preassignedOrder,
+      { ...preassignedOrder, id: 'duplicate-row-id' },
+      buildOrder('UNIQ'),
+    ],
+    ...integrations,
+    printerSettings,
+  })
+  assert.equal(duplicateSummary.totalOrders, 2)
+  assert.equal(duplicateSummary.labelReady, 1)
+  assert.equal(duplicateSummary.barcodeWaiting, 1)
+  assert.equal(duplicateSummary.openOperations, 2)
 })
+
+function buildPreassignedOrder(suffix) {
+  const numericSuffix = toNumericSuffix(suffix)
+  const trackingNumber = `9971862145${numericSuffix.padStart(4, '0')}`
+  const barcodeNumber = `0125000803${numericSuffix}`
+  const webSiparisKodu = `7270077${numericSuffix}`
+  const barcodeRaw = `^XA^FO20,20^FDT.No: ${trackingNumber}^FS^FT48,300^BCN,,Y,N^FD>:${barcodeNumber}^FS^XZ`
+  return {
+    ...buildOrder(suffix),
+    cargoTrackingNumber: webSiparisKodu,
+    status: 'Etiket Hazır',
+    operationStatus: 'LABEL_READY',
+    labelStatus: 'READY',
+    cargoProviderName: 'Sürat Kargo',
+    shipment: {
+      id: `shipment-${suffix}`,
+      provider: 'surat-kargo',
+      serviceMode: 'ORTAK_BARKOD_SOAP',
+      operationName: 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+      trackingNumber,
+      kargoTakipNo: trackingNumber,
+      tNo: trackingNumber,
+      barcode: barcodeNumber,
+      barkodNo: barcodeNumber,
+      barcodeValue: barcodeNumber,
+      finalSuratBarcode: barcodeNumber,
+      barcodeRaw,
+      trackingUrl: '',
+      shipmentCode: `PKG-${suffix}`,
+      webSiparisKodu,
+      ozelKargoTakipNo: webSiparisKodu,
+      barcodeSource: 'surat.create.preassignedBarkod',
+      trackingSource: 'surat.create.preassignedTNo',
+      zplSource: 'surat.ortakBarkod.BarcodeRaw',
+      labelStatus: 'READY',
+      status: 'created',
+      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+      candidateVerificationStatus: 'PREASSIGNED_AWAITING_ACCEPTANCE',
+      verificationStage: 'preassigned_awaiting_acceptance',
+      printEnabled: true,
+      source: 'real',
+      verifiedShipment: false,
+      dispatchRegistrationConfirmed: false,
+      operationalBarcodeVerified: false,
+      serdendipVerified: false,
+      noTrackingReason: 'Etiket hazır; fiziksel Sürat kabulü bekleniyor.',
+      diagnosticMessage:
+        'Etiket yazdırılabilir; Serendip kaydı fiziksel tesellümden sonra doğrulanacaktır.',
+      rawResponse: {},
+      createdAt: new Date().toISOString(),
+    },
+  }
+}
 
 function buildIntegrations() {
   return {

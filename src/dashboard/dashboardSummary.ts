@@ -10,6 +10,10 @@ import {
 } from '../utils/orderStatus'
 import { classifyOrderForTabs } from '../utils/orderClassification'
 import { resolveOrderStatus } from '../utils/shipmentStatus'
+import {
+  isPreassignedAwaitingAcceptance,
+  resolveSuratPrintEligibility,
+} from '../utils/suratPrintEligibility'
 import { verifySuratShipment } from '../utils/suratVerification'
 import {
   carrierProviderRegistry,
@@ -127,8 +131,12 @@ export function buildDashboardSummary({
   selectedPeriod = 'today',
 }: BuildDashboardSummaryInput): DashboardSummary {
   const now = new Date()
-  const normalized = orders.map(normalizeOrder)
-  const classified = orders.map((order) => ({
+  // Sayaçlar paket seviyesinde tekildir: aynı Trendyol paketi birden fazla
+  // satırdan gelirse bir kez sayılır (packageId → shipmentPackageId →
+  // marketplace+orderNumber → id anahtar sırası).
+  const uniqueOrders = dedupeOrdersByPackage(orders)
+  const normalized = uniqueOrders.map(normalizeOrder)
+  const classified = uniqueOrders.map((order) => ({
     order,
     state: classifyOrderForTabs(order),
   }))
@@ -398,8 +406,27 @@ export function buildDashboardProviderHealth({
   }
 }
 
+function dedupeOrdersByPackage(orders: CargoOrder[]): CargoOrder[] {
+  const seen = new Set<string>()
+  const unique: CargoOrder[] = []
+  for (const order of orders) {
+    const key =
+      String(order.packageId ?? '').trim() ||
+      String(order.shipmentPackageId ?? '').trim() ||
+      `${String(order.marketplace ?? '').trim()}::${String(
+        order.orderNumber ?? '',
+      ).trim()}` ||
+      String(order.id ?? '')
+    if (key && seen.has(key)) continue
+    if (key) seen.add(key)
+    unique.push(order)
+  }
+  return unique
+}
+
 function normalizeOrder(order: CargoOrder): DashboardRecentOrder & {
   verifiedShipment: boolean
+  preassignedReady: boolean
   operationStatus: string
   canceled: boolean
   hasError: boolean
@@ -423,6 +450,10 @@ function normalizeOrder(order: CargoOrder): DashboardRecentOrder & {
   const shipment = order.shipment
   const verification = verifySuratShipment(order, shipment)
   const verifiedShipment = verification.verifiedShipment
+  const preassignedReady = Boolean(
+    isPreassignedAwaitingAcceptance(shipment) &&
+      resolveSuratPrintEligibility(order, shipment).canPrint,
+  )
   const trackingNumber = verification.trackingNumber
   const barcode = verification.barcode
   const barcodeRaw = readString(shipment, 'barcodeRaw')
@@ -465,8 +496,9 @@ function normalizeOrder(order: CargoOrder): DashboardRecentOrder & {
         printError ||
         (verifiedShipment && !barcode) ||
         wrongServiceCalled ||
-        noTrackingReason ||
-        providerResponseError),
+        // Ön-atanmış hazır etiketin bilgi metinleri hata sayılmaz.
+        (!preassignedReady && noTrackingReason) ||
+        (!preassignedReady && providerResponseError)),
   )
   const resolvedStatus = resolveOrderStatus(order)
 
@@ -485,7 +517,11 @@ function normalizeOrder(order: CargoOrder): DashboardRecentOrder & {
     productImageUrl:
       order.items[0]?.productImageUrl || order.items[0]?.imageUrl || '',
     imageResolvedFrom: order.items[0]?.imageResolvedFrom,
-    status: dashboardStatus(order, verifiedShipment, barcode),
+    status: dashboardStatus(
+      order,
+      verifiedShipment || preassignedReady,
+      barcode,
+    ),
     statusSource: resolvedStatus.sourceLabel,
     carrierProviderKey: carrier.providerKey,
     carrierProviderName:
@@ -500,6 +536,7 @@ function normalizeOrder(order: CargoOrder): DashboardRecentOrder & {
     printedAt: order.label?.printedAt,
     createdAt: order.orderDate || order.createdAt,
     verifiedShipment,
+    preassignedReady,
     operationStatus: order.operationStatus,
     canceled,
     hasError,
@@ -544,7 +581,7 @@ function buildProviderBreakdown(
       shipmentCount: matchingOrders.filter((order) => order.trackingNumber).length,
       labelReadyCount: matchingOrders.filter(
         (order) =>
-          order.verifiedShipment &&
+          (order.verifiedShipment || order.preassignedReady) &&
           Boolean(order.barcode) &&
           order.labelStatus === 'READY',
       ).length,
