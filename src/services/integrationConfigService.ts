@@ -5,6 +5,10 @@ import type {
   PrinterSettings,
 } from '../types/cargoflow'
 import { loadFromStorage, saveToStorage } from '../utils/storage'
+import {
+  DEFAULT_TENANT_DESI_CONFIG,
+  normalizeTenantDesiConfig,
+} from '../utils/orderDesi'
 
 const INTEGRATION_KEY = 'cargoflow.integrationConfig'
 const PRINTER_KEY = 'cargoflow.printerSettings'
@@ -72,6 +76,7 @@ export const defaultIntegrationConfig: IntegrationConfig = {
     trackingVerificationDelaysMs: [0, 3000, 10000, 30000, 60000],
     labelRegistrationGraceMs: 30 * 60 * 1000,
   },
+  desi: DEFAULT_TENANT_DESI_CONFIG,
 }
 
 export const defaultPrinterSettings: PrinterSettings = {
@@ -144,6 +149,7 @@ export class IntegrationConfigService {
         ...stored.surat,
         ...normalizedSurat,
       },
+      desi: normalizeTenantDesiConfig(stored.desi),
     }
     if (
       stored.surat?.serviceMode !== normalized.surat.serviceMode ||
@@ -285,6 +291,7 @@ function normalizeIntegrationConfig(
       ...config.surat,
       ...normalizeSuratConfig(config.surat),
     },
+    desi: normalizeTenantDesiConfig(config.desi),
   }
 }
 

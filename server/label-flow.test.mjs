@@ -144,14 +144,18 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
   assert.equal(manualDesi.desi, 4.5)
   assert.equal(manualDesi.desiSource, 'manual')
 
+  // Ürün bazlı desi artık adet × birim desi toplamıdır (satır adedi 2).
   const productDesi = resolveNormalizedDesi({
     ...order,
     desi: null,
     desiSource: null,
     items: [{ ...order.items[0], desi: 3 }],
   })
-  assert.equal(productDesi.desi, 3)
-  assert.equal(productDesi.desiSource, 'product')
+  assert.equal(
+    productDesi.desi,
+    3 * Math.max(1, Number(order.items[0].quantity) || 1),
+  )
+  assert.equal(productDesi.desiSource, 'product_lines')
 
   const calculatedDesi = resolveNormalizedDesi({
     ...order,
@@ -332,11 +336,11 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
     [missingDesiOrder.id],
     buildConfig(),
   )
-  assert.match(missingDesiResult.result.message, /Desi bilgisi eksik/i)
+  assert.match(missingDesiResult.result.message, /desi bilgisi eksik/i)
   assert.doesNotMatch(missingDesiResult.result.message, /zaten oluşturulmuş/i)
   assert.match(
     missingDesiResult.result.bulkActionDebug.skippedReasons.join(' '),
-    /Top Ds\/Kg/i,
+    /Gönderi oluşturulamadı: 1 ürünün desi bilgisi eksik\./,
   )
 
   const workflowOrder = buildOrder()

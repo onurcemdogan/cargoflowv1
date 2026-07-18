@@ -821,6 +821,7 @@ function App() {
           onDownloadZpl={handleDownloadZpl}
           onDownloadZplForOrder={handleDownloadZplForOrder}
           onDesiChange={handleOrderDesiChange}
+          desiConfig={integrationConfig.desi}
           onMarkPrinted={handleMarkPrinted}
           onMarkPrintedForOrder={handleMarkPrintedForOrder}
           onMarkHandedToCargo={handleMarkHandedToCargo}

@@ -586,6 +586,46 @@ export function IntegrationsPage({
           <IntegrationResult result={suratTest} />
         </section>
 
+        <section className="panel">
+          <div className="panel-heading">
+            <h2>Desi Ayarları</h2>
+            <span>Ürün bazlı desi hesabının tenant varsayılanları</span>
+          </div>
+          <label>
+            <span>Varsayılan birim desi (tenant default)</span>
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              value={form.desi?.defaultUnitDesi ?? ''}
+              placeholder="Boş = eksik desili sipariş engellenir"
+              onChange={(event) => {
+                const value = Number(event.target.value.replace(',', '.'))
+                setForm({
+                  ...form,
+                  desi: {
+                    ...(form.desi ?? {
+                      categoryDefaults: {},
+                      productOverrides: {},
+                      variantOverrides: {},
+                    }),
+                    defaultUnitDesi:
+                      Number.isFinite(value) && value > 0 ? value : null,
+                  },
+                })
+              }}
+            />
+          </label>
+          <p className="field-note">
+            Desi önceliği: sipariş satırı → ürün varyantı → ürün kataloğu →
+            satıcı eşlemesi (variant/product override) → kategori varsayılanı →
+            bu tenant varsayılanı. Bu alan boşsa desisi çözülemeyen ürün içeren
+            siparişlerde gönderi oluşturma ENGELLENİR; sessiz varsayım
+            yapılmaz. Kategori/ürün/varyant bazlı override listeleri
+            konfigürasyon dosyasından yönetilir.
+          </p>
+        </section>
+
         <div className="form-footer">
           <button type="submit" className="primary-button" disabled={busy}>
             <Save size={18} />

@@ -525,7 +525,9 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   assert.equal(legacyBody.Gonderi.Pazaryerimi, 1)
   assert.equal(legacyBody.Gonderi.EntegrasyonFirmasi, 'Trendyol')
   assert.equal(legacyBody.Gonderi.Iademi, false)
-  assert.equal(legacyBody.Gonderi.Adet, 3)
+  // Adet = koli sayısı sözleşmesi: çok ürünlü sipariş TEK koliyle gider;
+  // ürün adedi (3) artık Adet'e yazılmaz.
+  assert.equal(legacyBody.Gonderi.Adet, 1)
 
   const pdfBarcodeConfig = buildConfig({
     serviceMode: 'KARGO_BARKODU_SIPARIS_SOAP',

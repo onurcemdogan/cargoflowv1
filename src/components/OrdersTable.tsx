@@ -158,12 +158,12 @@ export function OrdersTable({
                       className="order-desi-editor"
                       onClick={(event) => event.stopPropagation()}
                     >
-                      <span>Top Ds/Kg</span>
+                      <span>Toplam koli desisi</span>
                       <input
                         type="number"
                         min="0.01"
                         step="0.01"
-                        aria-label={`${order.orderNumber} Top Ds/Kg`}
+                        aria-label={`${order.orderNumber} Toplam koli desisi`}
                         value={normalizedDesi.desi ?? ''}
                         placeholder="Desi girin"
                         onChange={(event) => {
@@ -174,7 +174,7 @@ export function OrdersTable({
                             order.id,
                             Number.isFinite(value) && value > 0 ? value : null,
                             Number.isFinite(value) && value > 0
-                              ? 'manual'
+                              ? 'manual_total'
                               : null,
                           )
                         }}

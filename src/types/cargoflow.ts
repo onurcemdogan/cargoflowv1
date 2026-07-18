@@ -81,7 +81,9 @@ export type SuratServiceMode =
 export type LabelStatus = 'READY' | 'GENERATED' | 'PRINTED' | 'BLOCKED'
 export type DesiSource =
   | 'manual'
+  | 'manual_total'
   | 'product'
+  | 'product_lines'
   | 'calculated'
   | 'api'
   | 'default'
@@ -883,9 +885,21 @@ export interface SuratIntegrationConfig {
   labelRegistrationGraceMs?: number
 }
 
+// Tenant (satıcı) bazlı desi konfigürasyonu. Ürün satırı ve ürün cache'i
+// desi vermediğinde sırasıyla variant/product override, kategori varsayılanı
+// ve tenant varsayılanı devreye girer. defaultUnitDesi null ise eksik desi
+// gönderi oluşturmayı ENGELLER (sessiz varsayım yok).
+export interface TenantDesiConfig {
+  defaultUnitDesi: number | null
+  categoryDefaults: Record<string, number>
+  productOverrides: Record<string, number>
+  variantOverrides: Record<string, number>
+}
+
 export interface IntegrationConfig {
   trendyol: TrendyolIntegrationConfig
   surat: SuratIntegrationConfig
+  desi?: TenantDesiConfig
 }
 
 export interface PrinterSettings {

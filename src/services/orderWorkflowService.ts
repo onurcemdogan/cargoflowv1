@@ -38,6 +38,7 @@ import {
 import { applyProductImageResolution } from '../utils/productImage'
 import { mapSuratCarrierStatus } from '../utils/shipmentStatus'
 import { buildDesiDebug, resolveNormalizedDesi } from '../utils/desi'
+import { calculateOrderDesi } from '../utils/orderDesi'
 import type { AuditLogService } from './auditLogService'
 import { apiDebugService } from './apiDebugService'
 
@@ -485,10 +486,22 @@ export class OrderWorkflowService {
         continue
       }
 
+      // Desi tek sözleşmeden hesaplanır: manuel toplam koli desisi varsa o,
+      // yoksa sum(adet × satır birim desisi). Eksik desi sessizce
+      // varsayılmaz; tenant varsayılanı da yoksa create ENGELLENİR.
       const normalizedDesi = resolveNormalizedDesi(order)
-      if (normalizedDesi.desi == null) {
-        const reason =
-          'Desi bilgisi eksik. Kargo sütunundaki Top Ds/Kg alanına değer girin.'
+      const desiCalc = calculateOrderDesi(
+        order,
+        this.loadProducts(),
+        config.desi,
+      )
+      if (desiCalc.finalDesi == null) {
+        const missingList = desiCalc.missingLines
+          .map((line) => line.productName || line.sku || line.barcode)
+          .filter(Boolean)
+        const reason = `Gönderi oluşturulamadı: ${
+          desiCalc.blockedReason ?? 'desi bilgisi eksik.'
+        }${missingList.length > 0 ? ` Eksik ürünler: ${missingList.join(', ')}` : ''}`
         skippedCount += 1
         skippedOrderNumbers.push(order.orderNumber)
         skippedReasons.push(`${order.orderNumber}: ${reason}`)
@@ -501,10 +514,11 @@ export class OrderWorkflowService {
       }
       const normalizedOrder: CargoOrder = {
         ...order,
-        desi: normalizedDesi.desi,
-        desiSource: normalizedDesi.desiSource,
+        desi: desiCalc.finalDesi,
+        desiSource: desiCalc.finalDesiSource,
         weightKg: normalizedDesi.weightKg,
-        packageCount: normalizedDesi.packageCount,
+        // Adet=1 sözleşmesi: sipariş tek koli; ürün adedi koli sayısı değildir.
+        packageCount: desiCalc.parcelCount,
       }
 
       try {
@@ -652,11 +666,11 @@ export class OrderWorkflowService {
             zplDisabledReason: labelReadyState
               ? undefined
               : shipment.zplDisabledReason,
-            desi: normalizedDesi.desi,
-            desiSource: normalizedDesi.desiSource,
+            desi: desiCalc.finalDesi,
+            desiSource: desiCalc.finalDesiSource,
             weightKg: normalizedDesi.weightKg,
-            packageCount: normalizedDesi.packageCount,
-            apiRequestDesi: normalizedDesi.desi,
+            packageCount: desiCalc.parcelCount,
+            apiRequestDesi: desiCalc.finalDesi,
           },
           label: order.label,
           labelStatus: labelReadyState
@@ -781,8 +795,19 @@ export class OrderWorkflowService {
           requestUrl: '/api/shipments/surat/create',
           responseStatus: 200,
           responseBody: {
-            desiSource: normalizedDesi.desiSource,
-            finalNormalizedDesi: normalizedDesi.desi,
+            desiSource: desiCalc.finalDesiSource,
+            finalNormalizedDesi: desiCalc.finalDesi,
+            calculatedTotalDesi: desiCalc.calculatedTotalDesi,
+            manualTotalDesi: desiCalc.manualTotalDesi,
+            parcelCount: desiCalc.parcelCount,
+            lineBreakdown: desiCalc.lines.map((line) => ({
+              lineId: line.lineId,
+              quantity: line.quantity,
+              unitDesi: line.unitDesi,
+              unitDesiSource: line.unitDesiSource,
+              lineTotalDesi: line.lineTotalDesi,
+              excludedReason: line.excludedReason,
+            })),
           },
           status: 'SUCCESS',
           durationMs: 0,
@@ -793,7 +818,9 @@ export class OrderWorkflowService {
               normalizedOrder,
               {
                 ...normalizedDesi,
-                apiRequestDesi: normalizedDesi.desi,
+                desi: desiCalc.finalDesi,
+                desiSource: desiCalc.finalDesiSource,
+                apiRequestDesi: desiCalc.finalDesi,
                 apiResponseDesi:
                   shipment.apiResponseDesi ??
                   normalizedDesi.apiResponseDesi,

@@ -1,6 +1,11 @@
 import { Download, PackagePlus, Printer, Search, X } from 'lucide-react'
 import { useState } from 'react'
-import type { CargoOrder, CargoProduct, OrderItem } from '../types/cargoflow'
+import type {
+  CargoOrder,
+  CargoProduct,
+  OrderItem,
+  TenantDesiConfig,
+} from '../types/cargoflow'
 import { formatCurrency, formatDisplayDate } from '../utils/formatters'
 import {
   resolveProductImage,
@@ -23,6 +28,10 @@ import {
 } from '../utils/statusPresentation'
 import { resolveOrderStatus } from '../utils/shipmentStatus'
 import { formatDesi, resolveNormalizedDesi } from '../utils/desi'
+import {
+  calculateOrderDesi,
+  describeLineDesiSource,
+} from '../utils/orderDesi'
 import { StatusBadge } from './StatusBadge'
 
 interface OrderDetailDrawerProps {
@@ -39,6 +48,7 @@ interface OrderDetailDrawerProps {
     desi: number | null,
     desiSource: CargoOrder['desiSource'],
   ) => void
+  desiConfig?: TenantDesiConfig
 }
 
 export function OrderDetailDrawer({
@@ -51,6 +61,7 @@ export function OrderDetailDrawer({
   onDownloadZpl,
   onPrintLabel,
   onDesiChange,
+  desiConfig,
 }: OrderDetailDrawerProps) {
   const suratVerification = verifySuratShipment(order)
   const printEligibility = resolveSuratPrintEligibility(order)
@@ -61,6 +72,7 @@ export function OrderDetailDrawer({
   )
   const resolvedStatus = resolveOrderStatus(order)
   const normalizedDesi = resolveNormalizedDesi(order)
+  const desiCalculation = calculateOrderDesi(order, products, desiConfig)
   const [activeTab, setActiveTab] = useState<'details' | 'apiDebug'>('details')
 
   return (
@@ -280,9 +292,9 @@ export function OrderDetailDrawer({
                   </div>
                 ) : null}
                 <div>
-                  <span>Top Ds/Kg</span>
+                  <span>Toplam koli desisi</span>
                   <input
-                    aria-label="Top Ds/Kg"
+                    aria-label="Toplam koli desisi"
                     type="number"
                     min="0.01"
                     step="0.01"
@@ -296,7 +308,7 @@ export function OrderDetailDrawer({
                         order.id,
                         Number.isFinite(value) && value > 0 ? value : null,
                         Number.isFinite(value) && value > 0
-                          ? 'manual'
+                          ? 'manual_total'
                           : null,
                       )
                     }}
@@ -305,6 +317,42 @@ export function OrderDetailDrawer({
                     {formatDesi(normalizedDesi.desi)} ·{' '}
                     {normalizedDesi.desiSource || 'eksik'}
                   </strong>
+                </div>
+                <div className="desi-breakdown" data-testid="desi-breakdown">
+                  <span>Desi Dökümü (satır × adet)</span>
+                  {desiCalculation.lines.map((line) => (
+                    <div key={line.lineId} className="desi-breakdown-line">
+                      <span>
+                        {line.productName || line.sku || line.barcode || '-'}
+                      </span>
+                      <strong>
+                        {line.excludedReason === 'duplicate_line'
+                          ? 'Tekrarlanan satır — sayılmadı'
+                          : line.excludedReason === 'cancelled_line'
+                            ? 'İptal — sayılmadı'
+                            : line.unitDesi != null
+                              ? `${line.quantity} × ${formatDesi(line.unitDesi)} = ${formatDesi(line.lineTotalDesi)} (${describeLineDesiSource(line.unitDesiSource)})`
+                              : `${line.quantity} × ? — desi eksik`}
+                      </strong>
+                    </div>
+                  ))}
+                  <div className="desi-breakdown-total">
+                    <span>Hesaplanan toplam</span>
+                    <strong>{formatDesi(desiCalculation.calculatedTotalDesi)}</strong>
+                  </div>
+                  {desiCalculation.manualTotalDesi != null ? (
+                    <div className="desi-breakdown-total">
+                      <span>Manuel toplam koli desisi</span>
+                      <strong>
+                        {formatDesi(desiCalculation.manualTotalDesi)} (öncelikli)
+                      </strong>
+                    </div>
+                  ) : null}
+                  {desiCalculation.finalDesi == null ? (
+                    <div className="detail-warning" role="alert">
+                      Gönderi oluşturulamaz: {desiCalculation.blockedReason}
+                    </div>
+                  ) : null}
                 </div>
                 <Detail
                   label="Pazaryeri Durumu"

@@ -363,7 +363,7 @@ function BulkDesiEditor({
   return (
     <section className="bulk-label-preview-meta">
       <label>
-        <span>Top Ds/Kg</span>
+        <span>Toplam koli desisi</span>
         <input
           type="number"
           min="0.01"
@@ -375,7 +375,7 @@ function BulkDesiEditor({
             onDesiChange(
               order.id,
               Number.isFinite(value) && value > 0 ? value : null,
-              Number.isFinite(value) && value > 0 ? 'manual' : null,
+              Number.isFinite(value) && value > 0 ? 'manual_total' : null,
             )
           }}
         />

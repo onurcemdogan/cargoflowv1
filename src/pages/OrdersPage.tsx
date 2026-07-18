@@ -12,6 +12,7 @@ import type {
   MarketplaceStatus,
   OrderStatusFilter,
   SuratLabelMappingConfig,
+  TenantDesiConfig,
   TrendyolOrderDebug,
   WorkflowResult,
 } from '../types/cargoflow'
@@ -59,6 +60,7 @@ interface OrdersPageProps {
     desi: number | null,
     desiSource: CargoOrder['desiSource'],
   ) => void
+  desiConfig?: TenantDesiConfig
   onMarkPrinted: () => void
   onMarkPrintedForOrder: (orderId: string) => void
   onMarkHandedToCargo: () => void
@@ -158,6 +160,7 @@ export function OrdersPage({
   onDownloadZpl,
   onDownloadZplForOrder,
   onDesiChange,
+  desiConfig,
   onMarkPrinted,
   onMarkPrintedForOrder,
   onMarkHandedToCargo,
@@ -577,6 +580,7 @@ export function OrdersPage({
           onDownloadZpl={onDownloadZplForOrder}
           onPrintLabel={onMarkPrintedForOrder}
           onDesiChange={onDesiChange}
+          desiConfig={desiConfig}
         />
       ) : null}
     </>

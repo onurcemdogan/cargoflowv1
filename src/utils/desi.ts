@@ -24,17 +24,21 @@ export function resolveNormalizedDesi(
   const source = order?.desiSource ?? shipment?.desiSource ?? null
   const orderDesi = positiveNumber(order?.desi)
   const shipmentDesi = positiveNumber(shipment?.desi)
+  // Manuel giriş = TOPLAM koli desisi (quantity ile tekrar çarpılmaz).
   const manualDesi =
-    source === 'manual' || (!source && orderDesi != null)
+    source === 'manual' ||
+    source === 'manual_total' ||
+    (!source && orderDesi != null)
       ? orderDesi ?? shipmentDesi
       : null
+  // Ürün bazlı desi = sum(quantity × satır birim desisi). Eski davranış
+  // (ilk ürünün desisini tüm siparişe yazmak) çok ürünlü siparişlerde
+  // yanlıştı; herhangi bir satırın birim desisi yoksa toplam HESAPLANMAZ.
   const productDesi = firstNumber(
-    source === 'product' ? orderDesi : null,
-    ...((order?.items ?? []).flatMap((item) => [
-      positiveNumber(item.desi),
-      positiveNumber(readNested(item.rawLine, ['dimensionalWeight'])),
-      positiveNumber(readNested(item.rawLine, ['desi'])),
-    ])),
+    source === 'product' || source === 'product_lines'
+      ? orderDesi ?? shipmentDesi
+      : null,
+    sumOrderLineDesi(order?.items),
   )
   const weightKg = firstNumber(
     positiveNumber(order?.weightKg),
@@ -73,10 +77,16 @@ export function resolveNormalizedDesi(
   )
 
   if (manualDesi != null) {
-    return result(manualDesi, 'manual')
+    return result(
+      manualDesi,
+      source === 'manual_total' ? 'manual_total' : 'manual',
+    )
   }
   if (productDesi != null) {
-    return result(productDesi, 'product')
+    return result(
+      productDesi,
+      source === 'product' ? 'product' : 'product_lines',
+    )
   }
   if (calculatedDesi != null) {
     return result(calculatedDesi, 'calculated')
@@ -148,6 +158,34 @@ export function desiValuesDiffer(
 
 export function formatDesi(value: number | null): string {
   return value == null ? '-' : value.toFixed(2)
+}
+
+// Satır verisinden kayıpsız toplam: her sayılan satırın (adet>0, tekrar
+// etmeyen id) kendi birim desisi olmalı; aksi halde null döner ve üst
+// katman tenant konfigürasyonlu tam hesabı (calculateOrderDesi) veya
+// manuel girişi bekler.
+function sumOrderLineDesi(
+  items: CargoOrder['items'] | undefined,
+): number | null {
+  const seen = new Set<string>()
+  let total = 0
+  let counted = 0
+  for (const [index, item] of (items ?? []).entries()) {
+    const lineId = String(item.id ?? `line-${index}`)
+    if (seen.has(lineId)) continue
+    seen.add(lineId)
+    const quantity = Math.max(0, Math.round(Number(item.quantity) || 0))
+    if (quantity <= 0) continue
+    const unit = firstNumber(
+      positiveNumber(item.desi),
+      positiveNumber(readNested(item.rawLine, ['dimensionalWeight'])),
+      positiveNumber(readNested(item.rawLine, ['desi'])),
+    )
+    if (unit == null) return null
+    total += quantity * unit
+    counted += 1
+  }
+  return counted > 0 ? roundDesi(total) : null
 }
 
 function calculatePackageDesi(

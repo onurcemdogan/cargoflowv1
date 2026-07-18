@@ -5837,12 +5837,17 @@ function buildSuratShipmentPayload(
   { commonBarcode = false } = {},
 ) {
   const items = Array.isArray(order.items) ? order.items : []
-  const totalQuantity = Math.max(
+  // Sürat alan sözleşmesi:
+  // - Adet   = KOLİ sayısı (varsayılan 1). Ürün adedi koli sayısı DEĞİLDİR;
+  //            çok ürünlü sipariş tek koliyle gider.
+  // - BirimDesi = koli başına toplam desi. İstemci bunu ürün satırlarından
+  //            sum(adet × birim desi) olarak veya manuel "Toplam koli desisi"
+  //            girişinden hesaplayıp order.desi olarak gönderir.
+  // - BirimKg = koli ağırlığı; weightKg yoksa Sürat pratiğine uygun olarak
+  //            desi değeri aynen kullanılır (hacimsel ağırlık >= gerçek kg).
+  const parcelCount = Math.max(
     1,
-    items.reduce(
-      (total, item) => total + Number(item.quantity ?? 0),
-      0,
-    ),
+    Math.round(toPositiveNumber(order.packageCount) ?? 1),
   )
   const desi = toPositiveNumber(order.desi)
   if (desi == null) {
@@ -5896,7 +5901,7 @@ function buildSuratShipmentPayload(
     WebSiparisKodu: orderNumber,
     SatisKodu: orderNumber,
     MarketplaceIntegrationCode: marketplaceIntegrationCode,
-    Adet: totalQuantity,
+    Adet: parcelCount,
     BirimDesi: desi,
     BirimKg: kg,
     KargoIcerigi: content || 'CargoFlow gönderisi',

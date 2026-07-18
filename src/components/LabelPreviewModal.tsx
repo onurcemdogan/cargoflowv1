@@ -160,7 +160,7 @@ export function LabelPreviewModal({
           <header>
             <div>
               <span className="eyebrow">Gönderi ölçüsü</span>
-              <h3>Top Ds/Kg</h3>
+              <h3>Toplam koli desisi</h3>
             </div>
             <span className="preview-only-badge">
               Kaynak: {desiSourceLabel(normalizedDesi.desiSource)}
@@ -168,7 +168,7 @@ export function LabelPreviewModal({
           </header>
           <div className="label-editor-grid">
             <label>
-              <span>Top Ds/Kg</span>
+              <span>Toplam koli desisi</span>
               <input
                 type="number"
                 min="0.01"
@@ -181,7 +181,7 @@ export function LabelPreviewModal({
                   onDesiChange(
                     order.id,
                     value,
-                    value == null ? null : 'manual',
+                    value == null ? null : 'manual_total',
                   )
                 }}
               />
@@ -753,7 +753,9 @@ function desiSourceLabel(
   source: CargoOrder['desiSource'],
 ): string {
   if (source === 'manual') return 'Manuel'
+  if (source === 'manual_total') return 'Manuel toplam koli desisi'
   if (source === 'product') return 'Ürün'
+  if (source === 'product_lines') return 'Ürün satırları (adet × birim desi)'
   if (source === 'calculated') return 'Hesaplanan'
   if (source === 'api') return 'API'
   if (source === 'default') return 'Varsayılan'

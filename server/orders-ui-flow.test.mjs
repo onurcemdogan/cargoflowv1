@@ -199,8 +199,8 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     }),
   )
   assert.match(tableHtml, /cdn\.example\.com\/product\.jpg/)
-  assert.match(tableHtml, /Top Ds\/Kg/)
-  assert.match(tableHtml, /11336194107 Top Ds\/Kg/)
+  assert.match(tableHtml, /Toplam koli desisi/)
+  assert.match(tableHtml, /11336194107 Toplam koli desisi/)
 
   const barcodeMatchedOrder = buildOrder()
   barcodeMatchedOrder.items[0].productContentId = ''
