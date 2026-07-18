@@ -941,12 +941,18 @@ async function executeRegisteredSuratLabel({
   )
   const verified = isSerendipVerifiedCreateResult(result)
   const completedAt = new Date().toISOString()
+  const labelZplReference = buildSafeZplReference(result)
   await queueSuratCreateStoreUpdate((store) => {
     const record = store.operations[operationContext.idempotencyKey]
     if (!record) return
     record.labelCompletedAt = completedAt
     record.labelVerificationStatus = verified ? 'VERIFIED' : 'UNVERIFIED'
     record.updatedAt = completedAt
+    if (labelZplReference.zpl) {
+      record.technicalZpl = labelZplReference.zpl
+      record.technicalZplSha256 = labelZplReference.sha256
+      record.technicalZplLength = labelZplReference.length
+    }
     if (verified) {
       record.status = 'SUCCESS'
       record.verificationStatus = 'VERIFIED'
@@ -1192,6 +1198,7 @@ async function executeIdempotentSuratCreate(request, operation) {
           : 'SHIPMENT_REGISTERED',
     technicalZplSha256: buildSafeZplReference(result).sha256,
     technicalZplLength: buildSafeZplReference(result).length,
+    technicalZpl: buildSafeZplReference(result).zpl,
     lastCheckedAt: completedAt,
   }
   await writeSuratCreateOperation(record)
@@ -1450,6 +1457,21 @@ function buildSuratIdempotencyBlockedResponse(record, operation, message) {
         unverifiedBarcodeCandidate,
       )
     : undefined
+  // İlk create yanıtındaki teknik ZPL op kaydında saklanır; replay yanıtı
+  // bu ZPL'yi geri vererek yazdırılabilir durumu korur. Boş kayıt mevcut
+  // istemci ZPL'sini asla ezmez (istemci merge yalnız eksikse doldurur).
+  const storedTechnicalZpl = preassignedPatch
+    ? normalizeSuratRawZpl(record?.technicalZpl)
+    : ''
+  const technicalZplPatch = storedTechnicalZpl
+    ? {
+        barcodeRaw: storedTechnicalZpl,
+        zplAnalysis: analyzeSuratZpl(storedTechnicalZpl),
+        technicalZplReceived: true,
+        zplReady: true,
+        zplSource: 'surat.create.replayStoredZpl',
+      }
+    : undefined
   const noTrackingReason = preassignedPatch
     ? preassignedPatch.noTrackingReason
     : labelCreatedNotRegistered
@@ -1498,6 +1520,7 @@ function buildSuratIdempotencyBlockedResponse(record, operation, message) {
         noTrackingReason,
         diagnosticMessage: String(record?.businessMessage ?? '').slice(0, 600),
         ...(preassignedPatch ?? {}),
+        ...(technicalZplPatch ?? {}),
         suratCreateLog: {
           serviceMode,
           serviceType,
@@ -1601,6 +1624,10 @@ function buildSafeZplReference(result = {}) {
       ? createHash('sha256').update(zpl).digest('hex')
       : '',
     length: zpl.length,
+    // Teknik ZPL kaydın kendisinde de saklanır ki idempotency-blocked
+    // replay yanıtı, ilk create yanıtı istemcide hiç persist edilmemiş
+    // olsa bile yazdırılabilir etiketi geri verebilsin.
+    zpl,
   }
 }
 

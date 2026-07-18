@@ -11,6 +11,14 @@ import { formatDesi } from './desi'
 
 // Her etiket sayfası kendi bağımsız (immutable) modelini kullanır; bir
 // siparişin kodları başka siparişe sızamaz.
+export interface SuratPrintItemLine {
+  productName: string
+  quantity: number
+  color?: string
+  size?: string
+  sku?: string
+}
+
 export interface SuratPrintPageModel {
   orderNumber: string
   trackingNumber: string
@@ -21,6 +29,12 @@ export interface SuratPrintPageModel {
   address: string
   desi: number | null
   packageCount: number
+  // Yalnız ÇOK ürünlü siparişlerde doldurulur; tekli sipariş modeli
+  // (regression baseline) bu alanlar olmadan aynen devam eder. Satırlar
+  // shipment'ı mutate etmeden ayrı normalize edilir.
+  items?: SuratPrintItemLine[]
+  totalQuantity?: number
+  contentLines?: string[]
 }
 
 export interface SuratPrintSkip {
@@ -114,6 +128,30 @@ export function buildSuratPrintPageModel(order: CargoOrder): {
         'Etiket yazdırılamadı: T.No ve barkod alanları yanlış eşleştirilmiş.',
     }
   }
+  // Çoklu ürün satırları shipment'a DOKUNMADAN ayrı bir modelde normalize
+  // edilir; ZPL/tracking/barkod alanları ürün satırlarınca asla ezilmez.
+  const normalizedItems: SuratPrintItemLine[] = (order.items ?? []).map(
+    (item) => ({
+      productName: String(item.productName ?? '').trim(),
+      quantity: Math.max(1, Math.round(Number(item.quantity) || 1)),
+      color: item.color ? String(item.color) : undefined,
+      size: item.size ? String(item.size) : undefined,
+      sku: item.merchantSku || item.sku || undefined,
+    }),
+  )
+  const multiItemFields =
+    normalizedItems.length > 1
+      ? {
+          items: normalizedItems,
+          totalQuantity: normalizedItems.reduce(
+            (total, item) => total + item.quantity,
+            0,
+          ),
+          contentLines: normalizedItems.map(
+            (item) => `${item.quantity} x ${item.productName}`,
+          ),
+        }
+      : {}
   return {
     model: {
       orderNumber: String(order.orderNumber ?? ''),
@@ -125,6 +163,7 @@ export function buildSuratPrintPageModel(order: CargoOrder): {
       address: String(order.address ?? ''),
       desi: order.desi ?? null,
       packageCount: order.packageCount ?? 1,
+      ...multiItemFields,
     },
   }
 }
@@ -737,6 +776,21 @@ export function buildCleanLabelHtml(
     }
     .surat-product strong { font-size: 8pt; }
     .surat-product span { font-size: 7pt; margin-top: .5mm; }
+    /* Çoklu ürün: satırlar kayıpsız sarılır, alan taşarsa gizlenir ki
+       etiket TEK sayfada kalsın. Tekli kurallar yukarıda aynen durur. */
+    .surat-product-multi { overflow: hidden; }
+    .surat-product-multi .surat-product-line { margin-top: .4mm; }
+    .surat-product-multi .surat-product-line:first-child { margin-top: 0; }
+    .surat-product-multi strong,
+    .surat-product-multi span {
+      white-space: normal;
+      text-overflow: clip;
+      overflow-wrap: break-word;
+      word-break: normal;
+      line-height: 1.05;
+    }
+    .surat-product-multi strong { font-size: 6.5pt; }
+    .surat-product-multi span { font-size: 6pt; margin-top: 0; }
     @media print {
       html, body {
         width: ${widthMm}mm;
@@ -788,6 +842,31 @@ export function renderPrintableLabelHtml(data: LabelData): string {
   ]
     .filter(Boolean)
     .join(' | ')
+  // Çoklu ürün: tüm satırlar footer'da listelenir (kayıpsız, sarmalı).
+  // Tekli sipariş markup'ı regression baseline'dır ve birebir korunur.
+  const multipleItems = data.items.length > 1
+  const productFooter = multipleItems
+    ? `<footer class="surat-section surat-product surat-product-multi">
+            ${data.items
+              .map((line) => {
+                const lineMeta = [
+                  line.color ? `Renk: ${line.color}` : '',
+                  line.size ? `Beden: ${line.size}` : '',
+                ]
+                  .filter(Boolean)
+                  .join(' | ')
+                return `<div class="surat-product-line"><strong>${escapeHtml(
+                  `${line.quantity || 1} x ${line.productName}`,
+                )}</strong>${
+                  lineMeta ? `<span>${escapeHtml(lineMeta)}</span>` : ''
+                }</div>`
+              })
+              .join('')}
+          </footer>`
+    : `<footer class="surat-section surat-product">
+            <strong>${escapeHtml(productTitle)}</strong>
+            <span>${escapeHtml(productMeta)}</span>
+          </footer>`
 
   return `
       <article class="label-page">
@@ -833,10 +912,7 @@ export function renderPrintableLabelHtml(data: LabelData): string {
             </div>
             ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-small')}
           </section>
-          <footer class="surat-section surat-product">
-            <strong>${escapeHtml(productTitle)}</strong>
-            <span>${escapeHtml(productMeta)}</span>
-          </footer>
+          ${productFooter}
         </div>
       </article>
     `

@@ -1696,6 +1696,17 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   assert.equal(unverifiedCodesReplay.shipment.tNo, '24510610424923')
   assert.equal(unverifiedCodesReplay.shipment.barkodNo, '01249492893')
   assert.equal(unverifiedCodesReplay.shipment.verifiedShipment, false)
+  // Replay yanıtı ilk create'in teknik ZPL'sini geri verir: istemci ilk
+  // yanıtı hiç persist edememiş olsa bile etiket yazdırılabilir kalır.
+  assert.match(
+    String(unverifiedCodesReplay.shipment.barcodeRaw ?? ''),
+    /\^XA[\s\S]*\^XZ/,
+  )
+  assert.equal(
+    unverifiedCodesReplay.shipment.zplAnalysis.acceptedFinalBarcode,
+    '01249492893',
+  )
+  assert.equal(unverifiedCodesReplay.shipment.technicalZplReceived, true)
   assert.equal(requests.length, requestsBeforeUnverifiedReplay)
   const commonBarcodeConfigWithTrendyol = {
     ...commonBarcodeConfig,
