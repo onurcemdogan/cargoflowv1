@@ -403,6 +403,55 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
   assert.equal(duplicateSummary.labelReady, 1)
   assert.equal(duplicateSummary.barcodeWaiting, 1)
   assert.equal(duplicateSummary.openOperations, 2)
+
+  // Dashboard kartı → Siparişler geçiş sözleşmesi: filtreler varsayılana
+  // döndüğünde kart sayısı, hedef sekmenin görünür TEKİL paket sayısına eşit.
+  const parityOrders = [
+    preassignedOrder,
+    { ...preassignedOrder, id: 'duplicate-row-id' },
+    buildOrder('P1'),
+    buildOrder('P2'),
+  ]
+  const paritySummary = buildDashboardSummary({
+    orders: parityOrders,
+    ...integrations,
+    printerSettings,
+  })
+  const defaultFilters = {
+    persistentOrders: parityOrders,
+    marketplaceFilter: 'all',
+    operationStatusFilter: 'all',
+    cargoFilter: 'all',
+    dateFilter: { preset: 'all' },
+    searchQuery: '',
+  }
+  const uniquePackages = (list) =>
+    new Set(
+      list.map((order) =>
+        String(order.packageId || order.shipmentPackageId || order.id),
+      ),
+    ).size
+  assert.equal(
+    uniquePackages(
+      buildVisibleOrders({ ...defaultFilters, selectedTab: 'labelReady' })
+        .visibleOrders,
+    ),
+    paritySummary.labelReady,
+  )
+  assert.equal(
+    uniquePackages(
+      buildVisibleOrders({ ...defaultFilters, selectedTab: 'barcodePending' })
+        .visibleOrders,
+    ),
+    paritySummary.barcodeWaiting,
+  )
+  assert.equal(
+    uniquePackages(
+      buildVisibleOrders({ ...defaultFilters, selectedTab: 'open' })
+        .visibleOrders,
+    ),
+    paritySummary.openOperations,
+  )
 })
 
 function buildPreassignedOrder(suffix) {

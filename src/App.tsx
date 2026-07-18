@@ -182,11 +182,16 @@ function App() {
     }
   }
 
+  // Dashboard kartından Siparişler'e tek geçiş noktası: yeni navigation id
+  // OrdersPage'i remount eder (marketplace/status/kargo/tarih/arama filtreleri
+  // varsayılana döner), eski toplu seçim temizlenir ve yalnız kartın hedef
+  // sekmesi uygulanır. Böylece kart sayısı ile açılan liste eşleşir.
   function handleDashboardNavigateOrders(
     tab: QuickTab = 'all',
     orderId?: string,
   ) {
     setActivePage('orders')
+    setSelectedIds([])
     setOrdersNavigationRequest({
       id: Date.now(),
       tab,
