@@ -109,6 +109,11 @@ export interface LabelData {
   mainBarcodeValue: string
   // QR payload'ı müşteri referansıdır (OzelKargoTakipNo); barkod/T.No değildir.
   qrPayload?: string
+  // Üst bölümdeki GÖNDERİCİ adı (alıcı adı ASLA buraya düşmez).
+  senderName?: string
+  // Kayıpsız sarılmış tam alıcı adresi satırları + font kademesi.
+  fullAddressLines?: string[]
+  addressFontScale?: 'normal' | 'long' | 'xlong'
   barcodeSource: string
   tNoSource: string
   mainBarcodeSource: string
@@ -207,10 +212,22 @@ export function buildSuratLabelData(
     verifiedShipment: String(verification.verifiedShipment),
   }
 
+  const fullAddress = resolveFullRecipientAddress(order, effectiveShipment)
+  const addressLayout = buildAddressLayout(fullAddress)
+  const recipientPhoneResolution = resolveRecipientPhone(
+    order,
+    effectiveShipment,
+  )
+
   return {
     recipientName: String(order?.customerName ?? '').trim(),
-    recipientPhone: String(order?.customerPhone ?? '').trim(),
-    address: String(order?.address ?? '').trim(),
+    recipientPhone:
+      recipientPhoneResolution.phone ||
+      String(order?.customerPhone ?? '').trim(),
+    senderName: resolveSuratSenderName(order, effectiveShipment, mappingConfig),
+    fullAddressLines: addressLayout.lines,
+    addressFontScale: addressLayout.fontScale,
+    address: fullAddress || String(order?.address ?? '').trim(),
     city: String(order?.city ?? '').trim(),
     district: String(order?.district ?? '').trim(),
     orderNumber: String(order?.orderNumber ?? '').trim(),
@@ -683,6 +700,214 @@ function firstNonEmpty(...values: unknown[]): string {
   return values
     .map((value) => String(value ?? '').trim())
     .find(Boolean) ?? ''
+}
+
+// ---------------------------------------------------------------------------
+// Gönderici / alıcı telefonu / tam adres çözücüleri (yalnız etiket sunumu).
+// ---------------------------------------------------------------------------
+
+// Bu kurulumun Sürat cari GonderenUnvan değeri; canlı WebSiparisKodu
+// satırlarının tamamında bu ad dönüyor. mappingConfig.senderName ile
+// geçersiz kılınabilir. Alıcı adı hiçbir zaman fallback DEĞİLDİR.
+const DEFAULT_SURAT_SENDER_NAME = 'HASAN GÜREL'
+
+export function resolveSuratSenderName(
+  order?: CargoOrder,
+  shipment?: Shipment,
+  mappingConfig: SuratLabelMappingConfig = {},
+): string {
+  const effectiveShipment = shipment ?? order?.shipment
+  return firstNonEmpty(
+    readUnknown(effectiveShipment?.suratTrackingLog, ['GonderenUnvan']),
+    readUnknown(effectiveShipment?.rawResponse, ['GonderenUnvan']),
+    readUnknown(effectiveShipment, ['senderName']),
+    mappingConfig.senderName,
+    DEFAULT_SURAT_SENDER_NAME,
+  )
+}
+
+const PHONE_PLACEHOLDERS = new Set([
+  '',
+  '-',
+  '0',
+  'null',
+  'undefined',
+  'none',
+  'yok',
+  '0000000000',
+  '00000000000',
+  '5000000000',
+  '5555555555',
+])
+
+// Alıcı telefonu tek sözleşme: shipment adresi → normalize müşteri telefonu
+// → ham Trendyol shipment/invoice adresi → create isteğindeki TelefonCep.
+// Maskeli değer (yıldızlı) güvenli biçimde olduğu gibi korunur. Geçerli
+// telefon yoksa '' döner — SAHTE numara üretilmez.
+export function resolveRecipientPhone(
+  order?: CargoOrder,
+  shipment?: Shipment,
+): { phone: string; source: string; reason: string } {
+  const effectiveShipment = shipment ?? order?.shipment
+  const rawOrder = (order as CargoOrder & { rawOrder?: unknown })?.rawOrder
+  const rawPackage = (order as CargoOrder & { rawPackage?: unknown })
+    ?.rawPackage
+  const candidates: Array<[string, unknown]> = [
+    [
+      'order.shipmentAddress.phone',
+      readUnknown(order?.shipmentAddress, ['phone']),
+    ],
+    [
+      'order.shipmentAddress.phoneNumber',
+      readUnknown(order?.shipmentAddress, ['phoneNumber']),
+    ],
+    [
+      'order.shipmentAddress.gsm',
+      readUnknown(order?.shipmentAddress, ['gsm']),
+    ],
+    ['order.customerPhone', order?.customerPhone],
+    [
+      'rawOrder.shipmentAddress.phone',
+      readUnknown(readUnknown(rawOrder, ['shipmentAddress']), [
+        'phone',
+        'phoneNumber',
+        'gsm',
+      ]),
+    ],
+    [
+      'rawPackage.shipmentAddress.phone',
+      readUnknown(readUnknown(rawPackage, ['shipmentAddress']), [
+        'phone',
+        'phoneNumber',
+        'gsm',
+      ]),
+    ],
+    [
+      'rawOrder.invoiceAddress.phone',
+      readUnknown(readUnknown(rawOrder, ['invoiceAddress']), ['phone']),
+    ],
+    [
+      'create.TelefonCep',
+      extractTelefonCepFromRawRequest(
+        effectiveShipment?.suratCreateLog?.rawRequest,
+      ),
+    ],
+  ]
+  for (const [source, value] of candidates) {
+    const normalized = normalizeRecipientPhone(value)
+    if (normalized) return { phone: normalized, source, reason: '' }
+  }
+  return { phone: '', source: 'none', reason: 'PHONE_NOT_PROVIDED_BY_MARKETPLACE' }
+}
+
+export function normalizeRecipientPhone(value: unknown): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return ''
+  // Maskeli telefon (örn. 542*******) güvenli biçimde olduğu gibi gösterilir.
+  if (raw.includes('*')) {
+    const compact = raw.replace(/[\s()-]/g, '')
+    return /\d/.test(compact) ? compact : ''
+  }
+  let digits = raw.replace(/\D/g, '')
+  if (PHONE_PLACEHOLDERS.has(raw.toLocaleLowerCase('tr-TR'))) return ''
+  if (digits.startsWith('0090')) digits = digits.slice(4)
+  else if (digits.startsWith('90') && digits.length === 12) {
+    digits = digits.slice(2)
+  }
+  if (digits.startsWith('0') && digits.length === 11) digits = digits.slice(1)
+  if (PHONE_PLACEHOLDERS.has(digits)) return ''
+  if (digits.length === 10 && digits.startsWith('5')) {
+    return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 8)} ${digits.slice(8)}`
+  }
+  // 10 haneli sabit hat vb. — okunur ama biçimlenmemiş bırak.
+  return digits.length >= 7 ? digits : ''
+}
+
+function extractTelefonCepFromRawRequest(rawRequest: unknown): string {
+  const text = typeof rawRequest === 'string' ? rawRequest : ''
+  const match = text.match(/<TelefonCep>([^<]*)<\/TelefonCep>/i)
+  return match?.[1]?.trim() ?? ''
+}
+
+// Tam alıcı adresi: liste görünümündeki kısaltma helper'ları KULLANILMAZ;
+// canonical adres kaynaklarından en zengini seçilir.
+export function resolveFullRecipientAddress(
+  order?: CargoOrder,
+  shipment?: Shipment,
+): string {
+  const effectiveShipment = shipment ?? order?.shipment
+  const asString = (value: unknown): string =>
+    typeof value === 'string' || typeof value === 'number'
+      ? String(value)
+      : ''
+  const candidates = [
+    asString(readUnknown(order?.shipmentAddress, ['fullAddress'])),
+    [
+      asString(readUnknown(order?.shipmentAddress, ['address1'])),
+      asString(readUnknown(order?.shipmentAddress, ['address2'])),
+      asString(readUnknown(order?.shipmentAddress, ['neighborhood'])),
+    ]
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(' '),
+    asString(readUnknown(effectiveShipment, ['recipientAddress'])),
+    asString(order?.address),
+  ]
+    .map((value) => value.replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+  // En zengin (en uzun) canonical adres kazanır; kısaltılmış kopya seçilmez.
+  return candidates.sort((left, right) => right.length - left.length)[0] ?? ''
+}
+
+export interface AddressLayout {
+  lines: string[]
+  fontScale: 'normal' | 'long' | 'xlong'
+}
+
+// Kayıpsız sarma: hiçbir kelime atılmaz, '...' eklenmez, kelime ortasından
+// kesilmez. Satır sayısı yetmezse font kademesi küçültülüp daha geniş
+// satırlarla yeniden denenir.
+export function buildAddressLayout(address: string): AddressLayout {
+  const text = String(address ?? '').replace(/\s+/g, ' ').trim()
+  if (!text) return { lines: ['-'], fontScale: 'normal' }
+  const attempts: Array<{
+    maxChars: number
+    maxLines: number
+    fontScale: AddressLayout['fontScale']
+  }> = [
+    { maxChars: 38, maxLines: 3, fontScale: 'normal' },
+    { maxChars: 46, maxLines: 3, fontScale: 'long' },
+    { maxChars: 54, maxLines: 4, fontScale: 'xlong' },
+  ]
+  for (const attempt of attempts) {
+    const lines = wrapWordsLossless(text, attempt.maxChars)
+    if (lines.length <= attempt.maxLines) {
+      return { lines, fontScale: attempt.fontScale }
+    }
+  }
+  // Son çare: en küçük fontta kaç satır gerekiyorsa o kadar satır — içerik
+  // asla atılmaz.
+  return { lines: wrapWordsLossless(text, 54), fontScale: 'xlong' }
+}
+
+function wrapWordsLossless(text: string, maxChars: number): string[] {
+  const words = text.split(' ')
+  const lines: string[] = []
+  let current = ''
+  for (const word of words) {
+    if (!current) {
+      current = word
+      continue
+    }
+    if (current.length + 1 + word.length <= maxChars) {
+      current = `${current} ${word}`
+    } else {
+      lines.push(current)
+      current = word
+    }
+  }
+  if (current) lines.push(current)
+  return lines
 }
 
 function unique(values: string[]): string[] {

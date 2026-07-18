@@ -587,6 +587,12 @@ test('Toplu yazdırma tek dokümanda doğru alan eşlemesiyle çalışır', asyn
 
   const { printSuratLabels, buildCleanLabelHtml, buildSuratZplDownload } =
     await vite.ssrLoadModule('/src/utils/browserLabelPrint.ts')
+  const {
+    buildAddressLayout,
+    normalizeRecipientPhone,
+    resolveRecipientPhone,
+    resolveSuratSenderName,
+  } = await vite.ssrLoadModule('/src/utils/labelData.ts')
 
   const previousWindow = globalThis.window
   const previousDocument = globalThis.document
@@ -867,6 +873,104 @@ test('Toplu yazdırma tek dokümanda doğru alan eşlemesiyle çalışır', asyn
   assert.match(writtenHtml, /data-barcode-value="01250077333"/)
   assert.doesNotMatch(writtenHtml, /data-barcode-value="99718621452161"/)
   assert.match(writtenHtml, /data-qr-value="7270034532270019"/)
+
+  // ---- Etiket düzeni sözleşmesi (gönderici/adres/telefon/parça) ----
+
+  // Test: gönderici üstte, alıcı adres bloğunda; alıcı adı sender fallback'i DEĞİL.
+  printCalls = 0
+  writtenHtml = ''
+  const layoutOrder = preassignedOrder('LAY1')
+  layoutOrder.customerName = 'GÖRKEM GENÇÇOBAN'
+  layoutOrder.customerPhone = '05321234567'
+  layoutOrder.address =
+    'ETİMESGUT ERYAMAN YAVUZ SELİM MAHALLESİ IĞDIR CADDESİ SERPİL SİTESİ 4C BLOK DAİRE 15 ETİMESGUT ANKARA'
+  layoutOrder.shipment.suratTrackingLog = {
+    GonderenUnvan: 'HASAN GÜREL',
+  }
+  const layoutResult = await printSuratLabels([layoutOrder], buildTemplate())
+  assert.equal(layoutResult.printCalled, true)
+  assert.match(
+    writtenHtml,
+    /surat-sender-name">HASAN GÜREL<\/b>/,
+  )
+  assert.match(
+    writtenHtml,
+    /surat-recipient-name">GÖRKEM GENÇÇOBAN<\/b>/,
+  )
+  assert.doesNotMatch(
+    writtenHtml,
+    /surat-sender-name">GÖRKEM GENÇÇOBAN/,
+  )
+  // Adres kayıpsız: tüm kelimeler mevcut, '...' yok, ellipsis CSS'i yok.
+  for (const word of ['ETİMESGUT', 'ERYAMAN', 'IĞDIR', 'SERPİL', 'SİTESİ', 'DAİRE', '15', 'ANKARA']) {
+    assert.ok(writtenHtml.includes(word), `adres kelimesi eksik: ${word}`)
+  }
+  assert.doesNotMatch(writtenHtml, /\.\.\./)
+  assert.doesNotMatch(writtenHtml, /text-overflow: ellipsis;[^}]*}\s*\.surat-address/)
+  // Parça bloğu ayrı satır sınıfları mevcut.
+  assert.match(writtenHtml, /surat-parcel-label/)
+  assert.match(writtenHtml, /surat-parcel-count/)
+  assert.match(writtenHtml, /surat-delivery-type/)
+  assert.match(writtenHtml, /surat-destination/)
+  assert.match(writtenHtml, /surat-transfer/)
+  // Telefon normalize görünür (maskeli görüntü 532*****67 formatına izinli).
+  assert.match(writtenHtml, /TEL: 532/)
+  assert.doesNotMatch(writtenHtml, /TEL: -</)
+  // Canonical kodlar değişmedi.
+  assert.match(
+    writtenHtml,
+    new RegExp(`data-barcode-value="${layoutOrder.shipment.barcode}"`),
+  )
+  assert.match(
+    writtenHtml,
+    new RegExp(
+      `T\\.No: <strong>${layoutOrder.shipment.trackingNumber}</strong>`,
+    ),
+  )
+
+  // Telefon çözücü sözleşmesi.
+  assert.equal(normalizeRecipientPhone('05321234567'), '532 123 45 67')
+  assert.equal(normalizeRecipientPhone('+90 532 123 45 67'), '532 123 45 67')
+  assert.equal(normalizeRecipientPhone('905321234567'), '532 123 45 67')
+  assert.equal(normalizeRecipientPhone('542*******'), '542*******')
+  assert.equal(normalizeRecipientPhone('-'), '')
+  assert.equal(normalizeRecipientPhone('0000000000'), '')
+  const noPhone = resolveRecipientPhone(
+    { customerPhone: '', items: [] },
+    undefined,
+  )
+  assert.equal(noPhone.phone, '')
+  assert.equal(noPhone.reason, 'PHONE_NOT_PROVIDED_BY_MARKETPLACE')
+
+  // Adres layout: uzun adres kayıpsız, kademeli font.
+  const longLayout = buildAddressLayout(
+    'ETİMESGUT ERYAMAN YAVUZ SELİM MAHALLESİ IĞDIR CADDESİ SERPİL SİTESİ 4C BLOK DAİRE 15 ETİMESGUT ANKARA',
+  )
+  assert.equal(longLayout.lines.join(' ').includes('DAİRE 15'), true)
+  assert.ok(longLayout.lines.length <= 4)
+  const veryLongLayout = buildAddressLayout(
+    'ETİMESGUT ERYAMAN YAVUZ SELİM MAHALLESİ IĞDIR CADDESİ SERPİL SİTESİ 4C BLOK DAİRE 15 KAT 3 GİRİŞ B KAPI NO 7 YAKINLARINDA ESKİ PAZAR YERİ KARŞISI ETİMESGUT ANKARA TÜRKİYE',
+  )
+  assert.equal(
+    veryLongLayout.lines.join(' ').includes('ESKİ PAZAR YERİ'),
+    true,
+  )
+  assert.ok(['long', 'xlong'].includes(veryLongLayout.fontScale))
+  const shortLayout = buildAddressLayout('Kısa Mah. No:1 Merkez')
+  assert.equal(shortLayout.fontScale, 'normal')
+
+  // Sender resolver: alıcı adı asla fallback değil.
+  assert.equal(
+    resolveSuratSenderName(
+      { customerName: 'ALICI KİŞİ', items: [] },
+      { suratTrackingLog: { GonderenUnvan: 'HASAN GÜREL' } },
+    ),
+    'HASAN GÜREL',
+  )
+  assert.notEqual(
+    resolveSuratSenderName({ customerName: 'ALICI KİŞİ', items: [] }, {}),
+    'ALICI KİŞİ',
+  )
 
   // Kalıcı iframe garantileri: tüm printler boyunca iframe BİR kez
   // oluşturulur, hiç kaldırılmaz, hiçbir pencere kapatılmaz.

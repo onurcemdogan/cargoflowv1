@@ -604,6 +604,8 @@ export type SuratBarcodeSourceOption =
 
 export interface SuratLabelMappingConfig {
   barcodeSourceOverride?: SuratBarcodeSourceOption
+  // Etiketin üst bölümündeki GÖNDERİCİ adı override'ı (alıcı adı değildir).
+  senderName?: string
 }
 
 export interface LabelPreviewOverrides {

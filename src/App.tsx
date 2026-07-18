@@ -208,6 +208,24 @@ function App() {
     setApiDebugLogs(apiDebugService.load())
   }
 
+  // Açılışta persisted siparişlerde görseli çözülemeyen satır varsa ürün
+  // cache'i BİR kez arka planda tazelenir (bayat localStorage ürün listesi,
+  // render-time çözümlemenin eşleşememesinin ana nedeni). Sipariş/Sürat
+  // akışına dokunmaz; yalnız productsState güncellenir.
+  const productsAutoRefreshAttempted = useRef(false)
+  useEffect(() => {
+    if (
+      productsAutoRefreshAttempted.current ||
+      orders.length === 0 ||
+      !ordersMissingImages(orders)
+    ) {
+      return
+    }
+    productsAutoRefreshAttempted.current = true
+    void handleFetchProducts()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders])
+
   function toggleOrder(orderId: string) {
     setSelectedIds((current) =>
       current.includes(orderId)

@@ -643,14 +643,22 @@ export function buildCleanLabelHtml(
     .surat-address-copy span,
     .surat-address-copy strong {
       display: block;
-      overflow: hidden;
-      text-overflow: ellipsis;
       text-transform: uppercase;
-      white-space: nowrap;
+      white-space: normal;
+      word-break: normal;
+      overflow-wrap: break-word;
     }
     .surat-address-copy b,
-    .surat-address-copy strong { font-size: 8.5pt; font-weight: 900; }
-    .surat-address-copy span { font-size: 7pt; font-weight: 800; }
+    .surat-address-copy strong { font-size: 8.5pt; font-weight: 900; line-height: 1.15; }
+    .surat-address-copy span { font-size: 7pt; font-weight: 800; line-height: 1.15; }
+    /* Adres kayıpsız sarılır; uzunluk arttıkça font kademeli küçülür.
+       Ellipsis/kesme YOKTUR. */
+    .surat-address-normal .surat-address-line { font-size: 7pt; }
+    .surat-address-long .surat-address-line { font-size: 6.2pt; }
+    .surat-address-long .surat-recipient-name { font-size: 7.6pt; }
+    .surat-address-xlong .surat-address-line { font-size: 5.6pt; line-height: 1.1; }
+    .surat-address-xlong .surat-recipient-name { font-size: 7pt; }
+    .surat-address-xlong .surat-address-phone { font-size: 5.6pt; }
     .surat-route {
       display: grid;
       place-items: center;
@@ -687,9 +695,14 @@ export function buildCleanLabelHtml(
       display: block;
       border: .35mm solid #000;
     }
+    /* Parça adedi bloğu: her bilgi AYRI satırda, sabit line-height ile.
+       Metinler üst üste binmez, QR/DataMatrix alanına taşmaz. */
     .surat-delivery-copy {
       min-width: 0;
-      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto auto auto auto auto;
+      align-content: center;
+      row-gap: .2mm;
       font-weight: 900;
     }
     .surat-delivery-copy span,
@@ -697,16 +710,20 @@ export function buildCleanLabelHtml(
     .surat-delivery-copy strong,
     .surat-delivery-copy em {
       display: block;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      min-width: 0;
       text-transform: uppercase;
-      white-space: nowrap;
+      white-space: normal;
+      word-break: normal;
+      overflow-wrap: break-word;
+      line-height: 1.05;
     }
-    .surat-delivery-copy span { font-size: 7pt; }
-    .surat-delivery-copy b { font-size: 15pt; }
-    .surat-delivery-copy strong { font-size: 13pt; }
-    .surat-delivery-copy em { font-size: 14pt; font-style: normal; }
-    .surat-transfer { font-size: 12pt !important; }
+    .surat-parcel-label { font-size: 6.5pt; }
+    .surat-parcel-count { font-size: 11pt; }
+    .surat-delivery-type { font-size: 9.5pt; }
+    .surat-destination { font-style: normal; }
+    .surat-destination-normal { font-size: 9.5pt; }
+    .surat-destination-small { font-size: 7.5pt; }
+    .surat-transfer { font-size: 8.5pt !important; }
     .surat-product {
       padding: 1.5mm 2mm;
     }
@@ -745,7 +762,22 @@ export function renderPrintableLabelHtml(data: LabelData): string {
     data.routeCenter ||
     [data.city, data.district].filter(Boolean).join(' / ')
   const transferCenter = data.transferCenter || routeCenter
-  const addressLines = splitAddress(data.address)
+  // Adres KAYIPSIZ sarılır; '...' veya substring kesmesi yoktur. Uzun
+  // adreslerde font kademesi küçülür.
+  const addressLines =
+    data.fullAddressLines && data.fullAddressLines.length > 0
+      ? data.fullAddressLines
+      : splitAddress(data.address)
+  const addressScaleClass = `surat-address-${data.addressFontScale || 'normal'}`
+  // Üst bölüm GÖNDERİCİ adıdır; alıcı adı yalnız adres bloğunda görünür.
+  const senderName = data.senderName || ''
+  const phoneDisplay = data.recipientPhone
+    ? maskPhone(data.recipientPhone)
+    : '-'
+  const destinationScaleClass =
+    routeCenter.length > 24
+      ? 'surat-destination-small'
+      : 'surat-destination-normal'
   const productTitle = item
     ? `${item.quantity || 1} x ${item.productName}`
     : 'Ürün bilgisi yok'
@@ -767,21 +799,21 @@ export function renderPrintableLabelHtml(data: LabelData): string {
           <header class="surat-section surat-header">
             <div>
               <span>Şube: <strong>${escapeHtml(data.branchName || 'FERAH')}</strong></span>
-              <b>${escapeHtml(data.recipientName)}</b>
+              <b class="surat-sender-name">${escapeHtml(senderName)}</b>
               <span>MUST.IRS.NO: ${escapeHtml(data.orderNumber)}</span>
             </div>
             <div class="surat-header-right">
               <span>T.No: <strong>${escapeHtml(data.tNo || data.trackingNumber || '-')}</strong></span>
-              <span>TEL: ${escapeHtml(maskPhone(data.recipientPhone))}</span>
+              <span>TEL: ${escapeHtml(phoneDisplay)}</span>
             </div>
           </header>
           <section class="surat-section surat-barcode">${barcodeSvg}</section>
-          <section class="surat-section surat-address">
+          <section class="surat-section surat-address ${addressScaleClass}">
             <div class="surat-address-copy">
-              <b>${escapeHtml(data.recipientName)}</b>
-              ${addressLines.map((line) => `<span>${escapeHtml(line)}</span>`).join('')}
+              <b class="surat-recipient-name">${escapeHtml(data.recipientName)}</b>
+              ${addressLines.map((line) => `<span class="surat-address-line">${escapeHtml(line)}</span>`).join('')}
               <strong>${escapeHtml(routeCenter)}</strong>
-              <span>TEL: ${escapeHtml(maskPhone(data.recipientPhone))}</span>
+              <span class="surat-address-phone">TEL: ${escapeHtml(phoneDisplay)}</span>
             </div>
             <div class="surat-route">${escapeHtml(routeCenter)}</div>
           </section>
@@ -793,10 +825,10 @@ export function renderPrintableLabelHtml(data: LabelData): string {
           <section class="surat-section surat-delivery">
             ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-large')}
             <div class="surat-delivery-copy">
-              <span>Parca Adedi</span>
-              <b>1 / 1</b>
-              <strong>Adrese Teslim</strong>
-              <em>${escapeHtml(routeCenter)}</em>
+              <span class="surat-parcel-label">Parca Adedi</span>
+              <b class="surat-parcel-count">1 / 1</b>
+              <strong class="surat-delivery-type">Adrese Teslim</strong>
+              <em class="surat-destination ${destinationScaleClass}">${escapeHtml(routeCenter)}</em>
               <strong class="surat-transfer">${escapeHtml(transferCenter)}</strong>
             </div>
             ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-small')}
