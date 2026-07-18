@@ -132,7 +132,12 @@ export interface OrderItem {
   imageUrl?: string
   productImageUrl?: string
   imageSource?: string
-  imageResolvedFrom?: 'orderLine' | 'productCache' | 'listingApi' | 'none'
+  imageResolvedFrom?:
+    | 'orderLine'
+    | 'productCache'
+    | 'parentProductCache'
+    | 'listingApi'
+    | 'none'
   imageLoadError?: boolean
   matchedProductId?: string
   matchedBy?:
@@ -147,6 +152,7 @@ export interface OrderItem {
     | 'variantBarcode'
     | 'modelVariant'
     | 'nameVariant'
+    | 'parentModel'
     | 'none'
   color?: string
   size?: string

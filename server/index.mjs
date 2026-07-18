@@ -7853,19 +7853,31 @@ async function callTrendyolProducts(credentials) {
   const pageDebug = []
   const size = 200
   const maxPages = 25
+  // Sessiz kısmi katalog YASAK: ara sayfa hatası (ör. 429 rate-limit) bir
+  // kez tekrar denenir; yine de kesilirse sonuç KISMİ olarak işaretlenir ve
+  // mesajda açıkça söylenir. Aksi halde eksik katalog "tam" sanılıp görsel
+  // eşleşmesi VARIANT_NOT_IN_CACHE ile sessizce boş kalıyordu.
+  let partialFailure = null
 
   for (let page = 0; page < maxPages; page += 1) {
     const params = new URLSearchParams({
       page: String(page),
       size: String(size),
     })
-    const result = await fetchTrendyolJson(
-      `${getTrendyolBaseUrl(credentials)}/integration/product/sellers/${credentials.sellerId}/products?${params}`,
-      credentials,
-    )
+    const pageUrl = `${getTrendyolBaseUrl(credentials)}/integration/product/sellers/${credentials.sellerId}/products?${params}`
+    let result = await fetchTrendyolJson(pageUrl, credentials)
+    if (!result.ok && page > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1200))
+      result = await fetchTrendyolJson(pageUrl, credentials)
+    }
     pageDebug.push(result.debug)
     if (!result.ok) {
       if (page === 0) return result
+      partialFailure = {
+        page,
+        statusCode: result.statusCode,
+        message: result.message,
+      }
       break
     }
 
@@ -7883,11 +7895,15 @@ async function callTrendyolProducts(credentials) {
     ok: true,
     source: 'real',
     statusCode: 200,
-    message: `${allProducts.length} Trendyol ürün/listing kaydı alındı.`,
+    message: partialFailure
+      ? `${allProducts.length} Trendyol ürün kaydı alındı (KISMİ katalog: sayfa ${partialFailure.page} hatasında kesildi; eksik ürünlerin görselleri eşleşmeyebilir, tekrar deneyin).`
+      : `${allProducts.length} Trendyol ürün/listing kaydı alındı.`,
     data: { content: allProducts },
     debug: {
       pagesFetched: pageDebug.length,
       normalizedProductCandidates: allProducts.length,
+      partial: Boolean(partialFailure),
+      partialFailure,
       pages: pageDebug,
     },
   }

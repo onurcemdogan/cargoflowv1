@@ -1909,27 +1909,40 @@ function buildShipmentCreationResultMessage({
   return `Sürat gönderi akışı tamamlandı. ${createdShipments.join(' | ')}`
 }
 
-function mergeProductsWithCache(
+// Merge kimliği VARYANT seviyesindedir: yalnız externalProductId, barcode
+// ve productCode aynı ürünü gösterir. sku/productMainId/productContentId
+// model veya renk-grubu seviyesinde PAYLAŞILDIĞI için kimlik SAYILMAZ —
+// eski kural 16 varyantlı bir modeli tek kayda çökertiyor, katalog 4293
+// üründen ~331 "model"e iniyordu ve eksik varyantlar (ör. newzeyna11)
+// görsel eşleşmesinde VARIANT_NOT_IN_CACHE kalıyordu.
+function productVariantMergeKeys(product: CargoProduct): string[] {
+  return [
+    product.externalProductId ? `ext:${product.externalProductId}` : '',
+    product.barcode ? `bc:${String(product.barcode).trim()}` : '',
+    product.productCode ? `pc:${String(product.productCode).trim()}` : '',
+  ].filter(Boolean)
+}
+
+export function mergeProductsWithCache(
   freshProducts: CargoProduct[],
   cachedProducts: CargoProduct[],
 ): CargoProduct[] {
   const result = [...cachedProducts]
+  const indexByKey = new Map<string, number>()
+  const registerKeys = (product: CargoProduct, index: number) => {
+    for (const key of productVariantMergeKeys(product)) {
+      if (!indexByKey.has(key)) indexByKey.set(key, index)
+    }
+  }
+  result.forEach(registerKeys)
   for (const fresh of freshProducts) {
-    const index = result.findIndex((cached) =>
-      [
-        fresh.productContentId &&
-          cached.productContentId === fresh.productContentId,
-        fresh.productMainId && cached.productMainId === fresh.productMainId,
-        fresh.barcode && cached.barcode === fresh.barcode,
-        fresh.sku && cached.sku === fresh.sku,
-        fresh.stockCode && cached.stockCode === fresh.stockCode,
-        fresh.productCode && cached.productCode === fresh.productCode,
-        fresh.externalProductId &&
-          cached.externalProductId === fresh.externalProductId,
-      ].some(Boolean),
-    )
+    const index =
+      productVariantMergeKeys(fresh)
+        .map((key) => indexByKey.get(key))
+        .find((value) => value != null) ?? -1
     if (index < 0) {
       result.push(fresh)
+      registerKeys(fresh, result.length - 1)
       continue
     }
     const cached = result[index]
@@ -1943,6 +1956,7 @@ function mergeProductsWithCache(
           ? fresh.images
           : cached.images,
     }
+    registerKeys(result[index], index)
   }
   return result
 }

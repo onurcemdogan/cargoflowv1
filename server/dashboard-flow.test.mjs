@@ -599,13 +599,25 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
   assert.equal(separatorMatch.matchedBy, 'barcode')
   assert.equal(separatorMatch.failureReason, '')
 
-  // Test 2: barkod yok, merchantSku exact match.
+  // Test 2: barkod yok, merchantSku + beden birebir → merchantSku eşleşir.
+  // merchantSku TEK BAŞINA (beden teyidi olmadan) yeterli DEĞİLDİR; aynı
+  // merchantSku birden çok varyantı temsil edebilir.
   const merchantMatch = resolveProductCacheMatch(
-    cacheItem({ merchantSku: 'MRC-001' }),
+    cacheItem({
+      merchantSku: 'MRC-001',
+      size: '42',
+      productName: 'Bilinmeyen Ürün X',
+    }),
     [cacheProduct({ sku: 'MRC-001' })],
   )
   assert.equal(merchantMatch.matchedBy, 'merchantSku')
   assert.ok(merchantMatch.product)
+  const merchantWithoutSize = resolveProductCacheMatch(
+    cacheItem({ merchantSku: 'MRC-001', productName: 'Bilinmeyen Ürün X' }),
+    [cacheProduct({ sku: 'MRC-001' })],
+  )
+  assert.equal(merchantWithoutSize.matchedBy, 'none')
+  assert.equal(merchantWithoutSize.failureReason, 'VARIANT_NOT_IN_CACHE')
 
   // Test 3a: isimde model kodu varsa model eşleşmesi öncelikli ve doğrudur.
   const nameModelMatch = resolveProductCacheMatch(
@@ -655,13 +667,13 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
   assert.equal(modelMatch.matchedBy, 'modelVariant')
   assert.ok(modelMatch.product)
 
-  // Test 4: aynı isim iki FARKLI modelde → ambiguous → eşleşme yok.
+  // Test 4: aynı isim iki FARKLI modelde → belirsiz parent → eşleşme yok.
   const ambiguous = resolveProductCacheMatch(cacheItem(), [
     cacheProduct({ productMainId: 'MODEL-A' }),
     cacheProduct({ productMainId: 'MODEL-B' }),
   ])
   assert.equal(ambiguous.matchedBy, 'none')
-  assert.equal(ambiguous.failureReason, 'AMBIGUOUS_MATCH')
+  assert.equal(ambiguous.failureReason, 'AMBIGUOUS_PARENT_MATCH')
 
   // Test 5: ürün bulundu ama görseli yok → aday listesi boş kalır.
   const noImageProduct = cacheProduct({

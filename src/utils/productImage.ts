@@ -12,18 +12,23 @@ export type ProductImageMatchKey =
   | 'variantBarcode'
   | 'modelVariant'
   | 'nameVariant'
+  | 'parentModel'
   | 'none'
 
 export type ProductMatchFailureReason =
   | 'CACHE_NOT_SYNCED'
   | 'IDENTIFIER_MISMATCH'
+  | 'VARIANT_NOT_IN_CACHE'
   | 'PRODUCT_FOUND_NO_IMAGE'
+  | 'PARENT_PRODUCT_FOUND'
+  | 'PARENT_PRODUCT_IMAGE_USED'
   | 'AMBIGUOUS_MATCH'
+  | 'AMBIGUOUS_PARENT_MATCH'
   | ''
 
 export interface ProductImageResolution {
   url: string
-  imageResolvedFrom: 'orderLine' | 'productCache' | 'none'
+  imageResolvedFrom: 'orderLine' | 'productCache' | 'parentProductCache' | 'none'
   imageSource: string
   matchedProduct?: CargoProduct
   matchedProductId?: string
@@ -101,7 +106,11 @@ export function resolveProductImage(
           : undefined,
       matchedBy:
         resolvedFrom === 'productCache'
-          ? item.matchedBy && item.matchedBy !== 'orderLine'
+          ? // Bayat 'none' değeri yeni çözümlemeyi maskelemesin: cache
+            // yenilendikten sonra matchedBy güncel eşleşmeden gelir.
+            item.matchedBy &&
+            item.matchedBy !== 'orderLine' &&
+            item.matchedBy !== 'none'
             ? item.matchedBy
             : productMatch.matchedBy
           : 'orderLine',
@@ -132,11 +141,94 @@ export function resolveProductImage(
 
   return {
     url: productImage.url,
-    imageResolvedFrom: productImage.url ? 'productCache' : 'none',
+    imageResolvedFrom: productImage.url
+      ? match.matchedBy === 'parentModel'
+        ? 'parentProductCache'
+        : 'productCache'
+      : 'none',
     imageSource: productImage.url ? productImage.source : 'none',
     matchedProduct: match.product,
     matchedProductId: match.product.id,
     matchedBy: match.matchedBy,
+  }
+}
+
+// Görsel çözülemeyen satırlar için tanı sözleşmesi: normalize kimlikler,
+// çıkarılan model/beden, exact eşleşme sayıları ve nihai ret nedeni.
+export interface ProductMatchDebug {
+  normalizedBarcode: string
+  normalizedSku: string
+  normalizedMerchantSku: string
+  extractedModelCode: string
+  extractedSize: string
+  exactBarcodeMatches: number
+  exactSkuMatches: number
+  parentModelMatches: number
+  candidateProductIds: string[]
+  rejectionReasons: string[]
+  matchedBy: ProductImageMatchKey
+  matchedProductId: string
+  finalFailureReason: ProductMatchFailureReason
+}
+
+export function buildProductMatchDebug(
+  item: OrderItem,
+  products: CargoProduct[],
+): ProductMatchDebug {
+  const match = resolveProductCacheMatch(item, products)
+  const normalizedBarcode = normalizeProductIdentifier(item.barcode)
+  const normalizedSku = normalizeProductIdentifier(item.sku)
+  const normalizedMerchantSku = normalizeProductIdentifier(item.merchantSku)
+  const extractedModelCode = normalizeProductIdentifier(
+    item.productMainId || extractModelCodeFromName(item.productName),
+  )
+  const extractedSize = normalizeProductIdentifier(item.size)
+  const barcodeMatches = products.filter(
+    (product) =>
+      normalizedBarcode &&
+      normalizeProductIdentifier(product.barcode) === normalizedBarcode,
+  )
+  const skuMatches = products.filter(
+    (product) =>
+      normalizedSku &&
+      normalizeProductIdentifier(product.sku) === normalizedSku,
+  )
+  const parentMatches = products.filter(
+    (product) =>
+      extractedModelCode &&
+      normalizeProductIdentifier(product.productMainId) === extractedModelCode,
+  )
+  const rejectionReasons: string[] = []
+  if (products.length === 0) rejectionReasons.push('CACHE_NOT_SYNCED')
+  if (normalizedBarcode && barcodeMatches.length === 0) {
+    rejectionReasons.push('exact barcode cache-de yok')
+  }
+  if (normalizedSku && skuMatches.length === 0) {
+    rejectionReasons.push('exact sku cache-de yok')
+  }
+  if (normalizedMerchantSku && !extractedSize) {
+    rejectionReasons.push('merchantSku tek başına yeterli değil (beden yok)')
+  }
+  if (extractedModelCode && parentMatches.length === 0) {
+    rejectionReasons.push('parent model cache-de yok')
+  }
+  return {
+    normalizedBarcode,
+    normalizedSku,
+    normalizedMerchantSku,
+    extractedModelCode,
+    extractedSize,
+    exactBarcodeMatches: barcodeMatches.length,
+    exactSkuMatches: skuMatches.length,
+    parentModelMatches: parentMatches.length,
+    candidateProductIds: [...barcodeMatches, ...skuMatches, ...parentMatches]
+      .map((product) => product.id)
+      .filter((id, index, list) => list.indexOf(id) === index)
+      .slice(0, 8),
+    rejectionReasons,
+    matchedBy: match.matchedBy,
+    matchedProductId: match.product?.id ?? '',
+    finalFailureReason: match.failureReason,
   }
 }
 
@@ -315,11 +407,13 @@ export interface ProductCacheMatchResult {
 }
 
 // Tek eşleştirme sözleşmesi. Öncelik:
-// 1-5) normalize edilmiş barcode/merchantSku/sku/stockCode/varyant kimlikleri
-//      (hepsi aynı index üzerinden exact match)
-// 6) productMainId (model) + renk çelişmez + beden tercihli
-// 7) base ürün adı + renk/beden (yalnız model tekilse) — son çare
-// Belirsizlikte (birden fazla FARKLI model) eşleşme YAPILMAZ.
+// 1-5) normalize edilmiş barcode/sku/stockCode/varyant kimlikleri (exact);
+//      merchantSku TEK BAŞINA yeterli değildir — aynı merchantSku birden
+//      çok varyantı temsil edebildiğinden beden teyidi de gerekir.
+// 6) productMainId/model token (isimden çıkarılan) + renk çelişmez +
+//    beden eşleşirse varyant (modelVariant); beden yoksa parent ürünün
+//    görseli (parentModel) — ürün görseli çoğunlukla model bazlıdır.
+// 7) base ürün adı — yalnız model tekilse; belirsizlikte eşleşme YAPILMAZ.
 export function resolveProductCacheMatch(
   item: OrderItem,
   products: CargoProduct[],
@@ -338,6 +432,7 @@ export function resolveProductCacheMatch(
     ['productCode', normalizeProductIdentifier(item.productCode)],
     ['variantBarcode', normalizeProductIdentifier(item.productContentId)],
   ]
+  const hasAnyIdentifier = identifierAttempts.some(([, key]) => key)
   for (const [matchedBy, key] of identifierAttempts) {
     if (!key) continue
     const candidates = index.byIdentifier.get(key)
@@ -350,6 +445,24 @@ export function resolveProductCacheMatch(
     if (candidates.length > 1 && models.size > 1) {
       return { matchedBy: 'none', failureReason: 'AMBIGUOUS_MATCH' }
     }
+    // merchantSku birden çok varyantı temsil edebilir: item beden bilgisi
+    // taşıyorsa bedeni birebir tutan varyant şarttır; yoksa bu aşama
+    // atlanır ve model/parent aşaması karar verir.
+    if (matchedBy === 'merchantSku') {
+      const itemSize = normalizeProductIdentifier(item.size)
+      if (itemSize) {
+        const sizeExact = candidates.find(
+          (product) =>
+            !variantConflicts(item, product) &&
+            normalizeProductIdentifier(product.size) === itemSize,
+        )
+        if (sizeExact) {
+          return { product: sizeExact, matchedBy, failureReason: '' }
+        }
+        continue
+      }
+      continue
+    }
     const product = pickModelVariant(item, candidates)
     if (product) return { product, matchedBy, failureReason: '' }
   }
@@ -360,9 +473,30 @@ export function resolveProductCacheMatch(
   if (modelKey) {
     const candidates = index.byModel.get(modelKey)
     if (candidates && candidates.length > 0) {
-      const product = pickModelVariant(item, candidates)
-      if (product) {
-        return { product, matchedBy: 'modelVariant', failureReason: '' }
+      const nonConflicting = candidates.filter(
+        (product) => !variantConflicts(item, product),
+      )
+      if (nonConflicting.length === 0) {
+        // Parent model bulundu ama renk çelişiyor: yanlış ürün görseli
+        // GÖSTERİLMEZ.
+        return { matchedBy: 'none', failureReason: 'PARENT_PRODUCT_FOUND' }
+      }
+      const itemSize = normalizeProductIdentifier(item.size)
+      const sizeMatch = itemSize
+        ? nonConflicting.find(
+            (product) =>
+              normalizeProductIdentifier(product.size) === itemSize,
+          )
+        : undefined
+      if (sizeMatch) {
+        return { product: sizeMatch, matchedBy: 'modelVariant', failureReason: '' }
+      }
+      // Beden farkı parent görseli için engel değildir; görsel model
+      // bazlıdır. Kaynak açıkça parentModel olarak işaretlenir.
+      return {
+        product: nonConflicting[0],
+        matchedBy: 'parentModel',
+        failureReason: 'PARENT_PRODUCT_IMAGE_USED',
       }
     }
   }
@@ -377,23 +511,57 @@ export function resolveProductCacheMatch(
         ),
       )
       if (models.size > 1) {
-        return { matchedBy: 'none', failureReason: 'AMBIGUOUS_MATCH' }
+        // İki farklı parent aday: belirsiz — placeholder gösterilir.
+        return { matchedBy: 'none', failureReason: 'AMBIGUOUS_PARENT_MATCH' }
       }
-      const product = pickModelVariant(item, candidates)
-      if (product) {
-        return { product, matchedBy: 'nameVariant', failureReason: '' }
+      const nonConflicting = candidates.filter(
+        (product) => !variantConflicts(item, product),
+      )
+      if (nonConflicting.length === 0) {
+        return { matchedBy: 'none', failureReason: 'PARENT_PRODUCT_FOUND' }
+      }
+      const itemSize = normalizeProductIdentifier(item.size)
+      const sizeMatch = itemSize
+        ? nonConflicting.find(
+            (product) =>
+              normalizeProductIdentifier(product.size) === itemSize,
+          )
+        : undefined
+      if (sizeMatch) {
+        return { product: sizeMatch, matchedBy: 'nameVariant', failureReason: '' }
+      }
+      return {
+        product: nonConflicting[0],
+        matchedBy: 'parentModel',
+        failureReason: 'PARENT_PRODUCT_IMAGE_USED',
       }
     }
   }
 
-  return { matchedBy: 'none', failureReason: 'IDENTIFIER_MISMATCH' }
+  return {
+    matchedBy: 'none',
+    failureReason: hasAnyIdentifier
+      ? 'VARIANT_NOT_IN_CACHE'
+      : 'IDENTIFIER_MISMATCH',
+  }
 }
 
-// "…Takım 6496, 42" → "6496" (isimden model kodu; yalnız 4+ haneli son
-// bağımsız sayı bloğu).
-function extractModelCodeFromName(value: unknown): string {
+// İsimden model token'ı: sondaki beden eki atıldıktan sonra rakam içeren
+// son bağımsız token model kodu sayılır ("… Takım 6496, 42" → "6496",
+// "… Elbise ttzeyna44, 38" → "ttzeyna44", "… zeynafb090-3" → "zeynafb090-3").
+// Model token varsa fuzzy isim eşleşmesinden ÖNCE kullanılır.
+export function extractModelCodeFromName(value: unknown): string {
   const text = String(value ?? '')
-  const withoutSize = text.replace(/,\s*\d{1,3}\s*$/u, '')
+  const withoutSize = text.replace(/,\s*\d{1,3}\s*$/u, '').trim()
+  const tokens = withoutSize.split(/\s+/)
+  const lastToken = (tokens.at(-1) ?? '').replace(/[.,;:]+$/u, '')
+  if (
+    lastToken.length >= 4 &&
+    /\d/.test(lastToken) &&
+    /^[\p{L}\d_/-]+$/u.test(lastToken)
+  ) {
+    return lastToken
+  }
   const matches = withoutSize.match(/\b\d{4,}\b/g)
   return matches?.at(-1) ?? ''
 }

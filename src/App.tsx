@@ -362,6 +362,16 @@ function App() {
           response.result.level === 'error' ? response.result.message : undefined,
         productsDebug: response.result.debug,
       }))
+      // Ürün cache'i değişti: lookup index yeni ürün dizisiyle otomatik
+      // yeniden kurulur; çözülememiş görseller bayat matchedProductId=null
+      // sonucunda takılı kalmasın diye siparişler yeniden çözülür.
+      setOrdersState((current) => ({
+        ...current,
+        orders: workflowService.enrichOrderImages(
+          current.orders,
+          response.products,
+        ),
+      }))
     } finally {
       refreshLogs()
       setProductsState((current) => ({ ...current, productsLoading: false }))

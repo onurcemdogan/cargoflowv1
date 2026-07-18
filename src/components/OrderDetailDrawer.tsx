@@ -8,9 +8,11 @@ import type {
 } from '../types/cargoflow'
 import { formatCurrency, formatDisplayDate } from '../utils/formatters'
 import {
+  buildProductMatchDebug,
   resolveProductImage,
   resolveProductImageCandidates,
   type ProductImageResolution,
+  type ProductMatchDebug,
 } from '../utils/productImage'
 import { ProductImageThumb } from './ProductImageThumb'
 import {
@@ -211,6 +213,7 @@ export function OrderDetailDrawer({
                       item,
                       products,
                     ).map((candidate) => candidate.url)}
+                    matchDebug={buildProductMatchDebug(item, products)}
                   />
                 ))}
               </div>
@@ -614,11 +617,13 @@ function OrderLine({
   item,
   imageResolution,
   imageCandidates,
+  matchDebug,
 }: {
   orderNumber: string
   item: OrderItem
   imageResolution: ProductImageResolution
   imageCandidates: string[]
+  matchDebug: ProductMatchDebug
 }) {
   const imageResolvedFrom = imageResolution.imageResolvedFrom
   const product = imageResolution.matchedProduct
@@ -691,6 +696,17 @@ function OrderLine({
                 imageLoadError: Boolean(item.imageLoadError),
                 matchedProductId: imageResolution.matchedProductId || null,
                 matchedBy: imageResolution.matchedBy,
+                normalizedBarcode: matchDebug.normalizedBarcode,
+                normalizedSku: matchDebug.normalizedSku,
+                normalizedMerchantSku: matchDebug.normalizedMerchantSku,
+                extractedModelCode: matchDebug.extractedModelCode,
+                extractedSize: matchDebug.extractedSize,
+                exactBarcodeMatches: matchDebug.exactBarcodeMatches,
+                exactSkuMatches: matchDebug.exactSkuMatches,
+                parentModelMatches: matchDebug.parentModelMatches,
+                candidateProductIds: matchDebug.candidateProductIds,
+                rejectionReasons: matchDebug.rejectionReasons,
+                finalFailureReason: matchDebug.finalFailureReason || null,
               },
               null,
               2,
