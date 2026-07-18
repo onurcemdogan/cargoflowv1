@@ -757,6 +757,7 @@ function App() {
       {activePage === 'dashboard' ? (
         <DashboardPage
           orders={orders}
+          products={products}
           integrationConfig={integrationConfig}
           printerSettings={printerSettings}
           apiDebugLogs={apiDebugLogs}

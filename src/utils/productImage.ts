@@ -234,6 +234,27 @@ function firstImage(
   return { url: '', source: 'none' }
 }
 
+// Tek URL normalizasyon sözleşmesi:
+// - baş/son boşluk ve HTML entity'leri temizlenir (&amp; → &)
+// - protokolsüz `//cdn...` → `https://cdn...`
+// - `http://` → `https://` (mixed-content engelini aşan tek seçenek)
+// - yalnız https: ve data:image/ kabul edilir; javascript: vb. reddedilir
+export function normalizeProductImageUrl(value: unknown): string {
+  const trimmed = String(value ?? '').trim()
+  if (!trimmed) return ''
+  const decoded = trimmed
+    .replaceAll('&amp;', '&')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&#39;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+  let normalized = decoded.startsWith('//') ? `https:${decoded}` : decoded
+  if (/^http:\/\//i.test(normalized)) {
+    normalized = normalized.replace(/^http:\/\//i, 'https://')
+  }
+  return /^(https:\/\/|data:image\/)/i.test(normalized) ? normalized : ''
+}
+
 function normalizeImageValue(value: unknown): string {
   const raw =
     typeof value === 'string'
@@ -244,9 +265,72 @@ function normalizeImageValue(value: unknown): string {
           ['productImageUrl'],
           ['original'],
         ])
-  const trimmed = String(raw ?? '').trim()
-  const normalized = trimmed.startsWith('//') ? `https:${trimmed}` : trimmed
-  return /^(https?:\/\/|data:image\/)/i.test(normalized) ? normalized : ''
+  return normalizeProductImageUrl(raw)
+}
+
+// Sıralı, normalize edilmiş ve TEKİL görsel aday listesi. onError fallback
+// zinciri ve tüm görünümler (liste/drawer/dashboard) bu tek kaynağı kullanır.
+export function resolveProductImageCandidates(
+  item: OrderItem,
+  products: CargoProduct[] = [],
+): Array<{ url: string; source: string }> {
+  const match = findProductMatch(item, products)
+  const persistedProduct =
+    products.find((product) => product.id === item.matchedProductId) ||
+    match.product
+  const rawCandidates: Array<[string, unknown]> = [
+    ['line.productImageUrl', readPath(item.rawLine, ['productImageUrl'])],
+    ['line.imageUrl', readPath(item.rawLine, ['imageUrl'])],
+    ['line.productImage', readPath(item.rawLine, ['productImage'])],
+    ['line.image', readPath(item.rawLine, ['image'])],
+    ['line.thumbnail', readPath(item.rawLine, ['thumbnail'])],
+    ['line.productMainImage', readPath(item.rawLine, ['productMainImage'])],
+    [
+      'line.productContentImage',
+      readPath(item.rawLine, ['productContentImage']),
+    ],
+    ['line.images[0]', readPath(item.rawLine, ['images', '0'])],
+    [
+      'line.product.images[0]',
+      readPath(item.rawLine, ['product', 'images', '0']),
+    ],
+    ['line.product.image', readPath(item.rawLine, ['product', 'image'])],
+    [
+      'line.product.mainImage',
+      readPath(item.rawLine, ['product', 'mainImage']),
+    ],
+    ['line.product.media[0]', readPath(item.rawLine, ['product', 'media', '0'])],
+    ['item.productImageUrl', item.productImageUrl],
+    ['item.imageUrl', item.imageUrl],
+    ...(persistedProduct
+      ? ([
+          ['product.images[0]', persistedProduct.images?.[0]],
+          [
+            'product.images[0].url',
+            readPath(persistedProduct, ['images', '0', 'url']),
+          ],
+          ['product.imageUrl', persistedProduct.imageUrl],
+          ['product.productImageUrl', persistedProduct.productImageUrl],
+          ['product.mainImage', readPath(persistedProduct, ['mainImage'])],
+          ['product.thumbnail', readPath(persistedProduct, ['thumbnail'])],
+          ['product.media[0]', readPath(persistedProduct, ['media', '0'])],
+          [
+            'product.pictures[0]',
+            readPath(persistedProduct, ['pictures', '0']),
+          ],
+          ['product.image', readPath(persistedProduct, ['image'])],
+        ] as Array<[string, unknown]>)
+      : []),
+  ]
+  const seen = new Set<string>()
+  const unique: Array<{ url: string; source: string }> = []
+  for (const [source, value] of rawCandidates) {
+    const url = normalizeImageValue(value)
+    if (!url || seen.has(url)) continue
+    seen.add(url)
+    unique.push({ url, source })
+  }
+  return unique
 }
 
 function readFirstString(value: unknown, paths: string[][]): string {

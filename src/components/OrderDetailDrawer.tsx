@@ -4,8 +4,10 @@ import type { CargoOrder, CargoProduct, OrderItem } from '../types/cargoflow'
 import { formatCurrency, formatDisplayDate } from '../utils/formatters'
 import {
   resolveProductImage,
+  resolveProductImageCandidates,
   type ProductImageResolution,
 } from '../utils/productImage'
+import { ProductImageThumb } from './ProductImageThumb'
 import {
   canCreateShipment,
   canDownloadZpl,
@@ -193,6 +195,10 @@ export function OrderDetailDrawer({
                     orderNumber={order.orderNumber}
                     item={item}
                     imageResolution={resolveProductImage(item, products)}
+                    imageCandidates={resolveProductImageCandidates(
+                      item,
+                      products,
+                    ).map((candidate) => candidate.url)}
                   />
                 ))}
               </div>
@@ -559,13 +565,13 @@ function OrderLine({
   orderNumber,
   item,
   imageResolution,
+  imageCandidates,
 }: {
   orderNumber: string
   item: OrderItem
   imageResolution: ProductImageResolution
+  imageCandidates: string[]
 }) {
-  const [imageLoadError, setImageLoadError] = useState(false)
-  const imageUrl = imageResolution.url
   const imageResolvedFrom = imageResolution.imageResolvedFrom
   const product = imageResolution.matchedProduct
   const color = item.color || findVariantValue(item, 'Renk') || product?.color
@@ -575,17 +581,12 @@ function OrderLine({
 
   return (
     <div className="order-line">
-      {imageUrl && !imageLoadError ? (
-        <img
-          src={imageUrl}
-          alt={item.productName}
-          loading="lazy"
-          referrerPolicy="no-referrer"
-          onError={() => setImageLoadError(true)}
-        />
-      ) : (
-        <div className="line-image-placeholder">Fotoğraf yok</div>
-      )}
+      <ProductImageThumb
+        candidates={imageCandidates}
+        alt={item.productName}
+        placeholderClassName="line-image-placeholder"
+        placeholderText="Fotoğraf yok"
+      />
       <div className="order-line-content">
         <strong>{item.productName}</strong>
         <div className="order-line-grid">
@@ -635,10 +636,11 @@ function OrderLine({
                 barcode: item.barcode,
                 merchantSku: item.merchantSku,
                 sku: item.sku,
-                productImageUrl: imageUrl || null,
+                productImageUrl: imageResolution.url || null,
+                imageCandidates,
                 imageSource: imageResolution.imageSource,
                 imageResolvedFrom,
-                imageLoadError: imageLoadError || Boolean(item.imageLoadError),
+                imageLoadError: Boolean(item.imageLoadError),
                 matchedProductId: imageResolution.matchedProductId || null,
                 matchedBy: imageResolution.matchedBy,
               },

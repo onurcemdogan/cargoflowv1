@@ -19,6 +19,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { MetricTile } from '../components/MetricTile'
+import { ProductImageThumb } from '../components/ProductImageThumb'
 import {
   buildDashboardProviderHealth,
   buildDashboardSummary,
@@ -28,6 +29,7 @@ import {
 import type {
   ApiDebugLog,
   CargoOrder,
+  CargoProduct,
   IntegrationConfig,
   PageKey,
   PrinterSettings,
@@ -37,6 +39,7 @@ import type { QuickTab } from '../utils/ordersTabs'
 
 interface DashboardPageProps {
   orders: CargoOrder[]
+  products?: CargoProduct[]
   integrationConfig: IntegrationConfig
   printerSettings: PrinterSettings
   apiDebugLogs: ApiDebugLog[]
@@ -52,6 +55,7 @@ interface DashboardPageProps {
 
 export function DashboardPage({
   orders,
+  products = [],
   integrationConfig,
   printerSettings,
   apiDebugLogs,
@@ -81,12 +85,13 @@ export function DashboardPage({
     () =>
       buildDashboardSummary({
         orders,
+        products,
         marketplaceIntegrations: providerHealth.marketplaceIntegrations,
         carrierIntegrations: providerHealth.carrierIntegrations,
         printerSettings,
         selectedPeriod,
       }),
-    [orders, printerSettings, providerHealth, selectedPeriod],
+    [orders, printerSettings, products, providerHealth, selectedPeriod],
   )
   const hasConfiguredMarketplace = summary.marketplaceHealth.some(
     (provider) => provider.status !== 'not_configured',
@@ -389,9 +394,17 @@ export function DashboardPage({
                       <td>{order.marketplaceProviderName}</td>
                       <td>
                         <div className="dashboard-product-cell">
-                          <DashboardProductImage
-                            src={order.productImageUrl}
+                          <ProductImageThumb
+                            candidates={
+                              order.productImageCandidates.length > 0
+                                ? order.productImageCandidates
+                                : order.productImageUrl
+                                  ? [order.productImageUrl]
+                                  : []
+                            }
                             alt={order.productSummary}
+                            className="dashboard-product-image"
+                            placeholderClassName="dashboard-product-placeholder"
                           />
                           <div>
                             <strong>{order.customerName}</strong>
@@ -530,25 +543,3 @@ function QuickAction({
   )
 }
 
-function DashboardProductImage({
-  src,
-  alt,
-}: {
-  src?: string
-  alt: string
-}) {
-  const [failed, setFailed] = useState(false)
-  if (!src || failed) {
-    return <span className="dashboard-product-placeholder">Görsel yok</span>
-  }
-  return (
-    <img
-      className="dashboard-product-image"
-      src={src}
-      alt={alt}
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-    />
-  )
-}

@@ -20,6 +20,8 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
   const { buildVisibleOrders } = await vite.ssrLoadModule(
     '/src/utils/orderClassification.ts',
   )
+  const { normalizeProductImageUrl, resolveProductImageCandidates } =
+    await vite.ssrLoadModule('/src/utils/productImage.ts')
   const integrations = buildIntegrations()
   const printerSettings = buildPrinterSettings()
 
@@ -452,6 +454,99 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
     ),
     paritySummary.openOperations,
   )
+
+  // Ürün görseli çözümleme sözleşmesi.
+  assert.equal(
+    normalizeProductImageUrl('//cdn.dsmcdn.com/x/y.jpg'),
+    'https://cdn.dsmcdn.com/x/y.jpg',
+  )
+  assert.equal(
+    normalizeProductImageUrl('http://cdn.dsmcdn.com/x.jpg'),
+    'https://cdn.dsmcdn.com/x.jpg',
+  )
+  assert.equal(
+    normalizeProductImageUrl(
+      '  https://cdn.dsmcdn.com/a.jpg?w=100&amp;h=100  ',
+    ),
+    'https://cdn.dsmcdn.com/a.jpg?w=100&h=100',
+  )
+  assert.equal(normalizeProductImageUrl('javascript:alert(1)'), '')
+  assert.equal(normalizeProductImageUrl(''), '')
+
+  // Öncelik: line.productImageUrl → imageUrl; aynı URL dedupe edilir.
+  const lineItem = {
+    id: 'line-1',
+    productName: 'Ürün',
+    quantity: 1,
+    variantAttributes: [],
+    productImageUrl: 'https://cdn.dsmcdn.com/primary.jpg',
+    imageUrl: 'https://cdn.dsmcdn.com/primary.jpg',
+    rawLine: {
+      productImageUrl: 'https://cdn.dsmcdn.com/primary.jpg',
+      imageUrl: '//cdn.dsmcdn.com/secondary.jpg',
+    },
+  }
+  const lineCandidates = resolveProductImageCandidates(lineItem, [])
+  assert.equal(lineCandidates[0].url, 'https://cdn.dsmcdn.com/primary.jpg')
+  assert.equal(lineCandidates[1].url, 'https://cdn.dsmcdn.com/secondary.jpg')
+  assert.equal(
+    new Set(lineCandidates.map((candidate) => candidate.url)).size,
+    lineCandidates.length,
+  )
+
+  // productImageUrl boşsa imageUrl kullanılır.
+  const fallbackItem = {
+    ...lineItem,
+    productImageUrl: '',
+    rawLine: { imageUrl: 'https://cdn.dsmcdn.com/only-imageurl.jpg' },
+    imageUrl: '',
+  }
+  assert.equal(
+    resolveProductImageCandidates(fallbackItem, [])[0].url,
+    'https://cdn.dsmcdn.com/only-imageurl.jpg',
+  )
+
+  // Eski persisted kayıt: normalized alanlar boş, raw payload'da görsel var
+  // → read-time fallback devreye girer.
+  const legacyItem = {
+    id: 'line-legacy',
+    productName: 'Legacy Ürün',
+    quantity: 1,
+    variantAttributes: [],
+    productImageUrl: '',
+    imageUrl: '',
+    rawLine: {
+      product: { images: ['https://cdn.dsmcdn.com/raw-product.jpg'] },
+    },
+  }
+  assert.equal(
+    resolveProductImageCandidates(legacyItem, [])[0].url,
+    'https://cdn.dsmcdn.com/raw-product.jpg',
+  )
+
+  // Hiç görsel yoksa aday listesi boş → UI placeholder gösterir.
+  const emptyItem = {
+    id: 'line-empty',
+    productName: 'Görselsiz',
+    quantity: 1,
+    variantAttributes: [],
+    rawLine: {},
+  }
+  assert.equal(resolveProductImageCandidates(emptyItem, []).length, 0)
+
+  // Görsel eksikliği operasyonel sınıflandırmayı ETKİLEMEZ:
+  // görselsiz preassigned sipariş yine Etiket Hazır'dır.
+  const imagelessPreassigned = {
+    ...buildPreassignedOrder('IMGLESS'),
+    items: [emptyItem],
+  }
+  const imagelessSummary = buildDashboardSummary({
+    orders: [imagelessPreassigned],
+    ...integrations,
+    printerSettings,
+  })
+  assert.equal(imagelessSummary.labelReady, 1)
+  assert.equal(imagelessSummary.errors, 0)
 })
 
 function buildPreassignedOrder(suffix) {

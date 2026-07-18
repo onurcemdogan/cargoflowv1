@@ -1,6 +1,6 @@
-import { useState } from 'react'
 import type { CargoOrder, CargoProduct } from '../types/cargoflow'
-import { resolveProductImage } from '../utils/productImage'
+import { resolveProductImageCandidates } from '../utils/productImage'
+import { ProductImageThumb } from './ProductImageThumb'
 import { resolveNormalizedDesi } from '../utils/desi'
 import {
   mapMarketplaceStatus,
@@ -63,9 +63,11 @@ export function OrdersTable({
           {orders.map((order) => {
             const selected = selectedIds.includes(order.id)
             const firstItem = order.items[0]
-            const imageResolution = firstItem
-              ? resolveProductImage(firstItem, products)
-              : undefined
+            const imageCandidates = firstItem
+              ? resolveProductImageCandidates(firstItem, products).map(
+                  (candidate) => candidate.url,
+                )
+              : []
             const suratVerification = verifySuratShipment(order)
             const operationStatus = mapOperationStatus(order)
             const marketplaceStatus = mapMarketplaceStatus(
@@ -91,8 +93,8 @@ export function OrdersTable({
                 </td>
                 <td>
                   <div className="order-product-cell">
-                    <OrderProductImage
-                      src={imageResolution?.url}
+                    <ProductImageThumb
+                      candidates={imageCandidates}
                       alt={firstItem?.productName ?? ''}
                     />
                     <div>
@@ -210,28 +212,6 @@ export function OrdersTable({
         </div>
       ) : null}
     </div>
-  )
-}
-
-function OrderProductImage({
-  src,
-  alt,
-}: {
-  src?: string
-  alt: string
-}) {
-  const [failed, setFailed] = useState(false)
-  if (!src || failed) {
-    return <span className="order-image-placeholder">Görsel yok</span>
-  }
-  return (
-    <img
-      src={src}
-      alt={alt}
-      loading="lazy"
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-    />
   )
 }
 

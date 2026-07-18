@@ -1,6 +1,7 @@
 import type {
   ApiDebugLog,
   CargoOrder,
+  CargoProduct,
   IntegrationConfig,
   PrinterSettings,
 } from '../types/cargoflow'
@@ -9,6 +10,7 @@ import {
   isCancelledOrReturnedStatus,
 } from '../utils/orderStatus'
 import { classifyOrderForTabs } from '../utils/orderClassification'
+import { resolveProductImageCandidates } from '../utils/productImage'
 import { resolveOrderStatus } from '../utils/shipmentStatus'
 import {
   isPreassignedAwaitingAcceptance,
@@ -56,6 +58,7 @@ export interface DashboardRecentOrder {
   customerName: string
   productSummary: string
   productImageUrl: string
+  productImageCandidates: string[]
   imageResolvedFrom?: string
   status: string
   statusSource: string
@@ -113,6 +116,7 @@ export interface DashboardSummary {
 
 interface BuildDashboardSummaryInput {
   orders: CargoOrder[]
+  products?: CargoProduct[]
   shipments?: unknown[]
   labels?: unknown[]
   marketplaceIntegrations: DashboardProviderHealth[]
@@ -124,6 +128,7 @@ interface BuildDashboardSummaryInput {
 
 export function buildDashboardSummary({
   orders,
+  products = [],
   marketplaceIntegrations,
   carrierIntegrations,
   printerSettings,
@@ -135,7 +140,9 @@ export function buildDashboardSummary({
   // satırdan gelirse bir kez sayılır (packageId → shipmentPackageId →
   // marketplace+orderNumber → id anahtar sırası).
   const uniqueOrders = dedupeOrdersByPackage(orders)
-  const normalized = uniqueOrders.map(normalizeOrder)
+  const normalized = uniqueOrders.map((order) =>
+    normalizeOrder(order, products),
+  )
   const classified = uniqueOrders.map((order) => ({
     order,
     state: classifyOrderForTabs(order),
@@ -424,7 +431,10 @@ function dedupeOrdersByPackage(orders: CargoOrder[]): CargoOrder[] {
   return unique
 }
 
-function normalizeOrder(order: CargoOrder): DashboardRecentOrder & {
+function normalizeOrder(
+  order: CargoOrder,
+  products: CargoProduct[] = [],
+): DashboardRecentOrder & {
   verifiedShipment: boolean
   preassignedReady: boolean
   operationStatus: string
@@ -516,6 +526,14 @@ function normalizeOrder(order: CargoOrder): DashboardRecentOrder & {
         .join(', ') || 'Ürün bilgisi yok',
     productImageUrl:
       order.items[0]?.productImageUrl || order.items[0]?.imageUrl || '',
+    // Trendyol sipariş satırları görsel alanı taşımıyor (canlı doğrulama:
+    // 123/123 siparişte rawLine görsel alanları boş); görseller ürün
+    // cache eşleşmesinden gelir — bu yüzden products buraya da iletilir.
+    productImageCandidates: order.items[0]
+      ? resolveProductImageCandidates(order.items[0], products).map(
+          (candidate) => candidate.url,
+        )
+      : [],
     imageResolvedFrom: order.items[0]?.imageResolvedFrom,
     status: dashboardStatus(
       order,
