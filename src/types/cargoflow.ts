@@ -142,6 +142,9 @@ export interface OrderItem {
     | 'sku'
     | 'stockCode'
     | 'productCode'
+    | 'variantBarcode'
+    | 'modelVariant'
+    | 'nameVariant'
     | 'none'
   color?: string
   size?: string

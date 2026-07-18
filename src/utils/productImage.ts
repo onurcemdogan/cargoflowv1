@@ -9,7 +9,17 @@ export type ProductImageMatchKey =
   | 'sku'
   | 'stockCode'
   | 'productCode'
+  | 'variantBarcode'
+  | 'modelVariant'
+  | 'nameVariant'
   | 'none'
+
+export type ProductMatchFailureReason =
+  | 'CACHE_NOT_SYNCED'
+  | 'IDENTIFIER_MISMATCH'
+  | 'PRODUCT_FOUND_NO_IMAGE'
+  | 'AMBIGUOUS_MATCH'
+  | ''
 
 export interface ProductImageResolution {
   url: string
@@ -159,69 +169,241 @@ export function applyProductImageResolution(
   }
 }
 
+// Kimlik normalizasyonu: trim + lowercase + boşluk temizliği; -, _ ve /
+// ayraçları tek forma indirilir (649688-5 == 649688_5 == 649688/5, ama
+// 649688-5 != 649688-6). Baştaki sıfırlar KORUNUR; harfli barkodlara
+// dokunulmaz. Placeholder değerler ('merchantSku', 'sku', '-', 'null' vb.)
+// kimlik SAYILMAZ.
+const IDENTIFIER_PLACEHOLDERS = new Set([
+  'merchantsku',
+  'sku',
+  'barcode',
+  'barkod',
+  'stockcode',
+  'undefined',
+  'null',
+  'none',
+  'yok',
+  '-',
+  '_',
+  '/',
+  '0',
+])
+
+export function normalizeProductIdentifier(value: unknown): string {
+  const normalized = String(value ?? '')
+    .trim()
+    .toLocaleLowerCase('tr-TR')
+    .replace(/\s+/g, '')
+    .replace(/[-_/]+/g, '-')
+  if (!normalized || IDENTIFIER_PLACEHOLDERS.has(normalized)) return ''
+  return normalized
+}
+
+interface ProductCacheIndex {
+  byIdentifier: Map<string, CargoProduct[]>
+  byModel: Map<string, CargoProduct[]>
+  byBaseName: Map<string, CargoProduct[]>
+}
+
+// Index bir kez kurulur (products dizisi referansına göre memoize); her
+// satırda 4000+ ürün taranmaz.
+const productCacheIndexes = new WeakMap<CargoProduct[], ProductCacheIndex>()
+
+function getProductCacheIndex(products: CargoProduct[]): ProductCacheIndex {
+  const cached = productCacheIndexes.get(products)
+  if (cached) return cached
+  const byIdentifier = new Map<string, CargoProduct[]>()
+  const byModel = new Map<string, CargoProduct[]>()
+  const byBaseName = new Map<string, CargoProduct[]>()
+  const push = (map: Map<string, CargoProduct[]>, key: string, product: CargoProduct) => {
+    if (!key) return
+    const list = map.get(key)
+    if (list) {
+      if (!list.includes(product)) list.push(product)
+    } else {
+      map.set(key, [product])
+    }
+  }
+  for (const product of products) {
+    const record = product as CargoProduct & Record<string, unknown>
+    const identifierValues: unknown[] = [
+      product.barcode,
+      product.sku,
+      product.stockCode,
+      product.productCode,
+      product.productContentId,
+      product.externalProductId,
+      record.variantSku,
+      record.variantBarcode,
+    ]
+    // Varyant dizileri de indexlenir (variants/items/stockItems/barcodes).
+    for (const arrayKey of ['variants', 'items', 'stockItems', 'barcodes']) {
+      const entries = record[arrayKey]
+      if (!Array.isArray(entries)) continue
+      for (const entry of entries) {
+        if (typeof entry === 'string') {
+          identifierValues.push(entry)
+          continue
+        }
+        if (entry && typeof entry === 'object') {
+          const variant = entry as Record<string, unknown>
+          identifierValues.push(
+            variant.barcode,
+            variant.sku,
+            variant.stockCode,
+            variant.merchantSku,
+          )
+        }
+      }
+    }
+    for (const value of identifierValues) {
+      push(byIdentifier, normalizeProductIdentifier(value), product)
+    }
+    push(byModel, normalizeProductIdentifier(product.productMainId), product)
+    push(byBaseName, normalizeProductBaseName(product.productName), product)
+  }
+  const index = { byIdentifier, byModel, byBaseName }
+  productCacheIndexes.set(products, index)
+  return index
+}
+
+// "Önü Drapeli Loş Tesettür Takım 6496, 42" → "önü drapeli loş tesettür takım 6496"
+function normalizeProductBaseName(value: unknown): string {
+  const base = String(value ?? '')
+    .trim()
+    .toLocaleLowerCase('tr-TR')
+    .replace(/,\s*\d{1,3}\s*$/u, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return base.length >= 8 ? base : ''
+}
+
+function variantConflicts(
+  item: OrderItem,
+  product: CargoProduct,
+): boolean {
+  const itemColor = normalizeProductIdentifier(item.color)
+  const productColor = normalizeProductIdentifier(product.color)
+  return Boolean(itemColor && productColor && itemColor !== productColor)
+}
+
+function pickModelVariant(
+  item: OrderItem,
+  candidates: CargoProduct[],
+): CargoProduct | undefined {
+  const nonConflicting = candidates.filter(
+    (product) => !variantConflicts(item, product),
+  )
+  if (nonConflicting.length === 0) return undefined
+  const itemSize = normalizeProductIdentifier(item.size)
+  const sizeMatch = itemSize
+    ? nonConflicting.find(
+        (product) =>
+          normalizeProductIdentifier(product.size) === itemSize,
+      )
+    : undefined
+  // Aynı model içinde beden farkı kabul edilebilir; farklı modeller arasında
+  // asla seçim yapılmaz (çağıran taraf model tekilliğini garanti eder).
+  return sizeMatch ?? nonConflicting[0]
+}
+
+export interface ProductCacheMatchResult {
+  product?: CargoProduct
+  matchedBy: ProductImageMatchKey
+  failureReason: ProductMatchFailureReason
+}
+
+// Tek eşleştirme sözleşmesi. Öncelik:
+// 1-5) normalize edilmiş barcode/merchantSku/sku/stockCode/varyant kimlikleri
+//      (hepsi aynı index üzerinden exact match)
+// 6) productMainId (model) + renk çelişmez + beden tercihli
+// 7) base ürün adı + renk/beden (yalnız model tekilse) — son çare
+// Belirsizlikte (birden fazla FARKLI model) eşleşme YAPILMAZ.
+export function resolveProductCacheMatch(
+  item: OrderItem,
+  products: CargoProduct[],
+): ProductCacheMatchResult {
+  if (products.length === 0) {
+    return { matchedBy: 'none', failureReason: 'CACHE_NOT_SYNCED' }
+  }
+  const index = getProductCacheIndex(products)
+  const identifierAttempts: Array<
+    [ProductImageMatchKey, string]
+  > = [
+    ['barcode', normalizeProductIdentifier(item.barcode)],
+    ['merchantSku', normalizeProductIdentifier(item.merchantSku)],
+    ['sku', normalizeProductIdentifier(item.sku)],
+    ['stockCode', normalizeProductIdentifier(item.stockCode)],
+    ['productCode', normalizeProductIdentifier(item.productCode)],
+    ['variantBarcode', normalizeProductIdentifier(item.productContentId)],
+  ]
+  for (const [matchedBy, key] of identifierAttempts) {
+    if (!key) continue
+    const candidates = index.byIdentifier.get(key)
+    if (!candidates || candidates.length === 0) continue
+    const models = new Set(
+      candidates.map((product) =>
+        normalizeProductIdentifier(product.productMainId),
+      ),
+    )
+    if (candidates.length > 1 && models.size > 1) {
+      return { matchedBy: 'none', failureReason: 'AMBIGUOUS_MATCH' }
+    }
+    const product = pickModelVariant(item, candidates)
+    if (product) return { product, matchedBy, failureReason: '' }
+  }
+
+  const modelKey = normalizeProductIdentifier(
+    item.productMainId || extractModelCodeFromName(item.productName),
+  )
+  if (modelKey) {
+    const candidates = index.byModel.get(modelKey)
+    if (candidates && candidates.length > 0) {
+      const product = pickModelVariant(item, candidates)
+      if (product) {
+        return { product, matchedBy: 'modelVariant', failureReason: '' }
+      }
+    }
+  }
+
+  const baseName = normalizeProductBaseName(item.productName)
+  if (baseName) {
+    const candidates = index.byBaseName.get(baseName)
+    if (candidates && candidates.length > 0) {
+      const models = new Set(
+        candidates.map((product) =>
+          normalizeProductIdentifier(product.productMainId),
+        ),
+      )
+      if (models.size > 1) {
+        return { matchedBy: 'none', failureReason: 'AMBIGUOUS_MATCH' }
+      }
+      const product = pickModelVariant(item, candidates)
+      if (product) {
+        return { product, matchedBy: 'nameVariant', failureReason: '' }
+      }
+    }
+  }
+
+  return { matchedBy: 'none', failureReason: 'IDENTIFIER_MISMATCH' }
+}
+
+// "…Takım 6496, 42" → "6496" (isimden model kodu; yalnız 4+ haneli son
+// bağımsız sayı bloğu).
+function extractModelCodeFromName(value: unknown): string {
+  const text = String(value ?? '')
+  const withoutSize = text.replace(/,\s*\d{1,3}\s*$/u, '')
+  const matches = withoutSize.match(/\b\d{4,}\b/g)
+  return matches?.at(-1) ?? ''
+}
+
 function findProductMatch(
   item: OrderItem,
   products: CargoProduct[],
 ): { product?: CargoProduct; matchedBy: ProductImageMatchKey } {
-  const candidates: Array<{
-    key: Exclude<ProductImageMatchKey, 'orderLine' | 'none'>
-    itemValue: string
-    productValues: (product: CargoProduct) => unknown[]
-  }> = [
-    {
-      key: 'productContentId',
-      itemValue: normalizeKey(item.productContentId),
-      productValues: (product) => [
-        product.productContentId,
-        product.externalProductId,
-      ],
-    },
-    {
-      key: 'productMainId',
-      itemValue: normalizeKey(item.productMainId),
-      productValues: (product) => [product.productMainId],
-    },
-    {
-      key: 'barcode',
-      itemValue: normalizeKey(item.barcode),
-      productValues: (product) => [product.barcode],
-    },
-    {
-      key: 'merchantSku',
-      itemValue: normalizeKey(item.merchantSku),
-      productValues: (product) => [product.sku, product.stockCode],
-    },
-    {
-      key: 'sku',
-      itemValue: normalizeKey(item.sku),
-      productValues: (product) => [product.sku, product.stockCode],
-    },
-    {
-      key: 'stockCode',
-      itemValue: normalizeKey(item.stockCode),
-      productValues: (product) => [product.stockCode, product.sku],
-    },
-    {
-      key: 'productCode',
-      itemValue: normalizeKey(item.productCode),
-      productValues: (product) => [
-        product.productCode,
-        product.externalProductId,
-      ],
-    },
-  ]
-
-  for (const candidate of candidates) {
-    if (!candidate.itemValue) continue
-    const product = products.find((entry) =>
-      candidate
-        .productValues(entry)
-        .map(normalizeKey)
-        .includes(candidate.itemValue),
-    )
-    if (product) return { product, matchedBy: candidate.key }
-  }
-  return { matchedBy: 'none' }
+  const match = resolveProductCacheMatch(item, products)
+  return { product: match.product, matchedBy: match.matchedBy }
 }
 
 function firstImage(
@@ -360,6 +542,3 @@ function readPath(value: unknown, path: string[]): unknown {
   return current
 }
 
-function normalizeKey(value: unknown): string {
-  return String(value ?? '').trim().toLocaleLowerCase('tr-TR')
-}

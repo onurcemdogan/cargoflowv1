@@ -163,7 +163,9 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
   assert.equal(enriched[0].items[0].imageUrl, imageUrl)
   assert.equal(enriched[0].items[0].imageResolvedFrom, 'productCache')
   assert.equal(enriched[0].items[0].matchedProductId, 'product-ui')
-  assert.equal(enriched[0].items[0].matchedBy, 'productContentId')
+  // Yeni eşleştirme önceliği: barcode → merchantSku → sku → stockCode →
+  // varyant kimlikleri → model → isim. Bu fixture sku ile eşleşir.
+  assert.equal(enriched[0].items[0].matchedBy, 'sku')
   const persistedResolution = resolveProductImage(enriched[0].items[0], [
     {
       id: 'product-ui',
@@ -183,7 +185,7 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
   ])
   assert.equal(persistedResolution.imageResolvedFrom, 'productCache')
   assert.equal(persistedResolution.matchedProductId, 'product-ui')
-  assert.equal(persistedResolution.matchedBy, 'productContentId')
+  assert.equal(persistedResolution.matchedBy, 'sku')
   assert.match(persistedResolution.imageSource, /^product\./)
   const tableHtml = renderToStaticMarkup(
     createElement(OrdersTable, {

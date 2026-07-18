@@ -20,8 +20,12 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
   const { buildVisibleOrders } = await vite.ssrLoadModule(
     '/src/utils/orderClassification.ts',
   )
-  const { normalizeProductImageUrl, resolveProductImageCandidates } =
-    await vite.ssrLoadModule('/src/utils/productImage.ts')
+  const {
+    normalizeProductImageUrl,
+    normalizeProductIdentifier,
+    resolveProductCacheMatch,
+    resolveProductImageCandidates,
+  } = await vite.ssrLoadModule('/src/utils/productImage.ts')
   const integrations = buildIntegrations()
   const printerSettings = buildPrinterSettings()
 
@@ -547,6 +551,153 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
   })
   assert.equal(imagelessSummary.labelReady, 1)
   assert.equal(imagelessSummary.errors, 0)
+
+  // ---- Ürün cache eşleştirme sözleşmesi ----
+  const cacheProduct = (overrides = {}) => ({
+    id: `prod-${overrides.barcode || overrides.productMainId || Math.random()}`,
+    marketplace: 'Trendyol',
+    productName: 'Önü Drapeli Loş Tesettür Takım 6496',
+    barcode: '',
+    sku: '',
+    stockCode: '',
+    productCode: '',
+    productMainId: '6496',
+    color: 'Krem',
+    size: '42',
+    images: ['https://cdn.dsmcdn.com/model-6496.jpg'],
+    imageUrl: 'https://cdn.dsmcdn.com/model-6496.jpg',
+    source: 'real',
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  })
+  const cacheItem = (overrides = {}) => ({
+    id: 'line-cache',
+    productName: 'Önü Drapeli Loş Tesettür Takım 6496, 42',
+    quantity: 1,
+    variantAttributes: [],
+    rawLine: {},
+    ...overrides,
+  })
+
+  // Test 1: ayraç varyasyonu — 649688-5 siparişi, 649688_5 ürün barkoduyla eşleşir.
+  assert.equal(
+    normalizeProductIdentifier('649688-5'),
+    normalizeProductIdentifier('649688_5'),
+  )
+  assert.equal(
+    normalizeProductIdentifier('649688-5'),
+    normalizeProductIdentifier('649688/5'),
+  )
+  assert.notEqual(
+    normalizeProductIdentifier('649688-5'),
+    normalizeProductIdentifier('649688-6'),
+  )
+  const separatorMatch = resolveProductCacheMatch(
+    cacheItem({ barcode: '649688-5' }),
+    [cacheProduct({ barcode: '649688_5' })],
+  )
+  assert.equal(separatorMatch.matchedBy, 'barcode')
+  assert.equal(separatorMatch.failureReason, '')
+
+  // Test 2: barkod yok, merchantSku exact match.
+  const merchantMatch = resolveProductCacheMatch(
+    cacheItem({ merchantSku: 'MRC-001' }),
+    [cacheProduct({ sku: 'MRC-001' })],
+  )
+  assert.equal(merchantMatch.matchedBy, 'merchantSku')
+  assert.ok(merchantMatch.product)
+
+  // Test 3a: isimde model kodu varsa model eşleşmesi öncelikli ve doğrudur.
+  const nameModelMatch = resolveProductCacheMatch(
+    cacheItem({ color: 'Krem', size: '42' }),
+    [cacheProduct()],
+  )
+  assert.equal(nameModelMatch.matchedBy, 'modelVariant')
+  assert.ok(nameModelMatch.product)
+
+  // Test 3b: kimlik ve model kodu yok — isim + renk + beden güvenli fallback.
+  const nameMatch = resolveProductCacheMatch(
+    cacheItem({
+      productName: 'Saten Uzun Kollu Elbise, 42',
+      color: 'Krem',
+      size: '42',
+    }),
+    [
+      cacheProduct({
+        productName: 'Saten Uzun Kollu Elbise',
+        productMainId: 'SATEN-ELB',
+      }),
+    ],
+  )
+  assert.equal(nameMatch.matchedBy, 'nameVariant')
+  assert.ok(nameMatch.product)
+
+  // Model + varyant: sipariş barkodu katalogdakinden tamamen farklı olsa
+  // bile productMainId + beden üzerinden doğru varyant bulunur (77852 örneği).
+  const modelMatch = resolveProductCacheMatch(
+    cacheItem({
+      productName: 'Luna Zarafet Tesettür Kırmızı Abiye 77852, 36',
+      barcode: 'fb7785213',
+      size: '36',
+    }),
+    [
+      cacheProduct({
+        productName: 'Luna Zarafet Tesettür Kırmızı Abiye 77852',
+        productMainId: '77852',
+        barcode: 'asjdhıahsd715',
+        size: '36',
+        color: 'Siyahh',
+        images: ['https://cdn.dsmcdn.com/77852.jpg'],
+        imageUrl: 'https://cdn.dsmcdn.com/77852.jpg',
+      }),
+    ],
+  )
+  assert.equal(modelMatch.matchedBy, 'modelVariant')
+  assert.ok(modelMatch.product)
+
+  // Test 4: aynı isim iki FARKLI modelde → ambiguous → eşleşme yok.
+  const ambiguous = resolveProductCacheMatch(cacheItem(), [
+    cacheProduct({ productMainId: 'MODEL-A' }),
+    cacheProduct({ productMainId: 'MODEL-B' }),
+  ])
+  assert.equal(ambiguous.matchedBy, 'none')
+  assert.equal(ambiguous.failureReason, 'AMBIGUOUS_MATCH')
+
+  // Test 5: ürün bulundu ama görseli yok → aday listesi boş kalır.
+  const noImageProduct = cacheProduct({
+    barcode: 'NOIMG-1',
+    images: [],
+    imageUrl: '',
+  })
+  const noImageCandidates = resolveProductImageCandidates(
+    cacheItem({ barcode: 'NOIMG-1' }),
+    [noImageProduct],
+  )
+  assert.equal(noImageCandidates.length, 0)
+
+  // Test 6: cache boş → CACHE_NOT_SYNCED.
+  const emptyCache = resolveProductCacheMatch(cacheItem(), [])
+  assert.equal(emptyCache.failureReason, 'CACHE_NOT_SYNCED')
+
+  // Test 7: placeholder değerler kimlik sayılmaz.
+  assert.equal(normalizeProductIdentifier('merchantSku'), '')
+  assert.equal(normalizeProductIdentifier('sku'), '')
+  assert.equal(normalizeProductIdentifier(' - '), '')
+  assert.equal(normalizeProductIdentifier('null'), '')
+  const placeholderResult = resolveProductCacheMatch(
+    cacheItem({
+      productName: 'Kısa Ad',
+      merchantSku: 'merchantSku',
+      sku: 'sku',
+    }),
+    [cacheProduct({ sku: 'merchantsku', productName: 'Kısa Ad' })],
+  )
+  assert.equal(placeholderResult.matchedBy, 'none')
+
+  // Test 8: eşleşme değişiklikleri sayaçları/eligibility'yi etkilemez —
+  // görselsiz preassigned yine Etiket Hazır (yukarıda doğrulandı) ve
+  // varyant index'i verified fixture'ların sınıflandırmasını değiştirmedi
+  // (bu testin önceki tüm assert'leri aynı koşuda geçti).
 })
 
 function buildPreassignedOrder(suffix) {
