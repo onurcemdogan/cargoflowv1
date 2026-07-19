@@ -55,6 +55,8 @@ import type {
   OrdersDatePreset,
   OrdersNavigationFilters,
 } from '../utils/ordersNavigation'
+import { buildOrderCountSummary } from '../utils/orderCounts'
+import { buildOrdersDateRange } from '../utils/orderDateRange'
 
 interface OrdersPageProps {
   orders: CargoOrder[]
@@ -120,6 +122,7 @@ const statusOptions: OrderStatusFilter[] = [
   'UnDelivered',
   'UnSupplied',
   'AtCollectionPoint',
+  'Unknown',
   'Ön Kayıt Yapıldı',
   'Kargo Oluşturuldu',
   'Etiket Hazır',
@@ -131,7 +134,8 @@ const statusOptions: OrderStatusFilter[] = [
 const cargoOptions: CargoFilter[] = ['all', 'Sürat Kargo', 'Bekliyor', 'Hatalı']
 
 const quickTabs: Array<{ key: QuickTab; label: string }> = [
-  { key: 'currentSync', label: 'Bugün Gelen Siparişler' },
+  { key: 'currentSync', label: 'Son Senkron' },
+  { key: 'today', label: 'Bugün Gelenler' },
   { key: 'open', label: 'Tüm Açık Operasyonlar' },
   { key: 'barcodePending', label: 'Barkod Bekleyenler' },
   { key: 'shipmentPending', label: 'Kargo Oluşturulacaklar' },
@@ -210,7 +214,7 @@ export function OrdersPage({
     initialFilters?.actionFilter ?? 'all',
   )
   const [activeQuickTab, setActiveQuickTab] = useState<QuickTab>(
-    initialQuickTab ?? 'currentSync',
+    initialQuickTab ?? 'today',
   )
   const [activeOrderId, setActiveOrderId] = useState<string | undefined>(
     initialOrderId,
@@ -223,7 +227,7 @@ export function OrdersPage({
   const [currentPage, setCurrentPage] = useState(1)
   const activeOrder = orders.find((order) => order.id === activeOrderId)
   const dateRange = useMemo(
-    () => buildDateRange(datePreset, customStartDate, customEndDate),
+    () => buildOrdersDateRange(datePreset, customStartDate, customEndDate),
     [customEndDate, customStartDate, datePreset],
   )
 
@@ -243,6 +247,7 @@ export function OrdersPage({
           preset: datePreset,
           startTime: dateRange.startTime,
           endTime: dateRange.endTime,
+          timezone: dateRange.timezone,
         },
         searchQuery: query,
         customerQuery,
@@ -260,6 +265,7 @@ export function OrdersPage({
       datePreset,
       dateRange.endTime,
       dateRange.startTime,
+      dateRange.timezone,
       marketplace,
       district,
       multiProductFilter,
@@ -323,6 +329,7 @@ export function OrdersPage({
               preset: datePreset,
               startTime: dateRange.startTime,
               endTime: dateRange.endTime,
+              timezone: dateRange.timezone,
             },
             searchQuery: query,
             customerQuery,
@@ -341,6 +348,7 @@ export function OrdersPage({
       datePreset,
       dateRange.endTime,
       dateRange.startTime,
+      dateRange.timezone,
       marketplace,
       district,
       multiProductFilter,
@@ -398,14 +406,9 @@ export function OrdersPage({
     selectedIds.length === 0
       ? 'Seçili sipariş yok'
       : `${selectedIds.length} sipariş seçildi`
-  const listedLineCount = filteredOrders.reduce(
-    (total, order) => total + order.items.length,
-    0,
-  )
-  const listedQuantity = filteredOrders.reduce(
-    (total, order) =>
-      total + order.items.reduce((sum, item) => sum + Number(item.quantity ?? 0), 0),
-    0,
+  const listedCounts = useMemo(
+    () => buildOrderCountSummary(filteredOrders),
+    [filteredOrders],
   )
 
   function refreshForTab(tab: QuickTab) {
@@ -738,9 +741,9 @@ export function OrdersPage({
       <section className="toolbar">
         <div>
           <strong>{selectionText}</strong>
-          <span>{filteredOrders.length} paket/sipariş listeleniyor.</span>
-          <span>{listedLineCount} ürün kalemi</span>
-          <span>{listedQuantity} toplam adet</span>
+          <span>{listedCounts.packageCount} paket</span>
+          <span>{listedCounts.lineCount} kalem</span>
+          <span>{listedCounts.quantityTotal} ürün</span>
         </div>
         <div className="toolbar-actions">
           <button
@@ -839,10 +842,13 @@ export function OrdersPage({
           </code>
         </div>
         <div><span>persistentOrdersCount</span><code>{orders.length}</code></div>
+        <div><span>afterInvalidRecordFilterCount</span><code>{visibleOrdersResult.debug.afterInvalidRecordFilterCount}</code></div>
+        <div><span>afterPackageDedupCount</span><code>{visibleOrdersResult.debug.afterPackageDedupCount}</code></div>
         <div><span>OrdersPageCatalogCount</span><code>{products.length}</code></div>
         <div><span>catalogRevision</span><code>{products.length}</code></div>
         <div><span>latestSyncAt</span><code>{visibleOrdersResult.debug.latestSyncAt ? formatDisplayDate(visibleOrdersResult.debug.latestSyncAt) : '-'}</code></div>
         <div><span>latestSyncOrderCount</span><code>{visibleOrdersResult.debug.latestSyncCount}</code></div>
+        <div><span>latestSyncBatchId</span><code>{visibleOrdersResult.debug.latestSyncBatchId ?? '-'}</code></div>
         <div><span>dashboardSummary.totalOrders</span><code>{orderSummary.totalOrders}</code></div>
         <div><span>dashboardSummary.openOperations</span><code>{orderSummary.openOperations}</code></div>
         <div><span>visibleOrdersCount</span><code>{filteredOrders.length}</code></div>
@@ -860,7 +866,22 @@ export function OrdersPage({
         <div><span>afterActionFilterCount</span><code>{visibleOrdersResult.debug.afterActionFilter}</code></div>
         <div><span>afterDateFilterCount</span><code>{visibleOrdersResult.debug.afterDateFilter}</code></div>
         <div><span>afterSearchFilterCount</span><code>{visibleOrdersResult.debug.afterSearch}</code></div>
+        <div><span>uniquePackageCount</span><code>{visibleOrdersResult.debug.uniquePackageCount}</code></div>
+        <div><span>uniqueOrderNumberCount</span><code>{visibleOrdersResult.debug.uniqueOrderNumberCount}</code></div>
+        <div><span>lineCount</span><code>{visibleOrdersResult.debug.lineCount}</code></div>
+        <div><span>quantityTotal</span><code>{visibleOrdersResult.debug.quantityTotal}</code></div>
+        <div><span>excludedOrderCount</span><code>{visibleOrdersResult.debug.exclusions.length}</code></div>
           </section>
+          {visibleOrdersResult.debug.exclusions.length > 0 ? (
+            <details className="debug-panel orders-exclusion-debug">
+              <summary>
+                Elenen paketler ({visibleOrdersResult.debug.exclusions.length})
+              </summary>
+              <pre>
+                {JSON.stringify(visibleOrdersResult.debug.exclusions, null, 2)}
+              </pre>
+            </details>
+          ) : null}
 
           {lastResult?.bulkActionDebug ? (
             <section className="debug-panel bulk-action-debug">
@@ -917,8 +938,8 @@ export function OrdersPage({
       <footer className="orders-pagination" aria-label="Sipariş sayfalama">
         <span>
           {pagination.totalItems === 0
-            ? '0 kayıt'
-            : `${pagination.totalItems.toLocaleString('tr-TR')} kayıttan ${(
+            ? '0 paket'
+            : `${listedCounts.packageCount.toLocaleString('tr-TR')} paketten ${(
                 pagination.startIndex + 1
               ).toLocaleString('tr-TR')}–${pagination.endIndex.toLocaleString(
                 'tr-TR',
@@ -1013,55 +1034,6 @@ export function OrdersPage({
   )
 }
 
-function buildDateRange(
-  preset: OrdersDatePreset,
-  customStartDate: string,
-  customEndDate: string,
-) {
-  const now = new Date()
-  const todayStart = new Date(now)
-  todayStart.setHours(0, 0, 0, 0)
-  const todayEnd = new Date(now)
-  todayEnd.setHours(23, 59, 59, 999)
-
-  if (preset === 'all') {
-    return {
-      startDate: undefined,
-      endDate: undefined,
-      startTime: Number.NEGATIVE_INFINITY,
-      endTime: Number.POSITIVE_INFINITY,
-    }
-  }
-  if (preset === 'today') return toDateRange(todayStart, todayEnd)
-  if (preset === 'yesterday') {
-    const start = new Date(todayStart)
-    start.setDate(start.getDate() - 1)
-    const end = new Date(todayEnd)
-    end.setDate(end.getDate() - 1)
-    return toDateRange(start, end)
-  }
-  if (preset === 'custom' && customStartDate && customEndDate) {
-    return toDateRange(
-      new Date(`${customStartDate}T00:00:00`),
-      new Date(`${customEndDate}T23:59:59.999`),
-    )
-  }
-
-  const days = preset === 'last3' ? 3 : preset === 'last30' ? 30 : 7
-  const start = new Date(todayStart)
-  start.setDate(start.getDate() - (days - 1))
-  return toDateRange(start, todayEnd)
-}
-
-function toDateRange(startDate: Date, endDate: Date) {
-  return {
-    startDate,
-    endDate,
-    startTime: startDate.getTime(),
-    endTime: endDate.getTime(),
-  }
-}
-
 function formatSyncTime(value?: string): string {
   return value ? formatDisplayDate(value) : 'Bekleniyor'
 }
@@ -1098,6 +1070,7 @@ function statusOptionLabel(item: OrderStatusFilter): string {
     'UnDelivered',
     'UnSupplied',
     'AtCollectionPoint',
+    'Unknown',
   ]
   return marketplaceStatuses.includes(item)
     ? mapMarketplaceStatus('trendyol', item).label

@@ -259,6 +259,7 @@ async function handleTrendyolOrdersFetch(request, response) {
       orders: normalized.orders,
       debug: {
         ...normalized.debug,
+        syncStatus: 'COMPLETE',
         fetchDebug: result.debug,
         statusRequests: result.debug?.statusRequests,
         pageRequests: result.debug?.pageRequests,
@@ -7469,6 +7470,7 @@ async function callTrendyolOrdersByStatuses(credentials, query = {}) {
     credentials,
     query,
   )
+  if (!filteredResult.ok) return filteredResult
   const discoveryStatuses = statuses.filter((status) =>
     ACTIVE_TRENDYOL_ORDER_STATUSES.includes(status),
   )
@@ -7498,8 +7500,10 @@ async function callTrendyolOrdersByStatuses(credentials, query = {}) {
   const unfilteredContent = unfilteredResult.ok
     ? getTrendyolOrderPackagesArray(unfilteredResult.data)
     : []
-  const matchingUnfilteredContent = unfilteredContent.filter((item) =>
-    isTrendyolPackageInStatuses(item, discoveryStatuses),
+  const matchingUnfilteredContent = unfilteredContent.filter(
+    (item) =>
+      isTrendyolPackageInStatuses(item, discoveryStatuses) ||
+      isUnknownTrendyolPackageStatus(item),
   )
 
   if (!filteredResult.ok && !unfilteredResult.ok) return filteredResult
@@ -7540,6 +7544,7 @@ async function callTrendyolOrdersByStatuses(credentials, query = {}) {
     },
     debug: {
       ...(filteredResult.debug ?? {}),
+      syncStatus: 'COMPLETE',
       unfilteredFallback: summarizeTrendyolUnfilteredFallback(
         unfilteredResult,
         unfilteredContent.length,
@@ -7598,18 +7603,43 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
   )
   const firstData = successes[0]?.result.data ?? {}
 
+  if (failures.length > 0) {
+    return {
+      ok: false,
+      source: 'real',
+      statusCode: failures[0]?.result.statusCode ?? 502,
+      message: `Trendyol sipariş senkronu kısmi kaldı. Başarılı statüler: ${successes
+        .map((entry) => entry.status)
+        .join(', ')}. Hatalı statüler: ${failures
+        .map((entry) => entry.status)
+        .join(', ')}. Mevcut tam liste korunmalıdır.`,
+      data: {
+        content: [],
+        totalElements: 0,
+        totalPages: 0,
+      },
+      debug: {
+        syncStatus: 'PARTIAL',
+        partialRecordCount: combinedContent.length,
+        statusRequests: results.map((entry) => ({
+          status: entry.status,
+          ok: entry.result.ok,
+          statusCode: entry.result.statusCode,
+          message: entry.result.message,
+          requestUrl: entry.result.debug?.requestUrl,
+          pageRequests: entry.result.debug?.pageRequests,
+          rawResponsePreview: entry.result.debug?.rawResponsePreview,
+          parsedError: entry.result.debug?.parsedError,
+        })),
+      },
+    }
+  }
+
   return {
     ok: true,
     source: 'real',
     statusCode: successes[0]?.result.statusCode ?? 200,
-    message:
-      failures.length > 0
-        ? `Trendyol siparişleri kısmi alındı. Başarılı statüler: ${successes
-            .map((entry) => entry.status)
-            .join(', ')}. Hatalı statüler: ${failures
-            .map((entry) => entry.status)
-            .join(', ')}.`
-        : `Trendyol siparişleri statü bazlı alındı: ${statuses.join(', ')}.`,
+    message: `Trendyol siparişleri statü bazlı alındı: ${statuses.join(', ')}.`,
     data: {
       ...firstData,
       content: combinedContent,
@@ -7617,6 +7647,7 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
       totalPages: 1,
     },
     debug: {
+      syncStatus: 'COMPLETE',
       statusRequests: results.map((entry) => ({
         status: entry.status,
         ok: entry.result.ok,
@@ -9529,6 +9560,17 @@ function isTrendyolPackageInStatuses(item, statuses) {
   return Boolean(rawStatus && statuses.includes(rawStatus))
 }
 
+function isUnknownTrendyolPackageStatus(item) {
+  const rawStatus = [
+    item?.status,
+    item?.packageStatus,
+    item?.shipmentPackageStatus,
+  ]
+    .map((value) => String(value ?? '').trim())
+    .find(Boolean)
+  return Boolean(rawStatus && !ALL_TRENDYOL_ORDER_STATUSES.includes(rawStatus))
+}
+
 function mergeTrendyolPackageCollections(...collections) {
   const packages = new Map()
   for (const collection of collections) {
@@ -9870,7 +9912,7 @@ function findTrendyolAttribute(item, attributeName) {
 
 function normalizeStatus(value) {
   if (ALL_TRENDYOL_ORDER_STATUSES.includes(value)) return value
-  return 'Created'
+  return 'Unknown'
 }
 
 function operationStatusFromMarketplace(status) {

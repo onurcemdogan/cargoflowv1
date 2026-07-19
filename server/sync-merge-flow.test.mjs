@@ -166,7 +166,8 @@ test('Marketplace senkronu operasyonel shipment state kaybetmez (A-G)', async (t
   assert.equal(sourceC.canPrint, true)
   assert.equal(sourceC.canDownloadZpl, false)
 
-  // D) İki AYRI packageId: paket A'nın shipment'ı paket B'ye sızmaz.
+  // D) Aynı orderNumber altındaki iki AYRI packageId korunur; paket A'nın
+  //    shipment'ı paket B'ye sızmaz.
   storage.clear()
   const workflowD = buildWorkflow({
     fetchOrders: async () => ({
@@ -175,7 +176,7 @@ test('Marketplace senkronu operasyonel shipment state kaybetmez (A-G)', async (t
         freshFixture({
           id: 'ty_order_5000000001',
           externalOrderId: '5000000001',
-          orderNumber: '11425963018',
+          orderNumber: '11425963017',
           packageId: '5000000001',
           shipmentPackageId: '5000000001',
           cargoTrackingNumber: '7270034562639999',
@@ -188,8 +189,13 @@ test('Marketplace senkronu operasyonel shipment state kaybetmez (A-G)', async (t
   workflowD.setMarketplaceAccount('277221')
   storage.set(KEY, JSON.stringify([cachedFixture()]))
   const syncedD = await workflowD.fetchOrders(config, {})
-  const otherD = syncedD.orders.find((o) => o.orderNumber === '11425963018')
-  const sameD = syncedD.orders.find((o) => o.orderNumber === '11425963017')
+  const otherD = syncedD.orders.find((o) => String(o.packageId) === '5000000001')
+  const sameD = syncedD.orders.find((o) => String(o.packageId) === '4009094498')
+  assert.equal(
+    syncedD.orders.filter((o) => o.orderNumber === '11425963017').length,
+    2,
+    'D: aynı sipariş numarasındaki split paketler birleşmemeli',
+  )
   assert.ok(sameD.shipment, 'D: kendi paketi shipment korur')
   assert.equal(otherD.shipment, undefined, 'D: farklı pakete shipment sızmaz')
 
@@ -262,4 +268,24 @@ test('Marketplace senkronu operasyonel shipment state kaybetmez (A-G)', async (t
     [cachedFixture()],
   )
   assert.equal(preserved[0].shipment.id, 'shp-2')
+
+  // H) Kısmi/başarısız marketplace sonucu tam store'u ezmez.
+  storage.clear()
+  const workflowH = buildWorkflow({
+    fetchOrders: async () => ({
+      orders: [],
+      complete: false,
+      source: 'real',
+      message: 'Picking sayfası alınamadı; senkron PARTIAL.',
+    }),
+  })
+  workflowH.setMarketplaceAccount('277221')
+  storage.set(KEY, JSON.stringify([cachedFixture()]))
+  const syncedH = await workflowH.fetchOrders(config, {})
+  assert.equal(syncedH.orders.length, 1)
+  assert.equal(syncedH.orders[0].orderNumber, '11425963017')
+  assert.equal(syncedH.orders[0].shipment.tNo, '11722641149218')
+  assert.equal(syncedH.result.level, 'warning')
+  assert.match(syncedH.result.message, /Kısmi\/başarısız sonuç kaydedilmedi/)
+  assert.equal(JSON.parse(storage.get(KEY)).length, 1)
 })

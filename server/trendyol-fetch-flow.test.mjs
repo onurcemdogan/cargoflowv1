@@ -37,7 +37,7 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
         size: Number(url.searchParams.get('size') ?? 1),
         totalPages,
         totalElements:
-          status === 'Created' ? 2 : status === 'UNFILTERED' ? 2 : 1,
+          status === 'Created' ? 2 : status === 'UNFILTERED' ? 3 : 1,
       }),
     )
   })
@@ -74,10 +74,10 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
   })
 
   assert.equal(response.ok, true)
-  assert.equal(response.orders.length, 4)
-  assert.equal(response.debug.rawOrdersCount, 4)
-  assert.equal(response.debug.normalizedOrdersCount, 4)
-  assert.equal(response.debug.totalLineCount, 4)
+  assert.equal(response.orders.length, 5)
+  assert.equal(response.debug.rawOrdersCount, 5)
+  assert.equal(response.debug.normalizedOrdersCount, 5)
+  assert.equal(response.debug.totalLineCount, 5)
   assert.deepEqual(
     response.orders.map((order) => order.packageId).sort(),
     [
@@ -85,6 +85,7 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
       'PKG-CREATED-1',
       'PKG-HIDDEN-CREATED',
       'PKG-PICKING-0',
+      'PKG-UNKNOWN-0',
     ],
   )
   assert.equal(
@@ -97,7 +98,13 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
     'Statü filtresinin kaçırdığı yeni paketler için filtresiz güvenlik ağı çağrılmalı.',
   )
   assert.equal(response.debug.fetchDebug.unfilteredFallback.ok, true)
-  assert.equal(response.debug.fetchDebug.unfilteredFallback.addedCount, 1)
+  assert.equal(response.debug.fetchDebug.unfilteredFallback.addedCount, 2)
+  assert.equal(
+    response.orders.find((order) => order.packageId === 'PKG-UNKNOWN-0')
+      ?.marketplaceStatus,
+    'Unknown',
+    'Bilinmeyen pazaryeri statüsü Tümü kapsamından sessizce düşmemeli.',
+  )
   assert.ok(
     requests.some(
       (request) => request.status === 'Created' && request.page === 0,
@@ -141,6 +148,60 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
       Array.isArray(entry.pageRequests),
     ),
   )
+})
+
+test('Sipariş statülerinden biri alınamazsa PARTIAL sonuç başarı sayılmaz', async (t) => {
+  const mockTrendyol = http.createServer((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${host}`)
+    if (url.searchParams.get('status') === 'Picking') {
+      response.writeHead(503, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ message: 'temporary upstream error' }))
+      return
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end(
+      JSON.stringify({
+        content:
+          url.searchParams.get('status') === 'Created'
+            ? [
+                buildPackage({
+                  status: 'Created',
+                  suffix: 'PARTIAL-CREATED',
+                  packageId: 'PKG-PARTIAL-CREATED',
+                }),
+              ]
+            : [],
+        page: 0,
+        size: 200,
+        totalPages: 1,
+        totalElements: url.searchParams.get('status') === 'Created' ? 1 : 0,
+      }),
+    )
+  })
+  const mockPort = await listen(mockTrendyol)
+  t.after(() => mockTrendyol.close())
+  const { apiPort, apiProcess } = await startApiWithTrendyolMock(mockPort)
+  t.after(() => apiProcess.kill())
+
+  const body = await postJson(apiPort, '/api/trendyol/orders/fetch', {
+    credentials: {
+      sellerId: 'SELLER-1',
+      apiKey: 'api-key',
+      apiSecret: 'api-secret',
+      environment: 'prod',
+    },
+    query: {
+      startDate: Date.parse('2026-07-01T00:00:00.000Z'),
+      endDate: Date.parse('2026-07-08T23:59:59.999Z'),
+      size: 200,
+    },
+  })
+
+  assert.equal(body.ok, false)
+  assert.deepEqual(body.orders, [])
+  assert.equal(body.debug.syncStatus, 'PARTIAL')
+  assert.equal(body.debug.partialRecordCount, 1)
+  assert.match(body.message, /kısmi/i)
 })
 
 test('Ürün kataloğu tüm sayfaları çeker, orta sayfa 429 hatasını tekrarlar ve varyantları korur', async (t) => {
@@ -308,6 +369,11 @@ function buildPageContent(status, page) {
         status: 'Created',
         suffix: 'HIDDEN-CREATED',
         packageId: 'PKG-HIDDEN-CREATED',
+      }),
+      buildPackage({
+        status: 'UnexpectedMarketplaceState',
+        suffix: 'UNKNOWN-0',
+        packageId: 'PKG-UNKNOWN-0',
       }),
     ]
   }

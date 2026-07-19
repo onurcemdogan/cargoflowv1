@@ -98,6 +98,7 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
   assert.ok(statusesForFetch('cancelReturn').includes('Shipped'))
   assert.ok(statusesForFetch('labelReady').includes('Created'))
   assert.ok(statusesForFetch('currentSync').includes('Created'))
+  assert.ok(statusesForFetch('today').includes('Created'))
   assert.ok(statusesForFetch('all').includes('Delivered'))
 
   const html = renderToStaticMarkup(
@@ -148,6 +149,11 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     await vite.ssrLoadModule('/src/utils/suratVerification.ts')
   const { formatDisplayDate, formatDebugDateTime } =
     await vite.ssrLoadModule('/src/utils/formatters.ts')
+  const { buildOrderCountSummary } = await vite.ssrLoadModule(
+    '/src/utils/orderCounts.ts',
+  )
+  const { buildOrdersDateRange, isOrderWithinDateRange } =
+    await vite.ssrLoadModule('/src/utils/orderDateRange.ts')
 
   const shippedMarketplaceWithPendingSurat = {
     ...buildOrder(),
@@ -651,12 +657,16 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     id: `active-${index}`,
     externalOrderId: `ACTIVE-${index}`,
     orderNumber: `ACTIVE-${index}`,
+    packageId: `ACTIVE-PKG-${index}`,
+    shipmentPackageId: `ACTIVE-PKG-${index}`,
   }))
   const shippedOrders = Array.from({ length: 4 }, (_, index) => ({
     ...buildOrder(),
     id: `shipped-${index}`,
     externalOrderId: `SHIPPED-${index}`,
     orderNumber: `SHIPPED-${index}`,
+    packageId: `SHIPPED-PKG-${index}`,
+    shipmentPackageId: `SHIPPED-PKG-${index}`,
     marketplaceStatus: 'Shipped',
     operationStatus: 'HANDED_TO_CARGO',
   }))
@@ -667,6 +677,8 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     id: 'active-yesterday',
     externalOrderId: 'ACTIVE-YESTERDAY',
     orderNumber: 'ACTIVE-YESTERDAY',
+    packageId: 'ACTIVE-YESTERDAY-PKG',
+    shipmentPackageId: 'ACTIVE-YESTERDAY-PKG',
     createdAt: yesterday.toISOString(),
   }
   const ordersHtml = renderToStaticMarkup(
@@ -711,6 +723,8 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     ...buildOrder(),
     id: 'expanded-order',
     orderNumber: 'EXPANDED-100',
+    packageId: 'EXPANDED-PKG-100',
+    shipmentPackageId: 'EXPANDED-PKG-100',
     customerName: 'Ayşe Test',
     customerPhone: '5550000000',
     city: 'İstanbul',
@@ -760,6 +774,8 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
       ...buildOrder(),
       id: 'single-filter-order',
       orderNumber: 'SINGLE-200',
+      packageId: 'SINGLE-PKG-200',
+      shipmentPackageId: 'SINGLE-PKG-200',
       customerName: 'Başka Müşteri',
       city: 'İstanbul',
       district: 'Kadıköy',
@@ -825,6 +841,8 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     ...buildOrder(),
     id: `delivered-${index}`,
     orderNumber: `DELIVERED-${index}`,
+    packageId: `DELIVERED-PKG-${index}`,
+    shipmentPackageId: `DELIVERED-PKG-${index}`,
     marketplaceStatus: 'Delivered',
     operationStatus: 'DELIVERED',
   }))
@@ -832,6 +850,8 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     ...buildOrder(),
     id: `canceled-${index}`,
     orderNumber: `CANCELED-${index}`,
+    packageId: `CANCELED-PKG-${index}`,
+    shipmentPackageId: `CANCELED-PKG-${index}`,
     marketplaceStatus: index % 2 === 0 ? 'Cancelled' : 'Returned',
     operationStatus: 'ERROR',
   }))
@@ -980,8 +1000,48 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     /14\.06\.2026/,
   )
 
-  const todayStart = new Date()
-  todayStart.setHours(0, 0, 0, 0)
+  const fixedNow = new Date('2026-07-19T09:00:00.000Z')
+  const istanbulToday = buildOrdersDateRange('today', '', '', fixedNow)
+  assert.equal(
+    new Date(istanbulToday.startTime).toISOString(),
+    '2026-07-18T21:00:00.000Z',
+  )
+  assert.equal(
+    new Date(istanbulToday.endTime).toISOString(),
+    '2026-07-19T20:59:59.999Z',
+  )
+  assert.equal(
+    isOrderWithinDateRange(
+      {
+        orderDate: '2026-07-19T20:59:59.999Z',
+        createdAt: '2026-07-19T20:59:59.999Z',
+      },
+      istanbulToday,
+    ),
+    true,
+    'A: bitiş günü 23:59:59.999 Europe/Istanbul dahil olmalı',
+  )
+  assert.equal(
+    isOrderWithinDateRange(
+      {
+        orderDate: '2026-07-19T21:00:00.000Z',
+        createdAt: '2026-07-19T21:00:00.000Z',
+      },
+      istanbulToday,
+    ),
+    false,
+  )
+  assert.equal(
+    isOrderWithinDateRange(
+      {
+        orderDate: '2026-07-18T21:30:00.000Z',
+        createdAt: '2026-07-18T21:30:00.000Z',
+      },
+      istanbulToday,
+    ),
+    true,
+    'B: UTC 18 Temmuz 21:30, İstanbul 19 Temmuz 00:30 sayılmalı',
+  )
   const oldOrder = {
     ...buildOrder(),
     id: 'old-order',
@@ -1003,8 +1063,9 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
       selectedTab: 'all',
       dateFilter: {
         preset: 'today',
-        startTime: todayStart.getTime(),
-        endTime: Date.now(),
+        startTime: istanbulToday.startTime,
+        endTime: istanbulToday.endTime,
+        timezone: istanbulToday.timezone,
       },
     }).visibleOrders.length,
     0,
@@ -1051,14 +1112,30 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     selectedTab: 'currentSync',
     dateFilter: { preset: 'all' },
   })
-  assert.equal(latestSyncResult.visibleOrders.length, 34)
-  assert.equal(latestSyncResult.debug.latestSyncCount, 34)
-  assert.equal(latestSyncResult.debug.afterTabFilter, 34)
+  assert.equal(latestSyncResult.visibleOrders.length, 35)
+  assert.equal(latestSyncResult.debug.latestSyncCount, 35)
+  assert.equal(latestSyncResult.debug.afterTabFilter, 35)
   assert.equal(
     latestSyncResult.visibleOrders.some(
       (order) => order.orderNumber === 'LATEST-BUT-OLD',
     ),
-    false,
+    true,
+    'F: currentSync sipariş gününe değil son batch kimliğine göre çalışmalı',
+  )
+  assert.equal(
+    buildVisibleOrders({
+      ...filters,
+      persistentOrders: [
+        ...staleOpenOrders,
+        ...latestSyncedOrders,
+        oldOrderSeenInLatestSync,
+      ],
+      selectedTab: 'today',
+      dateFilter: { preset: 'all', timezone: 'Europe/Istanbul' },
+      now: new Date('2026-06-25T12:00:00.000Z'),
+    }).visibleOrders.length,
+    34,
+    'F: Bugün Gelenler, eski tarihli fakat son batchteki paketi içermemeli',
   )
   assert.equal(
     buildVisibleOrders({
@@ -1068,6 +1145,92 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
       dateFilter: { preset: 'all' },
     }).visibleOrders.length,
     4,
+  )
+
+  const unknownStatusOrder = {
+    ...buildOrder(),
+    id: 'unknown-status',
+    packageId: 'UNKNOWN-PKG',
+    orderNumber: 'UNKNOWN-ORDER',
+    marketplaceStatus: 'Unknown',
+  }
+  assert.equal(
+    buildVisibleOrders({
+      ...filters,
+      persistentOrders: [unknownStatusOrder],
+      selectedTab: 'all',
+    }).visibleOrders.length,
+    1,
+    'E: bilinmeyen durum Tümü sekmesinden düşmemeli',
+  )
+
+  const splitPackageA = {
+    ...buildOrder(),
+    id: 'split-a',
+    orderNumber: 'SPLIT-ORDER',
+    packageId: 'SPLIT-PKG-1',
+    shipmentPackageId: 'SPLIT-PKG-1',
+    items: [
+      { id: 'LINE-A1', productName: 'A1', barcode: 'A1', sku: 'A1', quantity: 2 },
+      { id: 'LINE-A2', productName: 'A2', barcode: 'A2', sku: 'A2', quantity: 1 },
+    ],
+  }
+  const splitPackageB = {
+    ...buildOrder(),
+    id: 'split-b',
+    orderNumber: 'SPLIT-ORDER',
+    packageId: 'SPLIT-PKG-2',
+    shipmentPackageId: 'SPLIT-PKG-2',
+    items: [
+      { id: 'LINE-B1', productName: 'B1', barcode: 'B1', sku: 'B1', quantity: 4 },
+    ],
+  }
+  const splitSummary = buildOrderCountSummary([splitPackageA, splitPackageB])
+  assert.deepEqual(splitSummary, {
+    packageCount: 2,
+    orderCount: 1,
+    lineCount: 3,
+    quantityTotal: 7,
+  })
+  const mixedLineSummary = buildOrderCountSummary([
+    {
+      ...splitPackageA,
+      id: 'mixed-line-package',
+      packageId: 'MIXED-LINE-PKG',
+      shipmentPackageId: 'MIXED-LINE-PKG',
+      items: [
+        { id: 'ACTIVE-LINE', productName: 'Aktif', quantity: 1, status: 'Picking' },
+        { id: 'CANCEL-LINE', productName: 'İptal', quantity: 1, status: 'Cancelled' },
+      ],
+    },
+  ])
+  assert.equal(mixedLineSummary.packageCount, 1)
+  assert.equal(mixedLineSummary.lineCount, 2)
+  assert.equal(mixedLineSummary.quantityTotal, 2)
+  const duplicateTypedPackage = {
+    ...splitPackageA,
+    id: 'split-a-number',
+    packageId: 12345,
+    shipmentPackageId: 12345,
+  }
+  const duplicateStringPackage = {
+    ...splitPackageA,
+    id: 'split-a-string',
+    packageId: '12345',
+    shipmentPackageId: '12345',
+  }
+  const typedPackageResult = buildVisibleOrders({
+    ...filters,
+    persistentOrders: [duplicateTypedPackage, duplicateStringPackage],
+    selectedTab: 'all',
+  })
+  assert.equal(typedPackageResult.visibleOrders.length, 1)
+  assert.equal(typedPackageResult.debug.afterPackageDedupCount, 1)
+  assert.equal(typedPackageResult.debug.uniquePackageCount, 1)
+  assert.equal(
+    typedPackageResult.debug.visibleCount,
+    typedPackageResult.visibleOrders.length,
+    'L: visible package count tablo paket sayısıyla aynı olmalı',
   )
 })
 

@@ -29,6 +29,7 @@ export type MarketplaceStatus =
   | 'UnDelivered'
   | 'UnSupplied'
   | 'AtCollectionPoint'
+  | 'Unknown'
 
 export type OperationStatus =
   | 'NEW'

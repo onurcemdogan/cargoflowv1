@@ -52,6 +52,10 @@ import {
   loadPersistedProductCatalog,
   savePersistedProductCatalog,
 } from '../utils/productCatalogStorage'
+import {
+  orderPackageIdentityCandidates,
+  orderNumberIdentity,
+} from '../utils/orderCounts'
 
 const ORDERS_KEY = 'cargoFlow_orders_v3'
 const PRODUCTS_KEY = 'cargoFlow_products_v4'
@@ -470,6 +474,23 @@ export class OrderWorkflowService {
       startDate: options.startDate,
       endDate: options.endDate,
     })
+    if (response.complete === false) {
+      const existingOrders = this.loadOrders()
+      this.auditLogService.append({
+        action: 'Siparişler çekildi',
+        level: 'warning',
+        details: `${response.message} Mevcut tam operasyon listesi korunuyor.`,
+      })
+      return {
+        orders: existingOrders,
+        result: {
+          level: 'warning',
+          source: response.source,
+          message: `${response.message} Kısmi/başarısız sonuç kaydedilmedi; mevcut ${existingOrders.length} paket korundu.`,
+          debug: response.debug,
+        },
+      }
+    }
     const syncBatchAt = new Date().toISOString()
     let nextOrders = mergeOrdersWithLocalState(
       response.orders.map((order) =>
@@ -2738,46 +2759,36 @@ function removeLegacyTrendyolShipment(order: CargoOrder): CargoOrder {
 }
 
 function buildOrderMergeMaps(orders: CargoOrder[]) {
-  return {
-    packageId: new Map(
-      orders
-        .filter((order) => order.packageId)
-        .map((order) => [String(order.packageId), order]),
-    ),
-    shipmentPackageId: new Map(
-      orders
-        .filter((order) => order.shipmentPackageId)
-        .map((order) => [String(order.shipmentPackageId), order]),
-    ),
-    orderNumber: new Map(
-      orders
-        .filter((order) => order.orderNumber)
-        .map((order) => [String(order.orderNumber), order]),
-    ),
-    orderId: new Map(
-      orders.flatMap((order) =>
-        [order.externalOrderId, order.id]
-          .filter(Boolean)
-          .map((value) => [String(value), order] as const),
-      ),
-    ),
+  const maps = {
+    package: new Map<string, CargoOrder>(),
+    orderNumberWithoutPackage: new Map<string, CargoOrder>(),
+    weakIdWithoutPackage: new Map<string, CargoOrder>(),
   }
+  orders.forEach((order) => addOrderToMergeMaps(order, maps))
+  return maps
 }
 
 function findMatchingOrder(
   order: CargoOrder,
   maps: ReturnType<typeof buildOrderMergeMaps>,
 ): CargoOrder | undefined {
-  return (
-    (order.packageId
-      ? maps.packageId.get(String(order.packageId))
-      : undefined) ||
-    (order.shipmentPackageId
-      ? maps.shipmentPackageId.get(String(order.shipmentPackageId))
-      : undefined) ||
-    maps.orderNumber.get(String(order.orderNumber)) ||
-    maps.orderId.get(String(order.externalOrderId || order.id))
-  )
+  const packageCandidates = orderPackageIdentityCandidates(order)
+  if (packageCandidates.length > 0) {
+    for (const candidate of packageCandidates) {
+      const match = maps.package.get(candidate)
+      if (match) return match
+    }
+    // Paket kimliği bulunan kayıtlar orderNumber/externalOrderId ile asla
+    // birleştirilmez. Aynı sipariş numarası birden fazla pakete bölünebilir.
+    return undefined
+  }
+
+  const orderNumber = String(order.orderNumber ?? '').trim()
+  if (orderNumber) {
+    return maps.orderNumberWithoutPackage.get(orderNumberIdentity(order))
+  }
+
+  return maps.weakIdWithoutPackage.get(weakOrderIdentity(order))
 }
 
 function deduplicateOrders(orders: CargoOrder[]): CargoOrder[] {
@@ -2786,17 +2797,33 @@ function deduplicateOrders(orders: CargoOrder[]): CargoOrder[] {
   for (const order of orders) {
     if (findMatchingOrder(order, maps)) continue
     result.push(order)
-    if (order.packageId) maps.packageId.set(String(order.packageId), order)
-    if (order.shipmentPackageId) {
-      maps.shipmentPackageId.set(String(order.shipmentPackageId), order)
-    }
-    maps.orderNumber.set(String(order.orderNumber), order)
-    if (order.externalOrderId) {
-      maps.orderId.set(String(order.externalOrderId), order)
-    }
-    maps.orderId.set(String(order.id), order)
+    addOrderToMergeMaps(order, maps)
   }
   return result
+}
+
+function addOrderToMergeMaps(
+  order: CargoOrder,
+  maps: ReturnType<typeof buildOrderMergeMaps>,
+): void {
+  const packageCandidates = orderPackageIdentityCandidates(order)
+  if (packageCandidates.length > 0) {
+    packageCandidates.forEach((candidate) => maps.package.set(candidate, order))
+    return
+  }
+
+  if (String(order.orderNumber ?? '').trim()) {
+    maps.orderNumberWithoutPackage.set(orderNumberIdentity(order), order)
+    return
+  }
+
+  maps.weakIdWithoutPackage.set(weakOrderIdentity(order), order)
+}
+
+function weakOrderIdentity(order: CargoOrder): string {
+  const marketplace = String(order.marketplace ?? '').trim().toLocaleLowerCase('tr-TR')
+  const value = String(order.externalOrderId || order.id || '').trim().toLocaleLowerCase('tr-TR')
+  return `${marketplace}:record:${value}`
 }
 
 function shouldClearCachedCarrierError(

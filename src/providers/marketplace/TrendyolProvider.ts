@@ -99,6 +99,7 @@ export class TrendyolProvider implements MarketplaceProvider {
       if (Array.isArray(data.orders)) {
         return {
           orders: data.orders,
+          complete: true,
           page: input.page ?? 0,
           size: Math.min(input.size ?? 200, 200),
           totalPages: data.totalPages ?? 1,
@@ -293,6 +294,7 @@ function emptyOrdersResult(
 ): FetchOrdersResult {
   return {
     orders: [],
+    complete: false,
     page: input.page ?? 0,
     size: Math.min(input.size ?? 200, 200),
     totalPages: 1,

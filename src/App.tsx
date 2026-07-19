@@ -282,6 +282,7 @@ function App() {
     config = integrationConfig,
     options: OrdersFetchOptions = {},
   ) {
+    const defaultSyncRange = marketplaceSyncRange()
     const requestId = ++ordersFetchRequestId.current
     setOrdersState((current) => ({
       ...current,
@@ -294,11 +295,11 @@ function App() {
       const response = await workflowService.fetchOrders(config, {
         statuses: options.statuses,
         startDate: options.allDates
-          ? undefined
-          : options.startDate ?? marketplaceSyncRange().startDate,
+          ? defaultSyncRange.startDate
+          : options.startDate ?? defaultSyncRange.startDate,
         endDate: options.allDates
-          ? undefined
-          : options.endDate ?? marketplaceSyncRange().endDate,
+          ? defaultSyncRange.endDate
+          : options.endDate ?? defaultSyncRange.endDate,
       })
       let productCatalog = productsState.products
       let nextOrders = workflowService.enrichOrderImages(

@@ -74,6 +74,11 @@ const trendyolStatuses: Record<string, StatusPresentation> = {
     description: 'Sipariş teslimat noktasında bekliyor.',
     color: 'yellow',
   },
+  Unknown: {
+    label: 'Bilinmeyen Durum',
+    description: 'Pazaryerinin tanımlı durum listesinde olmayan ham durum.',
+    color: 'gray',
+  },
 }
 
 export function mapMarketplaceStatus(

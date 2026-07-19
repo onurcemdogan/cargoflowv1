@@ -6,6 +6,7 @@ import {
 
 export type QuickTab =
   | 'currentSync'
+  | 'today'
   | 'open'
   | 'barcodePending'
   | 'shipmentPending'

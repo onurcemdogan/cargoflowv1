@@ -12,6 +12,16 @@ import {
   resolveSuratPrintEligibility,
 } from './suratPrintEligibility'
 import { verifySuratShipment } from './suratVerification'
+import {
+  buildOrderCountSummary,
+  dedupeOrdersByPackageIdentity,
+  orderPackageIdentity,
+} from './orderCounts'
+import {
+  buildOrdersDateRange,
+  isOrderWithinDateRange,
+  ORDERS_TIME_ZONE,
+} from './orderDateRange'
 
 export interface OrderTabClassification {
   isOpenOperation: boolean
@@ -33,6 +43,7 @@ export interface VisibleOrdersDateFilter {
   preset: string
   startTime?: number
   endTime?: number
+  timezone?: string
 }
 
 export interface BuildVisibleOrdersInput {
@@ -51,12 +62,28 @@ export interface BuildVisibleOrdersInput {
   productQuery?: string
   orderNumberQuery?: string
   cargoSlipQuery?: string
+  now?: Date
+}
+
+export interface VisibleOrderExclusion {
+  orderNumber: string
+  packageId: string
+  lineId: string
+  excludedAtStage: string
+  exclusionReason: string
 }
 
 export interface VisibleOrdersDebug {
   initialCount: number
+  apiRawCount?: number
+  normalizedCount?: number
+  afterInvalidRecordFilterCount: number
+  afterPackageDedupCount: number
+  persistedCount: number
+  latestSyncBatchId?: string
   latestSyncAt?: string
   latestSyncCount: number
+  afterSelectedTabCount: number
   afterTabFilter: number
   afterMarketplaceFilter: number
   afterOperationStatusFilter: number
@@ -67,6 +94,12 @@ export interface VisibleOrdersDebug {
   afterActionFilter: number
   afterDateFilter: number
   afterSearch: number
+  visibleCount: number
+  uniquePackageCount: number
+  uniqueOrderNumberCount: number
+  lineCount: number
+  quantityTotal: number
+  exclusions: VisibleOrderExclusion[]
 }
 
 export interface VisibleOrdersResult {
@@ -245,6 +278,7 @@ export function orderMatchesQuickTab(
 ): boolean {
   switch (tab) {
     case 'currentSync':
+    case 'today':
       return true
     case 'open':
       return classification.isOpenOperation
@@ -309,17 +343,44 @@ export function buildVisibleOrders({
   productQuery = '',
   orderNumberQuery = '',
   cargoSlipQuery = '',
+  now = new Date(),
 }: BuildVisibleOrdersInput): VisibleOrdersResult {
-  let current = [...persistentOrders]
+  const exclusions: VisibleOrderExclusion[] = []
+  let current = persistentOrders.filter((order) => {
+    const valid = Boolean(order && (order.id || order.orderNumber))
+    if (!valid) {
+      exclusions.push(
+        toExclusion(order, 'invalidRecord', 'Sipariş kimliği bulunamadı.'),
+      )
+    }
+    return valid
+  })
+  const afterInvalidRecordFilterCount = current.length
+  const beforePackageDedup = current
+  current = dedupeOrdersByPackageIdentity(current)
+  recordRemovedOrders(
+    beforePackageDedup,
+    current,
+    exclusions,
+    'packageDedup',
+    'Aynı marketplace paket kimliği yinelendi.',
+  )
+  const afterPackageDedupCount = current.length
   const latestSyncAt = resolveLatestMarketplaceSyncAt(current)
+  const latestSyncBatchId = resolveLatestMarketplaceSyncBatchId(current)
   const debug: VisibleOrdersDebug = {
-    initialCount: current.length,
+    initialCount: persistentOrders.length,
+    afterInvalidRecordFilterCount,
+    afterPackageDedupCount,
+    persistedCount: persistentOrders.length,
+    latestSyncBatchId,
     latestSyncAt,
-    latestSyncCount: latestSyncAt
-      ? current.filter((order) =>
-          orderBelongsToCurrentSyncDay(order, latestSyncAt),
+    latestSyncCount: latestSyncBatchId
+      ? current.filter(
+          (order) => order.lastMarketplaceSyncBatchId === latestSyncBatchId,
         ).length
       : 0,
+    afterSelectedTabCount: 0,
     afterTabFilter: 0,
     afterMarketplaceFilter: 0,
     afterOperationStatusFilter: 0,
@@ -330,23 +391,59 @@ export function buildVisibleOrders({
     afterActionFilter: 0,
     afterDateFilter: 0,
     afterSearch: 0,
+    visibleCount: 0,
+    uniquePackageCount: 0,
+    uniqueOrderNumberCount: 0,
+    lineCount: 0,
+    quantityTotal: 0,
+    exclusions,
   }
 
   if (selectedTab === 'currentSync') {
-    current = latestSyncAt
-      ? current.filter((order) =>
-          orderBelongsToCurrentSyncDay(order, latestSyncAt),
-        )
-      : current.filter((order) =>
-          orderMatchesQuickTab(classifyOrderForTabs(order), 'open'),
-        )
+    current = applyOrderFilter(
+      current,
+      (order) =>
+        Boolean(
+          latestSyncBatchId &&
+            order.lastMarketplaceSyncBatchId === latestSyncBatchId,
+        ),
+      exclusions,
+      'selectedTab',
+      'Son başarılı senkron batch kaydında bulunmuyor.',
+    )
+  } else if (selectedTab === 'today') {
+    const todayRange = buildOrdersDateRange(
+      'today',
+      '',
+      '',
+      now,
+      dateFilter.timezone || ORDERS_TIME_ZONE,
+    )
+    current = applyOrderFilter(
+      current,
+      (order) =>
+        isOrderWithinDateRange(
+          order,
+          todayRange,
+          dateFilter.timezone || ORDERS_TIME_ZONE,
+        ),
+      exclusions,
+      'selectedTab',
+      'Sipariş tarihi bugün (Europe/Istanbul) değil.',
+    )
   } else if (selectedTab !== 'all') {
-    current = current.filter((order) =>
-      orderMatchesQuickTab(classifyOrderForTabs(order), selectedTab),
+    current = applyOrderFilter(
+      current,
+      (order) => orderMatchesQuickTab(classifyOrderForTabs(order), selectedTab),
+      exclusions,
+      'selectedTab',
+      `Sipariş ${selectedTab} sekmesi kapsamına girmiyor.`,
     )
   }
   debug.afterTabFilter = current.length
+  debug.afterSelectedTabCount = current.length
 
+  const beforeMarketplaceFilter = current
   if (!isAllFilter(marketplaceFilter)) {
     current = current.filter(
       (order) =>
@@ -354,8 +451,16 @@ export function buildVisibleOrders({
         normalizedToken(marketplaceFilter),
     )
   }
+  recordRemovedOrders(
+    beforeMarketplaceFilter,
+    current,
+    exclusions,
+    'marketplaceFilter',
+    'Pazaryeri seçili filtreyle eşleşmiyor.',
+  )
   debug.afterMarketplaceFilter = current.length
 
+  const beforeOperationStatusFilter = current
   if (!isAllFilter(operationStatusFilter)) {
     const expectedStatus = normalizedToken(operationStatusFilter)
     current = current.filter((order) =>
@@ -369,8 +474,16 @@ export function buildVisibleOrders({
         .includes(expectedStatus),
     )
   }
+  recordRemovedOrders(
+    beforeOperationStatusFilter,
+    current,
+    exclusions,
+    'statusFilter',
+    'Sipariş durumu seçili statüyle eşleşmiyor.',
+  )
   debug.afterOperationStatusFilter = current.length
 
+  const beforeCargoFilter = current
   if (!isAllFilter(cargoFilter)) {
     const cargoToken = normalizedToken(cargoFilter)
     current = current.filter((order) => {
@@ -386,24 +499,48 @@ export function buildVisibleOrders({
       return normalizedToken(order.cargoProviderName).includes(cargoToken)
     })
   }
+  recordRemovedOrders(
+    beforeCargoFilter,
+    current,
+    exclusions,
+    'cargoFilter',
+    'Kargo kaydı seçili filtreyle eşleşmiyor.',
+  )
   debug.afterCargoFilter = current.length
 
+  const beforeCityFilter = current
   if (!isAllFilter(cityFilter)) {
     const expectedCity = normalizedToken(cityFilter)
     current = current.filter(
       (order) => normalizedToken(order.city) === expectedCity,
     )
   }
+  recordRemovedOrders(
+    beforeCityFilter,
+    current,
+    exclusions,
+    'cityFilter',
+    'Teslimat ili seçili filtreyle eşleşmiyor.',
+  )
   debug.afterCityFilter = current.length
 
+  const beforeDistrictFilter = current
   if (!isAllFilter(districtFilter)) {
     const expectedDistrict = normalizedToken(districtFilter)
     current = current.filter(
       (order) => normalizedToken(order.district) === expectedDistrict,
     )
   }
+  recordRemovedOrders(
+    beforeDistrictFilter,
+    current,
+    exclusions,
+    'districtFilter',
+    'Teslimat ilçesi seçili filtreyle eşleşmiyor.',
+  )
   debug.afterDistrictFilter = current.length
 
+  const beforeMultiProductFilter = current
   if (multiProductFilter !== 'all') {
     current = current.filter((order) =>
       multiProductFilter === 'multi'
@@ -411,29 +548,49 @@ export function buildVisibleOrders({
         : order.items.length <= 1,
     )
   }
+  recordRemovedOrders(
+    beforeMultiProductFilter,
+    current,
+    exclusions,
+    'multiProductFilter',
+    'Paket kalem sayısı seçili çoklu ürün filtresiyle eşleşmiyor.',
+  )
   debug.afterMultiProductFilter = current.length
 
+  const beforeActionFilter = current
   if (actionFilter !== 'all') {
     current = current.filter((order) =>
       orderMatchesDashboardAction(order, actionFilter),
     )
   }
+  recordRemovedOrders(
+    beforeActionFilter,
+    current,
+    exclusions,
+    'actionFilter',
+    'Sipariş seçili aksiyon filtresi kapsamında değil.',
+  )
   debug.afterActionFilter = current.length
 
   if (!isAllFilter(dateFilter.preset)) {
     const startTime = dateFilter.startTime ?? Number.NEGATIVE_INFINITY
     const endTime = dateFilter.endTime ?? Number.POSITIVE_INFINITY
-    current = current.filter((order) => {
-      const orderTime = new Date(order.orderDate || order.createdAt).getTime()
-      return (
-        !Number.isNaN(orderTime) &&
-        orderTime >= startTime &&
-        orderTime <= endTime
-      )
-    })
+    current = applyOrderFilter(
+      current,
+      (order) =>
+        isOrderWithinDateRange(
+          order,
+          { startTime, endTime },
+          dateFilter.timezone || ORDERS_TIME_ZONE,
+        ),
+      exclusions,
+      'dateFilter',
+      'Sipariş tarihi seçili Europe/Istanbul aralığında değil.',
+    )
   }
   debug.afterDateFilter = current.length
 
+  const beforeSearch = current
   const query = searchQuery.trim().toLocaleLowerCase('tr-TR')
   if (query) {
     current = current.filter((order) =>
@@ -497,9 +654,74 @@ export function buildVisibleOrders({
       verification.officialBarcodeValue,
     ]
   })
+  recordRemovedOrders(
+    beforeSearch,
+    current,
+    exclusions,
+    'searchFilter',
+    'Sipariş arama alanlarıyla eşleşmiyor.',
+  )
   debug.afterSearch = current.length
 
+  const summary = buildOrderCountSummary(current)
+  debug.visibleCount = summary.packageCount
+  debug.uniquePackageCount = summary.packageCount
+  debug.uniqueOrderNumberCount = summary.orderCount
+  debug.lineCount = summary.lineCount
+  debug.quantityTotal = summary.quantityTotal
+
   return { visibleOrders: current, debug }
+}
+
+function applyOrderFilter(
+  orders: CargoOrder[],
+  predicate: (order: CargoOrder) => boolean,
+  exclusions: VisibleOrderExclusion[],
+  stage: string,
+  reason: string,
+): CargoOrder[] {
+  return orders.filter((order) => {
+    const included = predicate(order)
+    if (!included) exclusions.push(toExclusion(order, stage, reason))
+    return included
+  })
+}
+
+function recordRemovedOrders(
+  before: CargoOrder[],
+  after: CargoOrder[],
+  exclusions: VisibleOrderExclusion[],
+  stage: string,
+  reason: string,
+): void {
+  const retained = new Map<string, number>()
+  after.forEach((order) => {
+    const identity = orderPackageIdentity(order)
+    retained.set(identity, (retained.get(identity) ?? 0) + 1)
+  })
+  before.forEach((order) => {
+    const identity = orderPackageIdentity(order)
+    const remaining = retained.get(identity) ?? 0
+    if (remaining > 0) {
+      retained.set(identity, remaining - 1)
+    } else {
+      exclusions.push(toExclusion(order, stage, reason))
+    }
+  })
+}
+
+function toExclusion(
+  order: CargoOrder | undefined,
+  stage: string,
+  reason: string,
+): VisibleOrderExclusion {
+  return {
+    orderNumber: String(order?.orderNumber ?? ''),
+    packageId: String(order?.packageId ?? order?.shipmentPackageId ?? ''),
+    lineId: String(order?.items?.[0]?.id ?? ''),
+    excludedAtStage: stage,
+    exclusionReason: reason,
+  }
 }
 
 function filterByWorkspaceQuery(
@@ -615,20 +837,11 @@ function resolveLatestMarketplaceSyncAt(orders: CargoOrder[]): string | undefine
   return dated[0]?.value
 }
 
-function orderBelongsToCurrentSyncDay(
-  order: CargoOrder,
-  syncBatchAt: string,
-): boolean {
-  const orderDate = String(order.orderDate || order.createdAt || '').trim()
-  const orderTime = new Date(orderDate)
-  const syncTime = new Date(syncBatchAt)
-  if (Number.isNaN(orderTime.getTime()) || Number.isNaN(syncTime.getTime())) {
-    return false
-  }
-
-  return (
-    orderTime.getFullYear() === syncTime.getFullYear() &&
-    orderTime.getMonth() === syncTime.getMonth() &&
-    orderTime.getDate() === syncTime.getDate()
-  )
+function resolveLatestMarketplaceSyncBatchId(
+  orders: CargoOrder[],
+): string | undefined {
+  return orders
+    .map((order) => String(order.lastMarketplaceSyncBatchId ?? '').trim())
+    .filter(Boolean)
+    .sort((left, right) => right.localeCompare(left))[0]
 }

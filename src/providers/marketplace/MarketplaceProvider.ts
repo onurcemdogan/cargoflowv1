@@ -22,6 +22,7 @@ export interface FetchOrdersInput {
 
 export interface FetchOrdersResult {
   orders: CargoOrder[]
+  complete?: boolean
   page: number
   size: number
   totalPages: number
