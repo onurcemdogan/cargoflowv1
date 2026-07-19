@@ -151,7 +151,9 @@ export interface OrderItem {
     | 'productCode'
     | 'variantBarcode'
     | 'modelVariant'
+    | 'modelColorSize'
     | 'nameVariant'
+    | 'normalizedNameColorSize'
     | 'parentModel'
     | 'none'
   color?: string

@@ -11,12 +11,15 @@ export type ProductImageMatchKey =
   | 'productCode'
   | 'variantBarcode'
   | 'modelVariant'
+  | 'modelColorSize'
   | 'nameVariant'
+  | 'normalizedNameColorSize'
   | 'parentModel'
   | 'none'
 
 export type ProductMatchFailureReason =
   | 'CACHE_NOT_SYNCED'
+  | 'PRODUCT_NOT_IN_CACHE'
   | 'IDENTIFIER_MISMATCH'
   | 'VARIANT_NOT_IN_CACHE'
   | 'PRODUCT_FOUND_NO_IMAGE'
@@ -24,6 +27,9 @@ export type ProductMatchFailureReason =
   | 'PARENT_PRODUCT_IMAGE_USED'
   | 'AMBIGUOUS_MATCH'
   | 'AMBIGUOUS_PARENT_MATCH'
+  | 'MULTIPLE_NAME_MATCHES'
+  | 'COLOR_CONFLICT'
+  | 'SIZE_CONFLICT'
   | ''
 
 export interface ProductImageResolution {
@@ -158,12 +164,20 @@ export function resolveProductImage(
 export interface ProductMatchDebug {
   normalizedBarcode: string
   normalizedSku: string
+  normalizedStockCode: string
   normalizedMerchantSku: string
+  normalizedProductName: string
   extractedModelCode: string
+  extractedColor: string
   extractedSize: string
   exactBarcodeMatches: number
   exactSkuMatches: number
+  exactStockCodeMatches: number
+  modelTokenMatches: number
   parentModelMatches: number
+  normalizedNameMatches: number
+  colorMatches: number
+  sizeMatches: number
   candidateProductIds: string[]
   rejectionReasons: string[]
   matchedBy: ProductImageMatchKey
@@ -176,13 +190,16 @@ export function buildProductMatchDebug(
   products: CargoProduct[],
 ): ProductMatchDebug {
   const match = resolveProductCacheMatch(item, products)
+  const nameParts = parseProductNameParts(item.productName)
   const normalizedBarcode = normalizeProductIdentifier(item.barcode)
   const normalizedSku = normalizeProductIdentifier(item.sku)
+  const normalizedStockCode = normalizeProductIdentifier(item.stockCode)
   const normalizedMerchantSku = normalizeProductIdentifier(item.merchantSku)
   const extractedModelCode = normalizeProductIdentifier(
     item.productMainId || extractModelCodeFromName(item.productName),
   )
-  const extractedSize = normalizeProductIdentifier(item.size)
+  const extractedSize = normalizeProductIdentifier(item.size) || nameParts.size
+  const itemColor = normalizeTrText(item.color) || nameParts.color
   const barcodeMatches = products.filter(
     (product) =>
       normalizedBarcode &&
@@ -193,15 +210,37 @@ export function buildProductMatchDebug(
       normalizedSku &&
       normalizeProductIdentifier(product.sku) === normalizedSku,
   )
+  const stockCodeMatches = products.filter(
+    (product) =>
+      normalizedStockCode &&
+      normalizeProductIdentifier(product.stockCode) === normalizedStockCode,
+  )
   const parentMatches = products.filter(
     (product) =>
       extractedModelCode &&
       normalizeProductIdentifier(product.productMainId) === extractedModelCode,
   )
+  const nameMatches = products.filter(
+    (product) =>
+      nameParts.baseName &&
+      parseProductNameParts(product.productName).baseName ===
+        nameParts.baseName,
+  )
+  const colorMatches = parentMatches.filter((product) =>
+    colorsCompatible(itemColor, product.color),
+  )
+  const sizeMatches = parentMatches.filter(
+    (product) =>
+      extractedSize &&
+      normalizeProductIdentifier(product.size) === extractedSize,
+  )
   const rejectionReasons: string[] = []
   if (products.length === 0) rejectionReasons.push('CACHE_NOT_SYNCED')
   if (normalizedBarcode && barcodeMatches.length === 0) {
     rejectionReasons.push('exact barcode cache-de yok')
+  }
+  if (normalizedStockCode && stockCodeMatches.length === 0) {
+    rejectionReasons.push('exact stockCode cache-de yok')
   }
   if (normalizedSku && skuMatches.length === 0) {
     rejectionReasons.push('exact sku cache-de yok')
@@ -212,23 +251,49 @@ export function buildProductMatchDebug(
   if (extractedModelCode && parentMatches.length === 0) {
     rejectionReasons.push('parent model cache-de yok')
   }
+  if (parentMatches.length > 0 && colorMatches.length === 0) {
+    rejectionReasons.push('COLOR_CONFLICT (parent adaylarında uyumlu renk yok)')
+  }
+  const matchedImageMissing = Boolean(
+    match.product &&
+      !normalizeProductImageUrl(
+        match.product.productImageUrl ??
+          match.product.imageUrl ??
+          match.product.images?.[0],
+      ),
+  )
   return {
     normalizedBarcode,
     normalizedSku,
+    normalizedStockCode,
     normalizedMerchantSku,
+    normalizedProductName: nameParts.baseName,
     extractedModelCode,
+    extractedColor: itemColor,
     extractedSize,
     exactBarcodeMatches: barcodeMatches.length,
     exactSkuMatches: skuMatches.length,
+    exactStockCodeMatches: stockCodeMatches.length,
+    modelTokenMatches: parentMatches.length,
     parentModelMatches: parentMatches.length,
-    candidateProductIds: [...barcodeMatches, ...skuMatches, ...parentMatches]
+    normalizedNameMatches: nameMatches.length,
+    colorMatches: colorMatches.length,
+    sizeMatches: sizeMatches.length,
+    candidateProductIds: [
+      ...barcodeMatches,
+      ...stockCodeMatches,
+      ...skuMatches,
+      ...parentMatches,
+    ]
       .map((product) => product.id)
       .filter((id, index, list) => list.indexOf(id) === index)
       .slice(0, 8),
     rejectionReasons,
     matchedBy: match.matchedBy,
     matchedProductId: match.product?.id ?? '',
-    finalFailureReason: match.failureReason,
+    finalFailureReason: matchedImageMissing
+      ? 'PRODUCT_FOUND_NO_IMAGE'
+      : match.failureReason,
   }
 }
 
@@ -360,24 +425,107 @@ function getProductCacheIndex(products: CargoProduct[]): ProductCacheIndex {
   return index
 }
 
-// "Önü Drapeli Loş Tesettür Takım 6496, 42" → "önü drapeli loş tesettür takım 6496"
-function normalizeProductBaseName(value: unknown): string {
-  const base = String(value ?? '')
-    .trim()
+// Türkçe metin normalizasyonu: küçük harf (tr), aksan katlama (ş→s, ı→i,
+// ç→c, ğ→g, ö→o, ü→u), noktalama temizliği, tek boşluk. İsim/renk
+// karşılaştırmaları bu tek sözleşmeyi kullanır.
+export function normalizeTrText(value: unknown): string {
+  return String(value ?? '')
     .toLocaleLowerCase('tr-TR')
-    .replace(/,\s*\d{1,3}\s*$/u, '')
+    .replace(/[ışçğöüâîû]/g, (char) =>
+      ({
+        ı: 'i', ş: 's', ç: 'c', ğ: 'g', ö: 'o', ü: 'u',
+        â: 'a', î: 'i', û: 'u',
+      })[char] ?? char,
+    )
+    .replace(/[^a-z0-9\s/-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
-  return base.length >= 8 ? base : ''
+}
+
+// Sık kullanılan Trendyol renk adları (normalize edilmiş; uzun ad önce
+// aranır ki 'zumrut yesil' 'yesil'den önce yakalansın).
+const KNOWN_COLOR_TOKENS = [
+  'zumrut yesil', 'acik mavi', 'koyu yesil', 'koyu mavi', 'acik pembe',
+  'siyah', 'beyaz', 'lacivert', 'bordo', 'yesil', 'kirmizi', 'mavi',
+  'bej', 'ekru', 'vizon', 'pudra', 'gri', 'haki', 'mor', 'lila',
+  'pembe', 'sax', 'tas', 'camel', 'kahverengi', 'kahve', 'turuncu',
+  'sari', 'fusya', 'murdum', 'antrasit', 'krem', 'gumus', 'altin',
+  'indigo', 'petrol', 'somon', 'mint', 'turkuaz',
+]
+
+export interface ParsedProductName {
+  baseName: string
+  modelToken: string
+  color: string
+  size: string
+}
+
+// "Büyük İspanyol Kol ... Zümrüt Yeşil zeyna-gfb44, 38" →
+// { baseName:'buyuk ispanyol kol ...', modelToken:'zeyna-gfb44',
+//   color:'zumrut yesil', size:'38' }
+export function parseProductNameParts(value: unknown): ParsedProductName {
+  const raw = String(value ?? '').trim()
+  const sizeMatch = raw.match(/,\s*(\d{1,3})\s*$/u)
+  const size = sizeMatch?.[1] ?? ''
+  const withoutSize = raw.replace(/,\s*\d{1,3}\s*$/u, '').trim()
+  const modelToken = extractModelCodeFromName(withoutSize)
+  let normalized = normalizeTrText(withoutSize)
+  if (modelToken) {
+    const normalizedToken = normalizeTrText(modelToken)
+    if (normalized.endsWith(normalizedToken)) {
+      normalized = normalized
+        .slice(0, normalized.length - normalizedToken.length)
+        .trim()
+    }
+  }
+  let color = ''
+  for (const token of KNOWN_COLOR_TOKENS) {
+    if (normalized === token || normalized.endsWith(` ${token}`)) {
+      color = token
+      normalized = normalized
+        .slice(0, normalized.length - token.length)
+        .trim()
+      break
+    }
+  }
+  return {
+    baseName: normalized.length >= 8 ? normalized : '',
+    modelToken: normalizeProductIdentifier(modelToken),
+    color,
+    size: normalizeProductIdentifier(size),
+  }
+}
+
+// TR-fold normalize edilmiş base ad ("Önü Drapeli ... 6496, 42" →
+// 'onu drapeli los tesettur takim'); renk/beden/model eki ayrılır.
+function normalizeProductBaseName(value: unknown): string {
+  return parseProductNameParts(value).baseName
+}
+
+// Renk uyumluluğu: normalize sonrası eşitlik VEYA kapsama ("zumrut yesil"
+// ⊇ "yesil" uyumludur; "lacivert" vs "yesil" çelişkidir). Pazaryeri renk
+// adlarının katalogdan farklı ayrıntıda yazılabildiği canlı vakadan
+// (Zümrüt Yeşil vs Yeşil, newzeyna13) türetildi.
+export function colorsCompatible(left: unknown, right: unknown): boolean {
+  const a = normalizeTrText(left)
+  const b = normalizeTrText(right)
+  if (!a || !b) return true
+  if (a === b) return true
+  const aWords = a.split(' ')
+  const bWords = b.split(' ')
+  return (
+    aWords.includes(b) ||
+    bWords.includes(a) ||
+    a.endsWith(` ${b}`) ||
+    b.endsWith(` ${a}`)
+  )
 }
 
 function variantConflicts(
   item: OrderItem,
   product: CargoProduct,
 ): boolean {
-  const itemColor = normalizeProductIdentifier(item.color)
-  const productColor = normalizeProductIdentifier(product.color)
-  return Boolean(itemColor && productColor && itemColor !== productColor)
+  return !colorsCompatible(item.color, product.color)
 }
 
 function pickModelVariant(
@@ -422,13 +570,15 @@ export function resolveProductCacheMatch(
     return { matchedBy: 'none', failureReason: 'CACHE_NOT_SYNCED' }
   }
   const index = getProductCacheIndex(products)
+  // Öncelik (spec): barcode → stockCode → sku → (merchantSku yalnız beden
+  // teyidiyle) → productCode → variantBarcode.
   const identifierAttempts: Array<
     [ProductImageMatchKey, string]
   > = [
     ['barcode', normalizeProductIdentifier(item.barcode)],
-    ['merchantSku', normalizeProductIdentifier(item.merchantSku)],
-    ['sku', normalizeProductIdentifier(item.sku)],
     ['stockCode', normalizeProductIdentifier(item.stockCode)],
+    ['sku', normalizeProductIdentifier(item.sku)],
+    ['merchantSku', normalizeProductIdentifier(item.merchantSku)],
     ['productCode', normalizeProductIdentifier(item.productCode)],
     ['variantBarcode', normalizeProductIdentifier(item.productContentId)],
   ]
@@ -463,6 +613,16 @@ export function resolveProductCacheMatch(
       }
       continue
     }
+    // Varyant-tekil kimlik (barcode/stockCode/sku) TEK aday veriyorsa
+    // eşleşme kesindir: pazaryeri renk adı katalogdan farklı yazılmış
+    // olabilir (canlı vaka: 'Zümrüt Yeşil' vs 'Yeşil', newzeyna13); renk
+    // adı kimlik eşleşmesini BOZAMAZ.
+    if (
+      candidates.length === 1 &&
+      ['barcode', 'stockCode', 'sku'].includes(matchedBy)
+    ) {
+      return { product: candidates[0], matchedBy, failureReason: '' }
+    }
     const product = pickModelVariant(item, candidates)
     if (product) return { product, matchedBy, failureReason: '' }
   }
@@ -477,9 +637,9 @@ export function resolveProductCacheMatch(
         (product) => !variantConflicts(item, product),
       )
       if (nonConflicting.length === 0) {
-        // Parent model bulundu ama renk çelişiyor: yanlış ürün görseli
-        // GÖSTERİLMEZ.
-        return { matchedBy: 'none', failureReason: 'PARENT_PRODUCT_FOUND' }
+        // Parent model bulundu ama renk çelişiyor: yanlış renk görseli
+        // GÖSTERİLMEZ (Lacivert görsel Zümrüt ürüne kullanılmaz).
+        return { matchedBy: 'none', failureReason: 'COLOR_CONFLICT' }
       }
       const itemSize = normalizeProductIdentifier(item.size)
       const sizeMatch = itemSize
@@ -489,7 +649,11 @@ export function resolveProductCacheMatch(
           )
         : undefined
       if (sizeMatch) {
-        return { product: sizeMatch, matchedBy: 'modelVariant', failureReason: '' }
+        return {
+          product: sizeMatch,
+          matchedBy: 'modelColorSize',
+          failureReason: '',
+        }
       }
       // Beden farkı parent görseli için engel değildir; görsel model
       // bazlıdır. Kaynak açıkça parentModel olarak işaretlenir.
@@ -511,14 +675,15 @@ export function resolveProductCacheMatch(
         ),
       )
       if (models.size > 1) {
-        // İki farklı parent aday: belirsiz — placeholder gösterilir.
-        return { matchedBy: 'none', failureReason: 'AMBIGUOUS_PARENT_MATCH' }
+        // Aynı isim birden fazla FARKLI modelde: yanlış görsel seçmek
+        // yerine placeholder.
+        return { matchedBy: 'none', failureReason: 'MULTIPLE_NAME_MATCHES' }
       }
       const nonConflicting = candidates.filter(
         (product) => !variantConflicts(item, product),
       )
       if (nonConflicting.length === 0) {
-        return { matchedBy: 'none', failureReason: 'PARENT_PRODUCT_FOUND' }
+        return { matchedBy: 'none', failureReason: 'COLOR_CONFLICT' }
       }
       const itemSize = normalizeProductIdentifier(item.size)
       const sizeMatch = itemSize
@@ -528,7 +693,11 @@ export function resolveProductCacheMatch(
           )
         : undefined
       if (sizeMatch) {
-        return { product: sizeMatch, matchedBy: 'nameVariant', failureReason: '' }
+        return {
+          product: sizeMatch,
+          matchedBy: 'normalizedNameColorSize',
+          failureReason: '',
+        }
       }
       return {
         product: nonConflicting[0],

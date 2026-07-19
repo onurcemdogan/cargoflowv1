@@ -624,7 +624,7 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
     cacheItem({ color: 'Krem', size: '42' }),
     [cacheProduct()],
   )
-  assert.equal(nameModelMatch.matchedBy, 'modelVariant')
+  assert.equal(nameModelMatch.matchedBy, 'modelColorSize')
   assert.ok(nameModelMatch.product)
 
   // Test 3b: kimlik ve model kodu yok — isim + renk + beden güvenli fallback.
@@ -641,7 +641,7 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
       }),
     ],
   )
-  assert.equal(nameMatch.matchedBy, 'nameVariant')
+  assert.equal(nameMatch.matchedBy, 'normalizedNameColorSize')
   assert.ok(nameMatch.product)
 
   // Model + varyant: sipariş barkodu katalogdakinden tamamen farklı olsa
@@ -664,7 +664,7 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
       }),
     ],
   )
-  assert.equal(modelMatch.matchedBy, 'modelVariant')
+  assert.equal(modelMatch.matchedBy, 'modelColorSize')
   assert.ok(modelMatch.product)
 
   // Test 4: aynı isim iki FARKLI modelde → belirsiz parent → eşleşme yok.
@@ -673,7 +673,7 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
     cacheProduct({ productMainId: 'MODEL-B' }),
   ])
   assert.equal(ambiguous.matchedBy, 'none')
-  assert.equal(ambiguous.failureReason, 'AMBIGUOUS_PARENT_MATCH')
+  assert.equal(ambiguous.failureReason, 'MULTIPLE_NAME_MATCHES')
 
   // Test 5: ürün bulundu ama görseli yok → aday listesi boş kalır.
   const noImageProduct = cacheProduct({

@@ -131,7 +131,7 @@ test('Varyant ve parent model görsel eşleşme sözleşmesi', async (t) => {
   ]
   const conflictMatch = resolveProductCacheMatch(zeynaItem(), conflictCatalog)
   assert.equal(conflictMatch.product, undefined)
-  assert.equal(conflictMatch.failureReason, 'PARENT_PRODUCT_FOUND')
+  assert.equal(conflictMatch.failureReason, 'COLOR_CONFLICT')
 
   // D) Aynı base isim iki FARKLI modelde: belirsiz — placeholder.
   const ambiguousCatalog = [
@@ -167,7 +167,7 @@ test('Varyant ve parent model görsel eşleşme sözleşmesi', async (t) => {
     ambiguousCatalog,
   )
   assert.equal(ambiguous.product, undefined)
-  assert.equal(ambiguous.failureReason, 'AMBIGUOUS_PARENT_MATCH')
+  assert.equal(ambiguous.failureReason, 'MULTIPLE_NAME_MATCHES')
 
   // E) merchantSku aynı ama modeller farklı: yanlış eşleşme YAPILMAZ.
   const sharedMerchantCatalog = [
@@ -281,4 +281,285 @@ test('Varyant ve parent model görsel eşleşme sözleşmesi', async (t) => {
   assert.equal(debug.parentModelMatches, 2)
   assert.equal(debug.matchedBy, 'parentModel')
   assert.equal(debug.finalFailureReason, 'PARENT_PRODUCT_IMAGE_USED')
+})
+
+// Normalize katalog sözleşmesi (spec A-H): TR isim normalizasyonu, öncelik
+// sırası (barcode → stockCode → sku), varyant-tekil kimlikte renk adı
+// toleransı ve güvenli isim fallback'i. Canlı vaka: 11425364152/newzeyna13
+// 'Zümrüt Yeşil' satırı, katalogdaki 'Yeşil' varyantına exact barkodla
+// bağlanmalıdır.
+test('Normalize katalog görsel eşleşmesi (A-H)', async (t) => {
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+  })
+  t.after(() => vite.close())
+  const {
+    resolveProductCacheMatch,
+    resolveProductImage,
+    applyProductImageResolution,
+    buildProductMatchDebug,
+    parseProductNameParts,
+    colorsCompatible,
+    normalizeTrText,
+  } = await vite.ssrLoadModule('/src/utils/productImage.ts')
+  const { resolveSuratPrintSource } = await vite.ssrLoadModule(
+    '/src/utils/suratPrintEligibility.ts',
+  )
+
+  const product = (over = {}) => ({
+    id: over.id,
+    marketplace: 'Trendyol',
+    productName: 'Büyük İspanyol Kol Uzun Parça Detaylı Özel Gün Abiye',
+    sku: '',
+    stockCode: '',
+    barcode: '',
+    productMainId: 'zeyna-gfb44',
+    stock: 0,
+    price: 0,
+    source: 'real',
+    updatedAt: '2026-07-19T00:00:00.000Z',
+    ...over,
+  })
+  const item = (over = {}) => ({
+    id: 'line-1',
+    productName:
+      'Büyük İspanyol Kol Uzun Parça Detaylı Özel Gün Abiye Zümrüt Yeşil zeyna-gfb44, 38',
+    sku: '',
+    merchantSku: '',
+    barcode: '',
+    stockCode: '',
+    quantity: 1,
+    productContentId: '',
+    productMainId: '',
+    color: 'Zümrüt Yeşil',
+    size: '38',
+    ...over,
+  })
+
+  // Spec 4 örneği: isim ayrıştırma sözleşmesi.
+  const parsed = parseProductNameParts(
+    'Büyük İspanyol Kol Uzun Parça Detaylı Özel Gün Abiye Zümrüt Yeşil zeyna-gfb44, 38',
+  )
+  assert.equal(
+    parsed.baseName,
+    'buyuk ispanyol kol uzun parca detayli ozel gun abiye',
+  )
+  assert.equal(parsed.modelToken, 'zeyna-gfb44')
+  assert.equal(parsed.color, 'zumrut yesil')
+  assert.equal(parsed.size, '38')
+  assert.equal(normalizeTrText('Şık Özel GÜN'), 'sik ozel gun')
+  assert.equal(colorsCompatible('Zümrüt Yeşil', 'Yeşil'), true)
+  assert.equal(colorsCompatible('Lacivert', 'Yeşil'), false)
+
+  // Canlı vaka regresyonu: exact barkod tek aday, renk ADI farklı yazılmış
+  // ('Zümrüt Yeşil' vs 'Yeşil') → kimlik kazanır, görsel gelir.
+  const liveCatalog = [
+    product({
+      id: 'prd-z13',
+      barcode: 'newzeyna13',
+      sku: 'zeyna',
+      stockCode: 'zeyna',
+      productMainId: 'ttzeyna44',
+      color: 'Yeşil',
+      size: '42',
+      productImageUrl: 'https://cdn.example.com/zeyna-yesil.jpg',
+    }),
+  ]
+  const liveMatch = resolveProductImage(
+    item({
+      barcode: 'newzeyna13',
+      sku: 'newzeyna13',
+      merchantSku: 'zeyna',
+      color: 'Zümrüt Yeşil',
+      size: '42',
+      productName:
+        'Zara Saten Tesettür Elbise Drapeli Uzun Abiye Elbise Dik Yaka Şık Özel Gün Elbisesi ttzeyna44, 42',
+    }),
+    liveCatalog,
+  )
+  assert.equal(liveMatch.matchedBy, 'barcode')
+  assert.equal(liveMatch.url, 'https://cdn.example.com/zeyna-yesil.jpg')
+
+  // B) Barkod yok, exact stok kodu → doğru görsel (öncelik sku'dan önce).
+  const stockCatalog = [
+    product({
+      id: 'prd-stok',
+      stockCode: 'STK-778',
+      sku: 'farkli-sku',
+      color: 'Bordo',
+      size: '38',
+      productImageUrl: 'https://cdn.example.com/stok.jpg',
+    }),
+  ]
+  const stockMatch = resolveProductImage(
+    item({ stockCode: 'STK-778', color: 'Bordo' }),
+    stockCatalog,
+  )
+  assert.equal(stockMatch.matchedBy, 'stockCode')
+  assert.equal(stockMatch.url, 'https://cdn.example.com/stok.jpg')
+
+  // C) Barkod/SKU yok, model token + renk + beden → doğru varyant.
+  const modelCatalog = [
+    product({
+      id: 'prd-m-38',
+      color: 'Zümrüt Yeşil',
+      size: '38',
+      productImageUrl: 'https://cdn.example.com/zumrut-38.jpg',
+    }),
+    product({
+      id: 'prd-m-40',
+      color: 'Zümrüt Yeşil',
+      size: '40',
+      productImageUrl: 'https://cdn.example.com/zumrut-40.jpg',
+    }),
+  ]
+  const modelMatch = resolveProductCacheMatch(item(), modelCatalog)
+  assert.equal(modelMatch.matchedBy, 'modelColorSize')
+  assert.equal(modelMatch.product.id, 'prd-m-38')
+
+  // D) İsim + renk + beden TEK aday → doğru görsel.
+  const nameCatalog = [
+    product({
+      id: 'prd-name',
+      productMainId: '',
+      color: 'Zümrüt Yeşil',
+      size: '38',
+      productImageUrl: 'https://cdn.example.com/name.jpg',
+    }),
+  ]
+  const nameMatch = resolveProductCacheMatch(
+    item({
+      productName:
+        'Büyük İspanyol Kol Uzun Parça Detaylı Özel Gün Abiye, 38',
+    }),
+    nameCatalog,
+  )
+  assert.equal(nameMatch.matchedBy, 'normalizedNameColorSize')
+  assert.equal(nameMatch.product.id, 'prd-name')
+
+  // E) Aynı isim, iki farklı renk (tek model): item rengiyle uyumlu varyant
+  //    seçilir; hiçbir renk uyumlu değilse YANLIŞ görsel seçilmez.
+  const twoColorCatalog = [
+    product({
+      id: 'prd-lacivert',
+      productMainId: 'model-x',
+      color: 'Lacivert',
+      size: '38',
+      productImageUrl: 'https://cdn.example.com/lacivert.jpg',
+    }),
+    product({
+      id: 'prd-zumrut',
+      productMainId: 'model-x',
+      color: 'Zümrüt Yeşil',
+      size: '38',
+      productImageUrl: 'https://cdn.example.com/zumrut.jpg',
+    }),
+  ]
+  const colorPick = resolveProductCacheMatch(
+    item({ productMainId: 'model-x' }),
+    twoColorCatalog,
+  )
+  assert.equal(colorPick.product.id, 'prd-zumrut')
+  const colorConflict = resolveProductCacheMatch(
+    item({ productMainId: 'model-x', color: 'Bordo' }),
+    twoColorCatalog,
+  )
+  assert.equal(colorConflict.product, undefined)
+  assert.equal(colorConflict.failureReason, 'COLOR_CONFLICT')
+
+  // F) Aynı isim, birden fazla FARKLI model aday → placeholder.
+  const multiNameCatalog = [
+    product({
+      id: 'prd-a',
+      productMainId: 'model-a',
+      color: 'Zümrüt Yeşil',
+      size: '38',
+      productImageUrl: 'https://cdn.example.com/a.jpg',
+    }),
+    product({
+      id: 'prd-b',
+      productMainId: 'model-b',
+      color: 'Zümrüt Yeşil',
+      size: '38',
+      productImageUrl: 'https://cdn.example.com/b.jpg',
+    }),
+  ]
+  const multiName = resolveProductCacheMatch(
+    item({
+      productName:
+        'Büyük İspanyol Kol Uzun Parça Detaylı Özel Gün Abiye, 38',
+    }),
+    multiNameCatalog,
+  )
+  assert.equal(multiName.product, undefined)
+  assert.equal(multiName.failureReason, 'MULTIPLE_NAME_MATCHES')
+
+  // G) Cache refresh: önce çözülmez, yeni katalog dizisiyle otomatik çözülür.
+  const before = applyProductImageResolution(item({ barcode: 'bc-g' }), [])
+  assert.equal(before.matchedProductId, undefined)
+  const after = applyProductImageResolution(before, [
+    product({
+      id: 'prd-g',
+      barcode: 'bc-g',
+      color: 'Yeşil',
+      size: '38',
+      productImageUrl: 'https://cdn.example.com/g.jpg',
+    }),
+  ])
+  assert.equal(after.matchedProductId, 'prd-g')
+  assert.equal(after.productImageUrl, 'https://cdn.example.com/g.jpg')
+
+  // H) Görsel bulunamaması print/create eligibility'yi etkilemez.
+  const noImageOrder = {
+    id: 'order-h',
+    marketplace: 'Trendyol',
+    externalOrderId: 'EXT-H',
+    orderNumber: 'ORDER-H',
+    packageId: 'PKG-H',
+    customerName: 'Alıcı',
+    customerPhone: '',
+    customerEmail: '',
+    address: 'Adres Mah. 1',
+    city: 'İstanbul',
+    district: 'Fatih',
+    cargoTrackingNumber: '7270030000000001',
+    marketplaceStatus: 'Picking',
+    operationStatus: 'READY_TO_SHIP',
+    source: 'real',
+    status: 'Etiket Hazır',
+    totalAmount: 0,
+    createdAt: '2026-07-19T00:00:00.000Z',
+    desi: 2,
+    desiSource: 'product_lines',
+    packageCount: 1,
+    items: [item({ barcode: 'yok-boyle-barkod' })],
+    shipment: {
+      id: 'shp-h',
+      provider: 'surat-kargo',
+      trackingNumber: '11722641140000',
+      tNo: '11722641140000',
+      kargoTakipNo: '11722641140000',
+      trackingUrl: '',
+      shipmentCode: 'PKG-H',
+      barcodeValue: '01250310000',
+      barkodNo: '01250310000',
+      barcode: '01250310000',
+      finalSuratBarcode: '01250310000',
+      candidateTNo: '11722641140000',
+      candidateBarkodNo: '01250310000',
+      ozelKargoTakipNo: '7270030000000001',
+      barcodeRaw: '',
+      zplSource: 'generated',
+      printEnabled: true,
+      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+      candidateVerificationStatus: 'PREASSIGNED_AWAITING_ACCEPTANCE',
+      labelStatus: 'READY',
+      verifiedShipment: false,
+    },
+  }
+  const debugH = buildProductMatchDebug(noImageOrder.items[0], [])
+  assert.equal(debugH.finalFailureReason, 'CACHE_NOT_SYNCED')
+  const printH = resolveSuratPrintSource(noImageOrder)
+  assert.equal(printH.canPrint, true)
 })
