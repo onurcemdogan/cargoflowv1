@@ -627,13 +627,16 @@ export function resolveProductCacheMatch(
       }
       continue
     }
-    // Varyant-tekil kimlik (barcode/stockCode/sku) TEK aday veriyorsa
+    // Varyant-tekil kimlik (barcode/stockCode/sku/productCode/contentId)
+    // TEK aday veriyorsa
     // eşleşme kesindir: pazaryeri renk adı katalogdan farklı yazılmış
     // olabilir (canlı vaka: 'Zümrüt Yeşil' vs 'Yeşil', newzeyna13); renk
     // adı kimlik eşleşmesini BOZAMAZ.
     if (
       candidates.length === 1 &&
-      ['barcode', 'stockCode', 'sku'].includes(matchedBy)
+      ['barcode', 'stockCode', 'sku', 'productCode', 'variantBarcode'].includes(
+        matchedBy,
+      )
     ) {
       return { product: candidates[0], matchedBy, failureReason: '' }
     }
@@ -910,4 +913,3 @@ function readPath(value: unknown, path: string[]): unknown {
   }
   return current
 }
-

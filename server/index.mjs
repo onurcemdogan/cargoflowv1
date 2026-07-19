@@ -9264,9 +9264,18 @@ function normalizeTrendyolOrderLines(lines, orderId) {
       color: color ? String(color) : '',
       size: size ? String(size) : '',
       variantAttributes,
-      productContentId: String(line.productContentId ?? ''),
-      productMainId: String(line.productMainId ?? ''),
-      productCode: String(line.productCode ?? ''),
+      // Trendyol order lines may expose the content identity as `contentId`
+      // (the live currentSync payload does this), not only as
+      // `productContentId`. Keep that identity for the product-image resolver.
+      productContentId: String(
+        line.productContentId ?? line.contentId ?? line.productId ?? '',
+      ),
+      productMainId: String(
+        line.productMainId ?? line.productMainCode ?? '',
+      ),
+      productCode: String(
+        line.productCode ?? line.contentId ?? line.productId ?? '',
+      ),
       desi: toPositiveNumber(
         line.dimensionalWeight ?? line.desi ?? line.volumetricWeight,
       ),
@@ -9431,10 +9440,16 @@ function normalizeTrendyolProducts(data) {
         item.id ?? item.productMainId ?? item.productCode ?? '',
       ),
       productContentId: String(
-        item.productContentId ?? item.productId ?? item.id ?? '',
+        item.productContentId ??
+          item.contentId ??
+          item.productId ??
+          item.id ??
+          '',
       ),
       productMainId: String(item.productMainId ?? ''),
-      productCode: String(item.productCode ?? ''),
+      productCode: String(
+        item.productCode ?? item.contentId ?? item.productId ?? '',
+      ),
       productName: item.title ?? item.productName ?? 'Trendyol ürünü',
       sku: item.merchantSku ?? item.stockCode ?? '',
       stockCode: item.stockCode ?? item.merchantSku ?? '',

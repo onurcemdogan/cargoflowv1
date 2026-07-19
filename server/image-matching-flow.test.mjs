@@ -664,3 +664,65 @@ test('Kirli barkod + aile kimliği ambiguity fallback (currentSync)', async (t) 
     true,
   )
 })
+
+test('Canlı katalog varyant kimlikleri üst ürün altında kaybolmaz', async (t) => {
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+  })
+  t.after(() => vite.close())
+  const { resolveProductImage } = await vite.ssrLoadModule(
+    '/src/utils/productImage.ts',
+  )
+  const { mergeProductsWithCache } = await vite.ssrLoadModule(
+    '/src/services/orderWorkflowService.ts',
+  )
+
+  const catalog = [
+    {
+      id: 'prd-green',
+      marketplace: 'Trendyol',
+      externalProductId: 'same-parent',
+      productContentId: 'same-content-group',
+      productCode: '1578164726',
+      barcode: 'eftal56879-2',
+      productName: 'Eftal Zara Saten Kumaş Drapeli Yeşil Tesettür Abiye Elbise',
+      color: 'Yeşil',
+      size: '40',
+      productImageUrl: 'https://cdn.example.com/eftal-green.jpg',
+    },
+    {
+      id: 'prd-black',
+      marketplace: 'Trendyol',
+      externalProductId: 'same-parent',
+      productContentId: 'same-content-group',
+      productCode: '1578164727',
+      barcode: 'eftal56879-3',
+      productName: 'Eftal Zara Saten Kumaş Drapeli Siyah Tesettür Abiye Elbise',
+      color: 'Siyah',
+      size: '40',
+      productImageUrl: 'https://cdn.example.com/eftal-black.jpg',
+    },
+  ]
+  const item = {
+    id: 'line-live',
+    productName:
+      'Eftal Zara Saten Kumaş Drapeli Yeşil Tesettür Abiye Elbise 56879, 40',
+    barcode: 'eftal56879-2',
+    sku: 'eftal56879-2',
+    merchantSku: 'eftal',
+    stockCode: 'eftal',
+    productCode: '1578164726',
+    productContentId: '1578164726',
+    color: 'Yeşil',
+    size: '40',
+  }
+
+  const mergedCatalog = mergeProductsWithCache(catalog, [])
+  assert.equal(mergedCatalog.length, 2)
+
+  const image = resolveProductImage(item, mergedCatalog)
+  assert.equal(image.matchedBy, 'barcode')
+  assert.equal(image.matchedProductId, 'prd-green')
+  assert.equal(image.url, 'https://cdn.example.com/eftal-green.jpg')
+})

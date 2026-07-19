@@ -1965,18 +1965,19 @@ function buildShipmentCreationResultMessage({
   return `Sürat gönderi akışı tamamlandı. ${createdShipments.join(' | ')}`
 }
 
-// Merge kimliği VARYANT seviyesindedir: yalnız externalProductId, barcode
-// ve productCode aynı ürünü gösterir. sku/productMainId/productContentId
-// model veya renk-grubu seviyesinde PAYLAŞILDIĞI için kimlik SAYILMAZ —
-// eski kural 16 varyantlı bir modeli tek kayda çökertiyor, katalog 4293
-// üründen ~331 "model"e iniyordu ve eksik varyantlar (ör. newzeyna11)
-// görsel eşleşmesinde VARIANT_NOT_IN_CACHE kalıyordu.
+// Merge kimliği VARYANT seviyesindedir. Aynı varyant için birden fazla alan
+// bulunduğunda yalnızca en güçlü alanı kullan; daha zayıf ve ortak bir alanı
+// aynı kayda eklemek farklı renk/beden kayıtlarını yine birleştirebilir.
+// Varyant kimliği olmayan eski kayıtlar için üst ürün geri dönüş anahtarıdır.
 function productVariantMergeKeys(product: CargoProduct): string[] {
-  return [
-    product.externalProductId ? `ext:${product.externalProductId}` : '',
-    product.barcode ? `bc:${String(product.barcode).trim()}` : '',
-    product.productCode ? `pc:${String(product.productCode).trim()}` : '',
-  ].filter(Boolean)
+  if (product.barcode) return [`bc:${String(product.barcode).trim()}`]
+  if (product.productCode) return [`pc:${String(product.productCode).trim()}`]
+  if (product.productContentId) {
+    return [`content:${String(product.productContentId).trim()}`]
+  }
+  return product.externalProductId
+    ? [`ext:${String(product.externalProductId).trim()}`]
+    : []
 }
 
 export function mergeProductsWithCache(
