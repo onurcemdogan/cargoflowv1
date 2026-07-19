@@ -1,5 +1,8 @@
 import type { CargoOrder, CargoProduct } from '../types/cargoflow'
-import { resolveProductImageCandidates } from '../utils/productImage'
+import {
+  buildProductMatchDebug,
+  resolveProductImageCandidates,
+} from '../utils/productImage'
 import { ProductImageThumb } from './ProductImageThumb'
 import { resolveNormalizedDesi } from '../utils/desi'
 import {
@@ -68,6 +71,32 @@ export function OrdersTable({
                   (candidate) => candidate.url,
                 )
               : []
+            // Yalnız development: görselsiz satır için tek tanı logu
+            // (PII yok — müşteri adı/adres/telefon loglanmaz).
+            if (
+              import.meta.env.DEV &&
+              firstItem &&
+              imageCandidates.length === 0
+            ) {
+              const debug = buildProductMatchDebug(firstItem, products)
+              console.info('[orders] ORDER_IMAGE_UNRESOLVED', {
+                orderNumber: order.orderNumber,
+                lineId: firstItem.id,
+                barcode: firstItem.barcode,
+                normalizedBarcode: debug.normalizedBarcode,
+                productName: firstItem.productName,
+                extractedModelToken: debug.extractedModelCode,
+                color: firstItem.color,
+                size: firstItem.size,
+                catalogRevision: products.length,
+                exactBarcodeMatches: debug.exactBarcodeMatches,
+                exactStockCodeMatches: debug.exactStockCodeMatches,
+                modelMatches: debug.modelTokenMatches,
+                nameMatches: debug.normalizedNameMatches,
+                matchedBy: debug.matchedBy,
+                failureReason: debug.finalFailureReason,
+              })
+            }
             const suratVerification = verifySuratShipment(order)
             const operationStatus = mapOperationStatus(order)
             const marketplaceStatus = mapMarketplaceStatus(

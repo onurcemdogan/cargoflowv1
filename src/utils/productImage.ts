@@ -418,6 +418,14 @@ function getProductCacheIndex(products: CargoProduct[]): ProductCacheIndex {
       push(byIdentifier, normalizeProductIdentifier(value), product)
     }
     push(byModel, normalizeProductIdentifier(product.productMainId), product)
+    // productMainId eksik/farklı olsa bile ürün ADINDAN çıkan model token'ı
+    // da indexlenir (56879, SECIL-334 gibi) — bayat/eksik kataloglarda
+    // model fallback'inin çalışabilmesi için.
+    push(
+      byModel,
+      parseProductNameParts(product.productName).modelToken,
+      product,
+    )
     push(byBaseName, normalizeProductBaseName(product.productName), product)
   }
   const index = { byIdentifier, byModel, byBaseName }
@@ -583,6 +591,11 @@ export function resolveProductCacheMatch(
     ['variantBarcode', normalizeProductIdentifier(item.productContentId)],
   ]
   const hasAnyIdentifier = identifierAttempts.some(([, key]) => key)
+  // Aile-düzeyi kimlik (ör. sku 'eftal') birden çok modelde bulunabilir;
+  // bu ambiguity resolver'ı DURDURMAZ — model/isim fallback'leri denenir,
+  // hiçbiri güvenli sonuç veremezse AMBIGUOUS_MATCH raporlanır (spec 6:
+  // matchedBy:none yalnız tüm güvenli fallback'ler tükendiğinde).
+  let ambiguousIdentifierSeen = false
   for (const [matchedBy, key] of identifierAttempts) {
     if (!key) continue
     const candidates = index.byIdentifier.get(key)
@@ -593,7 +606,8 @@ export function resolveProductCacheMatch(
       ),
     )
     if (candidates.length > 1 && models.size > 1) {
-      return { matchedBy: 'none', failureReason: 'AMBIGUOUS_MATCH' }
+      ambiguousIdentifierSeen = true
+      continue
     }
     // merchantSku birden çok varyantı temsil edebilir: item beden bilgisi
     // taşıyorsa bedeni birebir tutan varyant şarttır; yoksa bu aşama
@@ -631,8 +645,24 @@ export function resolveProductCacheMatch(
     item.productMainId || extractModelCodeFromName(item.productName),
   )
   if (modelKey) {
-    const candidates = index.byModel.get(modelKey)
-    if (candidates && candidates.length > 0) {
+    const bucket = index.byModel.get(modelKey)
+    if (bucket && bucket.length > 0) {
+      // İsim-türevli token farklı modelleri aynı bucket'a düşürebilir:
+      // önce productMainId'si token'la birebir olanlara daralt; hâlâ birden
+      // fazla FARKLI model kalıyorsa güvenli seçim yoktur.
+      const exactMain = bucket.filter(
+        (product) =>
+          normalizeProductIdentifier(product.productMainId) === modelKey,
+      )
+      const candidates = exactMain.length > 0 ? exactMain : bucket
+      const candidateModels = new Set(
+        candidates.map((product) =>
+          normalizeProductIdentifier(product.productMainId),
+        ),
+      )
+      if (candidateModels.size > 1) {
+        return { matchedBy: 'none', failureReason: 'MULTIPLE_NAME_MATCHES' }
+      }
       const nonConflicting = candidates.filter(
         (product) => !variantConflicts(item, product),
       )
@@ -709,9 +739,11 @@ export function resolveProductCacheMatch(
 
   return {
     matchedBy: 'none',
-    failureReason: hasAnyIdentifier
-      ? 'VARIANT_NOT_IN_CACHE'
-      : 'IDENTIFIER_MISMATCH',
+    failureReason: ambiguousIdentifierSeen
+      ? 'AMBIGUOUS_MATCH'
+      : hasAnyIdentifier
+        ? 'VARIANT_NOT_IN_CACHE'
+        : 'IDENTIFIER_MISMATCH',
   }
 }
 

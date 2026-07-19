@@ -563,3 +563,104 @@ test('Normalize katalog görsel eşleşmesi (A-H)', async (t) => {
   const printH = resolveSuratPrintSource(noImageOrder)
   assert.equal(printH.canPrint, true)
 })
+
+// currentSync canlı vakaları (19.07.2026): kirli/eksik katalogda aile-düzeyi
+// kimlik ambiguity'si resolver'ı durdurmamalı; model token fallback'i isim
+// türevli token'larla da çalışmalı.
+test('Kirli barkod + aile kimliği ambiguity fallback (currentSync)', async (t) => {
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+  })
+  t.after(() => vite.close())
+  const { resolveProductCacheMatch, resolveProductImage } =
+    await vite.ssrLoadModule('/src/utils/productImage.ts')
+
+  const base = (over = {}) => ({
+    id: over.id,
+    marketplace: 'Trendyol',
+    stock: 0,
+    price: 0,
+    source: 'real',
+    updatedAt: '2026-07-19T00:00:00.000Z',
+    ...over,
+  })
+  // Bayat katalog: 'eftal' sku'su iki FARKLI modelde; 56879 ailesinden tek
+  // varyant (Yeşil/38). Sipariş barkodu (eftal56879-2) katalogda YOK.
+  const staleCatalog = [
+    base({
+      id: 'prd-eftal-56879',
+      productName: 'Eftal Zara Saten Kumaş Drapeli Yeşil Tesettür Abiye Elbise',
+      barcode: 'eftal56879-4',
+      sku: 'eftal',
+      stockCode: 'eftal',
+      productMainId: '56879',
+      color: 'Yeşil',
+      size: '38',
+      productImageUrl: 'https://cdn.example.com/eftal-56879.jpg',
+    }),
+    base({
+      id: 'prd-eftal-yeni',
+      productName: 'Premium Yeşil Zara Saten Drapeli İspanyol Kol Tesettür Abiye',
+      barcode: 'eftalyeni443-2',
+      sku: 'eftal',
+      stockCode: 'eftal',
+      productMainId: 'eftalyeni44',
+      color: 'Yeşil',
+      size: '40',
+      productImageUrl: 'https://cdn.example.com/eftal-yeni.jpg',
+    }),
+  ]
+  const dirtyItem = {
+    id: 'line-dirty',
+    productName:
+      'Eftal Zara Saten Kumaş Drapeli Yeşil Tesettür Abiye Elbise 56879, 40',
+    barcode: 'eftal56879-2',
+    sku: 'eftal56879-2',
+    merchantSku: 'eftal',
+    stockCode: 'eftal',
+    quantity: 1,
+    productContentId: '',
+    productMainId: '',
+    color: 'Yeşil',
+    size: '40',
+  }
+  // E) exact barkod yok + 'eftal' iki modelde: ambiguity resolver'ı
+  //    DURDURMAZ; model token 56879 + renk uyumu ile doğru aileden görsel
+  //    gelir (beden farkı parent kullanımına engel değil).
+  const dirtyMatch = resolveProductCacheMatch(dirtyItem, staleCatalog)
+  assert.equal(dirtyMatch.product.id, 'prd-eftal-56879')
+  assert.equal(dirtyMatch.matchedBy, 'parentModel')
+  const dirtyImage = resolveProductImage(dirtyItem, staleCatalog)
+  assert.equal(dirtyImage.url, 'https://cdn.example.com/eftal-56879.jpg')
+
+  // İsimden türetilen model token da indexlidir: productMainId farklı
+  // yazılmış olsa bile 56879 isim token'ı aileyi bulur.
+  const renamedMainCatalog = [
+    base({
+      id: 'prd-renamed',
+      productName: 'Eftal Zara Saten Kumaş Drapeli Yeşil Tesettür Abiye Elbise 56879',
+      barcode: 'baska-barkod',
+      sku: 'eftal',
+      stockCode: 'eftal',
+      productMainId: 'tamamen-farkli-main',
+      color: 'Yeşil',
+      size: '40',
+      productImageUrl: 'https://cdn.example.com/renamed.jpg',
+    }),
+  ]
+  const renamedMatch = resolveProductCacheMatch(dirtyItem, renamedMainCatalog)
+  assert.equal(renamedMatch.product.id, 'prd-renamed')
+  const renamedImage = resolveProductImage(dirtyItem, renamedMainCatalog)
+  assert.equal(renamedImage.url, 'https://cdn.example.com/renamed.jpg')
+
+  // Güvenli aday hiç yoksa (renk çelişkisi) ambiguity nihai nedene düşer,
+  // yanlış görsel SEÇİLMEZ.
+  const conflictItem = { ...dirtyItem, color: 'Bordo' }
+  const conflictMatch = resolveProductCacheMatch(conflictItem, staleCatalog)
+  assert.equal(conflictMatch.product, undefined)
+  assert.equal(
+    ['AMBIGUOUS_MATCH', 'COLOR_CONFLICT'].includes(conflictMatch.failureReason),
+    true,
+  )
+})
