@@ -72,6 +72,8 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     await vite.ssrLoadModule('/src/utils/orderStatus.ts')
   const { buildVisibleOrders, classifyOrderForTabs } =
     await vite.ssrLoadModule('/src/utils/orderClassification.ts')
+  const { paginateOrders, sortOrdersForWorkspace, visiblePageNumbers } =
+    await vite.ssrLoadModule('/src/utils/ordersWorkspace.ts')
   const { resolveOrderStatus } =
     await vite.ssrLoadModule('/src/utils/shipmentStatus.ts')
   const { verifySuratShipment } =
@@ -631,6 +633,125 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
   assert.match(ordersHtml, /Kargoya Verilenler \(4\)/)
   assert.match(ordersHtml, /Tümü \(16\)/)
   assert.match(ordersHtml, /Tüm Tarihler/)
+  assert.match(ordersHtml, /Filtreler/)
+  assert.match(ordersHtml, /Kargo Fişi No/)
+  assert.match(ordersHtml, /Çok Çeşitli Sipariş/)
+  assert.match(ordersHtml, /Sayfa boyutu/)
+  assert.match(ordersHtml, /Bu sayfadaki siparişleri seç/)
+
+  const multiItemOrder = {
+    ...buildOrder(),
+    id: 'expanded-order',
+    orderNumber: 'EXPANDED-100',
+    customerName: 'Ayşe Test',
+    customerPhone: '5550000000',
+    city: 'İstanbul',
+    district: 'Ümraniye',
+    shipmentAddress: {
+      neighborhood: 'İnkılap',
+      postalCode: '34768',
+    },
+    items: [
+      { ...buildOrder().items[0], id: 'expanded-line-1', price: 100 },
+      {
+        ...buildOrder().items[0],
+        id: 'expanded-line-2',
+        productName: 'İkinci Gerçek Ürün',
+        barcode: 'SECOND-BARCODE',
+        quantity: 2,
+        price: 75,
+      },
+    ],
+  }
+  const expandedHtml = renderToStaticMarkup(
+    createElement(OrdersTable, {
+      orders: [multiItemOrder],
+      products: [],
+      selectedIds: [],
+      onToggleOrder: () => {},
+      onToggleAll: () => {},
+      onOpenOrder: () => {},
+      expandedOrderId: multiItemOrder.id,
+      onToggleExpand: () => {},
+      sortKey: 'orderDate',
+      sortDirection: 'desc',
+      onSortChange: () => {},
+      onDesiChange: () => {},
+    }),
+  )
+  assert.match(expandedHtml, /Sipariş Ürünleri \(2\)/)
+  assert.match(expandedHtml, /İkinci Gerçek Ürün/)
+  assert.match(expandedHtml, /Teslimat Bilgisi/)
+  assert.match(expandedHtml, /Ara Toplam/)
+  assert.match(expandedHtml, /34768/)
+  assert.match(expandedHtml, /aria-expanded="true"/)
+
+  const filterFixture = [
+    multiItemOrder,
+    {
+      ...buildOrder(),
+      id: 'single-filter-order',
+      orderNumber: 'SINGLE-200',
+      customerName: 'Başka Müşteri',
+      city: 'İstanbul',
+      district: 'Kadıköy',
+      cargoTrackingNumber: 'CARGO-SLIP-200',
+    },
+  ]
+  const workspaceFilters = {
+    persistentOrders: filterFixture,
+    selectedTab: 'all',
+    marketplaceFilter: 'all',
+    operationStatusFilter: 'all',
+    cargoFilter: 'all',
+    cityFilter: 'İstanbul',
+    districtFilter: 'Ümraniye',
+    multiProductFilter: 'multi',
+    dateFilter: { preset: 'all' },
+    searchQuery: '',
+    customerQuery: 'ayşe',
+    productQuery: 'second-barcode',
+    orderNumberQuery: 'expanded-100',
+    cargoSlipQuery: '',
+  }
+  assert.deepEqual(
+    buildVisibleOrders(workspaceFilters).visibleOrders.map((item) => item.id),
+    [multiItemOrder.id],
+  )
+  assert.deepEqual(
+    buildVisibleOrders({
+      ...workspaceFilters,
+      districtFilter: 'all',
+      multiProductFilter: 'all',
+      customerQuery: '',
+      productQuery: '',
+      orderNumberQuery: '',
+      cargoSlipQuery: 'cargo-slip-200',
+    }).visibleOrders.map((item) => item.id),
+    ['single-filter-order'],
+  )
+
+  const sortedWorkspaceOrders = sortOrdersForWorkspace(
+    [
+      { ...buildOrder(), id: 'sort-2', orderNumber: '20' },
+      { ...buildOrder(), id: 'sort-1', orderNumber: '3' },
+    ],
+    'orderNumber',
+    'asc',
+  )
+  assert.deepEqual(
+    sortedWorkspaceOrders.map((item) => item.orderNumber),
+    ['3', '20'],
+  )
+  const paginatedWorkspace = paginateOrders(
+    Array.from({ length: 61 }, (_, index) => index + 1),
+    2,
+    25,
+  )
+  assert.equal(paginatedWorkspace.pageCount, 3)
+  assert.equal(paginatedWorkspace.items[0], 26)
+  assert.equal(paginatedWorkspace.items.at(-1), 50)
+  assert.deepEqual(visiblePageNumbers(5, 12), [1, 4, 5, 6, 12])
 
   const deliveredOrders = Array.from({ length: 154 }, (_, index) => ({
     ...buildOrder(),

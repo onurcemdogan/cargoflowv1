@@ -42,9 +42,15 @@ export interface BuildVisibleOrdersInput {
   operationStatusFilter: string
   cargoFilter: string
   cityFilter?: string
+  districtFilter?: string
+  multiProductFilter?: 'all' | 'single' | 'multi'
   actionFilter?: OrdersActionFilter
   dateFilter: VisibleOrdersDateFilter
   searchQuery: string
+  customerQuery?: string
+  productQuery?: string
+  orderNumberQuery?: string
+  cargoSlipQuery?: string
 }
 
 export interface VisibleOrdersDebug {
@@ -56,6 +62,8 @@ export interface VisibleOrdersDebug {
   afterOperationStatusFilter: number
   afterCargoFilter: number
   afterCityFilter: number
+  afterDistrictFilter: number
+  afterMultiProductFilter: number
   afterActionFilter: number
   afterDateFilter: number
   afterSearch: number
@@ -292,9 +300,15 @@ export function buildVisibleOrders({
   operationStatusFilter,
   cargoFilter,
   cityFilter = 'all',
+  districtFilter = 'all',
+  multiProductFilter = 'all',
   actionFilter = 'all',
   dateFilter,
   searchQuery,
+  customerQuery = '',
+  productQuery = '',
+  orderNumberQuery = '',
+  cargoSlipQuery = '',
 }: BuildVisibleOrdersInput): VisibleOrdersResult {
   let current = [...persistentOrders]
   const latestSyncAt = resolveLatestMarketplaceSyncAt(current)
@@ -311,6 +325,8 @@ export function buildVisibleOrders({
     afterOperationStatusFilter: 0,
     afterCargoFilter: 0,
     afterCityFilter: 0,
+    afterDistrictFilter: 0,
+    afterMultiProductFilter: 0,
     afterActionFilter: 0,
     afterDateFilter: 0,
     afterSearch: 0,
@@ -380,6 +396,23 @@ export function buildVisibleOrders({
   }
   debug.afterCityFilter = current.length
 
+  if (!isAllFilter(districtFilter)) {
+    const expectedDistrict = normalizedToken(districtFilter)
+    current = current.filter(
+      (order) => normalizedToken(order.district) === expectedDistrict,
+    )
+  }
+  debug.afterDistrictFilter = current.length
+
+  if (multiProductFilter !== 'all') {
+    current = current.filter((order) =>
+      multiProductFilter === 'multi'
+        ? order.items.length > 1
+        : order.items.length <= 1,
+    )
+  }
+  debug.afterMultiProductFilter = current.length
+
   if (actionFilter !== 'all') {
     current = current.filter((order) =>
       orderMatchesDashboardAction(order, actionFilter),
@@ -426,9 +459,70 @@ export function buildVisibleOrders({
         .includes(query),
     )
   }
+
+  current = filterByWorkspaceQuery(current, customerQuery, (order) => [
+    order.customerName,
+    order.customerPhone,
+    order.customerEmail,
+  ])
+  current = filterByWorkspaceQuery(current, productQuery, (order) =>
+    order.items.flatMap((item) => [
+      item.productName,
+      item.sku,
+      item.merchantSku,
+      item.stockCode,
+      item.barcode,
+    ]),
+  )
+  current = filterByWorkspaceQuery(current, orderNumberQuery, (order) => [
+    order.orderNumber,
+    order.externalOrderId,
+  ])
+  current = filterByWorkspaceQuery(current, cargoSlipQuery, (order) => {
+    const verification = verifySuratShipment(order)
+    return [
+      order.cargoTrackingNumber,
+      order.shipment?.shipmentCode,
+      order.shipment?.trackingNumber,
+      order.shipment?.kargoTakipNo,
+      order.shipment?.tNo,
+      order.shipment?.barcode,
+      order.shipment?.barkodNo,
+      order.shipment?.barcodeValue,
+      order.shipment?.gonderiNo,
+      order.shipment?.waybillNo,
+      order.shipment?.irsaliyeNo,
+      order.shipment?.cargoKey,
+      verification.trackingNumber,
+      verification.officialBarcodeValue,
+    ]
+  })
   debug.afterSearch = current.length
 
   return { visibleOrders: current, debug }
+}
+
+function filterByWorkspaceQuery(
+  orders: CargoOrder[],
+  query: string,
+  selectValues: (order: CargoOrder) => unknown[],
+): CargoOrder[] {
+  const token = normalizedSearch(query)
+  if (!token) return orders
+  return orders.filter((order) =>
+    selectValues(order)
+      .filter(Boolean)
+      .map(normalizedSearch)
+      .some((value) => value.includes(token)),
+  )
+}
+
+function normalizedSearch(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
 }
 
 function resolveOperationStatusLabel(
