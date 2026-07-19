@@ -11,8 +11,11 @@ import type {
   LabelTemplate,
   MarketplaceStatus,
   PrinterSettings,
+  ProductCatalogCacheEnvelope,
+  ProductCatalogCacheMetadata,
   Shipment,
   SuratLabelMappingConfig,
+  TrendyolProductSyncDebug,
   WorkflowResult,
 } from '../types/cargoflow'
 import {
@@ -39,11 +42,22 @@ import { applyProductImageResolution } from '../utils/productImage'
 import { mapSuratCarrierStatus } from '../utils/shipmentStatus'
 import { buildDesiDebug, resolveNormalizedDesi } from '../utils/desi'
 import { calculateOrderDesi } from '../utils/orderDesi'
+import {
+  buildRevisionMismatch,
+  FRONTEND_BUILD_REVISION,
+} from '../utils/buildRevision'
 import type { AuditLogService } from './auditLogService'
 import { apiDebugService } from './apiDebugService'
+import {
+  loadPersistedProductCatalog,
+  savePersistedProductCatalog,
+} from '../utils/productCatalogStorage'
 
 const ORDERS_KEY = 'cargoFlow_orders_v3'
-const PRODUCTS_KEY = 'cargoFlow_products_v3'
+const PRODUCTS_KEY = 'cargoFlow_products_v4'
+const LEGACY_PRODUCTS_KEYS = ['cargoFlow_products_v3']
+const PRODUCT_CACHE_SCHEMA_VERSION = 4
+const MIN_COMPLETE_CATALOG_RATIO = 0.99
 const ACTIVE_MARKETPLACE_ACCOUNT_KEY = 'cargoFlow_active_marketplace_account_v2'
 const LEGACY_ACTIVE_MARKETPLACE_ACCOUNT_KEYS = [
   'cargoFlow_active_marketplace_account_v1',
@@ -89,7 +103,10 @@ function prepareMarketplaceAccountCaches(activeScope: string): void {
       (key === ORDERS_KEY ||
         key.startsWith(`${ORDERS_KEY}:`) ||
         key === PRODUCTS_KEY ||
-        key.startsWith(`${PRODUCTS_KEY}:`)) &&
+        key.startsWith(`${PRODUCTS_KEY}:`) ||
+        LEGACY_PRODUCTS_KEYS.some(
+          (legacyKey) => key === legacyKey || key.startsWith(`${legacyKey}:`),
+        )) &&
       (marketplaceAccountChanged || !activeKeys.has(key))
     ) {
       removableKeys.push(key)
@@ -99,6 +116,10 @@ function prepareMarketplaceAccountCaches(activeScope: string): void {
   LEGACY_ACTIVE_MARKETPLACE_ACCOUNT_KEYS.forEach((key) =>
     window.localStorage.removeItem(key),
   )
+  LEGACY_PRODUCTS_KEYS.forEach((key) => {
+    window.localStorage.removeItem(key)
+    window.localStorage.removeItem(scopedStorageKey(key, activeScope))
+  })
   window.localStorage.setItem(ACTIVE_MARKETPLACE_ACCOUNT_KEY, activeScope)
 }
 
@@ -183,6 +204,10 @@ export class OrderWorkflowService {
   private readonly printProvider: PrintProvider
   private readonly auditLogService: AuditLogService
   private marketplaceAccountScope = ''
+  private readonly productCatalogMemory = new Map<
+    string,
+    ProductCatalogCacheEnvelope
+  >()
 
   constructor(
     marketplaceProvider: MarketplaceProvider,
@@ -247,9 +272,71 @@ export class OrderWorkflowService {
     return this.persistOrders(enriched)
   }
 
+  loadProductCatalog(): {
+    products: CargoProduct[]
+    metadata?: ProductCatalogCacheMetadata
+  } {
+    const inMemory = this.productCatalogMemory.get(this.productsStorageKey())
+    if (inMemory && isValidProductCatalogCache(inMemory)) {
+      return {
+        products: enrichStoredProducts(inMemory.products),
+        metadata: inMemory.metadata,
+      }
+    }
+    const stored = loadFromStorage<unknown>(this.productsStorageKey(), null)
+    if (!isValidProductCatalogCache(stored)) {
+      return { products: [] }
+    }
+    const products = enrichStoredProducts(stored.products)
+    if (products.length !== stored.metadata.actualCount) {
+      return { products: [] }
+    }
+    return { products, metadata: stored.metadata }
+  }
+
+  async hydrateProductCatalog(): Promise<{
+    products: CargoProduct[]
+    metadata?: ProductCatalogCacheMetadata
+  }> {
+    const key = this.productsStorageKey()
+    const persisted = await loadPersistedProductCatalog(key).catch(() => null)
+    if (isValidProductCatalogCache(persisted)) {
+      this.productCatalogMemory.set(key, persisted)
+      return {
+        products: enrichStoredProducts(persisted.products),
+        metadata: persisted.metadata,
+      }
+    }
+    const localCatalog = this.loadProductCatalog()
+    if (localCatalog.metadata) {
+      const envelope = {
+        products: localCatalog.products,
+        metadata: localCatalog.metadata,
+      }
+      this.productCatalogMemory.set(key, envelope)
+      await savePersistedProductCatalog(key, envelope).catch(() => undefined)
+      window.localStorage.removeItem(key)
+    }
+    return localCatalog
+  }
+
   loadProducts(): CargoProduct[] {
-    const products = loadFromStorage<CargoProduct[]>(this.productsStorageKey(), [])
-    return enrichStoredProducts(products)
+    return this.loadProductCatalog().products
+  }
+
+  private async saveCompleteProductCatalog(
+    products: CargoProduct[],
+    metadata: ProductCatalogCacheMetadata,
+  ): Promise<void> {
+    const key = this.productsStorageKey()
+    const persistedProducts = products.map(compactProductForCache)
+    const persistedEnvelope: ProductCatalogCacheEnvelope = {
+      metadata,
+      products: persistedProducts,
+    }
+    await savePersistedProductCatalog(key, persistedEnvelope)
+    this.productCatalogMemory.set(key, { metadata, products })
+    window.localStorage.removeItem(key)
   }
 
   updateOrderDesi(
@@ -420,28 +507,127 @@ export class OrderWorkflowService {
     config: IntegrationConfig,
   ): Promise<{ products: CargoProduct[]; result: WorkflowResult }> {
     this.setMarketplaceAccount(config.trendyol.sellerId)
+    const cachedCatalog = this.loadProductCatalog()
     const response = await this.marketplaceProvider.fetchProducts(config.trendyol)
-    const nextProducts = mergeProductsWithCache(
-      response.products,
-      this.loadProducts(),
+    const expectedTotal = Number(
+      response.debug?.expectedTotal ?? response.products.length,
     )
-    saveToStorage(this.productsStorageKey(), nextProducts)
+    const dedupedProducts = dedupeProductsByVariantIdentity(response.products)
+    const nextProducts = mergeProductsWithCache(
+      dedupedProducts,
+      cachedCatalog.products,
+    )
+    const completenessRatio =
+      expectedTotal > 0
+        ? nextProducts.length / expectedTotal
+        : nextProducts.length === 0
+          ? 1
+          : 0
+    const complete =
+      response.debug?.status === 'COMPLETE' &&
+      completenessRatio >= MIN_COMPLETE_CATALOG_RATIO
+    const now = new Date().toISOString()
+    const catalogRevision = buildProductCatalogRevision(nextProducts, now)
+    const debug: TrendyolProductSyncDebug = {
+      expectedTotal,
+      fetchedCount: Number(
+        response.debug?.fetchedCount ?? response.products.length,
+      ),
+      rawApiRecordsCount: Number(
+        response.debug?.rawApiRecordsCount ?? response.products.length,
+      ),
+      normalizedProductsCount: response.products.length,
+      afterDedupCount: dedupedProducts.length,
+      afterMergeCount: nextProducts.length,
+      persistedProductsCount: complete
+        ? nextProducts.length
+        : cachedCatalog.products.length,
+      productsStoreCount: complete
+        ? nextProducts.length
+        : cachedCatalog.products.length,
+      fetchedPages: Number(response.debug?.fetchedPages ?? 0),
+      expectedPages: Number(response.debug?.expectedPages ?? 0),
+      failedPages: response.debug?.failedPages ?? [],
+      requestedPageSize: Number(response.debug?.requestedPageSize ?? 200),
+      responsePageSize: Number(response.debug?.responsePageSize ?? 200),
+      uniqueBarcodeCount: countUniqueProductsByField(
+        nextProducts,
+        'barcode',
+      ),
+      uniqueProductContentIdCount: countUniqueProductsByField(
+        nextProducts,
+        'productContentId',
+      ),
+      uniqueProductMainIdCount: countUniqueProductsByField(
+        nextProducts,
+        'productMainId',
+      ),
+      uniqueExternalVariantIdCount: countUniqueProductsByField(
+        nextProducts,
+        'externalVariantId',
+      ),
+      uniqueVariantCount: new Set(
+        nextProducts.map(productVariantIdentity).filter(Boolean),
+      ).size,
+      completenessRatio: Math.min(completenessRatio, 1),
+      status: complete ? 'COMPLETE' : response.debug?.status ?? 'FAILED',
+      pages: response.debug?.pages,
+      targetTraces: [
+        ...(response.debug?.targetTraces ?? []),
+        ...traceClientCatalogTargets('client-merged', nextProducts),
+      ],
+      cachePreserved: !complete && cachedCatalog.products.length > 0,
+      rejectionReason: complete
+        ? undefined
+        : response.debug?.rejectionReason ??
+          `Katalog tamlık oranı ${(completenessRatio * 100).toFixed(2)}%; tam cache eşiği %99.`,
+      lastSuccessfulFullSyncAt: complete
+        ? now
+        : cachedCatalog.metadata?.lastSuccessfulFullSyncAt,
+      schemaVersion: PRODUCT_CACHE_SCHEMA_VERSION,
+      catalogRevision: complete
+        ? catalogRevision
+        : cachedCatalog.metadata?.catalogRevision,
+      backendBuildRevision: response.debug?.backendBuildRevision,
+      frontendBuildRevision: FRONTEND_BUILD_REVISION,
+      revisionMismatch: buildRevisionMismatch(
+        FRONTEND_BUILD_REVISION,
+        response.debug?.backendBuildRevision,
+      ),
+    }
+
+    if (complete) {
+      await this.saveCompleteProductCatalog(nextProducts, {
+        schemaVersion: PRODUCT_CACHE_SCHEMA_VERSION,
+        catalogRevision,
+        syncStatus: 'COMPLETE',
+        expectedTotal,
+        actualCount: nextProducts.length,
+        completenessRatio: Math.min(completenessRatio, 1),
+        lastSuccessfulFullSyncAt: now,
+        backendBuildRevision: response.debug?.backendBuildRevision,
+        frontendBuildRevision: FRONTEND_BUILD_REVISION,
+      })
+    }
+    const visibleProducts = complete ? nextProducts : cachedCatalog.products
     this.auditLogService.append({
       action: 'Ürünler çekildi',
-      level: response.products.length > 0 ? 'success' : 'warning',
+      level: complete ? 'success' : 'warning',
       details:
-        nextProducts.length > 0
-          ? `${nextProducts.length} ürün yüklendi. Kaynak: Gerçek API.`
-          : 'Veri bulunamadı. Kaynak: Gerçek API.',
+        complete
+          ? `${nextProducts.length}/${expectedTotal} ürün varyantı tam katalog olarak yüklendi. Kaynak: Gerçek API.`
+          : `${response.products.length}/${expectedTotal} ürün alındı; kısmi katalog kaydedilmedi${cachedCatalog.products.length > 0 ? `, ${cachedCatalog.products.length} kayıtlı tam katalog korundu` : ''}.`,
     })
 
     return {
-      products: nextProducts,
+      products: visibleProducts,
       result: {
-        level:
-          response.products.length > 0 ? 'success' : 'warning',
+        level: complete ? 'success' : 'error',
         source: response.source,
-        message: `${nextProducts.length} ürün yüklendi. ${response.message}`,
+        message: complete
+          ? `${nextProducts.length}/${expectedTotal} ürün varyantı tam katalog olarak yüklendi. ${response.message}`
+          : `${response.message} Kısmi sonuç ana ürün kataloğunu değiştirmedi.`,
+        productSyncDebug: debug,
       },
     }
   }
@@ -1965,45 +2151,75 @@ function buildShipmentCreationResultMessage({
   return `Sürat gönderi akışı tamamlandı. ${createdShipments.join(' | ')}`
 }
 
-// Merge kimliği VARYANT seviyesindedir. Aynı varyant için birden fazla alan
-// bulunduğunda yalnızca en güçlü alanı kullan; daha zayıf ve ortak bir alanı
-// aynı kayda eklemek farklı renk/beden kayıtlarını yine birleştirebilir.
-// Varyant kimliği olmayan eski kayıtlar için üst ürün geri dönüş anahtarıdır.
-function productVariantMergeKeys(product: CargoProduct): string[] {
-  if (product.barcode) return [`bc:${String(product.barcode).trim()}`]
-  if (product.productCode) return [`pc:${String(product.productCode).trim()}`]
-  if (product.productContentId) {
-    return [`content:${String(product.productContentId).trim()}`]
+function normalizedProductIdentityValue(value: unknown): string {
+  return String(value ?? '').trim().toLocaleLowerCase('tr-TR')
+}
+
+export function productVariantIdentity(product: CargoProduct): string {
+  const barcode = normalizedProductIdentityValue(product.barcode)
+  const externalVariantId = normalizedProductIdentityValue(
+    product.externalVariantId,
+  )
+  if (barcode && externalVariantId) {
+    return `bc:${barcode}|ext:${externalVariantId}`
   }
-  return product.externalProductId
-    ? [`ext:${String(product.externalProductId).trim()}`]
-    : []
+  if (externalVariantId) return `ext:${externalVariantId}`
+  if (barcode) return `bc:${barcode}`
+  const productCode = normalizedProductIdentityValue(product.productCode)
+  const color = normalizedProductIdentityValue(product.color)
+  const size = normalizedProductIdentityValue(product.size)
+  if (productCode || color || size) {
+    return `variant:${productCode}|${color}|${size}`
+  }
+  const contentId = normalizedProductIdentityValue(product.productContentId)
+  if (contentId) return `content:${contentId}`
+  const externalProductId = normalizedProductIdentityValue(
+    product.externalProductId,
+  )
+  return externalProductId ? `product:${externalProductId}` : ''
+}
+
+export function dedupeProductsByVariantIdentity(
+  products: CargoProduct[],
+): CargoProduct[] {
+  const result: CargoProduct[] = []
+  const indexByIdentity = new Map<string, number>()
+  for (const product of products) {
+    const identity = productVariantIdentity(product) || `row:${result.length}`
+    const index = indexByIdentity.get(identity)
+    if (index == null) {
+      indexByIdentity.set(identity, result.length)
+      result.push(product)
+      continue
+    }
+    const existing = result[index]
+    result[index] = {
+      ...existing,
+      ...product,
+      imageUrl: product.imageUrl || existing.imageUrl,
+      productImageUrl: product.productImageUrl || existing.productImageUrl,
+      images:
+        product.images && product.images.length > 0
+          ? product.images
+          : existing.images,
+    }
+  }
+  return result
 }
 
 export function mergeProductsWithCache(
   freshProducts: CargoProduct[],
   cachedProducts: CargoProduct[],
 ): CargoProduct[] {
-  const result = [...cachedProducts]
-  const indexByKey = new Map<string, number>()
-  const registerKeys = (product: CargoProduct, index: number) => {
-    for (const key of productVariantMergeKeys(product)) {
-      if (!indexByKey.has(key)) indexByKey.set(key, index)
-    }
-  }
-  result.forEach(registerKeys)
-  for (const fresh of freshProducts) {
-    const index =
-      productVariantMergeKeys(fresh)
-        .map((key) => indexByKey.get(key))
-        .find((value) => value != null) ?? -1
-    if (index < 0) {
-      result.push(fresh)
-      registerKeys(fresh, result.length - 1)
-      continue
-    }
-    const cached = result[index]
-    result[index] = {
+  const cachedByIdentity = new Map(
+    cachedProducts
+      .map((product) => [productVariantIdentity(product), product] as const)
+      .filter(([identity]) => Boolean(identity)),
+  )
+  return dedupeProductsByVariantIdentity(freshProducts).map((fresh) => {
+    const cached = cachedByIdentity.get(productVariantIdentity(fresh))
+    if (!cached) return fresh
+    return {
       ...cached,
       ...fresh,
       imageUrl: fresh.imageUrl || cached.imageUrl,
@@ -2013,9 +2229,91 @@ export function mergeProductsWithCache(
           ? fresh.images
           : cached.images,
     }
-    registerKeys(result[index], index)
+  })
+}
+
+function countUniqueProductsByField(
+  products: CargoProduct[],
+  field: keyof CargoProduct,
+): number {
+  return new Set(
+    products
+      .map((product) => normalizedProductIdentityValue(product[field]))
+      .filter(Boolean),
+  ).size
+}
+
+function traceClientCatalogTargets(
+  stage: string,
+  products: CargoProduct[],
+): NonNullable<TrendyolProductSyncDebug['targetTraces']> {
+  return ['kkkıasdasdasd14', 'SCUBA-SEC0115', 'eftal56879-2'].map(
+    (query) => {
+      const normalizedQuery = normalizedProductIdentityValue(query)
+      const matches = products.filter((product) =>
+        [
+          product.barcode,
+          product.sku,
+          product.stockCode,
+          product.productCode,
+          product.productMainId,
+          product.productName,
+        ].some((value) =>
+          normalizedProductIdentityValue(value).includes(normalizedQuery),
+        ),
+      )
+      const product = matches[0]
+      return {
+        stage,
+        query,
+        found: matches.length > 0,
+        recordCount: matches.length,
+        barcode: product?.barcode,
+        productMainId: product?.productMainId,
+        productCode: product?.productCode,
+        color: product?.color,
+        size: product?.size,
+        imageCandidates: product?.images ??
+          (product?.imageUrl ? [product.imageUrl] : []),
+      }
+    },
+  )
+}
+
+function buildProductCatalogRevision(
+  products: CargoProduct[],
+  syncedAt: string,
+): string {
+  return `${syncedAt}:${products.length}:${new Set(
+    products.map(productVariantIdentity).filter(Boolean),
+  ).size}`
+}
+
+function compactProductForCache(product: CargoProduct): CargoProduct {
+  const primaryImage =
+    product.imageUrl || product.productImageUrl || product.images?.[0] || ''
+  return {
+    ...product,
+    imageUrl: primaryImage,
+    productImageUrl: primaryImage,
+    images: primaryImage ? [primaryImage] : [],
   }
-  return result
+}
+
+export function isValidProductCatalogCache(
+  value: unknown,
+): value is ProductCatalogCacheEnvelope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const envelope = value as Partial<ProductCatalogCacheEnvelope>
+  const metadata = envelope.metadata
+  if (!metadata || !Array.isArray(envelope.products)) return false
+  return Boolean(
+    metadata.schemaVersion === PRODUCT_CACHE_SCHEMA_VERSION &&
+      metadata.syncStatus === 'COMPLETE' &&
+      metadata.completenessRatio >= MIN_COMPLETE_CATALOG_RATIO &&
+      metadata.actualCount === envelope.products.length &&
+      metadata.expectedTotal > 0,
+  )
 }
 
 function normalizeSuratCreateErrorMessage(error: unknown): string {

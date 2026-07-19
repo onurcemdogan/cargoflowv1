@@ -20,6 +20,7 @@ import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
 const app = express()
 const execFileAsync = promisify(execFile)
 const serverDirectory = dirname(fileURLToPath(import.meta.url))
+const BUILD_REVISION = await resolveBuildRevision()
 loadLocalEnvFile(join(serverDirectory, '..', '.env'))
 const port = Number(process.env.CARGOFLOW_API_PORT ?? 8787)
 const localConfigDirectory =
@@ -146,6 +147,7 @@ app.get('/api/health', (_request, response) => {
   response.json({
     ok: true,
     service: 'cargoflow-api',
+    buildRevision: BUILD_REVISION,
     checkedAt: new Date().toISOString(),
   })
 })
@@ -288,12 +290,63 @@ async function handleTrendyolProductsFetch(request, response) {
   const result = await callTrendyolProducts(credentials)
 
   if (result.ok) {
+    const products = normalizeTrendyolProducts(result.data)
+    const expectedTotal = Number(result.debug?.expectedTotal ?? products.length)
+    const normalizedRatio =
+      expectedTotal > 0
+        ? products.length / expectedTotal
+        : products.length === 0
+          ? 1
+          : 0
+    const normalizedComplete =
+      result.debug?.status === 'COMPLETE' && normalizedRatio >= 0.99
+    const debug = {
+      ...result.debug,
+      backendBuildRevision: BUILD_REVISION,
+      normalizedProductsCount: products.length,
+      uniqueBarcodeCount: countUniqueProductField(products, 'barcode'),
+      uniqueProductContentIdCount: countUniqueProductField(
+        products,
+        'productContentId',
+      ),
+      uniqueProductMainIdCount: countUniqueProductField(
+        products,
+        'productMainId',
+      ),
+      uniqueExternalVariantIdCount: countUniqueProductField(
+        products,
+        'externalVariantId',
+      ),
+      uniqueVariantCount: countUniqueProductVariants(products),
+      completenessRatio: Math.min(
+        Number(result.debug?.completenessRatio ?? 1),
+        normalizedRatio,
+      ),
+      status: normalizedComplete ? 'COMPLETE' : 'PARTIAL',
+      targetTraces: [
+        ...(result.debug?.targetTraces ?? []),
+        ...traceProductCatalogTargets('normalized', products),
+      ],
+    }
+    if (!normalizedComplete) {
+      response.status(502).json({
+        ok: false,
+        source: 'real',
+        message:
+          'Trendyol ürün kataloğu normalize edilirken eksik kaldı. Kısmi katalog ana cache olarak kaydedilmedi.',
+        products: [],
+        statusCode: 502,
+        debug,
+        rawPreview: preview(debug),
+      })
+      return
+    }
     response.json({
       ok: true,
       source: 'real',
       message: 'Trendyol ürünleri gerçek API üzerinden alındı.',
-      products: normalizeTrendyolProducts(result.data),
-      debug: result.debug,
+      products,
+      debug,
       rawPreview: preview(result.debug ?? result.data),
     })
     return
@@ -7851,60 +7904,152 @@ async function callTrendyolProducts(credentials) {
 
   const allProducts = []
   const pageDebug = []
+  const pageMetrics = []
+  const failedPages = []
   const size = 200
-  const maxPages = 25
-  // Sessiz kısmi katalog YASAK: ara sayfa hatası (ör. 429 rate-limit) bir
-  // kez tekrar denenir; yine de kesilirse sonuç KISMİ olarak işaretlenir ve
-  // mesajda açıkça söylenir. Aksi halde eksik katalog "tam" sanılıp görsel
-  // eşleşmesi VARIANT_NOT_IN_CACHE ile sessizce boş kalıyordu.
-  let partialFailure = null
+  const maxPages = 500
+  const maxRetries = 2
+  let expectedPages = 1
+  let expectedTotal = 0
+  let responsePageSize = size
 
-  for (let page = 0; page < maxPages; page += 1) {
+  for (let page = 0; page < expectedPages && page < maxPages; page += 1) {
     const params = new URLSearchParams({
       page: String(page),
       size: String(size),
     })
     const pageUrl = `${getTrendyolBaseUrl(credentials)}/integration/product/sellers/${credentials.sellerId}/products?${params}`
     let result = await fetchTrendyolJson(pageUrl, credentials)
-    if (!result.ok && page > 0) {
-      await new Promise((resolve) => setTimeout(resolve, 1200))
+    let retryCount = 0
+    while (!result.ok && retryCount < maxRetries) {
+      retryCount += 1
+      await new Promise((resolve) => setTimeout(resolve, 600 * retryCount))
       result = await fetchTrendyolJson(pageUrl, credentials)
     }
     pageDebug.push(result.debug)
     if (!result.ok) {
-      if (page === 0) return result
-      partialFailure = {
+      failedPages.push(page)
+      const metric = {
         page,
-        statusCode: result.statusCode,
-        message: result.message,
+        requestedPageSize: size,
+        responseItemCount: 0,
+        totalPages: expectedPages,
+        totalElements: expectedTotal,
+        retryCount,
+        httpStatus: Number(result.statusCode ?? result.debug?.status ?? 0),
+        rateLimitRemaining: result.debug?.rateLimitRemaining,
       }
-      break
+      pageMetrics.push(metric)
+      console.info('[products] PRODUCT_SYNC_PAGE', metric)
+      if (page === 0) {
+        return {
+          ...result,
+          debug: {
+            ...result.debug,
+            status: 'FAILED',
+            expectedTotal: 0,
+            fetchedCount: 0,
+            rawApiRecordsCount: 0,
+            fetchedPages: 0,
+            expectedPages: 0,
+            failedPages,
+            requestedPageSize: size,
+            responsePageSize: size,
+            completenessRatio: 0,
+            pages: pageMetrics,
+            pageResponses: pageDebug,
+          },
+        }
+      }
+      continue
     }
 
     const products = getTrendyolProductsArray(result.data)
     allProducts.push(...products)
     const totalPages = Number(result.data?.totalPages ?? 0)
-    const hasNext =
-      totalPages > 0
-        ? page + 1 < totalPages
+    const totalElements = Number(result.data?.totalElements ?? 0)
+    if (page === 0) {
+      expectedPages = totalPages > 0
+        ? Math.min(totalPages, maxPages)
         : products.length === size
-    if (!hasNext) break
+          ? maxPages
+          : 1
+      expectedTotal = totalElements > 0 ? totalElements : products.length
+      responsePageSize = Number(result.data?.size ?? size)
+    } else if (totalPages > expectedPages) {
+      expectedPages = Math.min(totalPages, maxPages)
+    }
+    const metric = {
+      page,
+      requestedPageSize: size,
+      responseItemCount: products.length,
+      totalPages: totalPages || expectedPages,
+      totalElements: totalElements || expectedTotal,
+      retryCount,
+      httpStatus: Number(result.statusCode ?? result.debug?.status ?? 200),
+      rateLimitRemaining: result.debug?.rateLimitRemaining,
+    }
+    pageMetrics.push(metric)
+    console.info('[products] PRODUCT_SYNC_PAGE', metric)
+    if (totalPages <= 0 && products.length < size) {
+      expectedPages = page + 1
+      expectedTotal = allProducts.length
+    }
   }
+
+  const fetchedPages = pageMetrics.filter(
+    (entry) => entry.responseItemCount > 0 || entry.httpStatus === 200,
+  ).length
+  const rawCompletenessRatio =
+    expectedTotal > 0
+      ? allProducts.length / expectedTotal
+      : allProducts.length === 0
+        ? 1
+        : 0
+  const status =
+    failedPages.length === 0 &&
+    fetchedPages === expectedPages &&
+    rawCompletenessRatio >= 0.999
+      ? 'COMPLETE'
+      : 'PARTIAL'
 
   return {
     ok: true,
     source: 'real',
     statusCode: 200,
-    message: partialFailure
-      ? `${allProducts.length} Trendyol ürün kaydı alındı (KISMİ katalog: sayfa ${partialFailure.page} hatasında kesildi; eksik ürünlerin görselleri eşleşmeyebilir, tekrar deneyin).`
+    message: status === 'PARTIAL'
+      ? `${allProducts.length}/${expectedTotal} Trendyol ürün kaydı alındı. Kısmi katalog ana cache olarak kaydedilmedi.`
       : `${allProducts.length} Trendyol ürün/listing kaydı alındı.`,
     data: { content: allProducts },
     debug: {
-      pagesFetched: pageDebug.length,
+      expectedTotal,
+      fetchedCount: allProducts.length,
+      rawApiRecordsCount: allProducts.length,
+      fetchedPages,
+      expectedPages,
+      failedPages,
+      requestedPageSize: size,
+      responsePageSize,
+      completenessRatio: Math.min(rawCompletenessRatio, 1),
+      status,
+      pages: pageMetrics,
+      pageResponses: pageDebug,
       normalizedProductCandidates: allProducts.length,
-      partial: Boolean(partialFailure),
-      partialFailure,
-      pages: pageDebug,
+      uniqueBarcodeCount: countUniqueRawProductField(allProducts, ['barcode']),
+      uniqueProductContentIdCount: countUniqueRawProductField(allProducts, [
+        'productContentId',
+        'contentId',
+        'productId',
+      ]),
+      uniqueProductMainIdCount: countUniqueRawProductField(allProducts, [
+        'productMainId',
+      ]),
+      uniqueExternalVariantIdCount: countUniqueRawProductField(allProducts, [
+        'platformListingId',
+        'id',
+      ]),
+      uniqueVariantCount: countUniqueRawProductVariants(allProducts),
+      targetTraces: traceProductCatalogTargets('raw-api', allProducts),
     },
   }
 }
@@ -7961,6 +8106,10 @@ async function fetchTrendyolJson(url, credentials, options = {}) {
       rawResponsePreview,
       parsedError: parsed.error,
       method,
+      rateLimitRemaining:
+        response.headers.get('x-ratelimit-remaining') ??
+        response.headers.get('x-rate-limit-remaining') ??
+        undefined,
     }
 
     if (response.ok && !text.trim()) {
@@ -9433,12 +9582,27 @@ function normalizeTrendyolProducts(data) {
   const content = getTrendyolProductsArray(data)
   return content.filter(isTrendyolProductListing).map((item, index) => {
     const images = extractTrendyolImages(item)
+    const externalVariantId = String(
+      item.platformListingId ?? item.id ?? '',
+    ).trim()
+    const barcode = String(item.barcode ?? '').trim()
+    const color = String(
+      item.color ?? findTrendyolAttribute(item, 'Renk') ?? '',
+    ).trim()
+    const size = String(
+      item.size ?? findTrendyolAttribute(item, 'Beden') ?? '',
+    ).trim()
+    const variantAttributes = [
+      color ? { name: 'Renk', value: color } : null,
+      size ? { name: 'Beden', value: size } : null,
+    ].filter(Boolean)
     return {
-      id: `prd_real_${item.id ?? item.barcode ?? index}`,
+      id: `prd_real_${externalVariantId || barcode || index}_${index}`,
       marketplace: 'Trendyol',
       externalProductId: String(
         item.id ?? item.productMainId ?? item.productCode ?? '',
       ),
+      externalVariantId,
       productContentId: String(
         item.productContentId ??
           item.contentId ??
@@ -9453,11 +9617,12 @@ function normalizeTrendyolProducts(data) {
       productName: item.title ?? item.productName ?? 'Trendyol ürünü',
       sku: item.merchantSku ?? item.stockCode ?? '',
       stockCode: item.stockCode ?? item.merchantSku ?? '',
-      barcode: item.barcode ?? '',
+      barcode,
       category: item.categoryName ?? item.category ?? '',
       brand: item.brand ?? item.brandName ?? '',
-      color: item.color ?? findTrendyolAttribute(item, 'Renk') ?? '',
-      size: item.size ?? findTrendyolAttribute(item, 'Beden') ?? '',
+      color,
+      size,
+      variantAttributes,
       desi: Number(item.dimensionalWeight ?? item.desi ?? 0),
       kg: Number(item.weight ?? item.kg ?? 0),
       imageUrl: images[0] ?? '',
@@ -9469,6 +9634,100 @@ function normalizeTrendyolProducts(data) {
       source: 'real',
       createdAt: item.createDate ?? item.createdDate ?? item.createdAt ?? '',
       updatedAt: new Date().toISOString(),
+    }
+  })
+}
+
+const PRODUCT_CATALOG_TRACE_QUERIES = [
+  'kkkıasdasdasd14',
+  'SCUBA-SEC0115',
+  'eftal56879-2',
+]
+
+function normalizedCatalogValue(value) {
+  return String(value ?? '').trim().toLocaleLowerCase('tr-TR')
+}
+
+function countUniqueProductField(products, field) {
+  return new Set(
+    products
+      .map((product) => normalizedCatalogValue(product?.[field]))
+      .filter(Boolean),
+  ).size
+}
+
+function countUniqueRawProductField(products, fields) {
+  return new Set(
+    products
+      .map((product) =>
+        fields
+          .map((field) => normalizedCatalogValue(product?.[field]))
+          .find(Boolean),
+      )
+      .filter(Boolean),
+  ).size
+}
+
+function productVariantIdentity(product) {
+  const barcode = normalizedCatalogValue(product?.barcode)
+  const externalVariantId = normalizedCatalogValue(
+    product?.externalVariantId ?? product?.platformListingId ?? product?.id,
+  )
+  if (barcode && externalVariantId) return `bc:${barcode}|ext:${externalVariantId}`
+  if (externalVariantId) return `ext:${externalVariantId}`
+  if (barcode) return `bc:${barcode}`
+  const productCode = normalizedCatalogValue(product?.productCode)
+  const color = normalizedCatalogValue(
+    product?.color ?? findTrendyolAttribute(product, 'Renk'),
+  )
+  const size = normalizedCatalogValue(
+    product?.size ?? findTrendyolAttribute(product, 'Beden'),
+  )
+  return [productCode, color, size].filter(Boolean).join('|')
+}
+
+function countUniqueProductVariants(products) {
+  return new Set(products.map(productVariantIdentity).filter(Boolean)).size
+}
+
+function countUniqueRawProductVariants(products) {
+  return countUniqueProductVariants(products)
+}
+
+function traceProductCatalogTargets(stage, products) {
+  return PRODUCT_CATALOG_TRACE_QUERIES.map((query) => {
+    const normalizedQuery = normalizedCatalogValue(query)
+    const matches = products.filter((product) => {
+      const values = [
+        product?.barcode,
+        product?.productCode,
+        product?.productMainId,
+        product?.merchantSku,
+        product?.sku,
+        product?.stockCode,
+        product?.title,
+        product?.productName,
+      ]
+      return values.some((value) =>
+        normalizedCatalogValue(value).includes(normalizedQuery),
+      )
+    })
+    const product = matches[0]
+    return {
+      stage,
+      query,
+      found: matches.length > 0,
+      recordCount: matches.length,
+      barcode: String(product?.barcode ?? ''),
+      productMainId: String(product?.productMainId ?? ''),
+      productCode: String(product?.productCode ?? ''),
+      color: String(
+        product?.color ?? findTrendyolAttribute(product, 'Renk') ?? '',
+      ),
+      size: String(
+        product?.size ?? findTrendyolAttribute(product, 'Beden') ?? '',
+      ),
+      imageCandidates: product ? extractTrendyolImages(product) : [],
     }
   })
 }
@@ -10076,6 +10335,21 @@ function safeJson(text) {
     return JSON.parse(text)
   } catch {
     return { raw: text.slice(0, 500) }
+  }
+}
+
+async function resolveBuildRevision() {
+  if (process.env.CARGOFLOW_BUILD_REVISION) {
+    return String(process.env.CARGOFLOW_BUILD_REVISION).trim()
+  }
+  try {
+    const result = await execFileAsync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: join(serverDirectory, '..'),
+      windowsHide: true,
+    })
+    return String(result.stdout ?? '').trim() || 'unknown'
+  } catch {
+    return 'unknown'
   }
 }
 

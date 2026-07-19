@@ -4,6 +4,7 @@ import type {
   CargoProduct,
   IntegrationTestResult,
   MarketplaceStatus,
+  TrendyolProductSyncDebug,
   TrendyolOrderDebug,
   TrendyolIntegrationConfig,
 } from '../../types/cargoflow'
@@ -34,6 +35,7 @@ export interface FetchProductsResult {
   products: CargoProduct[]
   source: ApiDataSource
   message: string
+  debug?: TrendyolProductSyncDebug
 }
 
 export interface MarketplaceProvider {

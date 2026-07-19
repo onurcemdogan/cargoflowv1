@@ -793,9 +793,11 @@ export interface CargoProduct {
   id: string
   marketplace: MarketplaceName
   externalProductId?: string
+  externalVariantId?: string
   productContentId?: string
   productMainId?: string
   productCode?: string
+  variantAttributes?: OrderVariantAttribute[]
   productName: string
   sku: string
   stockCode?: string
@@ -998,7 +1000,84 @@ export interface WorkflowResult {
   level: AuditLevel
   source?: ApiDataSource
   debug?: TrendyolOrderDebug
+  productSyncDebug?: TrendyolProductSyncDebug
   bulkActionDebug?: BulkActionDebug
+}
+
+export type ProductCatalogSyncStatus = 'COMPLETE' | 'PARTIAL' | 'FAILED'
+
+export interface ProductSyncPageDebug {
+  page: number
+  requestedPageSize: number
+  responseItemCount: number
+  totalPages: number
+  totalElements: number
+  retryCount: number
+  httpStatus: number
+  rateLimitRemaining?: string
+}
+
+export interface ProductCatalogTargetTrace {
+  stage: string
+  query: string
+  found: boolean
+  recordCount: number
+  barcode?: string
+  productMainId?: string
+  productCode?: string
+  color?: string
+  size?: string
+  imageCandidates?: string[]
+}
+
+export interface TrendyolProductSyncDebug {
+  schemaVersion?: number
+  catalogRevision?: string
+  backendBuildRevision?: string
+  frontendBuildRevision?: string
+  revisionMismatch?: boolean
+  expectedTotal: number
+  fetchedCount: number
+  rawApiRecordsCount: number
+  normalizedProductsCount: number
+  afterDedupCount: number
+  afterMergeCount: number
+  persistedProductsCount: number
+  productsStoreCount: number
+  fetchedPages: number
+  expectedPages: number
+  failedPages: number[]
+  requestedPageSize: number
+  responsePageSize: number
+  uniqueBarcodeCount: number
+  uniqueProductContentIdCount: number
+  uniqueProductMainIdCount: number
+  uniqueExternalVariantIdCount: number
+  uniqueVariantCount: number
+  completenessRatio: number
+  status: ProductCatalogSyncStatus
+  pages?: ProductSyncPageDebug[]
+  targetTraces?: ProductCatalogTargetTrace[]
+  cachePreserved?: boolean
+  rejectionReason?: string
+  lastSuccessfulFullSyncAt?: string
+}
+
+export interface ProductCatalogCacheMetadata {
+  schemaVersion: number
+  catalogRevision: string
+  syncStatus: ProductCatalogSyncStatus
+  expectedTotal: number
+  actualCount: number
+  completenessRatio: number
+  lastSuccessfulFullSyncAt: string
+  backendBuildRevision?: string
+  frontendBuildRevision?: string
+}
+
+export interface ProductCatalogCacheEnvelope {
+  metadata: ProductCatalogCacheMetadata
+  products: CargoProduct[]
 }
 
 export interface BulkActionDebug {

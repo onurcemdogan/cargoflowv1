@@ -143,6 +143,159 @@ test('Trendyol sipariş senkronizasyonu tüm statü sayfalarını çekip parse e
   )
 })
 
+test('Ürün kataloğu tüm sayfaları çeker, orta sayfa 429 hatasını tekrarlar ve varyantları korur', async (t) => {
+  const pageAttempts = new Map()
+  const mockTrendyol = http.createServer((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${host}`)
+    if (!url.pathname.endsWith('/products')) {
+      response.writeHead(404, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ message: 'not found' }))
+      return
+    }
+    const page = Number(url.searchParams.get('page') ?? 0)
+    const attempt = (pageAttempts.get(page) ?? 0) + 1
+    pageAttempts.set(page, attempt)
+    if (page === 2 && attempt === 1) {
+      response.writeHead(429, {
+        'Content-Type': 'application/json',
+        'x-ratelimit-remaining': '0',
+      })
+      response.end(JSON.stringify({ message: 'rate limited' }))
+      return
+    }
+    response.writeHead(200, {
+      'Content-Type': 'application/json',
+      'x-ratelimit-remaining': String(100 - page),
+    })
+    response.end(
+      JSON.stringify({
+        content: buildProductPage(page, 200),
+        page,
+        size: 200,
+        totalPages: 5,
+        totalElements: 1000,
+      }),
+    )
+  })
+  const mockPort = await listen(mockTrendyol)
+  t.after(() => mockTrendyol.close())
+  const { apiPort, apiProcess } = await startApiWithTrendyolMock(mockPort)
+  t.after(() => apiProcess.kill())
+
+  const { status, body } = await postJsonWithStatus(
+    apiPort,
+    '/api/trendyol/products/fetch',
+    productFetchBody(),
+  )
+
+  assert.equal(status, 200)
+  assert.equal(body.ok, true)
+  assert.equal(body.products.length, 1000)
+  assert.equal(body.debug.status, 'COMPLETE')
+  assert.equal(body.debug.expectedTotal, 1000)
+  assert.equal(body.debug.rawApiRecordsCount, 1000)
+  assert.equal(body.debug.normalizedProductsCount, 1000)
+  assert.equal(body.debug.fetchedPages, 5)
+  assert.equal(body.debug.expectedPages, 5)
+  assert.deepEqual(body.debug.failedPages, [])
+  assert.equal(body.debug.pages.find((entry) => entry.page === 2).retryCount, 1)
+  assert.equal(pageAttempts.get(2), 2)
+  assert.equal(
+    body.products.filter((product) => product.barcode === 'SHARED-0').length,
+    10,
+    'Aynı barkodu taşıyan farklı platformListingId kayıtları normalize aşamasında kaybolmamalı.',
+  )
+})
+
+test('Kalıcı ara sayfa hatasında kısmi ürün kataloğu istemciye ve ana cache akışına verilmez', async (t) => {
+  const pageAttempts = new Map()
+  const mockTrendyol = http.createServer((request, response) => {
+    const url = new URL(request.url ?? '/', `http://${host}`)
+    const page = Number(url.searchParams.get('page') ?? 0)
+    pageAttempts.set(page, (pageAttempts.get(page) ?? 0) + 1)
+    if (page === 3) {
+      response.writeHead(503, { 'Content-Type': 'application/json' })
+      response.end(JSON.stringify({ message: 'temporary upstream error' }))
+      return
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json' })
+    response.end(
+      JSON.stringify({
+        content: buildProductPage(page, 200),
+        page,
+        size: 200,
+        totalPages: 5,
+        totalElements: 1000,
+      }),
+    )
+  })
+  const mockPort = await listen(mockTrendyol)
+  t.after(() => mockTrendyol.close())
+  const { apiPort, apiProcess } = await startApiWithTrendyolMock(mockPort)
+  t.after(() => apiProcess.kill())
+
+  const { status, body } = await postJsonWithStatus(
+    apiPort,
+    '/api/trendyol/products/fetch',
+    productFetchBody(),
+  )
+
+  assert.equal(status, 502)
+  assert.equal(body.ok, false)
+  assert.deepEqual(body.products, [])
+  assert.equal(body.debug.status, 'PARTIAL')
+  assert.equal(body.debug.rawApiRecordsCount, 800)
+  assert.deepEqual(body.debug.failedPages, [3])
+  assert.equal(body.debug.pages.find((entry) => entry.page === 3).retryCount, 2)
+  assert.equal(pageAttempts.get(3), 3)
+})
+
+function productFetchBody() {
+  return {
+    credentials: {
+      sellerId: 'SELLER-1',
+      apiKey: 'api-key',
+      apiSecret: 'api-secret',
+      environment: 'prod',
+    },
+  }
+}
+
+function buildProductPage(page, size) {
+  return Array.from({ length: size }, (_, index) => {
+    const absoluteIndex = page * size + index
+    return {
+      id: `content-${Math.floor(absoluteIndex / 5)}`,
+      platformListingId: `listing-${absoluteIndex}`,
+      productMainId: `main-${Math.floor(absoluteIndex / 20)}`,
+      productCode: `product-${absoluteIndex}`,
+      barcode: `SHARED-${absoluteIndex % 100}`,
+      merchantSku: `SKU-${absoluteIndex}`,
+      title: `Ürün ${absoluteIndex}`,
+      color: absoluteIndex % 2 === 0 ? 'Yeşil' : 'Bordo',
+      size: String(36 + (absoluteIndex % 4) * 2),
+      images: [{ url: `https://cdn.example.com/${absoluteIndex}.jpg` }],
+    }
+  })
+}
+
+async function startApiWithTrendyolMock(mockPort) {
+  const apiPort = await getFreePort()
+  const apiProcess = spawn(process.execPath, ['server/index.mjs'], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      CARGOFLOW_API_PORT: String(apiPort),
+      TRENDYOL_PROD_BASE_URL: `http://${host}:${mockPort}`,
+      TRENDYOL_STAGE_BASE_URL: `http://${host}:${mockPort}`,
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+  await waitForHealth(apiPort, apiProcess)
+  return { apiPort, apiProcess }
+}
+
 function buildPageContent(status, page) {
   if (status === 'UNFILTERED' && page === 0) {
     return [
@@ -255,4 +408,13 @@ async function postJson(port, path, body) {
     body: JSON.stringify(body),
   })
   return response.json()
+}
+
+async function postJsonWithStatus(port, path, body) {
+  const response = await fetch(`http://${host}:${port}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  return { status: response.status, body: await response.json() }
 }

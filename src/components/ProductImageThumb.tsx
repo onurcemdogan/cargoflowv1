@@ -34,7 +34,12 @@ export function ProductImageThumb({
   const src = candidates[candidateIndex]
   if (!src) {
     return (
-      <span className={placeholderClassName} title={placeholderText}>
+      <span
+        className={placeholderClassName}
+        title={placeholderText}
+        data-image-state="placeholder"
+        data-image-load-error="true"
+      >
         {placeholderText}
       </span>
     )
@@ -48,6 +53,9 @@ export function ProductImageThumb({
       loading="lazy"
       referrerPolicy="no-referrer"
       draggable={false}
+      data-image-state="loaded-candidate"
+      data-image-load-error="false"
+      data-image-candidate-index={candidateIndex}
       onError={() =>
         setImageState((state) => ({
           key: candidatesKey,

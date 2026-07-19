@@ -3,13 +3,25 @@ import { useMemo, useState } from 'react'
 import { ActionResult } from '../components/ActionResult'
 import { PageHeader } from '../components/PageHeader'
 import { ProductDetailDrawer } from '../components/ProductDetailDrawer'
-import type { CargoOrder, CargoProduct, WorkflowResult } from '../types/cargoflow'
+import type {
+  CargoOrder,
+  CargoProduct,
+  ProductCatalogCacheMetadata,
+  TrendyolProductSyncDebug,
+  WorkflowResult,
+} from '../types/cargoflow'
+import {
+  buildRevisionMismatch,
+  FRONTEND_BUILD_REVISION,
+} from '../utils/buildRevision'
 import { formatCurrency, formatDisplayDate } from '../utils/formatters'
 
 interface ProductsPageProps {
   products: CargoProduct[]
   orders: CargoOrder[]
   result?: WorkflowResult
+  debug?: TrendyolProductSyncDebug
+  metadata?: ProductCatalogCacheMetadata
   busy: boolean
   onFetchProducts: () => void
 }
@@ -18,6 +30,8 @@ export function ProductsPage({
   products,
   orders,
   result,
+  debug,
+  metadata,
   busy,
   onFetchProducts,
 }: ProductsPageProps) {
@@ -33,6 +47,12 @@ export function ProductsPage({
       ),
     )
   }, [activeProduct, orders])
+  const backendRevision =
+    debug?.backendBuildRevision ?? metadata?.backendBuildRevision
+  const revisionMismatch = buildRevisionMismatch(
+    FRONTEND_BUILD_REVISION,
+    backendRevision,
+  )
 
   return (
     <>
@@ -53,6 +73,56 @@ export function ProductsPage({
       />
 
       <ActionResult result={result} />
+
+      <section className="panel sync-overview" data-testid="product-catalog-status">
+        <div>
+          <span>Senkron durumu</span>
+          <b>{debug?.status ?? metadata?.syncStatus ?? 'CACHE YOK'}</b>
+        </div>
+        <div>
+          <span>API kayıtları</span>
+          <b>{debug?.rawApiRecordsCount ?? metadata?.expectedTotal ?? 0}</b>
+        </div>
+        <div>
+          <span>Normalize</span>
+          <b>{debug?.normalizedProductsCount ?? products.length}</b>
+        </div>
+        <div>
+          <span>Varyant tekilleştirme</span>
+          <b>{debug?.afterDedupCount ?? products.length}</b>
+        </div>
+        <div>
+          <span>Products store</span>
+          <b data-testid="products-store-count">
+            {debug?.productsStoreCount ?? products.length}
+          </b>
+        </div>
+        <div>
+          <span>Persist edilen</span>
+          <b>{debug?.persistedProductsCount ?? metadata?.actualCount ?? 0}</b>
+        </div>
+        <div>
+          <span>ProductsPageCount</span>
+          <b>{products.length}</b>
+        </div>
+        <div>
+          <span>Katalog revizyonu</span>
+          <b>{debug?.catalogRevision ?? metadata?.catalogRevision ?? '-'}</b>
+        </div>
+        <div>
+          <span>Frontend / API</span>
+          <b className={revisionMismatch ? 'debug-fail' : 'debug-ok'}>
+            {FRONTEND_BUILD_REVISION} / {backendRevision ?? '-'}
+          </b>
+        </div>
+      </section>
+
+      {revisionMismatch ? (
+        <div className="action-result warning">
+          Frontend ile API farklı commit revizyonunda çalışıyor. Her iki dev
+          serverı da yeniden başlatın.
+        </div>
+      ) : null}
 
       <section className="panel">
         <div className="table-shell">

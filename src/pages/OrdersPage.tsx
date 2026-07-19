@@ -509,6 +509,8 @@ export function OrdersPage({
           </code>
         </div>
         <div><span>persistentOrdersCount</span><code>{orders.length}</code></div>
+        <div><span>OrdersPageCatalogCount</span><code>{products.length}</code></div>
+        <div><span>catalogRevision</span><code>{products.length}</code></div>
         <div><span>latestSyncAt</span><code>{visibleOrdersResult.debug.latestSyncAt ? formatDisplayDate(visibleOrdersResult.debug.latestSyncAt) : '-'}</code></div>
         <div><span>latestSyncOrderCount</span><code>{visibleOrdersResult.debug.latestSyncCount}</code></div>
         <div><span>dashboardSummary.totalOrders</span><code>{orderSummary.totalOrders}</code></div>

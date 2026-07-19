@@ -36,7 +36,9 @@ import type {
   LabelTemplate,
   PageKey,
   PrinterSettings,
+  ProductCatalogCacheMetadata,
   SuratLabelMappingConfig,
+  TrendyolProductSyncDebug,
   WorkflowResult,
 } from './types/cargoflow'
 import { downloadTextFile } from './utils/download'
@@ -62,7 +64,8 @@ interface ProductsState {
   productsLoading: boolean
   productsMessage?: WorkflowResult
   productsError?: string
-  productsDebug?: WorkflowResult['debug']
+  productsDebug?: TrendyolProductSyncDebug
+  metadata?: ProductCatalogCacheMetadata
 }
 
 const integrationConfigService = new IntegrationConfigService()
@@ -145,7 +148,8 @@ function App() {
         workflowService.setMarketplaceAccount(
           hydrated.trendyol.sellerId,
         )
-        const cachedProducts = workflowService.loadProducts()
+        const cachedCatalog = await workflowService.hydrateProductCatalog()
+        const cachedProducts = cachedCatalog.products
         setIntegrationConfig(hydrated)
         setIntegrationConfigRevision((current) => current + 1)
         setSelectedIds([])
@@ -159,6 +163,7 @@ function App() {
         setProductsState({
           products: cachedProducts,
           productsLoading: false,
+          metadata: cachedCatalog.metadata,
         })
         setIntegrationHydrated(true)
       }
@@ -312,6 +317,8 @@ function App() {
               productResponse.result.level === 'error'
                 ? productResponse.result.message
                 : undefined,
+            productsDebug: productResponse.result.productSyncDebug,
+            metadata: workflowService.loadProductCatalog().metadata,
           }))
         } catch (imageError) {
           setProductsState((current) => ({
@@ -360,7 +367,8 @@ function App() {
         productsMessage: response.result,
         productsError:
           response.result.level === 'error' ? response.result.message : undefined,
-        productsDebug: response.result.debug,
+        productsDebug: response.result.productSyncDebug,
+        metadata: workflowService.loadProductCatalog().metadata,
       }))
       // Ürün cache'i değişti: lookup index yeni ürün dizisiyle otomatik
       // yeniden kurulur; çözülememiş görseller bayat matchedProductId=null
@@ -386,16 +394,32 @@ function App() {
     setIntegrationConfig(saved)
     if (accountChanged) {
       setSelectedIds([])
+      const emptyCatalog = workflowService.loadProductCatalog()
       setOrdersState({
         orders: workflowService.enrichOrderImages(
           workflowService.loadOrders(),
-          workflowService.loadProducts(),
+          emptyCatalog.products,
         ),
         ordersLoading: false,
       })
       setProductsState({
-        products: workflowService.loadProducts(),
+        products: emptyCatalog.products,
         productsLoading: false,
+        metadata: emptyCatalog.metadata,
+      })
+      void workflowService.hydrateProductCatalog().then((catalog) => {
+        setProductsState({
+          products: catalog.products,
+          productsLoading: false,
+          metadata: catalog.metadata,
+        })
+        setOrdersState((current) => ({
+          ...current,
+          orders: workflowService.enrichOrderImages(
+            current.orders,
+            catalog.products,
+          ),
+        }))
       })
     }
     return { saved, accountChanged }
@@ -843,6 +867,8 @@ function App() {
           products={products}
           orders={orders}
           result={productsState.productsMessage}
+          debug={productsState.productsDebug}
+          metadata={productsState.metadata}
           busy={productsState.productsLoading}
           onFetchProducts={() => handleFetchProducts()}
         />

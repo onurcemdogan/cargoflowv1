@@ -151,6 +151,7 @@ export class TrendyolProvider implements MarketplaceProvider {
           products: [],
           source: 'real',
           message: data.message ?? 'Trendyol ürün API isteği başarısız.',
+          debug: data.debug,
         }
       }
 
@@ -159,6 +160,7 @@ export class TrendyolProvider implements MarketplaceProvider {
           products: data.products,
           source: 'real',
           message: data.products.length > 0 ? data.message : 'Veri bulunamadı.',
+          debug: data.debug,
         }
       }
 
@@ -166,6 +168,7 @@ export class TrendyolProvider implements MarketplaceProvider {
         products: [],
         source: 'real',
         message: 'Trendyol yanıtında ürün verisi bulunamadı.',
+        debug: data.debug,
       }
     } catch (error) {
       appendTrendyolDebug({
