@@ -3779,3 +3779,221 @@ button:disabled {
     background: #ffffff !important;
   }
 }
+
+/* ---- Sipariş Detay paneli (yeniden yapılandırma, read-only) ---- */
+/* Mevcut .detail-drawer temelini bozmadan yalnız .order-drawer'a özel
+   düzen: sticky başlık + kontrollü iç scroll + görünür footer. */
+.order-drawer {
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  overflow: hidden;
+}
+
+.order-drawer-header {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: var(--surface);
+  padding: 18px 22px 14px;
+}
+
+.order-drawer-subtitle {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.order-drawer .drawer-tabs {
+  padding: 0 22px;
+}
+
+.order-drawer-content {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 22px;
+}
+
+.order-drawer-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  padding: 12px 22px;
+  margin: 0;
+}
+
+.order-summary-section {
+  padding-top: 0;
+}
+
+.order-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.summary-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 4px;
+  background: var(--surface);
+  min-width: 0;
+}
+
+.summary-card span {
+  color: var(--muted);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.summary-card strong {
+  font-size: 14px;
+  line-height: 1.3;
+  overflow-wrap: break-word;
+}
+
+.summary-card-ready strong { color: var(--primary); }
+.summary-card-done strong { color: #15803d; }
+.summary-card-waiting strong { color: #a16207; }
+.summary-card-error strong { color: #b91c1c; }
+
+.customer-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  align-items: start;
+}
+
+.customer-column { min-width: 0; }
+
+.address-label {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.invoice-address { margin-top: 10px; }
+
+.address-box span,
+.address-box strong {
+  overflow-wrap: break-word;
+}
+
+.drawer-desi-editor {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+
+.drawer-desi-editor input { max-width: 140px; }
+
+/* Kargo zaman çizelgesi */
+.surat-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.surat-timeline-step {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  padding: 0 0 18px 0;
+}
+
+.surat-timeline-step:last-child { padding-bottom: 0; }
+
+.surat-timeline-step::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 18px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+
+.surat-timeline-step:last-child::before { display: none; }
+
+.surat-timeline-dot {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  border-radius: 50%;
+  border: 2px solid var(--strong-border);
+  background: var(--surface);
+  z-index: 1;
+}
+
+.surat-timeline-completed .surat-timeline-dot {
+  background: #15803d;
+  border-color: #15803d;
+}
+
+.surat-timeline-active .surat-timeline-dot {
+  background: var(--surface);
+  border-color: #a16207;
+  box-shadow: 0 0 0 3px rgba(161, 98, 7, 0.18);
+}
+
+.surat-timeline-error .surat-timeline-dot {
+  background: #b91c1c;
+  border-color: #b91c1c;
+}
+
+.surat-timeline-copy { min-width: 0; display: grid; gap: 2px; }
+
+.surat-timeline-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.surat-timeline-head strong { font-size: 13.5px; }
+
+.surat-timeline-time {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.surat-timeline-description {
+  color: var(--muted);
+  font-size: 12.5px;
+  overflow-wrap: break-word;
+}
+
+.surat-timeline-error .surat-timeline-description { color: #b91c1c; }
+
+/* Teknik durum accordion */
+.technical-status > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.technical-status .detail-grid { margin-top: 10px; }
+
+/* Dar ekran */
+@media (max-width: 720px) {
+  .order-drawer { width: 100vw; }
+  .customer-columns { grid-template-columns: 1fr; }
+  .order-summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .order-drawer-footer { flex-wrap: wrap; }
+  .order-drawer-footer button { flex: 1 1 45%; }
+}
