@@ -280,6 +280,14 @@ export function OrderDetailDrawer({
                     kaydı tesellümden sonra doğrulanacaktır.
                   </div>
                 ) : null}
+                {printEligibility.canPrint &&
+                !printEligibility.canDownloadZpl ? (
+                  <div className="detail-warning" role="status">
+                    Bu eski kayıtta taşıyıcının ham ZPL verisi bulunamadı.
+                    Etiket canonical T.No/barkod/QR alanlarından HTML olarak
+                    yazdırılır; ZPL İndir bu kayıt için kapalıdır.
+                  </div>
+                ) : null}
                 {!printEligibility.awaitingAcceptance &&
                 order.shipment?.candidateVerificationStatus ===
                   'PENDING_VERIFICATION' ? (

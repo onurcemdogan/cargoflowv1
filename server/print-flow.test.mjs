@@ -143,9 +143,10 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   const marketplaceCodeResolution = resolvePrintableLabel(marketplaceCodeOrder)
   assert.equal(marketplaceCodeResolution.canPreview, false)
   assert.equal(marketplaceCodeResolution.canPrint, false)
+  // Kritik kod alanları eksik: canonical HTML fallback da devreye girmez.
   assert.throws(
     () => buildCleanLabelHtml([marketplaceCodeOrder], buildTemplate()),
-    /ZPL bulunamad/,
+    /T\.No\/barkod eksik/,
   )
 
   // Test 2: Önizleme label üretir ama sipariş state'ini değiştirmez.
@@ -425,10 +426,16 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   assert.equal(missingRawResolution.canPreview, true)
   assert.equal(missingRawResolution.canPrint, true)
   assert.equal(missingRawResolution.debug.hasBarcodeRaw, false)
-  // Yeni politika: geçerli ZPL olmadan hiçbir etiket print dokümanına girmez.
-  assert.throws(
-    () => buildCleanLabelHtml([missingRawOrder], buildTemplate()),
-    /ZPL bulunamad/,
+  // Yeni politika: legacy kayıtta raw ZPL yoksa etiket canonical
+  // T.No/barkod/QR alanlarından HTML olarak yazdırılır (create çağrısı yok);
+  // ZPL indirme ise yalnız gerçek ZPL varken açık kalır.
+  const missingRawHtml = buildCleanLabelHtml(
+    [missingRawOrder],
+    buildTemplate(),
+  )
+  assert.equal(
+    (missingRawHtml.match(/class="label-page"/g) ?? []).length,
+    1,
   )
 
   // Selected row shipment taşımıyorsa canonical order state kullanılır.
@@ -724,11 +731,18 @@ test('Toplu yazdırma tek dokümanda doğru alan eşlemesiyle çalışır', asyn
   assert.match(zplDownload.content, /\^XZ/)
   assert.equal(zplDownload.fileName, 'surat-ORDER-MAP1-01249974986.zpl')
   assert.equal(printCalls, printCallsBeforeDownload)
-  // Uygun ZPL yoksa indirme null döner (dosya oluşmaz).
+  // Legacy kayıt (raw ZPL yok): .zpl dosyası OLUŞMAZ ve neden açıkça
+  // raporlanır; Etiketi Yazdır ise canonical HTML fallback ile çalışır.
   const emptyZplDownload = buildSuratZplDownload([
     preassignedOrder('D1', stripZpl(buildShipment('D1'))),
   ])
-  assert.equal(emptyZplDownload, null)
+  assert.ok(emptyZplDownload)
+  assert.equal(emptyZplDownload.content, '')
+  assert.equal(emptyZplDownload.models.length, 0)
+  assert.match(
+    emptyZplDownload.skipped[0].reason,
+    /ham ZPL verisi bulunamadı/,
+  )
 
   // Üç uygun sipariş: tek print çağrısı, üç sayfa, kod sızması yok.
   printCalls = 0
@@ -784,16 +798,34 @@ test('Toplu yazdırma tek dokümanda doğru alan eşlemesiyle çalışır', asyn
     buildTemplate(),
   )
   assert.equal(printCalls, 1)
-  assert.equal(mixedResult.models.length, 2)
-  assert.equal(mixedResult.skipped.length, 2)
+  // ZPL'siz ('23') sipariş artık canonical HTML fallback ile BASILIR;
+  // yalnız kritik kodları eksik olan ('24') atlanır.
+  assert.equal(mixedResult.models.length, 3)
+  assert.equal(mixedResult.skipped.length, 1)
+  assert.equal(
+    mixedResult.models.find((model) => model.orderNumber === 'ORDER-23')
+      ?.printSource,
+    'canonical_html',
+  )
   assert.ok(
     mixedResult.skipped.every((item) => item.orderNumber && item.reason),
   )
 
-  // Hiç uygun sipariş yoksa print çağrılmaz.
+  // Hiç uygun sipariş yoksa (kritik kodlar eksik) print çağrılmaz.
   printCalls = 0
   const emptyResult = await printSuratLabels(
-    [preassignedOrder('31', stripZpl(buildShipment('31')))],
+    [
+      preassignedOrder('31', {
+        ...stripZpl(buildShipment('31')),
+        barcode: '',
+        barkodNo: '',
+        finalSuratBarcode: '',
+        barcodeValue: '',
+        candidateBarkodNo: '',
+        rawResponse: {},
+        suratCreateLog: undefined,
+      }),
+    ],
     buildTemplate(),
   )
   assert.equal(printCalls, 0)
@@ -816,14 +848,15 @@ test('Toplu yazdırma tek dokümanda doğru alan eşlemesiyle çalışır', asyn
     1,
   )
 
-  // buildCleanLabelHtml de aynı seçimi kullanır (tek politika).
-  assert.throws(
-    () =>
-      buildCleanLabelHtml(
-        [preassignedOrder('51', stripZpl(buildShipment('51')))],
-        buildTemplate(),
-      ),
-    /ZPL bulunamad/,
+  // buildCleanLabelHtml de aynı seçimi kullanır (tek politika): legacy
+  // ZPL'siz preassigned kayıt canonical HTML fallback ile TEK sayfa üretir.
+  const strippedCanonicalHtml = buildCleanLabelHtml(
+    [preassignedOrder('51', stripZpl(buildShipment('51')))],
+    buildTemplate(),
+  )
+  assert.equal(
+    (strippedCanonicalHtml.match(/class="label-page"/g) ?? []).length,
+    1,
   )
 
   // Regresyon (11424170556): 016 yanıtında üst seviye Barcode alanlarına

@@ -252,6 +252,95 @@ test('Çoklu ürünlü sipariş yazdırılabilir model ve etiket üretir', async
   assert.ok(multiHtml.includes('Renk: Bordo | Beden: 38'))
   assert.equal((multiHtml.match(/<article class="label-page">/g) ?? []).length, 1)
 
+  // Legacy kayıt (11425963017 birebir): raw ZPL yok, canonical alanlar tam.
+  // canPrint=true (canonical_html), canDownloadZpl=false, ZPL indirme
+  // açıklamalı düşer; kritik alan eksikse baskı açık nedenle engellenir.
+  const { resolveSuratPrintSource, LEGACY_ZPL_MISSING_MESSAGE } =
+    await vite.ssrLoadModule('/src/utils/suratPrintEligibility.ts')
+  const { buildSuratZplDownload } = await vite.ssrLoadModule(
+    '/src/utils/browserLabelPrint.ts',
+  )
+  const legacyOrder = buildPrintableOrder({
+    id: 'order-legacy',
+    orderNumber: '11425963017',
+    items: multiItems.map((item) => ({ ...item })),
+    shipment: {
+      trackingNumber: '11722641149218',
+      tNo: '11722641149218',
+      kargoTakipNo: '11722641149218',
+      barcodeValue: '01250312435',
+      barkodNo: '01250312435',
+      barcode: '01250312435',
+      finalSuratBarcode: '01250312435',
+      candidateTNo: '11722641149218',
+      candidateBarkodNo: '01250312435',
+      ozelKargoTakipNo: '7270034562631323',
+      barcodeRaw: '',
+      zplAnalysis: undefined,
+      zplSource: 'generated',
+    },
+  })
+  legacyOrder.desi = 4
+  legacyOrder.cargoTrackingNumber = '7270034562631323'
+  const legacySource = resolveSuratPrintSource(legacyOrder)
+  assert.equal(legacySource.source, 'canonical_html')
+  assert.equal(legacySource.canPrint, true)
+  assert.equal(legacySource.canDownloadZpl, false)
+  assert.match(legacySource.reason, /ham ZPL verisi bulunamadı/)
+  const legacyModel = buildSuratPrintPageModel(legacyOrder)
+  assert.equal(legacyModel.reason, undefined)
+  assert.equal(legacyModel.model.printSource, 'canonical_html')
+  // Kritik kodlar birbirinin yerine geçmez.
+  assert.equal(legacyModel.model.trackingNumber, '11722641149218')
+  assert.equal(legacyModel.model.barcodeNumber, '01250312435')
+  assert.equal(legacyModel.model.ozelKargoTakipNo, '7270034562631323')
+  assert.equal(legacyModel.model.zpl, '')
+  assert.equal(legacyModel.model.contentLines.length, 2)
+  const legacySelection = resolveSuratPrintableSelection([legacyOrder])
+  assert.equal(legacySelection.printable.length, 1)
+  const legacyDownload = buildSuratZplDownload([legacyOrder])
+  assert.equal(legacyDownload.content, '')
+  assert.equal(legacyDownload.models.length, 0)
+  assert.equal(legacyDownload.skipped[0].reason, LEGACY_ZPL_MISSING_MESSAGE)
+  // Renderer canonical alanlardan iki ürün satırıyla tek sayfa basar.
+  const legacyHtml = renderPrintableLabelHtml(
+    buildLabelData({
+      desi: 4,
+      trackingNumber: '11722641149218',
+      tNo: '11722641149218',
+      barcodeValue: '01250312435',
+      qrPayload: '7270034562631323',
+      items: multiItems.map((item) => ({ ...item })),
+      totalQuantity: 2,
+    }),
+  )
+  assert.ok(legacyHtml.includes('data-barcode-value="01250312435"'))
+  assert.ok(legacyHtml.includes('data-qr-value="7270034562631323"'))
+  assert.ok(legacyHtml.includes('11722641149218'))
+  assert.equal((legacyHtml.match(/<article class="label-page">/g) ?? []).length, 1)
+  assert.ok(legacyHtml.includes('surat-product-multi'))
+
+  // Kritik alan (adres) eksikse baskı engellenir ve neden açıktır.
+  const incompleteLegacy = buildPrintableOrder({
+    id: 'order-legacy-missing',
+    orderNumber: 'LEGACY-MISSING',
+    items: multiItems.map((item) => ({ ...item })),
+    shipment: { barcodeRaw: '', zplAnalysis: undefined },
+  })
+  incompleteLegacy.address = ''
+  const incompleteSource = resolveSuratPrintSource(incompleteLegacy)
+  assert.equal(incompleteSource.source, 'unavailable')
+  assert.equal(incompleteSource.canPrint, false)
+  assert.match(incompleteSource.reason, /kritik alanlar eksik/)
+  assert.ok(incompleteSource.missingFields.includes('açık adres'))
+
+  // Görsel eksikliği baskıyı ENGELLEMEZ: satırlarda görsel yokken de
+  // canonical model üretilebilir (legacyOrder satırları görselsizdi).
+  assert.equal(
+    (legacyOrder.items ?? []).every((item) => !item.productImageUrl),
+    true,
+  )
+
   // D) Uzun ürün adları: renderer throw etmez, tek sayfa kalır.
   const longName =
     'Çok Uzun Ürün Adı ' + 'Saten Detaylı Şifon Astarlı Tesettür Abiye '.repeat(6)

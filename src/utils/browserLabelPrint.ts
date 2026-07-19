@@ -6,7 +6,10 @@ import type {
   SuratLabelMappingConfig,
 } from '../types/cargoflow'
 import { buildLabelData, type LabelData } from './labelData'
-import { resolveSuratPrintEligibility } from './suratPrintEligibility'
+import {
+  LEGACY_ZPL_MISSING_MESSAGE,
+  resolveSuratPrintEligibility,
+} from './suratPrintEligibility'
 import { formatDesi } from './desi'
 
 // Her etiket sayfası kendi bağımsız (immutable) modelini kullanır; bir
@@ -35,6 +38,9 @@ export interface SuratPrintPageModel {
   items?: SuratPrintItemLine[]
   totalQuantity?: number
   contentLines?: string[]
+  // carrier_zpl: taşıyıcının gerçek ZPL'i var; canonical_html: legacy kayıt,
+  // etiket canonical alanlardan HTML olarak basılır (ZPL İndir kapalı).
+  printSource?: 'carrier_zpl' | 'canonical_html'
 }
 
 export interface SuratPrintSkip {
@@ -163,6 +169,10 @@ export function buildSuratPrintPageModel(order: CargoOrder): {
       address: String(order.address ?? ''),
       desi: order.desi ?? null,
       packageCount: order.packageCount ?? 1,
+      printSource:
+        eligibility.source === 'canonical_html'
+          ? 'canonical_html'
+          : 'carrier_zpl',
       ...multiItemFields,
     },
   }
@@ -220,18 +230,32 @@ export function buildSuratZplDownload(
   orders: CargoOrder[],
 ): SuratZplDownload | null {
   const selection = resolveSuratPrintableSelection(orders)
-  if (selection.printable.length === 0) {
-    return null
+  // ZPL dosyasına yalnız taşıyıcının GERÇEK ZPL'i girer. canonical_html
+  // kaynaklı (legacy, ZPL'siz) etiketler yazdırılabilir olsa da indirme
+  // listesinden açıklamayla düşer.
+  const zplModels = selection.printable
+    .map((item) => item.model)
+    .filter((model) => model.zpl.trim().length > 0)
+  const legacySkipped = selection.printable
+    .filter((item) => !item.model.zpl.trim())
+    .map((item) => ({
+      orderNumber: item.model.orderNumber,
+      reason: LEGACY_ZPL_MISSING_MESSAGE,
+    }))
+  const skipped = [...selection.skipped, ...legacySkipped]
+  if (zplModels.length === 0) {
+    return zplModels.length === 0 && skipped.length > 0
+      ? { fileName: '', content: '', models: [], skipped }
+      : null
   }
-  const models = selection.printable.map((item) => item.model)
-  const content = models.map((model) => model.zpl).join('\n')
+  const content = zplModels.map((model) => model.zpl).join('\n')
   const fileName =
-    models.length === 1
-      ? `surat-${sanitizeFilePart(models[0].orderNumber)}-${sanitizeFilePart(
-          models[0].barcodeNumber,
+    zplModels.length === 1
+      ? `surat-${sanitizeFilePart(zplModels[0].orderNumber)}-${sanitizeFilePart(
+          zplModels[0].barcodeNumber,
         )}.zpl`
-      : `surat-toplu-${models.length}.zpl`
-  return { fileName, content, models, skipped: selection.skipped }
+      : `surat-toplu-${zplModels.length}.zpl`
+  return { fileName, content, models: zplModels, skipped }
 }
 
 function sanitizeFilePart(value: string): string {
