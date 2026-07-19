@@ -44,6 +44,22 @@ test('UTC raporlama günü: sınırlar, TZ bağımsızlığı ve satış/operasy
     true,
   )
 
+  // GÜN ÇAPASI İSTANBUL TAKVİMİ: TSİ 20.07 00:07 (= UTC 19.07 21:07)
+  // anında "Bugün" 20.07'dir; verisi 20.07 UTC bucket'ından okunur.
+  const midnight = new Date('2026-07-19T21:07:35.000Z')
+  const midnightToday = resolveReportingRange('today', midnight, 'UTC')
+  const midnightYesterday = resolveReportingRange('yesterday', midnight, 'UTC')
+  assert.equal(midnightToday.start.toISOString(), '2026-07-20T00:00:00.000Z')
+  assert.equal(midnightToday.end.toISOString(), '2026-07-20T23:59:59.999Z')
+  assert.equal(
+    midnightYesterday.start.toISOString(),
+    '2026-07-19T00:00:00.000Z',
+  )
+  assert.equal(
+    midnightYesterday.end.toISOString(),
+    '2026-07-19T23:59:59.999Z',
+  )
+
   // Europe/Istanbul modu (ileride kullanım için) test edilebilir durumda.
   const istToday = resolveReportingRange('today', now, 'Europe/Istanbul')
   assert.equal(istToday.start.toISOString(), '2026-07-18T21:00:00.000Z')
@@ -81,6 +97,7 @@ test('UTC raporlama günü: sınırlar, TZ bağımsızlığı ve satış/operasy
     assert.equal(parsed.todayStart, '2026-07-19T00:00:00.000Z', tz)
     assert.equal(parsed.yesterdayStart, '2026-07-18T00:00:00.000Z', tz)
     assert.equal(parsed.istTodayStart, '2026-07-18T21:00:00.000Z', tz)
+    assert.equal(parsed.midnightTodayStart, '2026-07-20T00:00:00.000Z', tz)
   }
 
   // D/E benzeri sınıflandırma (sipariş bazlı; tutarlar sabitlenmeden):

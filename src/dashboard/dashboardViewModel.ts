@@ -681,17 +681,22 @@ function resolveSalesCardComparisonRange(
   )
 }
 
+// Kart tarih etiketi UTC bucket tarihinden okunur (İstanbul çapası gereği
+// anchor tarihine eşittir); makine TZ'sinden bağımsızdır.
 function salesPeriodDateLabel(
   key: DashboardSalesPeriodKey,
   period: DashboardDateRange,
 ): string {
   if (key === 'today' || key === 'yesterday') {
-    return period.start.toLocaleDateString('tr-TR')
+    return new Intl.DateTimeFormat('tr-TR', { timeZone: 'UTC' }).format(
+      period.start,
+    )
   }
-  const label = period.start.toLocaleDateString('tr-TR', {
+  const label = new Intl.DateTimeFormat('tr-TR', {
     month: 'long',
     year: 'numeric',
-  })
+    timeZone: 'UTC',
+  }).format(period.start)
   return label.charAt(0).toLocaleUpperCase('tr-TR') + label.slice(1)
 }
 

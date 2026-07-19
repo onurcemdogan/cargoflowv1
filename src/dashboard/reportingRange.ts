@@ -86,13 +86,20 @@ function parseCustomDate(
   }
 }
 
+// "Bugün hangi TARİH?" seçimi (anchor) HER ZAMAN Europe/Istanbul
+// takvimine göre yapılır — kullanıcı gece 00:00 TSİ'de yeni günü görür.
+// Seçilen tarihin VERİ bucket'ı ise reportingTimeZone sınırlarıyla
+// (varsayılan UTC, Durusoft mutabakatı) hesaplanır. Bu ayrım olmadan
+// TSİ 00:00-03:00 arasında kartlar bir gün geride etiketleniyordu.
+const REPORT_DAY_ANCHOR_TIME_ZONE: ReportingTimeZone = 'Europe/Istanbul'
+
 export function resolveReportingRange(
   periodKey: ReportingPeriodKey,
   now: Date,
   reportingTimeZone: ReportingTimeZone,
   custom?: ReportingCustomRange,
 ): ReportingRange {
-  const today = zoneDayParts(now, reportingTimeZone)
+  const today = zoneDayParts(now, REPORT_DAY_ANCHOR_TIME_ZONE)
   const dayStart = (year: number, month: number, day: number) =>
     zonedDayStart(year, month, day, reportingTimeZone)
   const todayStart = dayStart(today.year, today.month, today.day)
@@ -150,7 +157,7 @@ export function resolveReportingComparisonRange(
   now: Date,
   reportingTimeZone: ReportingTimeZone,
 ): ReportingRange {
-  const today = zoneDayParts(now, reportingTimeZone)
+  const today = zoneDayParts(now, REPORT_DAY_ANCHOR_TIME_ZONE)
   const dayStart = (year: number, month: number, day: number) =>
     zonedDayStart(year, month, day, reportingTimeZone)
 
