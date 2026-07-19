@@ -3,21 +3,14 @@ import {
   ArrowDownRight,
   ArrowRight,
   ArrowUpRight,
-  Barcode,
   CalendarDays,
-  ClipboardList,
   Download,
   Eye,
-  ListTree,
   MapPin,
   Minus,
-  PackageCheck,
   Printer,
   RefreshCcw,
-  RotateCcw,
-  ShoppingBag,
   Store,
-  Truck,
   XCircle,
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
@@ -30,9 +23,9 @@ import {
   type DashboardComparison,
   type DashboardDateRange,
   type DashboardDistributionRow,
-  type DashboardMetric,
   type DashboardPeriodKey,
   type DashboardPeriodSelection,
+  type DashboardSalesPeriodCard,
   type DashboardTimeBucket,
 } from '../dashboard/dashboardViewModel'
 import type {
@@ -348,67 +341,18 @@ export function DashboardPage({
         </section>
       ) : null}
 
-      <section className="dashboard-period-summary" aria-label="Dönemsel karşılaştırma">
-        <div className="dashboard-summary-title">
-          <span>Dönemsel Karşılaştırma</span>
-          <small>{viewModel.period.helper}</small>
+      <section className="dashboard-section-heading" aria-labelledby="sales-analytics-title">
+        <div>
+          <span>Satış Analitiği</span>
+          <h2 id="sales-analytics-title">Dönemsel satış özeti</h2>
         </div>
-        <DashboardMetricCard
-          label="Satış Tutarı"
-          metric={viewModel.salesSummary.salesAmount}
-          icon={<ShoppingBag />}
-          format="currency"
-          tone="blue"
-        />
-        <DashboardMetricCard
-          label="Sipariş Adedi"
-          metric={viewModel.salesSummary.orderCount}
-          icon={<Barcode />}
-          tone="amber"
-          onClick={() => navigateOrders('all', periodFilters)}
-        />
-        <DashboardMetricCard
-          label="Kalem Adedi"
-          metric={viewModel.salesSummary.lineCount}
-          icon={<ListTree />}
-          tone="violet"
-        />
-        <DashboardMetricCard
-          label="Ürün Adedi"
-          metric={viewModel.salesSummary.productCount}
-          icon={<PackageCheck />}
-          tone="teal"
-        />
-        <DashboardMetricCard
-          label="İade Tutarı"
-          metric={viewModel.salesSummary.returnAmount}
-          icon={<AlertTriangle />}
-          format="currency"
-          tone="red"
-        />
-        <DashboardMetricCard
-          label="İade Adedi"
-          metric={viewModel.salesSummary.returnCount}
-          icon={<RotateCcw />}
-          tone="red"
-          onClick={() => navigateOrders('cancelReturn', periodFilters)}
-        />
-        <DashboardSnapshotCard
-          label="Açık Operasyon"
-          value={viewModel.operationalSummary.openOperations}
-          helper="Anlık tamamlanmamış işler"
-          icon={<ClipboardList />}
-          tone="blue"
-          onClick={() => navigateOrders('open')}
-        />
-        <DashboardSnapshotCard
-          label="Kargoya Verilen"
-          value={viewModel.operationalSummary.handedToCargo}
-          helper={`${viewModel.period.label} içinde`}
-          icon={<Truck />}
-          tone="blue"
-          onClick={() => navigateOrders('handedToCargo', periodFilters)}
-        />
+        <p>Satış metrikleri yalnız sipariş, paket ve ürün satırı verilerinden hesaplanır.</p>
+      </section>
+
+      <section className="dashboard-sales-period-cards" aria-label="Dönemsel satış kartları">
+        {viewModel.salesPeriodCards.map((card) => (
+          <SalesPeriodCard key={card.key} card={card} />
+        ))}
       </section>
 
       <section className="dashboard-analytics-grid dashboard-analytics-row-main">
@@ -454,6 +398,62 @@ export function DashboardPage({
             }
           />
         </article>
+      </section>
+
+      <section className="dashboard-analytics-grid dashboard-sales-products-row">
+        <article className="dashboard-analytics-card dashboard-top-products-card">
+          <DashboardCardHeader
+            title="En Çok Satan Ürünler"
+            helper={`${viewModel.period.label} · İlk 10 ürün`}
+          />
+          {viewModel.topProducts.length > 0 ? (
+            <div className="dashboard-table-wrap">
+              <table className="dashboard-compact-table dashboard-top-products-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Ürün</th>
+                    <th>Satılan Adet</th>
+                    <th>Toplam Ciro</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewModel.topProducts.map((product, index) => (
+                    <tr key={product.key}>
+                      <td>{index + 1}</td>
+                      <td>
+                        <div className="dashboard-product-cell-new">
+                          <ProductImageThumb
+                            candidates={product.imageCandidates}
+                            alt={product.productName}
+                            className="dashboard-mini-product-image"
+                            placeholderClassName="dashboard-mini-product-placeholder"
+                          />
+                          <span>
+                            <strong>{product.productName}</strong>
+                            <small>{product.barcode || product.sku || 'Kod yok'}</small>
+                          </span>
+                        </div>
+                      </td>
+                      <td><strong>{product.quantity}</strong></td>
+                      <td>{formatCurrency(product.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="dashboard-empty-card">Bu dönem için ürün satışı bulunamadı.</div>
+          )}
+        </article>
+      </section>
+
+      <section className="dashboard-section-heading dashboard-operation-heading" aria-labelledby="operation-analytics-title">
+        <div>
+          <span>Operasyon Analitiği</span>
+          <h2 id="operation-analytics-title">Kargo operasyon görünümü</h2>
+        </div>
+        <p>Mevcut CargoFlow operasyon sınıflandırması ve işlem bekleyen kayıtlar korunur.</p>
       </section>
 
       <section className="dashboard-analytics-grid dashboard-analytics-row-ops">
@@ -543,7 +543,7 @@ export function DashboardPage({
             ))}
             {viewModel.pickingLists.products.length === 0 ? (
               <div className="dashboard-empty-compact">
-                Bu dönem için toplanacak ürün bulunamadı.
+                Açık operasyonlarda toplanacak ürün bulunamadı.
               </div>
             ) : null}
           </div>
@@ -551,60 +551,14 @@ export function DashboardPage({
       </section>
 
       <section className="dashboard-analytics-grid dashboard-analytics-row-bottom">
-        <article className="dashboard-analytics-card dashboard-top-products-card">
-          <DashboardCardHeader
-            title="En Çok Satan Ürünler"
-            helper={viewModel.period.label}
-          />
-          {viewModel.topProducts.length > 0 ? (
-            <div className="dashboard-table-wrap">
-              <table className="dashboard-compact-table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Ürün</th>
-                    <th>Satış</th>
-                    <th>Ciro</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {viewModel.topProducts.map((product, index) => (
-                    <tr key={product.key}>
-                      <td>{index + 1}</td>
-                      <td>
-                        <div className="dashboard-product-cell-new">
-                          <ProductImageThumb
-                            candidates={product.imageCandidates}
-                            alt={product.productName}
-                            className="dashboard-mini-product-image"
-                            placeholderClassName="dashboard-mini-product-placeholder"
-                          />
-                          <span>
-                            <strong>{product.productName}</strong>
-                            <small>{product.barcode || product.sku || 'Kod yok'}</small>
-                          </span>
-                        </div>
-                      </td>
-                      <td><strong>{product.quantity}</strong></td>
-                      <td>{formatCurrency(product.revenue)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="dashboard-empty-card">Bu dönem için ürün satışı bulunamadı.</div>
-          )}
-        </article>
-
         <article className="dashboard-analytics-card dashboard-recent-ops-card">
           <DashboardCardHeader
-            title="Güncel Operasyon Kayıtları"
+            title="Son Operasyonlar"
             action={
               <button
                 type="button"
                 className="dashboard-card-link"
-                onClick={() => navigateOrders('all', periodFilters)}
+                onClick={() => navigateOrders('all')}
               >
                 Tümünü gör <ArrowRight size={14} />
               </button>
@@ -688,7 +642,7 @@ export function DashboardPage({
               </table>
             </div>
           ) : (
-            <div className="dashboard-empty-card">Bu dönem için operasyon kaydı bulunamadı.</div>
+            <div className="dashboard-empty-card">Henüz operasyon kaydı bulunamadı.</div>
           )}
         </article>
       </section>
@@ -718,94 +672,65 @@ export function DashboardPage({
   )
 }
 
-function DashboardMetricCard({
-  label,
-  metric,
-  icon,
-  tone,
-  format = 'number',
-  onClick,
-}: {
-  label: string
-  metric: DashboardMetric
-  icon: ReactNode
-  tone: string
-  format?: 'number' | 'currency'
-  onClick?: () => void
-}) {
+function SalesPeriodCard({ card }: { card: DashboardSalesPeriodCard }) {
+  const trend = salesTrend(card.comparison)
   return (
-    <MetricCardShell label={label} tone={tone} icon={icon} onClick={onClick}>
-      <strong>{metric.available ? formatMetric(metric.value, format) : 'Veri yok'}</strong>
-      {metric.available ? (
-        <ComparisonBadge comparison={metric.comparison} format={format} />
-      ) : (
-        <small>Parasal alan eksik</small>
-      )}
-    </MetricCardShell>
+    <article className={`dashboard-sales-period-card period-${card.key}`}>
+      <header>
+        <span>
+          <strong>{card.label}</strong>
+          <small>{card.dateLabel}</small>
+        </span>
+        <span className={`dashboard-sales-trend ${card.comparison.direction}`}>
+          {trend.label} {trend.icon}
+        </span>
+      </header>
+      <div className="dashboard-sales-period-primary">
+        <div className="sales-net">
+          <small>Satış (Net)</small>
+          <strong>
+            {card.salesAmountAvailable ? formatCurrency(card.salesAmount) : 'Veri yok'}
+          </strong>
+        </div>
+        <div className="return-net">
+          <small>İade / İptal (Net)</small>
+          <strong>
+            {card.returnCancellationAmountAvailable
+              ? formatCurrency(card.returnCancellationAmount)
+              : 'Veri yok'}
+          </strong>
+        </div>
+      </div>
+      <div className="dashboard-sales-period-details">
+        <SalesPeriodValue label="Paket (Net)" value={formatNumber(card.packageCount)} />
+        <SalesPeriodValue label="Kalem (Net)" value={formatNumber(card.lineCount)} />
+        <SalesPeriodValue label="Ürün (Net)" value={formatNumber(card.productCount)} />
+        <SalesPeriodValue label="Paket Ort." value={formatNumber(card.packageAverage)} tone="blue" />
+        <SalesPeriodValue label="İade Paket" value={formatNumber(card.returnPackageCount)} tone="red" />
+        <SalesPeriodValue label="İptal Paket" value={formatNumber(card.cancelPackageCount)} tone="red" />
+      </div>
+    </article>
   )
 }
 
-function DashboardSnapshotCard({
+function SalesPeriodValue({
   label,
   value,
-  helper,
-  icon,
-  tone,
-  onClick,
+  tone = 'neutral',
 }: {
   label: string
-  value: number
-  helper: string
-  icon: ReactNode
-  tone: string
-  onClick: () => void
+  value: string
+  tone?: 'neutral' | 'blue' | 'red'
 }) {
   return (
-    <MetricCardShell label={label} tone={tone} icon={icon} onClick={onClick}>
-      <strong>{formatNumber(value)}</strong>
-      <small>{helper}</small>
-    </MetricCardShell>
+    <div className={`tone-${tone}`}>
+      <small>{label}</small>
+      <strong>{value}</strong>
+    </div>
   )
 }
 
-function MetricCardShell({
-  label,
-  tone,
-  icon,
-  onClick,
-  children,
-}: {
-  label: string
-  tone: string
-  icon: ReactNode
-  onClick?: () => void
-  children: ReactNode
-}) {
-  const content = (
-    <>
-      <div className="dashboard-metric-card-head">
-        <span>{label}</span>
-        <i className={`tone-${tone}`}>{icon}</i>
-      </div>
-      {children}
-    </>
-  )
-  return onClick ? (
-    <button type="button" className="dashboard-metric-card clickable" onClick={onClick}>
-      {content}
-    </button>
-  ) : (
-    <div className="dashboard-metric-card">{content}</div>
-  )
-}
-
-function ComparisonBadge({
-  comparison,
-  format,
-}: {
-  comparison: DashboardComparison
-  format: 'number' | 'currency'
-}) {
+function salesTrend(comparison: DashboardComparison) {
   const icon =
     comparison.direction === 'up' ? (
       <ArrowUpRight size={13} />
@@ -819,12 +744,7 @@ function ComparisonBadge({
     : `${comparison.percentageChange >= 0 ? '+' : ''}${comparison.percentageChange.toLocaleString('tr-TR', {
         maximumFractionDigits: 1,
       })}%`
-  return (
-    <small className={`dashboard-comparison ${comparison.direction}`}>
-      Önceki: {formatMetric(comparison.previous, format)}
-      <span>{label} {icon}</span>
-    </small>
-  )
+  return { icon, label }
 }
 
 function DashboardCardHeader({
@@ -981,15 +901,12 @@ function navigationFiltersForPeriod(period: DashboardDateRange): OrdersNavigatio
   }
 }
 
-function formatMetric(value: number, format: 'number' | 'currency'): string {
-  return format === 'currency' ? formatCurrency(value) : formatNumber(value)
-}
-
 function formatCurrency(value: number): string {
   return new Intl.NumberFormat('tr-TR', {
     style: 'currency',
     currency: 'TRY',
-    maximumFractionDigits: 0,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(value)
 }
 

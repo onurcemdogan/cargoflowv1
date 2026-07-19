@@ -273,6 +273,109 @@ test('dashboard lifecycle and action filters match Orders results', async (t) =>
   }
 })
 
+test('dashboard satış dönemleri Bugün, Dün, 7 Gün, 30 Gün, Bu Ay ve Geçen Ay için doğru hesaplanır', async (t) => {
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+  })
+  t.after(() => vite.close())
+  const { buildDashboardViewModel } = await vite.ssrLoadModule(
+    '/src/dashboard/dashboardViewModel.ts',
+  )
+  const now = new Date('2026-07-19T12:00:00')
+  const orders = [
+    order('today-sale', '2026-07-19T10:00:00', {
+      totalAmount: 100,
+      operationStatus: 'ERROR',
+      items: [item('TODAY-A', 2, 30), item('TODAY-B', 1, 40)],
+    }),
+    order('yesterday-sale', '2026-07-18T10:00:00', { totalAmount: 200 }),
+    order('week-sale', '2026-07-14T10:00:00', { totalAmount: 300 }),
+    order('month-return', '2026-07-10T10:00:00', {
+      marketplaceStatus: 'Returned',
+      operationStatus: 'ERROR',
+      totalAmount: 50,
+    }),
+    order('month-cancel', '2026-07-11T10:00:00', {
+      marketplaceStatus: 'Cancelled',
+      operationStatus: 'NEW',
+      totalAmount: 25,
+    }),
+    order('thirty-day-sale', '2026-06-25T10:00:00', { totalAmount: 400 }),
+    order('last-month-sale', '2026-06-10T10:00:00', { totalAmount: 500 }),
+    order('older-sale', '2026-05-15T10:00:00', { totalAmount: 600 }),
+  ]
+
+  const today = buildDashboardViewModel({
+    orders,
+    selectedPeriod: { key: 'today' },
+    now,
+  })
+  assert.equal(today.salesSummary.salesAmount.value, 100)
+  assert.equal(today.salesSummary.orderCount.value, 1)
+  assert.equal(today.salesSummary.lineCount.value, 2)
+  assert.equal(today.salesSummary.productCount.value, 3)
+  assert.equal(today.salesChart.granularity, 'hourly')
+
+  const yesterday = buildDashboardViewModel({
+    orders,
+    selectedPeriod: { key: 'yesterday' },
+    now,
+  })
+  assert.equal(yesterday.salesSummary.salesAmount.value, 200)
+  assert.equal(yesterday.salesSummary.orderCount.value, 1)
+  assert.equal(yesterday.salesChart.granularity, 'hourly')
+
+  const last7 = buildDashboardViewModel({
+    orders,
+    selectedPeriod: { key: 'last7' },
+    now,
+  })
+  assert.equal(last7.salesSummary.salesAmount.value, 600)
+  assert.equal(last7.salesSummary.orderCount.value, 3)
+  assert.equal(last7.salesChart.granularity, 'daily')
+  assert.equal(last7.salesChart.current.length, 7)
+
+  const last30 = buildDashboardViewModel({
+    orders,
+    selectedPeriod: { key: 'last30' },
+    now,
+  })
+  assert.equal(last30.salesSummary.salesAmount.value, 1000)
+  assert.equal(last30.salesSummary.orderCount.value, 4)
+  assert.equal(last30.salesChart.granularity, 'daily')
+  assert.equal(last30.salesChart.current.length, 30)
+
+  const month = buildDashboardViewModel({
+    orders,
+    selectedPeriod: { key: 'month' },
+    now,
+  })
+  assert.equal(month.salesSummary.salesAmount.value, 600)
+  assert.equal(month.salesSummary.orderCount.value, 3)
+  assert.equal(month.salesSummary.returnAmount.value, 50)
+  assert.equal(month.salesChart.granularity, 'daily')
+  assert.equal(month.salesChart.current.length, 19)
+
+  const cards = Object.fromEntries(
+    month.salesPeriodCards.map((card) => [card.key, card]),
+  )
+  assert.equal(cards.today.salesAmount, 100)
+  assert.equal(cards.today.packageCount, 1)
+  assert.equal(cards.today.lineCount, 2)
+  assert.equal(cards.today.productCount, 3)
+  assert.equal(cards.today.packageAverage, 3)
+  assert.equal(cards.yesterday.salesAmount, 200)
+  assert.equal(cards.month.salesAmount, 600)
+  assert.equal(cards.month.returnCancellationAmount, 75)
+  assert.equal(cards.month.returnPackageCount, 1)
+  assert.equal(cards.month.cancelPackageCount, 1)
+  assert.equal(cards.lastMonth.salesAmount, 900)
+  assert.equal(cards.lastMonth.packageCount, 2)
+  assert.equal(cards.lastMonth.range.start.getDate(), 1)
+  assert.equal(cards.lastMonth.range.end.getDate(), 30)
+})
+
 function item(barcode, quantity = 1, price = 100, size = '38') {
   return {
     id: `item-${barcode}`,

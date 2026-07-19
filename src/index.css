@@ -4240,6 +4240,189 @@ button:disabled {
 .dashboard-comparison.down span { color: #e24135; }
 .dashboard-comparison.flat span { color: #64748b; }
 
+.dashboard-section-heading {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 2px 2px 0;
+}
+
+.dashboard-section-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.dashboard-section-heading span {
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.dashboard-section-heading h2 {
+  margin: 0;
+  color: #172033;
+  font-size: 17px;
+  letter-spacing: -.02em;
+}
+
+.dashboard-section-heading p {
+  max-width: 560px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: right;
+}
+
+.dashboard-operation-heading {
+  margin-top: 8px;
+  padding-top: 16px;
+  border-top: 1px solid #dfe6ef;
+}
+
+.dashboard-operation-heading span { color: #2563eb; }
+
+.dashboard-sales-period-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dashboard-sales-period-card {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #dfe6ef;
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgb(30 64 175 / 3%);
+}
+
+.dashboard-sales-period-card.period-today {
+  border-top: 3px solid #14b8a6;
+  padding-top: 12px;
+}
+
+.dashboard-sales-period-card > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.dashboard-sales-period-card > header > span:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.dashboard-sales-period-card > header strong {
+  color: #1e293b;
+  font-size: 19px;
+  letter-spacing: -.025em;
+}
+
+.dashboard-sales-period-card > header small {
+  color: #718096;
+  font-size: 10px;
+}
+
+.dashboard-sales-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  white-space: nowrap;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.dashboard-sales-trend.up { color: #0b9b5c; }
+.dashboard-sales-trend.down { color: #e24135; }
+.dashboard-sales-trend.flat { color: #64748b; }
+
+.dashboard-sales-period-primary {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+.dashboard-sales-period-primary > div,
+.dashboard-sales-period-details > div {
+  min-width: 0;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+  border-radius: 7px;
+}
+
+.dashboard-sales-period-primary > div {
+  min-height: 58px;
+  padding: 9px 10px;
+}
+
+.dashboard-sales-period-primary .sales-net {
+  background: #e7efff;
+  color: #193f82;
+}
+
+.dashboard-sales-period-primary .return-net {
+  background: #fee9e7;
+  color: #b42318;
+}
+
+.dashboard-sales-period-primary small,
+.dashboard-sales-period-details small {
+  min-height: 17px;
+  white-space: normal;
+  font-size: 7px;
+  line-height: 1.15;
+  font-weight: 750;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.dashboard-sales-period-primary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+}
+
+.dashboard-sales-period-details {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.dashboard-sales-period-details > div {
+  min-height: 51px;
+  padding: 8px 9px;
+  background: #f6f1eb;
+  color: #475569;
+}
+
+.dashboard-sales-period-details > div.tone-blue {
+  background: #e7efff;
+  color: #24559c;
+}
+
+.dashboard-sales-period-details > div.tone-red {
+  background: #fee9e7;
+  color: #b42318;
+}
+
+.dashboard-sales-period-details strong { font-size: 15px; }
+
+.dashboard-sales-products-row .dashboard-top-products-card,
+.dashboard-analytics-row-bottom .dashboard-recent-ops-card {
+  grid-column: 1 / -1;
+}
+
+.dashboard-top-products-table { min-width: 620px; }
+
 .dashboard-analytics-grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
@@ -4557,6 +4740,7 @@ button:disabled {
     min-width: 0;
   }
   .dashboard-period-summary { grid-template-columns: repeat(4, minmax(130px, 1fr)); }
+  .dashboard-sales-period-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-analytics-header { flex-direction: column; }
   .dashboard-analytics-controls { justify-content: flex-start; max-width: none; }
   .dashboard-analytics-controls > small { text-align: left; }
@@ -4581,6 +4765,9 @@ button:disabled {
   .dashboard-custom-range { align-items: flex-end; }
   .dashboard-custom-range label { display: grid; }
   .dashboard-period-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dashboard-sales-period-cards { grid-template-columns: 1fr; }
+  .dashboard-section-heading { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .dashboard-section-heading p { text-align: left; }
   .dashboard-summary-title { align-items: flex-start; flex-direction: column; }
   .dashboard-operation-flow { grid-template-columns: repeat(3, 1fr); gap: 18px 5px; }
   .dashboard-operation-flow::before { display: none; }

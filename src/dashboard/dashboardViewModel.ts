@@ -18,6 +18,12 @@ export type DashboardPeriodKey =
   | 'month'
   | 'custom'
 
+export type DashboardSalesPeriodKey =
+  | 'today'
+  | 'yesterday'
+  | 'month'
+  | 'lastMonth'
+
 export interface DashboardPeriodSelection {
   key: DashboardPeriodKey
   startDate?: string
@@ -25,7 +31,7 @@ export interface DashboardPeriodSelection {
 }
 
 export interface DashboardDateRange {
-  key: DashboardPeriodKey | 'comparison'
+  key: DashboardPeriodKey | DashboardSalesPeriodKey | 'comparison'
   label: string
   helper: string
   start: Date
@@ -72,6 +78,24 @@ export interface DashboardTopProduct {
   quantity: number
   revenue: number
   imageCandidates: string[]
+}
+
+export interface DashboardSalesPeriodCard {
+  key: DashboardSalesPeriodKey
+  label: string
+  dateLabel: string
+  range: DashboardDateRange
+  salesAmount: number
+  salesAmountAvailable: boolean
+  returnCancellationAmount: number
+  returnCancellationAmountAvailable: boolean
+  packageCount: number
+  lineCount: number
+  productCount: number
+  packageAverage: number
+  returnPackageCount: number
+  cancelPackageCount: number
+  comparison: DashboardComparison
 }
 
 export interface DashboardActionRequired {
@@ -128,6 +152,7 @@ export interface DashboardRecentOperation {
 export interface DashboardViewModel {
   period: DashboardDateRange
   comparisonPeriod: DashboardDateRange
+  salesPeriodCards: DashboardSalesPeriodCard[]
   salesSummary: {
     salesAmount: DashboardMetric
     orderCount: DashboardMetric
@@ -184,6 +209,12 @@ interface PeriodTotals {
   returnAmount: number
   returnAmountAvailable: boolean
   returnCount: number
+  cancelAmount: number
+  cancelAmountAvailable: boolean
+  cancelCount: number
+  returnCancellationAmount: number
+  returnCancellationAmountAvailable: boolean
+  packageAverage: number
 }
 
 export function buildDashboardViewModel({
@@ -245,6 +276,7 @@ export function buildDashboardViewModel({
   return {
     period,
     comparisonPeriod: resolvedComparison,
+    salesPeriodCards: buildDashboardSalesPeriodCards(uniqueOrders, now),
     salesSummary: {
       salesAmount: metric(
         currentTotals.salesAmount,
@@ -293,7 +325,7 @@ export function buildDashboardViewModel({
       periodOrders,
       (order) => String(order.marketplace || 'Bilinmeyen').trim() || 'Bilinmeyen',
     ),
-    topProducts: buildTopProducts(periodOrders, products).slice(0, 5),
+    topProducts: buildTopProducts(periodOrders, products).slice(0, 10),
     actionRequired: buildActionRequired(classified),
     operationFlow: [
       {
@@ -337,11 +369,11 @@ export function buildDashboardViewModel({
       mode: 'readonly-products',
       title: 'Toplanacak Ürünler',
       products: buildPickingProducts(
-        openOrders.filter((order) => orderIsInRange(order, period)),
+        openOrders,
         products,
-      ).slice(0, 5),
+      ).slice(0, 10),
     },
-    recentOperations: buildRecentOperations(periodOrders, products).slice(0, 8),
+    recentOperations: buildRecentOperations(uniqueOrders, products).slice(0, 10),
     latestSyncAt: latestSyncAt ?? resolveLatestSyncAt(uniqueOrders),
   }
 }
@@ -443,6 +475,54 @@ export function dedupeDashboardOrders(orders: CargoOrder[]): CargoOrder[] {
   })
 }
 
+export function buildDashboardSalesPeriodCards(
+  orders: CargoOrder[],
+  now = new Date(),
+): DashboardSalesPeriodCard[] {
+  const uniqueOrders = dedupeDashboardOrders(orders)
+  const keys: DashboardSalesPeriodKey[] = [
+    'today',
+    'yesterday',
+    'month',
+    'lastMonth',
+  ]
+
+  return keys.map((key) => {
+    const period = resolveSalesPeriodRange(key, now)
+    const comparisonPeriod = resolveSalesCardComparisonRange(key, period)
+    const periodOrders = uniqueOrders.filter((order) =>
+      orderIsInRange(order, period),
+    )
+    const comparisonOrders = uniqueOrders.filter((order) =>
+      orderIsInRange(order, comparisonPeriod),
+    )
+    const totals = calculatePeriodTotals(periodOrders)
+    const comparisonTotals = calculatePeriodTotals(comparisonOrders)
+
+    return {
+      key,
+      label: period.label,
+      dateLabel: salesPeriodDateLabel(key, period),
+      range: period,
+      salesAmount: totals.salesAmount,
+      salesAmountAvailable: totals.salesAmountAvailable,
+      returnCancellationAmount: totals.returnCancellationAmount,
+      returnCancellationAmountAvailable:
+        totals.returnCancellationAmountAvailable,
+      packageCount: totals.orderCount,
+      lineCount: totals.lineCount,
+      productCount: totals.productCount,
+      packageAverage: totals.packageAverage,
+      returnPackageCount: totals.returnCount,
+      cancelPackageCount: totals.cancelCount,
+      comparison: calculateComparison(
+        totals.salesAmount,
+        comparisonTotals.salesAmount,
+      ),
+    }
+  })
+}
+
 function resolveComparisonPeriod(
   period: DashboardDateRange,
   key: DashboardPeriodKey,
@@ -467,33 +547,148 @@ function resolveComparisonPeriod(
   return range('comparison', 'Karşılaştırma', period.helper, start, end)
 }
 
-function calculatePeriodTotals(orders: CargoOrder[]): PeriodTotals {
-  const salesOrders = orders.filter(
-    (order) => !classifyOrderForTabs(order).isCanceledOrReturned,
+function resolveSalesPeriodRange(
+  key: DashboardSalesPeriodKey,
+  now: Date,
+): DashboardDateRange {
+  const todayStart = startOfDay(now)
+  const todayEnd = endOfDay(now)
+  if (key === 'today') {
+    return range('today', 'Bugün', 'Bugünün net satış özeti', todayStart, todayEnd)
+  }
+  if (key === 'yesterday') {
+    return range(
+      'yesterday',
+      'Dün',
+      'Dünün net satış özeti',
+      addDays(todayStart, -1),
+      addDays(todayEnd, -1),
+    )
+  }
+  if (key === 'month') {
+    return range(
+      'month',
+      'Bu Ay',
+      'Ay başından bugüne net satış özeti',
+      new Date(now.getFullYear(), now.getMonth(), 1),
+      todayEnd,
+    )
+  }
+  const previousMonthStart = new Date(
+    now.getFullYear(),
+    now.getMonth() - 1,
+    1,
   )
+  const previousMonthEnd = endOfDay(
+    new Date(now.getFullYear(), now.getMonth(), 0),
+  )
+  return range(
+    'lastMonth',
+    'Geçen Ay',
+    'Önceki takvim ayının net satış özeti',
+    previousMonthStart,
+    previousMonthEnd,
+  )
+}
+
+function resolveSalesCardComparisonRange(
+  key: DashboardSalesPeriodKey,
+  period: DashboardDateRange,
+): DashboardDateRange {
+  if (key === 'today' || key === 'yesterday') {
+    return range(
+      'comparison',
+      'Önceki Gün',
+      'Önceki gün ile karşılaştırılıyor',
+      addDays(period.start, -1),
+      addDays(period.end, -1),
+    )
+  }
+  if (key === 'month') {
+    const previousMonthStart = new Date(
+      period.start.getFullYear(),
+      period.start.getMonth() - 1,
+      1,
+    )
+    return range(
+      'comparison',
+      'Önceki Ayın Aynı Dönemi',
+      'Önceki ayın aynı gün sayısı ile karşılaştırılıyor',
+      previousMonthStart,
+      endOfDay(addDays(previousMonthStart, daySpan(period) - 1)),
+    )
+  }
+  const earlierMonthStart = new Date(
+    period.start.getFullYear(),
+    period.start.getMonth() - 1,
+    1,
+  )
+  return range(
+    'comparison',
+    'Bir Önceki Ay',
+    'Bir önceki tam ay ile karşılaştırılıyor',
+    earlierMonthStart,
+    endOfDay(new Date(period.start.getFullYear(), period.start.getMonth(), 0)),
+  )
+}
+
+function salesPeriodDateLabel(
+  key: DashboardSalesPeriodKey,
+  period: DashboardDateRange,
+): string {
+  if (key === 'today' || key === 'yesterday') {
+    return period.start.toLocaleDateString('tr-TR')
+  }
+  const label = period.start.toLocaleDateString('tr-TR', {
+    month: 'long',
+    year: 'numeric',
+  })
+  return label.charAt(0).toLocaleUpperCase('tr-TR') + label.slice(1)
+}
+
+function calculatePeriodTotals(orders: CargoOrder[]): PeriodTotals {
+  const salesOrders = orders.filter((order) => salesDisposition(order) === 'sale')
   const returnedOrders = orders.filter(
-    (order) => classifyOrderForTabs(order).isCanceledOrReturned,
+    (order) => salesDisposition(order) === 'return',
+  )
+  const canceledOrders = orders.filter(
+    (order) => salesDisposition(order) === 'cancel',
   )
   const salesAmounts = salesOrders.map(resolveOrderAmount)
   const returnAmounts = returnedOrders.map(resolveOrderAmount)
+  const cancelAmounts = canceledOrders.map(resolveOrderAmount)
+  const productCount = salesOrders.reduce(
+    (total, order) =>
+      total +
+      order.items.reduce(
+        (sum, item) => sum + Math.max(0, finiteNumber(item.quantity)),
+        0,
+      ),
+    0,
+  )
+  const returnAmountAvailable =
+    returnedOrders.length === 0 || returnAmounts.every(isNumber)
+  const cancelAmountAvailable =
+    canceledOrders.length === 0 || cancelAmounts.every(isNumber)
   return {
     salesAmount: sumAvailableAmounts(salesAmounts),
     salesAmountAvailable: salesOrders.length === 0 || salesAmounts.every(isNumber),
     orderCount: salesOrders.length,
     lineCount: salesOrders.reduce((total, order) => total + order.items.length, 0),
-    productCount: salesOrders.reduce(
-      (total, order) =>
-        total +
-        order.items.reduce(
-          (sum, item) => sum + Math.max(0, finiteNumber(item.quantity)),
-          0,
-        ),
-      0,
-    ),
+    productCount,
     returnAmount: sumAvailableAmounts(returnAmounts),
-    returnAmountAvailable:
-      returnedOrders.length === 0 || returnAmounts.every(isNumber),
+    returnAmountAvailable,
     returnCount: returnedOrders.length,
+    cancelAmount: sumAvailableAmounts(cancelAmounts),
+    cancelAmountAvailable,
+    cancelCount: canceledOrders.length,
+    returnCancellationAmount: sumAvailableAmounts([
+      ...returnAmounts,
+      ...cancelAmounts,
+    ]),
+    returnCancellationAmountAvailable:
+      returnAmountAvailable && cancelAmountAvailable,
+    packageAverage: salesOrders.length > 0 ? productCount / salesOrders.length : 0,
   }
 }
 
@@ -525,14 +720,59 @@ function resolveOrderAmount(order: CargoOrder): number | null {
   return null
 }
 
+function resolveItemRevenue(
+  order: CargoOrder,
+  item: OrderItem,
+  orderQuantity: number,
+): number {
+  const quantity = Math.max(0, finiteNumber(item.quantity))
+  if (isNumber(item.price)) return finiteNumber(item.price) * quantity
+  const orderAmount = resolveOrderAmount(order)
+  if (orderAmount === null || orderQuantity <= 0) return 0
+  return orderAmount * (quantity / orderQuantity)
+}
+
+function salesDisposition(order: CargoOrder): 'sale' | 'return' | 'cancel' {
+  const rawOrder =
+    order.rawOrder && typeof order.rawOrder === 'object'
+      ? (order.rawOrder as Record<string, unknown>)
+      : undefined
+  const tokens = [
+    order.marketplaceStatus,
+    order.packageStatus,
+    order.shipmentStatusName,
+    rawOrder?.status,
+    rawOrder?.packageStatus,
+    rawOrder?.shipmentStatus,
+  ].map(normalizeIdentity)
+
+  if (
+    tokens.some((token) =>
+      ['returned', 'returning', 'return', 'iade', 'undelivered'].some(
+        (candidate) => token === candidate || token.includes(candidate),
+      ),
+    )
+  ) {
+    return 'return'
+  }
+  if (
+    tokens.some((token) =>
+      ['cancelled', 'canceled', 'cancel', 'iptal', 'unsupplied'].some(
+        (candidate) => token === candidate || token.includes(candidate),
+      ),
+    )
+  ) {
+    return 'cancel'
+  }
+  return 'sale'
+}
+
 function buildDistribution(
   orders: CargoOrder[],
   labelFor: (order: CargoOrder) => string,
 ): DashboardDistributionRow[] {
   const groups = new Map<string, { label: string; orders: CargoOrder[] }>()
-  for (const order of orders.filter(
-    (item) => !classifyOrderForTabs(item).isCanceledOrReturned,
-  )) {
+  for (const order of orders.filter((item) => salesDisposition(item) === 'sale')) {
     const label = labelFor(order)
     const key = normalizeIdentity(label)
     const group = groups.get(key) ?? { label, orders: [] }
@@ -545,7 +785,7 @@ function buildDistribution(
     0,
   )
   const totalOrders = orders.filter(
-    (item) => !classifyOrderForTabs(item).isCanceledOrReturned,
+    (item) => salesDisposition(item) === 'sale',
   ).length
   return Array.from(groups.entries())
     .map(([key, group]) => {
@@ -574,18 +814,19 @@ function buildTopProducts(
   products: CargoProduct[],
 ): DashboardTopProduct[] {
   const groups = new Map<string, DashboardTopProduct>()
-  for (const order of orders.filter(
-    (item) => !classifyOrderForTabs(item).isCanceledOrReturned,
-  )) {
+  for (const order of orders.filter((item) => salesDisposition(item) === 'sale')) {
+    const orderQuantity = order.items.reduce(
+      (total, item) => total + Math.max(0, finiteNumber(item.quantity)),
+      0,
+    )
     for (const item of order.items) {
       const key = dashboardProductKey(item)
       const quantity = Math.max(0, finiteNumber(item.quantity))
+      const revenue = resolveItemRevenue(order, item, orderQuantity)
       const existing = groups.get(key)
       if (existing) {
         existing.quantity += quantity
-        existing.revenue += isNumber(item.price)
-          ? finiteNumber(item.price) * quantity
-          : 0
+        existing.revenue += revenue
         continue
       }
       groups.set(key, {
@@ -596,7 +837,7 @@ function buildTopProducts(
         color: String(item.color || '').trim(),
         size: String(item.size || '').trim(),
         quantity,
-        revenue: isNumber(item.price) ? finiteNumber(item.price) * quantity : 0,
+        revenue,
         imageCandidates: resolveProductImageCandidates(item, products).map(
           (candidate) => candidate.url,
         ),
@@ -776,7 +1017,7 @@ function buildTimeBuckets(
     orderCount: 0,
   }))
   for (const order of orders.filter(
-    (item) => !classifyOrderForTabs(item).isCanceledOrReturned,
+    (item) => salesDisposition(item) === 'sale',
   )) {
     const date = new Date(order.orderDate || order.createdAt)
     const index = bucketIndex(period, granularity, date)
