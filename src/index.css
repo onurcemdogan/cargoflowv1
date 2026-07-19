@@ -4019,6 +4019,21 @@ button:disabled {
   cursor: pointer;
 }
 
+.dashboard-detail-error {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 130;
+  padding: 12px 16px;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  background: #fff1f2;
+  color: #b91c1c;
+  box-shadow: 0 12px 32px rgb(15 23 42 / 14%);
+  font-size: 13px;
+  font-weight: 700;
+}
+
 .dashboard-analytics-header {
   display: flex;
   align-items: flex-start;

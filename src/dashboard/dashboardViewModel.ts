@@ -107,6 +107,8 @@ export interface DashboardPickingProduct extends DashboardTopProduct {
 
 export interface DashboardRecentOperation {
   id: string
+  packageId?: string
+  shipmentPackageId?: string
   orderNumber: string
   marketplace: string
   customerName: string
@@ -688,6 +690,8 @@ function buildRecentOperations(
       const zplReady = canDownloadZpl(order)
       return {
         id: order.id,
+        packageId: order.packageId,
+        shipmentPackageId: order.shipmentPackageId,
         orderNumber: order.orderNumber,
         marketplace: String(order.marketplace || 'Bilinmeyen'),
         customerName: order.customerName,
@@ -712,6 +716,38 @@ function buildRecentOperations(
           : order.zplDisabledReason || 'İndirilebilir ZPL verisi yok.',
       }
     })
+}
+
+export function resolveDashboardOrder(
+  orders: CargoOrder[],
+  operation: Pick<
+    DashboardRecentOperation,
+    'id' | 'marketplace' | 'orderNumber' | 'packageId' | 'shipmentPackageId'
+  >,
+): CargoOrder | undefined {
+  const marketplace = normalizeIdentity(operation.marketplace)
+  const packageIdentity = firstString(
+    String(operation.packageId ?? ''),
+    String(operation.shipmentPackageId ?? ''),
+  )
+  if (packageIdentity) {
+    const normalizedPackage = normalizeIdentity(packageIdentity)
+    const packageMatch = orders.find((order) => {
+      if (normalizeIdentity(order.marketplace) !== marketplace) return false
+      return [order.packageId, order.shipmentPackageId]
+        .filter(Boolean)
+        .some((value) => normalizeIdentity(value) === normalizedPackage)
+    })
+    if (packageMatch) return packageMatch
+  }
+  const idMatch = orders.find((order) => order.id === operation.id)
+  if (idMatch) return idMatch
+  return orders.find(
+    (order) =>
+      normalizeIdentity(order.marketplace) === marketplace &&
+      normalizeIdentity(order.orderNumber) ===
+        normalizeIdentity(operation.orderNumber),
+  )
 }
 
 function buildTimeBuckets(

@@ -314,9 +314,14 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
       onPreviewOrder: () => {},
       onDownloadOrder: () => {},
       onPrintOrder: () => {},
+      onCreateShipment: () => {},
+      onTrackShipment: () => {},
+      onDesiChange: () => {},
     }),
   )
   assert.match(html, /Dashboard/)
+  assert.match(html, /aria-label=/)
+  assert.match(html, /data-order-number=/)
   assert.match(html, /Açık Operasyon/)
   assert.match(html, /Satış Tutarı/)
   assert.match(html, /Sipariş Adedi/)

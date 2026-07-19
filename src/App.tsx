@@ -824,6 +824,10 @@ function App() {
           onNavigateOrders={handleDashboardNavigateOrders}
           onDownloadOrder={handleDownloadZplForOrder}
           onPrintOrder={handleMarkPrintedForOrder}
+          onCreateShipment={handleCreateShipmentForOrder}
+          onTrackShipment={handleTrackShipmentForOrder}
+          onDesiChange={handleOrderDesiChange}
+          desiConfig={integrationConfig.desi}
           onRefresh={() =>
             handleFetchOrders(integrationConfig, {
               statuses: [

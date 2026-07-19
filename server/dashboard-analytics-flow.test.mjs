@@ -53,6 +53,66 @@ test('dashboard view model dönem, comparison ve paket tekilleştirmesini korur'
   })
 })
 
+test('dashboard operation detail resolves the full order with strong identity', async (t) => {
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+  })
+  t.after(() => vite.close())
+  const { resolveDashboardOrder } = await vite.ssrLoadModule(
+    '/src/dashboard/dashboardViewModel.ts',
+  )
+  const preferred = order('preferred', '2026-07-19T10:00:00', {
+    id: 'current-id',
+    marketplace: 'Trendyol',
+    packageId: 'PKG-42',
+    shipmentPackageId: 'SHP-42',
+    orderNumber: '11420000001',
+  })
+  const staleId = order('stale', '2026-07-19T09:00:00', {
+    id: 'stale-id',
+    marketplace: 'Trendyol',
+    packageId: 'PKG-OLD',
+    orderNumber: '11420000001',
+  })
+  const operation = {
+    id: 'stale-id',
+    marketplace: ' TRENDYOL ',
+    orderNumber: '11420000001',
+    packageId: ' pkg-42 ',
+  }
+
+  assert.equal(
+    resolveDashboardOrder([staleId, preferred], operation)?.id,
+    preferred.id,
+  )
+  assert.equal(
+    resolveDashboardOrder([preferred], {
+      ...operation,
+      packageId: 'missing',
+      id: preferred.id,
+    })?.id,
+    preferred.id,
+  )
+  assert.equal(
+    resolveDashboardOrder([preferred], {
+      ...operation,
+      packageId: undefined,
+      id: 'missing-id',
+    })?.id,
+    preferred.id,
+  )
+  assert.equal(
+    resolveDashboardOrder([preferred], {
+      ...operation,
+      packageId: undefined,
+      id: 'missing-id',
+      orderNumber: 'missing-order',
+    }),
+    undefined,
+  )
+})
+
 test('dashboard iade, şehir normalizasyonu ve eksik şehir verisini güvenle işler', async (t) => {
   const vite = await createServer({
     appType: 'custom',

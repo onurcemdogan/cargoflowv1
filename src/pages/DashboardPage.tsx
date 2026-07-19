@@ -22,9 +22,11 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ProductImageThumb } from '../components/ProductImageThumb'
+import { OrderDetailDrawer } from '../components/OrderDetailDrawer'
 import { buildDashboardProviderHealth } from '../dashboard/dashboardSummary'
 import {
   buildDashboardViewModel,
+  resolveDashboardOrder,
   type DashboardComparison,
   type DashboardDateRange,
   type DashboardDistributionRow,
@@ -40,6 +42,7 @@ import type {
   IntegrationConfig,
   PageKey,
   PrinterSettings,
+  TenantDesiConfig,
 } from '../types/cargoflow'
 import { formatDisplayDate } from '../utils/formatters'
 import type { OrdersNavigationFilters } from '../utils/ordersNavigation'
@@ -63,6 +66,14 @@ interface DashboardPageProps {
   ) => void
   onDownloadOrder: (orderId: string) => void
   onPrintOrder: (orderId: string) => void
+  onCreateShipment: (orderId: string) => void
+  onTrackShipment: (orderId: string) => void
+  onDesiChange: (
+    orderId: string,
+    desi: number | null,
+    desiSource: CargoOrder['desiSource'],
+  ) => void
+  desiConfig?: TenantDesiConfig
 }
 
 const periodOptions: Array<{ key: DashboardPeriodKey; label: string }> = [
@@ -90,11 +101,18 @@ export function DashboardPage({
   onNavigateOrders,
   onDownloadOrder,
   onPrintOrder,
+  onCreateShipment,
+  onTrackShipment,
+  onDesiChange,
+  desiConfig,
 }: DashboardPageProps) {
   const todayInput = formatInputDate(new Date())
   const [periodKey, setPeriodKey] = useState<DashboardPeriodKey>('today')
   const [customStartDate, setCustomStartDate] = useState(todayInput)
   const [customEndDate, setCustomEndDate] = useState(todayInput)
+  const [activeDashboardOperationId, setActiveDashboardOperationId] =
+    useState<string>()
+  const [dashboardDetailError, setDashboardDetailError] = useState<string>()
   const selectedPeriod = useMemo<DashboardPeriodSelection>(
     () => ({
       key: periodKey,
@@ -130,6 +148,12 @@ export function DashboardPage({
     () => navigationFiltersForPeriod(viewModel.period),
     [viewModel.period],
   )
+  const activeDashboardOperation = viewModel.recentOperations.find(
+    (operation) => operation.id === activeDashboardOperationId,
+  )
+  const activeDashboardOrder = activeDashboardOperation
+    ? resolveDashboardOrder(orders, activeDashboardOperation)
+    : undefined
 
   useEffect(() => {
     if (!import.meta.env.DEV) return
@@ -199,6 +223,25 @@ export function DashboardPage({
       })
     }
     onNavigateOrders(tab, orderId, filters)
+  }
+
+  function openDashboardOrderDetail(operationId: string) {
+    const operation = viewModel.recentOperations.find(
+      (item) => item.id === operationId,
+    )
+    if (!operation) {
+      setActiveDashboardOperationId(undefined)
+      setDashboardDetailError('Sipariş detayı bulunamadı.')
+      return
+    }
+    const order = resolveDashboardOrder(orders, operation)
+    if (!order) {
+      setActiveDashboardOperationId(undefined)
+      setDashboardDetailError('Sipariş detayı bulunamadı.')
+      return
+    }
+    setDashboardDetailError(undefined)
+    setActiveDashboardOperationId(operation.id)
   }
 
   void printerSettings
@@ -612,9 +655,10 @@ export function DashboardPage({
                         <div className="dashboard-row-actions">
                           <button
                             type="button"
-                            aria-label={`${operation.orderNumber} detay`}
-                            title="Sipariş detayı"
-                            onClick={() => navigateOrders('all', periodFilters, operation.id)}
+                            aria-label="Sipariş detayını görüntüle"
+                            title="Detayı Gör"
+                            data-order-number={operation.orderNumber}
+                            onClick={() => openDashboardOrderDetail(operation.id)}
                           >
                             <Eye size={15} />
                           </button>
@@ -648,6 +692,28 @@ export function DashboardPage({
           )}
         </article>
       </section>
+      {dashboardDetailError ? (
+        <div className="dashboard-detail-error" role="status">
+          {dashboardDetailError}
+        </div>
+      ) : null}
+      {activeDashboardOrder ? (
+        <OrderDetailDrawer
+          order={activeDashboardOrder}
+          products={products}
+          busy={loading}
+          onClose={() => {
+            setActiveDashboardOperationId(undefined)
+            setDashboardDetailError(undefined)
+          }}
+          onCreateShipment={onCreateShipment}
+          onTrackShipment={onTrackShipment}
+          onDownloadZpl={onDownloadOrder}
+          onPrintLabel={onPrintOrder}
+          onDesiChange={onDesiChange}
+          desiConfig={desiConfig}
+        />
+      ) : null}
     </div>
   )
 }
