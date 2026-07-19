@@ -1,6 +1,11 @@
 import type { CargoOrder } from '../types/cargoflow'
 import type { QuickTab } from './ordersTabs'
-import { hasCarrierTracking } from './orderStatus'
+import {
+  canCreateShipment,
+  canMarkPrinted,
+  hasCarrierTracking,
+} from './orderStatus'
+import type { OrdersActionFilter } from './ordersNavigation'
 import { resolveOrderStatus } from './shipmentStatus'
 import {
   isPreassignedAwaitingAcceptance,
@@ -36,6 +41,8 @@ export interface BuildVisibleOrdersInput {
   marketplaceFilter: string
   operationStatusFilter: string
   cargoFilter: string
+  cityFilter?: string
+  actionFilter?: OrdersActionFilter
   dateFilter: VisibleOrdersDateFilter
   searchQuery: string
 }
@@ -48,6 +55,8 @@ export interface VisibleOrdersDebug {
   afterMarketplaceFilter: number
   afterOperationStatusFilter: number
   afterCargoFilter: number
+  afterCityFilter: number
+  afterActionFilter: number
   afterDateFilter: number
   afterSearch: number
 }
@@ -255,12 +264,35 @@ export function orderMatchesQuickTab(
   }
 }
 
+export function orderMatchesDashboardAction(
+  order: CargoOrder,
+  actionFilter: OrdersActionFilter,
+): boolean {
+  if (actionFilter === 'all') return true
+  const state = classifyOrderForTabs(order)
+  if (actionFilter === 'createEligible') return canCreateShipment(order)
+  if (actionFilter === 'printEligible') {
+    return Boolean(
+      !state.isLabelPrinted &&
+        canMarkPrinted(order) &&
+        (order.label?.printHistory?.length ?? 0) === 0,
+    )
+  }
+  if (!state.isOpenOperation) return false
+  const missingAddress =
+    !String(order.address || '').trim() || !String(order.city || '').trim()
+  const missingDesi = !(Number(order.desi ?? order.shipment?.desi) > 0)
+  return state.hasError || missingAddress || missingDesi
+}
+
 export function buildVisibleOrders({
   persistentOrders,
   selectedTab,
   marketplaceFilter,
   operationStatusFilter,
   cargoFilter,
+  cityFilter = 'all',
+  actionFilter = 'all',
   dateFilter,
   searchQuery,
 }: BuildVisibleOrdersInput): VisibleOrdersResult {
@@ -278,6 +310,8 @@ export function buildVisibleOrders({
     afterMarketplaceFilter: 0,
     afterOperationStatusFilter: 0,
     afterCargoFilter: 0,
+    afterCityFilter: 0,
+    afterActionFilter: 0,
     afterDateFilter: 0,
     afterSearch: 0,
   }
@@ -337,6 +371,21 @@ export function buildVisibleOrders({
     })
   }
   debug.afterCargoFilter = current.length
+
+  if (!isAllFilter(cityFilter)) {
+    const expectedCity = normalizedToken(cityFilter)
+    current = current.filter(
+      (order) => normalizedToken(order.city) === expectedCity,
+    )
+  }
+  debug.afterCityFilter = current.length
+
+  if (actionFilter !== 'all') {
+    current = current.filter((order) =>
+      orderMatchesDashboardAction(order, actionFilter),
+    )
+  }
+  debug.afterActionFilter = current.length
 
   if (!isAllFilter(dateFilter.preset)) {
     const startTime = dateFilter.startTime ?? Number.NEGATIVE_INFINITY

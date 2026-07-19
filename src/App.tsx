@@ -49,6 +49,7 @@ import {
   ARCHIVE_MARKETPLACE_STATUSES,
 } from './utils/orderStatus'
 import { statusesForFetch, type QuickTab } from './utils/ordersTabs'
+import type { OrdersNavigationFilters } from './utils/ordersNavigation'
 
 interface OrdersState {
   orders: CargoOrder[]
@@ -122,6 +123,7 @@ function App() {
     id: number
     tab?: QuickTab
     orderId?: string
+    filters?: OrdersNavigationFilters
   }>()
   const orders = ordersState.orders
   const products = productsState.products
@@ -194,6 +196,7 @@ function App() {
   function handleDashboardNavigateOrders(
     tab: QuickTab = 'all',
     orderId?: string,
+    filters?: OrdersNavigationFilters,
   ) {
     setActivePage('orders')
     setSelectedIds([])
@@ -201,6 +204,7 @@ function App() {
       id: Date.now(),
       tab,
       orderId,
+      filters,
     })
     void handleFetchOrders(integrationConfig, {
       statuses: statusesForFetch(tab),
@@ -845,6 +849,7 @@ function App() {
           lastSyncAt={ordersState.lastSyncedAt}
           initialQuickTab={ordersNavigationRequest?.tab}
           initialOrderId={ordersNavigationRequest?.orderId}
+          initialFilters={ordersNavigationRequest?.filters}
           onToggleOrder={toggleOrder}
           onToggleAll={toggleVisibleOrders}
           onFetchOrders={(options) => handleFetchOrders(integrationConfig, options)}

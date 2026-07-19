@@ -1,31 +1,38 @@
 import {
   AlertTriangle,
+  ArrowDownRight,
   ArrowRight,
+  ArrowUpRight,
   Barcode,
-  Box,
-  CheckCircle2,
+  CalendarDays,
+  ClipboardList,
   Download,
+  Eye,
+  ListTree,
+  MapPin,
+  Minus,
   PackageCheck,
-  Plug,
   Printer,
   RefreshCcw,
   RotateCcw,
-  Settings,
   ShoppingBag,
+  Store,
   Truck,
-  Wifi,
-  WifiOff,
   XCircle,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { MetricTile } from '../components/MetricTile'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ProductImageThumb } from '../components/ProductImageThumb'
+import { buildDashboardProviderHealth } from '../dashboard/dashboardSummary'
 import {
-  buildDashboardProviderHealth,
-  buildDashboardSummary,
-  type DashboardPeriod,
-  type DashboardProviderHealth,
-} from '../dashboard/dashboardSummary'
+  buildDashboardViewModel,
+  type DashboardComparison,
+  type DashboardDateRange,
+  type DashboardDistributionRow,
+  type DashboardMetric,
+  type DashboardPeriodKey,
+  type DashboardPeriodSelection,
+  type DashboardTimeBucket,
+} from '../dashboard/dashboardViewModel'
 import type {
   ApiDebugLog,
   CargoOrder,
@@ -35,6 +42,7 @@ import type {
   PrinterSettings,
 } from '../types/cargoflow'
 import { formatDisplayDate } from '../utils/formatters'
+import type { OrdersNavigationFilters } from '../utils/ordersNavigation'
 import type { QuickTab } from '../utils/ordersTabs'
 
 interface DashboardPageProps {
@@ -48,10 +56,25 @@ interface DashboardPageProps {
   lastSyncedAt?: string
   onRefresh: () => void
   onNavigatePage: (page: PageKey) => void
-  onNavigateOrders: (tab?: QuickTab, orderId?: string) => void
+  onNavigateOrders: (
+    tab?: QuickTab,
+    orderId?: string,
+    filters?: OrdersNavigationFilters,
+  ) => void
   onDownloadOrder: (orderId: string) => void
   onPrintOrder: (orderId: string) => void
 }
+
+const periodOptions: Array<{ key: DashboardPeriodKey; label: string }> = [
+  { key: 'today', label: 'Bugün' },
+  { key: 'yesterday', label: 'Dün' },
+  { key: 'last7', label: '7 Gün' },
+  { key: 'last30', label: '30 Gün' },
+  { key: 'month', label: 'Bu Ay' },
+  { key: 'custom', label: 'Özel' },
+]
+
+const marketplaceColors = ['#2563eb', '#14b8a6', '#f59e0b', '#8b5cf6', '#64748b']
 
 export function DashboardPage({
   orders,
@@ -68,9 +91,28 @@ export function DashboardPage({
   onDownloadOrder,
   onPrintOrder,
 }: DashboardPageProps) {
-  const autoRefreshAttempted = useRef(false)
-  const [selectedPeriod, setSelectedPeriod] =
-    useState<DashboardPeriod>('today')
+  const todayInput = formatInputDate(new Date())
+  const [periodKey, setPeriodKey] = useState<DashboardPeriodKey>('today')
+  const [customStartDate, setCustomStartDate] = useState(todayInput)
+  const [customEndDate, setCustomEndDate] = useState(todayInput)
+  const selectedPeriod = useMemo<DashboardPeriodSelection>(
+    () => ({
+      key: periodKey,
+      startDate: customStartDate,
+      endDate: customEndDate,
+    }),
+    [customEndDate, customStartDate, periodKey],
+  )
+  const viewModel = useMemo(
+    () =>
+      buildDashboardViewModel({
+        orders,
+        products,
+        selectedPeriod,
+        latestSyncAt: lastSyncedAt,
+      }),
+    [lastSyncedAt, orders, products, selectedPeriod],
+  )
   const providerHealth = useMemo(
     () =>
       buildDashboardProviderHealth({
@@ -81,95 +123,161 @@ export function DashboardPage({
       }),
     [apiDebugLogs, integrationConfig, lastSyncedAt, orders],
   )
-  const summary = useMemo(
-    () =>
-      buildDashboardSummary({
-        orders,
-        products,
-        marketplaceIntegrations: providerHealth.marketplaceIntegrations,
-        carrierIntegrations: providerHealth.carrierIntegrations,
-        printerSettings,
-        selectedPeriod,
-      }),
-    [orders, printerSettings, products, providerHealth, selectedPeriod],
-  )
-  const hasConfiguredMarketplace = summary.marketplaceHealth.some(
+  const hasConfiguredMarketplace = providerHealth.marketplaceIntegrations.some(
     (provider) => provider.status !== 'not_configured',
+  )
+  const periodFilters = useMemo(
+    () => navigationFiltersForPeriod(viewModel.period),
+    [viewModel.period],
   )
 
   useEffect(() => {
-    if (autoRefreshAttempted.current || loading || !hasConfiguredMarketplace) {
-      return
+    if (!import.meta.env.DEV) return
+    console.debug('DASHBOARD_MODEL_READY', {
+      period: viewModel.period.key,
+      periodOrderCount: viewModel.salesSummary.orderCount.value,
+      openOperations: viewModel.operationalSummary.openOperations,
+      cityCount: viewModel.cityDistribution.length,
+      marketplaceCount: viewModel.marketplaceDistribution.length,
+    })
+    console.debug('DASHBOARD_COMPARISON_READY', {
+      currentPeriod: viewModel.period.label,
+      comparisonPeriod: viewModel.comparisonPeriod.label,
+      comparable: viewModel.salesSummary.salesAmount.comparison.comparable,
+    })
+    console.debug('DASHBOARD_METRIC_COUNTS', {
+      salesOrders: viewModel.salesSummary.orderCount.value,
+      lines: viewModel.salesSummary.lineCount.value,
+      quantity: viewModel.salesSummary.productCount.value,
+      openOperations: viewModel.operationalSummary.openOperations,
+      handedToCargo: viewModel.operationalSummary.handedToCargo,
+    })
+    console.debug('DASHBOARD_CITY_DISTRIBUTION', {
+      cityCount: viewModel.cityDistribution.length,
+      orderCount: viewModel.cityDistribution.reduce(
+        (total, row) => total + row.orderCount,
+        0,
+      ),
+    })
+    console.debug('DASHBOARD_MARKETPLACE_DISTRIBUTION', {
+      marketplaceCount: viewModel.marketplaceDistribution.length,
+      orderCount: viewModel.marketplaceDistribution.reduce(
+        (total, row) => total + row.orderCount,
+        0,
+      ),
+    })
+    console.debug('DASHBOARD_TOP_PRODUCTS', {
+      groupCount: viewModel.topProducts.length,
+    })
+    console.debug('DASHBOARD_ACTION_REQUIRED', {
+      rowCount: viewModel.actionRequired.length,
+      totalCount: viewModel.actionRequired.reduce(
+        (total, row) => total + row.count,
+        0,
+      ),
+    })
+  }, [viewModel])
+
+  function choosePeriod(key: DashboardPeriodKey) {
+    setPeriodKey(key)
+    if (import.meta.env.DEV) {
+      console.debug('DASHBOARD_PERIOD_CHANGED', { period: key })
     }
-    autoRefreshAttempted.current = true
-    onRefresh()
-  }, [hasConfiguredMarketplace, loading, onRefresh])
+  }
+
+  function navigateOrders(
+    tab: QuickTab,
+    filters?: OrdersNavigationFilters,
+    orderId?: string,
+  ) {
+    if (import.meta.env.DEV) {
+      console.debug('DASHBOARD_FILTER_NAVIGATION', {
+        tab,
+        datePreset: filters?.datePreset ?? 'all',
+        marketplace: filters?.marketplace ?? 'all',
+        city: filters?.city ? 'selected' : 'all',
+      })
+    }
+    onNavigateOrders(tab, orderId, filters)
+  }
+
+  void printerSettings
 
   return (
-    <div className="dashboard-page dashboard-v2">
-      <section className="dashboard-topbar">
+    <div className="dashboard-page dashboard-analytics" data-testid="dashboard-analytics">
+      <header className="dashboard-analytics-header">
         <div>
-          <span className="dashboard-kicker">
-            <span className={loading ? 'pulse-dot loading' : 'pulse-dot'} />
-            Operasyon ve dönem özeti
-          </span>
-          <h1>Bugünkü Kargo Operasyonu</h1>
-          <p>
-            Açık operasyon yükünü ve seçili dönemdeki sipariş hareketlerini
-            birlikte takip edin.
-          </p>
-          <div className="dashboard-secondary-stats">
-            <span>
-              Bugün gelen <strong>{summary.todayOrders}</strong>
-            </span>
-            <span>
-              Bu ay alınan <strong>{summary.monthlyOrders}</strong>
-            </span>
-            <span>
-              Açık operasyon <strong>{summary.openOperations}</strong>
-            </span>
-          </div>
+          <h1>Dashboard</h1>
+          <p>Satış ve kargo operasyon verilerinizi tek ekrandan takip edin.</p>
         </div>
-        <div className="dashboard-topbar-actions">
-          <div className="dashboard-period-filter" aria-label="Dashboard dönemi">
-            {dashboardPeriods.map((period) => (
+        <div className="dashboard-analytics-controls">
+          <div className="dashboard-period-switch" aria-label="Dashboard dönemi">
+            {periodOptions.map((period) => (
               <button
                 key={period.key}
                 type="button"
-                className={selectedPeriod === period.key ? 'active' : ''}
-                onClick={() => setSelectedPeriod(period.key)}
+                className={periodKey === period.key ? 'active' : ''}
+                aria-pressed={periodKey === period.key}
+                onClick={() => choosePeriod(period.key)}
               >
                 {period.label}
               </button>
             ))}
           </div>
-          <span>
-            {lastSyncedAt || summary.lastSyncAt
-              ? `Son senkronizasyon ${formatDisplayDate(
-                  lastSyncedAt || summary.lastSyncAt || '',
-                )}`
-              : 'Henüz senkronizasyon yapılmadı'}
-          </span>
-          <div>
-            <button
-              type="button"
-              className="primary-button"
-              onClick={onRefresh}
-              disabled={loading || !hasConfiguredMarketplace}
-            >
-              <RefreshCcw className={loading ? 'spin-icon' : ''} size={17} />
-              {loading ? 'Yenileniyor' : 'Verileri yenile'}
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => onNavigateOrders('all')}
-            >
-              Siparişlere git <ArrowRight size={17} />
-            </button>
-          </div>
+          {periodKey === 'custom' ? (
+            <div className="dashboard-custom-range">
+              <label>
+                <span>Başlangıç</span>
+                <input
+                  aria-label="Başlangıç tarihi"
+                  type="date"
+                  value={customStartDate}
+                  onChange={(event) => setCustomStartDate(event.target.value)}
+                  onInput={(event) =>
+                    setCustomStartDate(event.currentTarget.value)
+                  }
+                />
+              </label>
+              <span>–</span>
+              <label>
+                <span>Bitiş</span>
+                <input
+                  aria-label="Bitiş tarihi"
+                  type="date"
+                  value={customEndDate}
+                  onChange={(event) => setCustomEndDate(event.target.value)}
+                  onInput={(event) =>
+                    setCustomEndDate(event.currentTarget.value)
+                  }
+                />
+              </label>
+            </div>
+          ) : (
+            <div className="dashboard-period-range" title={viewModel.period.helper}>
+              <CalendarDays size={15} />
+              {formatDisplayDate(viewModel.period.start.toISOString())} –{' '}
+              {formatDisplayDate(viewModel.period.end.toISOString())}
+            </div>
+          )}
+          <button
+            type="button"
+            className="dashboard-refresh-button"
+            onClick={onRefresh}
+            disabled={loading || !hasConfiguredMarketplace}
+          >
+            <RefreshCcw size={16} className={loading ? 'spin-icon' : ''} />
+            {loading ? 'Yenileniyor' : 'Yenile'}
+          </button>
+          <small>
+            Son senkronizasyon:{' '}
+            <strong>
+              {viewModel.latestSyncAt
+                ? formatDisplayDate(viewModel.latestSyncAt)
+                : 'Bekleniyor'}
+            </strong>
+          </small>
         </div>
-      </section>
+      </header>
 
       {error ? (
         <section className="dashboard-alert error">
@@ -186,13 +294,10 @@ export function DashboardPage({
 
       {!hasConfiguredMarketplace ? (
         <section className="dashboard-alert warning">
-          <WifiOff size={20} />
+          <AlertTriangle size={20} />
           <div>
-            <strong>Henüz pazaryeri bağlantısı kurulmadı</strong>
-            <span>
-              Entegrasyon ayarlarından bir pazaryeri bağlayıp siparişleri
-              yenileyin.
-            </span>
+            <strong>Pazaryeri bağlantısı bulunamadı</strong>
+            <span>Gerçek satış verisini görmek için entegrasyon ayarlarını tamamlayın.</span>
           </div>
           <button type="button" onClick={() => onNavigatePage('integrations')}>
             Ayarlara git
@@ -200,346 +305,642 @@ export function DashboardPage({
         </section>
       ) : null}
 
-      <section className="metrics-grid dashboard-metrics-grid dashboard-kpis">
-        <MetricTile
-          label="Açık Operasyon"
-          value={summary.openOperations}
-          helper="Tamamlanmamış aktif işler"
-          icon={<ShoppingBag size={20} />}
+      <section className="dashboard-period-summary" aria-label="Dönemsel karşılaştırma">
+        <div className="dashboard-summary-title">
+          <span>Dönemsel Karşılaştırma</span>
+          <small>{viewModel.period.helper}</small>
+        </div>
+        <DashboardMetricCard
+          label="Satış Tutarı"
+          metric={viewModel.salesSummary.salesAmount}
+          icon={<ShoppingBag />}
+          format="currency"
           tone="blue"
-          onClick={() => onNavigateOrders('open')}
         />
-        <MetricTile
-          label="Barkod Bekleyen"
-          value={summary.barcodeWaiting}
-          helper="Kargo barkodu oluşturulacak"
-          icon={<Barcode size={20} />}
+        <DashboardMetricCard
+          label="Sipariş Adedi"
+          metric={viewModel.salesSummary.orderCount}
+          icon={<Barcode />}
           tone="amber"
-          onClick={() => onNavigateOrders('barcodePending')}
+          onClick={() => navigateOrders('all', periodFilters)}
         />
-        <MetricTile
-          label="Etiket Hazır"
-          value={summary.labelReady}
-          helper="Yazdırmaya hazır"
-          icon={<PackageCheck size={20} />}
-          tone="teal"
-          onClick={() => onNavigateOrders('labelReady')}
-        />
-        <MetricTile
-          label="Etiket Basıldı"
-          value={summary.labelPrinted}
-          helper={`${periodLabel(selectedPeriod)} başarıyla basılan`}
-          icon={<Printer size={20} />}
+        <DashboardMetricCard
+          label="Kalem Adedi"
+          metric={viewModel.salesSummary.lineCount}
+          icon={<ListTree />}
           tone="violet"
-          onClick={() => onNavigateOrders('labelPrinted')}
         />
-        <MetricTile
-          label="Hatalı / Aksiyon Gerekli"
-          value={summary.errors}
-          helper="Kontrol gereken işlem"
-          icon={<AlertTriangle size={20} />}
-          tone="red"
-          onClick={() => onNavigateOrders('all')}
+        <DashboardMetricCard
+          label="Ürün Adedi"
+          metric={viewModel.salesSummary.productCount}
+          icon={<PackageCheck />}
+          tone="teal"
         />
-        <MetricTile
-          label="İptal / İade"
-          value={summary.canceledOrReturned}
-          helper={`${periodLabel(selectedPeriod)} iptal, iade veya teslim edilemeyen`}
-          icon={<RotateCcw size={20} />}
+        <DashboardMetricCard
+          label="İade Tutarı"
+          metric={viewModel.salesSummary.returnAmount}
+          icon={<AlertTriangle />}
+          format="currency"
           tone="red"
-          onClick={() => onNavigateOrders('cancelReturn')}
+        />
+        <DashboardMetricCard
+          label="İade Adedi"
+          metric={viewModel.salesSummary.returnCount}
+          icon={<RotateCcw />}
+          tone="red"
+          onClick={() => navigateOrders('cancelReturn', periodFilters)}
+        />
+        <DashboardSnapshotCard
+          label="Açık Operasyon"
+          value={viewModel.operationalSummary.openOperations}
+          helper="Anlık tamamlanmamış işler"
+          icon={<ClipboardList />}
+          tone="blue"
+          onClick={() => navigateOrders('open')}
+        />
+        <DashboardSnapshotCard
+          label="Kargoya Verilen"
+          value={viewModel.operationalSummary.handedToCargo}
+          helper={`${viewModel.period.label} içinde`}
+          icon={<Truck />}
+          tone="blue"
+          onClick={() => navigateOrders('handedToCargo', periodFilters)}
         />
       </section>
 
-      <section className="dashboard-v2-main">
-        <article className="panel dashboard-flow-card">
-          <DashboardHeading
-            eyebrow="Operasyon Akışı"
-            title="Siparişten kargoya"
-            icon={<Truck size={19} />}
+      <section className="dashboard-analytics-grid dashboard-analytics-row-main">
+        <article className="dashboard-analytics-card dashboard-sales-chart-card">
+          <DashboardCardHeader
+            title={viewModel.salesChart.title}
+            helper="Satış tutarı"
           />
-          <div className="dashboard-flow-steps">
-            {summary.flowSteps.map((step, index) => (
-              <div key={step.key} className="dashboard-flow-step">
-                <span>{index + 1}</span>
-                <div>
-                  <strong>{step.count}</strong>
-                  <small>{step.label}</small>
-                </div>
-              </div>
-            ))}
-          </div>
+          <SalesLineChart
+            current={viewModel.salesChart.current}
+            comparison={viewModel.salesChart.comparison}
+          />
         </article>
 
-        <article className="panel dashboard-system-card">
-          <DashboardHeading
-            eyebrow="Sistem Durumu"
-            title="Aktif bağlantılar"
-            icon={<Wifi size={19} />}
+        <article className="dashboard-analytics-card dashboard-city-card">
+          <DashboardCardHeader
+            title="Türkiye Satış Dağılımı"
+            helper="Teslimat iline göre gerçek siparişler"
+            icon={<MapPin size={18} />}
           />
-          <div className="dashboard-health-list">
-            {summary.marketplaceHealth.map((provider) => (
-              <HealthRow key={provider.providerKey} provider={provider} />
-            ))}
-            {summary.carrierHealth.map((provider) => (
-              <HealthRow key={provider.providerKey} provider={provider} />
-            ))}
-            <HealthRow
-              provider={{
-                providerKey: 'printer',
-                providerName: summary.printerHealth.name,
-                status: summary.printerHealth.status,
-                errorCount: 0,
-                detail: summary.printerHealth.detail,
-              }}
-            />
-            {summary.marketplaceHealth.length === 0 &&
-            summary.carrierHealth.length === 0 ? (
-              <p className="empty-state">
-                Henüz kargo veya pazaryeri sağlayıcısı bağlanmadı.
-              </p>
-            ) : null}
-          </div>
+          <DistributionBars
+            rows={viewModel.cityDistribution}
+            emptyText="Bu dönem için şehir verisi bulunamadı."
+            onSelect={(row) =>
+              navigateOrders('all', { ...periodFilters, city: row.label })
+            }
+          />
+        </article>
+
+        <article className="dashboard-analytics-card dashboard-marketplace-card">
+          <DashboardCardHeader
+            title="Pazaryeri Satış Dağılımı"
+            helper="Sipariş tutarı payı"
+            icon={<Store size={18} />}
+          />
+          <MarketplaceDonut
+            rows={viewModel.marketplaceDistribution}
+            onSelect={(row) =>
+              navigateOrders('all', {
+                ...periodFilters,
+                marketplace: row.label as OrdersNavigationFilters['marketplace'],
+              })
+            }
+          />
         </article>
       </section>
 
-      <section className="dashboard-v2-main">
-        <article className="panel dashboard-actions-card">
-          <DashboardHeading
-            eyebrow="Kontrol Listesi"
+      <section className="dashboard-analytics-grid dashboard-analytics-row-ops">
+        <article className="dashboard-analytics-card dashboard-actions-card-new">
+          <DashboardCardHeader
             title="Aksiyon Gerektirenler"
-            icon={<AlertTriangle size={19} />}
+            icon={<AlertTriangle size={18} />}
           />
-          <div className="dashboard-action-list">
-            {summary.actionItems.filter((item) => item.count > 0).map((item) => (
-              <div key={item.key} className="dashboard-action-row">
-                <div>
-                  <strong>{item.title}</strong>
-                  <span>{item.description}</span>
-                </div>
-                <b>{item.count}</b>
+          <div className="dashboard-action-list-new">
+            {viewModel.actionRequired
+              .filter((item) => item.count > 0)
+              .map((item) => (
                 <button
                   type="button"
+                  key={item.key}
+                  className={`severity-${item.severity}`}
                   onClick={() =>
-                    item.target === 'integrations'
-                      ? onNavigatePage('integrations')
-                      : onNavigateOrders(item.target)
+                    navigateOrders(
+                      item.filterTarget,
+                      item.actionFilter
+                        ? { actionFilter: item.actionFilter }
+                        : undefined,
+                    )
                   }
                 >
-                  Git <ArrowRight size={14} />
+                  <span>
+                    <strong>{item.label}</strong>
+                    <small>{item.description}</small>
+                  </span>
+                  <b>{item.count}</b>
+                  <ArrowRight size={14} />
                 </button>
-              </div>
-            ))}
-            {summary.actionItems.every((item) => item.count === 0) ? (
-              <div className="dashboard-compact-empty">
-                <CheckCircle2 size={22} />
-                <div>
-                  <strong>Aksiyon gerektiren işlem yok.</strong>
-                  <span>Mevcut sipariş ve sağlayıcı state’leri temiz görünüyor.</span>
-                </div>
-              </div>
+              ))}
+            {viewModel.actionRequired.every((item) => item.count === 0) ? (
+              <div className="dashboard-empty-compact">Aksiyon gerektiren işlem yok.</div>
             ) : null}
           </div>
         </article>
 
-        <article className="panel dashboard-quick-card">
-          <DashboardHeading
-            eyebrow="Kısayollar"
-            title="Hızlı İşlemler"
-            icon={<Box size={19} />}
+        <article className="dashboard-analytics-card dashboard-operation-flow-card">
+          <DashboardCardHeader
+            title="Operasyon Akışı"
+            helper="Backlog alanları anlık, tamamlanan adımlar seçili dönemdir"
           />
-          <div className="dashboard-quick-grid">
-            <QuickAction icon={<RefreshCcw />} label="Siparişleri Yenile" onClick={onRefresh} />
-            <QuickAction icon={<Barcode />} label="Toplu Barkod Oluştur" onClick={() => onNavigateOrders('barcodePending')} />
-            <QuickAction icon={<Printer />} label="Barkod Bas" onClick={() => onNavigateOrders('labelReady')} />
-            <QuickAction icon={<Download />} label="ZPL İndir" onClick={() => onNavigateOrders('labelReady')} />
-            <QuickAction icon={<Printer />} label="Yazdırma Kuyruğu" onClick={() => onNavigateOrders('labelReady')} />
-            <QuickAction icon={<Plug />} label="Entegrasyon Ayarları" onClick={() => onNavigatePage('integrations')} />
-            <QuickAction icon={<Settings />} label="Yazıcı Ayarları" onClick={() => onNavigatePage('printers')} />
+          <div className="dashboard-operation-flow">
+            {viewModel.operationFlow.map((step, index) => (
+              <button
+                type="button"
+                key={step.key}
+                onClick={() =>
+                  navigateOrders(
+                    step.filterTarget,
+                    ['printed', 'cargo', 'delivered'].includes(step.key)
+                      ? periodFilters
+                      : undefined,
+                  )
+                }
+              >
+                <span>{index + 1}</span>
+                <small>{step.label}</small>
+                <strong>{step.count}</strong>
+              </button>
+            ))}
+          </div>
+        </article>
+
+        <article className="dashboard-analytics-card dashboard-picking-card">
+          <DashboardCardHeader
+            title={viewModel.pickingLists.title}
+            helper="Açık operasyonlardan salt okunur özet"
+          />
+          <div className="dashboard-picking-list">
+            {viewModel.pickingLists.products.map((product) => (
+              <div key={product.key}>
+                <ProductImageThumb
+                  candidates={product.imageCandidates}
+                  alt={product.productName}
+                  className="dashboard-mini-product-image"
+                  placeholderClassName="dashboard-mini-product-placeholder"
+                />
+                <span>
+                  <strong>{product.productName}</strong>
+                  <small>{product.barcode || product.sku || 'Kod yok'}</small>
+                </span>
+                <b>{product.quantity} adet</b>
+              </div>
+            ))}
+            {viewModel.pickingLists.products.length === 0 ? (
+              <div className="dashboard-empty-compact">
+                Bu dönem için toplanacak ürün bulunamadı.
+              </div>
+            ) : null}
           </div>
         </article>
       </section>
 
-      <article className="panel dashboard-recent-table-card">
-        <DashboardHeading
-          eyebrow="Son Siparişler"
-          title="Güncel operasyon kayıtları"
-          action={
-            <button type="button" className="text-button" onClick={() => onNavigateOrders('all')}>
-              Tümünü gör <ArrowRight size={15} />
-            </button>
-          }
-        />
-        {summary.recentOrders.length > 0 ? (
-          <div className="dashboard-table-scroll">
-            <table className="dashboard-recent-table">
-              <thead>
-                <tr>
-                  <th>Sipariş No</th>
-                  <th>Pazaryeri</th>
-                  <th>Müşteri / Ürün</th>
-                  <th>Durum</th>
-                  <th>Kargo Firması</th>
-                  <th>Sürat Takip / Barkod</th>
-                  <th>Aksiyonlar</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summary.recentOrders.map((order) => {
-                  const zplAvailable = Boolean(order.barcodeRaw)
-                  const printAvailable = Boolean(order.barcode)
-                  return (
-                    <tr key={order.id}>
-                      <td><strong>{order.orderNumber}</strong></td>
-                      <td>{order.marketplaceProviderName}</td>
+      <section className="dashboard-analytics-grid dashboard-analytics-row-bottom">
+        <article className="dashboard-analytics-card dashboard-top-products-card">
+          <DashboardCardHeader
+            title="En Çok Satan Ürünler"
+            helper={viewModel.period.label}
+          />
+          {viewModel.topProducts.length > 0 ? (
+            <div className="dashboard-table-wrap">
+              <table className="dashboard-compact-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Ürün</th>
+                    <th>Satış</th>
+                    <th>Ciro</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewModel.topProducts.map((product, index) => (
+                    <tr key={product.key}>
+                      <td>{index + 1}</td>
                       <td>
-                        <div className="dashboard-product-cell">
+                        <div className="dashboard-product-cell-new">
                           <ProductImageThumb
-                            candidates={
-                              order.productImageCandidates.length > 0
-                                ? order.productImageCandidates
-                                : order.productImageUrl
-                                  ? [order.productImageUrl]
-                                  : []
-                            }
-                            alt={order.productSummary}
-                            className="dashboard-product-image"
-                            placeholderClassName="dashboard-product-placeholder"
+                            candidates={product.imageCandidates}
+                            alt={product.productName}
+                            className="dashboard-mini-product-image"
+                            placeholderClassName="dashboard-mini-product-placeholder"
                           />
-                          <div>
-                            <strong>{order.customerName}</strong>
-                            <span>{order.productSummary}</span>
-                          </div>
+                          <span>
+                            <strong>{product.productName}</strong>
+                            <small>{product.barcode || product.sku || 'Kod yok'}</small>
+                          </span>
                         </div>
                       </td>
+                      <td><strong>{product.quantity}</strong></td>
+                      <td>{formatCurrency(product.revenue)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="dashboard-empty-card">Bu dönem için ürün satışı bulunamadı.</div>
+          )}
+        </article>
+
+        <article className="dashboard-analytics-card dashboard-recent-ops-card">
+          <DashboardCardHeader
+            title="Güncel Operasyon Kayıtları"
+            action={
+              <button
+                type="button"
+                className="dashboard-card-link"
+                onClick={() => navigateOrders('all', periodFilters)}
+              >
+                Tümünü gör <ArrowRight size={14} />
+              </button>
+            }
+          />
+          {viewModel.recentOperations.length > 0 ? (
+            <div className="dashboard-table-wrap">
+              <table className="dashboard-compact-table dashboard-operations-table">
+                <thead>
+                  <tr>
+                    <th>Sipariş No</th>
+                    <th>Pazaryeri</th>
+                    <th>Müşteri</th>
+                    <th>Ürün</th>
+                    <th>Durum</th>
+                    <th>Kargo</th>
+                    <th>İşlem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {viewModel.recentOperations.map((operation) => (
+                    <tr key={operation.id}>
+                      <td><strong>{operation.orderNumber}</strong></td>
+                      <td>{operation.marketplace}</td>
+                      <td>{operation.customerName}</td>
                       <td>
-                        <span className="dashboard-status-pill">{order.status}</span>
-                        <span>Kaynak: {order.statusSource}</span>
+                        <div className="dashboard-product-cell-new">
+                          <ProductImageThumb
+                            candidates={operation.imageCandidates}
+                            alt={operation.productName}
+                            className="dashboard-mini-product-image"
+                            placeholderClassName="dashboard-mini-product-placeholder"
+                          />
+                          <span>
+                            <strong>{operation.productName}</strong>
+                            <small>
+                              {operation.productVariant || 'Varyant bilgisi yok'}
+                              {operation.additionalItemCount > 0
+                                ? ` · +${operation.additionalItemCount} ürün`
+                                : ''}
+                            </small>
+                          </span>
+                        </div>
                       </td>
-                      <td>{order.carrierProviderName}</td>
+                      <td><span className="dashboard-operation-status">{operation.status}</span></td>
+                      <td>{operation.carrier}</td>
                       <td>
-                        <strong>Sürat takip: {order.trackingNumber || '-'}</strong>
-                        <span>Sürat barkod: {order.barcode || '-'}</span>
-                        {order.trendyolCargoTrackingNumber ? (
-                          <span>Trendyol kodu: {order.trendyolCargoTrackingNumber}</span>
-                        ) : null}
-                      </td>
-                      <td>
-                        <div className="dashboard-order-actions">
-                          <button type="button" onClick={() => onNavigateOrders('all', order.id)}>
-                            Detay
+                        <div className="dashboard-row-actions">
+                          <button
+                            type="button"
+                            aria-label={`${operation.orderNumber} detay`}
+                            title="Sipariş detayı"
+                            onClick={() => navigateOrders('all', periodFilters, operation.id)}
+                          >
+                            <Eye size={15} />
                           </button>
                           <button
                             type="button"
-                            disabled={!zplAvailable}
-                            title={zplAvailable ? 'ZPL indir' : 'ZPL verisi yok; Chrome yazdırma kullanılabilir.'}
-                            onClick={() => onDownloadOrder(order.id)}
+                            aria-label={`${operation.orderNumber} etiketi yazdır`}
+                            title={operation.canPrint ? 'Etiketi yazdır' : operation.printDisabledReason}
+                            disabled={!operation.canPrint}
+                            onClick={() => onPrintOrder(operation.id)}
                           >
-                            ZPL
+                            <Printer size={15} />
                           </button>
                           <button
                             type="button"
-                            disabled={!printAvailable}
-                            title={printAvailable ? 'Yazdır' : 'Önce kargo barkodu oluşturulmalı.'}
-                            onClick={() => onPrintOrder(order.id)}
+                            aria-label={`${operation.orderNumber} ZPL indir`}
+                            title={operation.canDownloadZpl ? 'ZPL indir' : operation.zplDisabledReason}
+                            disabled={!operation.canDownloadZpl}
+                            onClick={() => onDownloadOrder(operation.id)}
                           >
-                            {order.labelStatus === 'PRINTED' ? 'Tekrar Yazdır' : 'Yazdır'}
+                            <Download size={15} />
                           </button>
                         </div>
                       </td>
                     </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : (
-          <div className="dashboard-empty-state">
-            <ShoppingBag size={30} />
-            <strong>Henüz sipariş çekilmedi.</strong>
-            <span>Pazaryeri bağlantısını kurup siparişleri yenileyin.</span>
-          </div>
-        )}
-      </article>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="dashboard-empty-card">Bu dönem için operasyon kaydı bulunamadı.</div>
+          )}
+        </article>
+      </section>
     </div>
   )
 }
 
-const dashboardPeriods: Array<{
-  key: DashboardPeriod
+function DashboardMetricCard({
+  label,
+  metric,
+  icon,
+  tone,
+  format = 'number',
+  onClick,
+}: {
   label: string
-}> = [
-  { key: 'today', label: 'Bugün' },
-  { key: 'last7', label: 'Son 7 Gün' },
-  { key: 'month', label: 'Bu Ay' },
-  { key: 'all', label: 'Tümü' },
-]
-
-function periodLabel(period: DashboardPeriod): string {
-  if (period === 'today') return 'Bugün'
-  if (period === 'last7') return 'Son 7 günde'
-  if (period === 'month') return 'Bu ay'
-  return 'Tüm dönemde'
+  metric: DashboardMetric
+  icon: ReactNode
+  tone: string
+  format?: 'number' | 'currency'
+  onClick?: () => void
+}) {
+  return (
+    <MetricCardShell label={label} tone={tone} icon={icon} onClick={onClick}>
+      <strong>{metric.available ? formatMetric(metric.value, format) : 'Veri yok'}</strong>
+      {metric.available ? (
+        <ComparisonBadge comparison={metric.comparison} format={format} />
+      ) : (
+        <small>Parasal alan eksik</small>
+      )}
+    </MetricCardShell>
+  )
 }
 
-function DashboardHeading({
-  eyebrow,
+function DashboardSnapshotCard({
+  label,
+  value,
+  helper,
+  icon,
+  tone,
+  onClick,
+}: {
+  label: string
+  value: number
+  helper: string
+  icon: ReactNode
+  tone: string
+  onClick: () => void
+}) {
+  return (
+    <MetricCardShell label={label} tone={tone} icon={icon} onClick={onClick}>
+      <strong>{formatNumber(value)}</strong>
+      <small>{helper}</small>
+    </MetricCardShell>
+  )
+}
+
+function MetricCardShell({
+  label,
+  tone,
+  icon,
+  onClick,
+  children,
+}: {
+  label: string
+  tone: string
+  icon: ReactNode
+  onClick?: () => void
+  children: ReactNode
+}) {
+  const content = (
+    <>
+      <div className="dashboard-metric-card-head">
+        <span>{label}</span>
+        <i className={`tone-${tone}`}>{icon}</i>
+      </div>
+      {children}
+    </>
+  )
+  return onClick ? (
+    <button type="button" className="dashboard-metric-card clickable" onClick={onClick}>
+      {content}
+    </button>
+  ) : (
+    <div className="dashboard-metric-card">{content}</div>
+  )
+}
+
+function ComparisonBadge({
+  comparison,
+  format,
+}: {
+  comparison: DashboardComparison
+  format: 'number' | 'currency'
+}) {
+  const icon =
+    comparison.direction === 'up' ? (
+      <ArrowUpRight size={13} />
+    ) : comparison.direction === 'down' ? (
+      <ArrowDownRight size={13} />
+    ) : (
+      <Minus size={13} />
+    )
+  const label = !comparison.comparable
+    ? 'Yeni'
+    : `${comparison.percentageChange >= 0 ? '+' : ''}${comparison.percentageChange.toLocaleString('tr-TR', {
+        maximumFractionDigits: 1,
+      })}%`
+  return (
+    <small className={`dashboard-comparison ${comparison.direction}`}>
+      Önceki: {formatMetric(comparison.previous, format)}
+      <span>{label} {icon}</span>
+    </small>
+  )
+}
+
+function DashboardCardHeader({
   title,
+  helper,
   icon,
   action,
 }: {
-  eyebrow: string
   title: string
+  helper?: string
   icon?: ReactNode
   action?: ReactNode
 }) {
   return (
-    <div className="dashboard-card-heading">
+    <div className="dashboard-card-header-new">
       <div>
-        <span className="eyebrow">{eyebrow}</span>
         <h2>{title}</h2>
+        {helper ? <small>{helper}</small> : null}
       </div>
       {action || icon}
     </div>
   )
 }
 
-function HealthRow({ provider }: { provider: DashboardProviderHealth }) {
-  const online = provider.status === 'connected'
-  const statusText =
-    provider.status === 'connected'
-      ? 'Bağlı'
-      : provider.status === 'error'
-        ? 'Hata'
-        : 'Ayarlanmadı'
+function SalesLineChart({
+  current,
+  comparison,
+}: {
+  current: DashboardTimeBucket[]
+  comparison: DashboardTimeBucket[]
+}) {
+  const width = 700
+  const height = 230
+  const left = 54
+  const right = 18
+  const top = 18
+  const bottom = 36
+  const values = [...current, ...comparison].map((bucket) => bucket.amount)
+  const max = Math.max(1, ...values)
+  const xFor = (index: number, length: number) =>
+    left + (index / Math.max(1, length - 1)) * (width - left - right)
+  const yFor = (value: number) => top + (1 - value / max) * (height - top - bottom)
+  const currentPoints = current.map((bucket, index) => `${xFor(index, current.length)},${yFor(bucket.amount)}`).join(' ')
+  const comparisonPoints = comparison.map((bucket, index) => `${xFor(index, comparison.length)},${yFor(bucket.amount)}`).join(' ')
+  const tickEvery = Math.max(1, Math.ceil(current.length / 8))
+
   return (
-    <div className="dashboard-connection-row">
-      <div className={online ? 'connection-icon online' : 'connection-icon'}>
-        {online ? <Wifi size={17} /> : <WifiOff size={17} />}
+    <div className="dashboard-sales-chart" data-testid="dashboard-sales-chart">
+      <div className="dashboard-chart-legend">
+        <span><i className="current" />Seçili dönem</span>
+        <span><i className="comparison" />Karşılaştırma</span>
       </div>
-      <div>
-        <strong>{provider.providerName}</strong>
-        <span>{provider.detail}</span>
-      </div>
-      <small>{statusText}</small>
+      <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Satış tutarı zaman grafiği">
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = top + ratio * (height - top - bottom)
+          return (
+            <g key={ratio}>
+              <line x1={left} y1={y} x2={width - right} y2={y} className="grid-line" />
+              <text x={left - 8} y={y + 4} textAnchor="end">{compactCurrency(max * (1 - ratio))}</text>
+            </g>
+          )
+        })}
+        <polyline points={comparisonPoints} className="comparison-line" />
+        <polyline points={currentPoints} className="current-line" />
+        {current.map((bucket, index) => (
+          <g key={bucket.key}>
+            <circle cx={xFor(index, current.length)} cy={yFor(bucket.amount)} r="3" className="current-point">
+              <title>{`${bucket.label}: ${formatCurrency(bucket.amount)} · ${bucket.orderCount} sipariş`}</title>
+            </circle>
+            {index % tickEvery === 0 || index === current.length - 1 ? (
+              <text x={xFor(index, current.length)} y={height - 12} textAnchor="middle">{bucket.label}</text>
+            ) : null}
+          </g>
+        ))}
+      </svg>
     </div>
   )
 }
 
-function QuickAction({
-  icon,
-  label,
-  onClick,
+function DistributionBars({
+  rows,
+  emptyText,
+  onSelect,
 }: {
-  icon: ReactNode
-  label: string
-  onClick: () => void
+  rows: DashboardDistributionRow[]
+  emptyText: string
+  onSelect: (row: DashboardDistributionRow) => void
 }) {
+  const visibleRows = rows.slice(0, 7)
+  if (visibleRows.length === 0) return <div className="dashboard-empty-card">{emptyText}</div>
   return (
-    <button type="button" onClick={onClick}>
-      {icon}
-      <span>{label}</span>
-    </button>
+    <div className="dashboard-distribution-bars">
+      <div className="dashboard-distribution-head">
+        <span>Şehir</span><span>Sipariş</span><span>Ciro</span><span>Pay</span>
+      </div>
+      {visibleRows.map((row) => (
+        <button type="button" key={row.key} onClick={() => onSelect(row)}>
+          <span className="dashboard-distribution-label">
+            <strong>{row.label}</strong>
+            <i style={{ width: `${Math.max(3, row.share)}%` }} />
+          </span>
+          <span>{row.orderCount}</span>
+          <span>{formatCurrency(row.amount)}</span>
+          <span>%{row.share.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}</span>
+        </button>
+      ))}
+    </div>
   )
 }
 
+function MarketplaceDonut({
+  rows,
+  onSelect,
+}: {
+  rows: DashboardDistributionRow[]
+  onSelect: (row: DashboardDistributionRow) => void
+}) {
+  if (rows.length === 0) {
+    return <div className="dashboard-empty-card">Bu dönem için pazaryeri satışı bulunamadı.</div>
+  }
+  const segments = rows.map((row, index) => {
+    const start = rows
+      .slice(0, index)
+      .reduce((sum, item) => sum + item.share, 0)
+    const end = start + row.share
+    return `${marketplaceColors[index % marketplaceColors.length]} ${start}% ${end}%`
+  })
+  return (
+    <div className="dashboard-marketplace-donut-wrap">
+      <div className="dashboard-marketplace-donut" style={{ background: `conic-gradient(${segments.join(', ')})` }}>
+        <span><strong>{rows.reduce((sum, row) => sum + row.orderCount, 0)}</strong><small>Sipariş</small></span>
+      </div>
+      <div className="dashboard-marketplace-legend">
+        {rows.map((row, index) => (
+          <button type="button" key={row.key} onClick={() => onSelect(row)}>
+            <i style={{ background: marketplaceColors[index % marketplaceColors.length] }} />
+            <span><strong>{row.label}</strong><small>{row.orderCount} sipariş · {formatCurrency(row.amount)}</small></span>
+            <b>%{row.share.toLocaleString('tr-TR', { maximumFractionDigits: 1 })}</b>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function navigationFiltersForPeriod(period: DashboardDateRange): OrdersNavigationFilters {
+  if (['today', 'yesterday', 'last7', 'last30'].includes(period.key)) {
+    return { datePreset: period.key as OrdersNavigationFilters['datePreset'] }
+  }
+  return {
+    datePreset: 'custom',
+    customStartDate: formatInputDate(period.start),
+    customEndDate: formatInputDate(period.end),
+  }
+}
+
+function formatMetric(value: number, format: 'number' | 'currency'): string {
+  return format === 'currency' ? formatCurrency(value) : formatNumber(value)
+}
+
+function formatCurrency(value: number): string {
+  return new Intl.NumberFormat('tr-TR', {
+    style: 'currency',
+    currency: 'TRY',
+    maximumFractionDigits: 0,
+  }).format(value)
+}
+
+function compactCurrency(value: number): string {
+  return new Intl.NumberFormat('tr-TR', {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value)
+}
+
+function formatNumber(value: number): string {
+  return new Intl.NumberFormat('tr-TR', { maximumFractionDigits: 1 }).format(value)
+}
+
+function formatInputDate(value: Date): string {
+  const year = value.getFullYear()
+  const month = String(value.getMonth() + 1).padStart(2, '0')
+  const day = String(value.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}

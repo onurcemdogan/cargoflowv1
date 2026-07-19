@@ -32,6 +32,11 @@ import {
 } from '../utils/ordersTabs'
 import { mapMarketplaceStatus } from '../utils/statusPresentation'
 import { formatDisplayDate } from '../utils/formatters'
+import type {
+  OrdersActionFilter,
+  OrdersDatePreset,
+  OrdersNavigationFilters,
+} from '../utils/ordersNavigation'
 
 interface OrdersPageProps {
   orders: CargoOrder[]
@@ -43,6 +48,7 @@ interface OrdersPageProps {
   lastSyncAt?: string
   initialQuickTab?: QuickTab
   initialOrderId?: string
+  initialFilters?: OrdersNavigationFilters
   onToggleOrder: (orderId: string) => void
   onToggleAll: (visibleIds: string[]) => void
   onFetchOrders: (options?: OrdersFetchOptions) => void
@@ -121,16 +127,7 @@ const quickTabs: Array<{ key: QuickTab; label: string }> = [
   { key: 'all', label: 'Tümü' },
 ]
 
-type DateRangePreset =
-  | 'all'
-  | 'today'
-  | 'yesterday'
-  | 'last3'
-  | 'last7'
-  | 'last30'
-  | 'custom'
-
-const dateRangeOptions: Array<{ key: DateRangePreset; label: string }> = [
+const dateRangeOptions: Array<{ key: OrdersDatePreset; label: string }> = [
   { key: 'all', label: 'Tüm Tarihler' },
   { key: 'today', label: 'Bugün' },
   { key: 'yesterday', label: 'Dün' },
@@ -150,6 +147,7 @@ export function OrdersPage({
   lastSyncAt,
   initialQuickTab,
   initialOrderId,
+  initialFilters,
   onToggleOrder,
   onToggleAll,
   onFetchOrders,
@@ -165,13 +163,25 @@ export function OrdersPage({
   onMarkPrintedForOrder,
   onMarkHandedToCargo,
 }: OrdersPageProps) {
-  const [marketplace, setMarketplace] = useState<'all' | MarketplaceName>('all')
+  const [marketplace, setMarketplace] = useState<'all' | MarketplaceName>(
+    initialFilters?.marketplace ?? 'all',
+  )
+  const [city, setCity] = useState(initialFilters?.city ?? 'all')
   const [status, setStatus] = useState<OrderStatusFilter>('all')
   const [cargo, setCargo] = useState<CargoFilter>('all')
   const [query, setQuery] = useState('')
-  const [datePreset, setDatePreset] = useState<DateRangePreset>('all')
-  const [customStartDate, setCustomStartDate] = useState('')
-  const [customEndDate, setCustomEndDate] = useState('')
+  const [datePreset, setDatePreset] = useState<OrdersDatePreset>(
+    initialFilters?.datePreset ?? 'all',
+  )
+  const [customStartDate, setCustomStartDate] = useState(
+    initialFilters?.customStartDate ?? '',
+  )
+  const [customEndDate, setCustomEndDate] = useState(
+    initialFilters?.customEndDate ?? '',
+  )
+  const [actionFilter, setActionFilter] = useState<OrdersActionFilter>(
+    initialFilters?.actionFilter ?? 'all',
+  )
   const [activeQuickTab, setActiveQuickTab] = useState<QuickTab>(
     initialQuickTab ?? 'currentSync',
   )
@@ -192,6 +202,8 @@ export function OrdersPage({
         marketplaceFilter: marketplace,
         operationStatusFilter: status,
         cargoFilter: cargo,
+        cityFilter: city,
+        actionFilter,
         dateFilter: {
           preset: datePreset,
           startTime: dateRange.startTime,
@@ -201,7 +213,9 @@ export function OrdersPage({
       }),
     [
       activeQuickTab,
+      actionFilter,
       cargo,
+      city,
       datePreset,
       dateRange.endTime,
       dateRange.startTime,
@@ -232,6 +246,8 @@ export function OrdersPage({
             marketplaceFilter: marketplace,
             operationStatusFilter: status,
             cargoFilter: cargo,
+            cityFilter: city,
+            actionFilter,
             dateFilter: {
               preset: datePreset,
               startTime: dateRange.startTime,
@@ -242,7 +258,9 @@ export function OrdersPage({
         ]),
       ) as Record<QuickTab, number>,
     [
+      actionFilter,
       cargo,
+      city,
       datePreset,
       dateRange.endTime,
       dateRange.startTime,
@@ -260,6 +278,13 @@ export function OrdersPage({
         .length,
     }
   }, [orders])
+  const cityOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(orders.map((order) => String(order.city || '').trim()).filter(Boolean)),
+      ).sort((left, right) => left.localeCompare(right, 'tr-TR')),
+    [orders],
+  )
 
   const selectionText =
     selectedIds.length === 0
@@ -280,6 +305,8 @@ export function OrdersPage({
     setMarketplace('all')
     setStatus('all')
     setCargo('all')
+    setCity('all')
+    setActionFilter('all')
     setQuery('')
     onFetchOrders({
       statuses: statusesForFetch(tab),
@@ -377,6 +404,17 @@ export function OrdersPage({
           </select>
         </label>
         <label>
+          <span>Şehir</span>
+          <select value={city} onChange={(event) => setCity(event.target.value)}>
+            <option value="all">Tümü</option>
+            {cityOptions.map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
           <span>Arama</span>
           <input
             value={query}
@@ -388,7 +426,7 @@ export function OrdersPage({
           <span>Tarih</span>
           <select
             value={datePreset}
-            onChange={(event) => setDatePreset(event.target.value as DateRangePreset)}
+            onChange={(event) => setDatePreset(event.target.value as OrdersDatePreset)}
           >
             {dateRangeOptions.map((item) => (
               <option key={item.key} value={item.key}>
@@ -418,6 +456,16 @@ export function OrdersPage({
           </>
         ) : null}
       </section>
+
+      {actionFilter !== 'all' ? (
+        <button
+          type="button"
+          className="orders-dashboard-filter-chip"
+          onClick={() => setActionFilter('all')}
+        >
+          Dashboard aksiyon filtresi: {actionFilterLabel(actionFilter)} ×
+        </button>
+      ) : null}
 
       <section className="toolbar">
         <div>
@@ -521,11 +569,13 @@ export function OrdersPage({
         <div><span>selectedStatusFilter</span><code>{status}</code></div>
         <div><span>selectedCargoFilter</span><code>{cargo}</code></div>
         <div><span>selectedDateFilter</span><code>{datePreset}</code></div>
+        <div><span>selectedActionFilter</span><code>{actionFilter}</code></div>
         <div><span>searchQuery</span><code>{query || '-'}</code></div>
         <div><span>afterTabFilterCount</span><code>{visibleOrdersResult.debug.afterTabFilter}</code></div>
         <div><span>afterMarketplaceFilterCount</span><code>{visibleOrdersResult.debug.afterMarketplaceFilter}</code></div>
         <div><span>afterStatusFilterCount</span><code>{visibleOrdersResult.debug.afterOperationStatusFilter}</code></div>
         <div><span>afterCargoFilterCount</span><code>{visibleOrdersResult.debug.afterCargoFilter}</code></div>
+        <div><span>afterActionFilterCount</span><code>{visibleOrdersResult.debug.afterActionFilter}</code></div>
         <div><span>afterDateFilterCount</span><code>{visibleOrdersResult.debug.afterDateFilter}</code></div>
         <div><span>afterSearchFilterCount</span><code>{visibleOrdersResult.debug.afterSearch}</code></div>
       </section>
@@ -590,7 +640,7 @@ export function OrdersPage({
 }
 
 function buildDateRange(
-  preset: DateRangePreset,
+  preset: OrdersDatePreset,
   customStartDate: string,
   customEndDate: string,
 ) {
@@ -640,6 +690,13 @@ function toDateRange(startDate: Date, endDate: Date) {
 
 function formatSyncTime(value?: string): string {
   return value ? formatDisplayDate(value) : 'Bekleniyor'
+}
+
+function actionFilterLabel(filter: OrdersActionFilter): string {
+  if (filter === 'createEligible') return 'Barkod oluşturulabilir'
+  if (filter === 'printEligible') return 'Etiketi basılabilir'
+  if (filter === 'critical') return 'Hatalı / kritik bilgi eksik'
+  return 'Tümü'
 }
 
 function statusOptionLabel(item: OrderStatusFilter): string {
