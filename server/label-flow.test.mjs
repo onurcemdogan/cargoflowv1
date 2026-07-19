@@ -481,9 +481,20 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
     {},
     { append: () => [] },
   )
+  // Ayrık kimlik: storage'daki önceki başarılı 'order-1' kaydı, ikinci
+  // savunma guard'ını tetiklemesin (guard, kalıcı shipment'ı olan pakette
+  // shipment'sız kopyayla yeni create başlatılmasını bilerek engeller).
+  const failedInputOrder = {
+    ...buildOrder(),
+    id: 'order-failed-1',
+    orderNumber: 'ORDER-FAILED-1',
+    packageId: 'PKGFAILED1',
+    shipmentPackageId: 'PKGFAILED1',
+    cargoTrackingNumber: '7270031111111111',
+  }
   const failedOrderResult = await failedWorkflow.createShipments(
-    [buildOrder()],
-    ['order-1'],
+    [failedInputOrder],
+    ['order-failed-1'],
     buildConfig(),
   )
   const failedOrder = failedOrderResult.orders[0]

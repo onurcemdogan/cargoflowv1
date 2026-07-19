@@ -216,8 +216,22 @@ export class OrderWorkflowService {
     return scopedStorageKey(PRODUCTS_KEY, this.marketplaceAccountScope)
   }
 
-  private persistOrders(orders: CargoOrder[]): void {
-    saveToStorage(this.ordersStorageKey(), buildPersistedOrderCache(orders))
+  // Operational state için SON savunma hattı: hangi akış yazarsa yazsın
+  // (senkron merge, görsel zenginleştirme, bayat in-memory snapshot),
+  // storage'daki mevcut shipment/etiket/desi izi, shipment'sız bir kopya
+  // tarafından ASLA silinemez. Reconciled liste geri döner ki UI'ya giden
+  // in-memory kopya da storage ile aynı operasyonel state'i taşısın.
+  private persistOrders(orders: CargoOrder[]): CargoOrder[] {
+    const storedOrders = loadFromStorage<CargoOrder[]>(
+      this.ordersStorageKey(),
+      [],
+    )
+    const reconciled = preserveOperationalStateFromStore(orders, storedOrders)
+    saveToStorage(
+      this.ordersStorageKey(),
+      buildPersistedOrderCache(reconciled),
+    )
+    return reconciled
   }
 
   loadOrders(): CargoOrder[] {
@@ -230,8 +244,7 @@ export class OrderWorkflowService {
     products: CargoProduct[],
   ): CargoOrder[] {
     const enriched = enrichOrdersWithProductImages(orders, products)
-    this.persistOrders(enriched)
-    return enriched
+    return this.persistOrders(enriched)
   }
 
   loadProducts(): CargoProduct[] {
@@ -371,7 +384,7 @@ export class OrderWorkflowService {
       endDate: options.endDate,
     })
     const syncBatchAt = new Date().toISOString()
-    const nextOrders = mergeOrdersWithLocalState(
+    let nextOrders = mergeOrdersWithLocalState(
       response.orders.map((order) =>
         markOrderAsSeenInSyncBatch(withDerivedOperationStatus(order), syncBatchAt),
       ),
@@ -380,7 +393,9 @@ export class OrderWorkflowService {
     if (response.debug) {
       console.log('Trendyol order normalization debug', response.debug)
     }
-    this.persistOrders(nextOrders)
+    // Reconciled liste hem storage'a hem UI'ya gider (desi/shipment izi
+    // in-memory kopyada da korunur).
+    nextOrders = this.persistOrders(nextOrders)
     this.auditLogService.append({
       action: 'Siparişler çekildi',
       level: 'success',
@@ -450,7 +465,48 @@ export class OrderWorkflowService {
     const skippedOrderNumbers: string[] = []
     const skippedReasons: string[] = []
 
+    // İkinci savunma katmanı: seçilen order geçici olarak shipment'sız
+    // görünse bile storage'daki aynı paket kaydında operasyonel shipment
+    // varsa yeni carrier create BAŞLATILMAZ (ana koruma persistOrders
+    // reconcile'ıdır; bu katman bayat UI kopyalarına karşı emniyettir).
+    const storedWithShipment = this.loadOrders().filter(
+      (stored) => stored.shipment,
+    )
+
     for (const order of selectedOrders(orders, selectedIds)) {
+      if (!order.shipment) {
+        const storedCounterpart = findMatchingOperationalOrder(
+          order,
+          storedWithShipment,
+        )
+        if (storedCounterpart?.shipment) {
+          const reason =
+            'Önceki gönderi kaydı inceleniyor; yeni gönderi oluşturulamaz.'
+          skippedCount += 1
+          skippedOrderNumbers.push(order.orderNumber)
+          skippedReasons.push(`${order.orderNumber}: ${reason}`)
+          this.auditLogService.append({
+            action: 'Gönderi oluşturuldu',
+            level: 'warning',
+            details: `${reason} (paket ${order.packageId ?? order.shipmentPackageId ?? '-'} için kalıcı kayıt bulundu)`,
+            orderNumber: order.orderNumber,
+          })
+          // Kalıcı kayıttaki shipment görünen listeye geri bağlanır.
+          nextOrders = replaceOrder(nextOrders, {
+            ...order,
+            shipment: storedCounterpart.shipment,
+            labelStatus: storedCounterpart.labelStatus,
+            printEnabled: storedCounterpart.printEnabled,
+            status:
+              storedCounterpart.status && storedCounterpart.status !== 'Yeni'
+                ? storedCounterpart.status
+                : order.status,
+            operationStatus:
+              storedCounterpart.operationStatus ?? order.operationStatus,
+          })
+          continue
+        }
+      }
       if (!canCreateShipment(order)) {
         const reason = shipmentCreationBlockedReason(order)
         skippedCount += 1
@@ -2025,6 +2081,84 @@ function isValidStoredOrder(order: CargoOrder): boolean {
       order.customerName !== 'Trendyol Müşterisi' &&
       (order.address || order.city || order.district),
   )
+}
+
+// Merge kuralı (persist katmanı): yazılacak order'da shipment YOKSA ama
+// storage'daki aynı paket kaydında operasyonel shipment VARSA, marketplace
+// alanları (müşteri/adres/items/durum/tarih/fiyat) yeni kopyadan alınır,
+// operasyonel alanlar (shipment, etiket geçmişi, doğrulama durumu, desi
+// override) storage'dan KORUNUR. Yazılacak kopya kendi shipment'ını
+// taşıyorsa (create/track akışları) o daha yenidir ve aynen yazılır.
+// Kimlik: packageId/shipmentPackageId String() ile normalize edilir
+// ("4009094498" === 4009094498); farklı packageId'ler birleştirilmez.
+// Operasyonel kimlik eşleyici: tenant zaten storage anahtarında; burada
+// öncelik packageId/shipmentPackageId'dir (String() normalize —
+// "4009094498" === 4009094498). Yalnız İKİ TARAF da packageId taşımıyorsa
+// orderNumber'a düşülür; externalOrderId/id gibi zayıf kimliklerle iki
+// farklı paket ASLA birleştirilmez.
+function findMatchingOperationalOrder(
+  order: CargoOrder,
+  storedOrders: CargoOrder[],
+): CargoOrder | undefined {
+  const packageKeys = [order.packageId, order.shipmentPackageId]
+    .map((value) => String(value ?? '').trim())
+    .filter(Boolean)
+  if (packageKeys.length > 0) {
+    return storedOrders.find((stored) =>
+      [stored.packageId, stored.shipmentPackageId]
+        .map((value) => String(value ?? '').trim())
+        .some((value) => value && packageKeys.includes(value)),
+    )
+  }
+  const orderNumber = String(order.orderNumber ?? '').trim()
+  if (!orderNumber) return undefined
+  return storedOrders.find(
+    (stored) =>
+      !String(stored.packageId ?? '').trim() &&
+      !String(stored.shipmentPackageId ?? '').trim() &&
+      String(stored.orderNumber ?? '').trim() === orderNumber,
+  )
+}
+
+export function preserveOperationalStateFromStore(
+  nextOrders: CargoOrder[],
+  storedOrders: CargoOrder[],
+): CargoOrder[] {
+  if (storedOrders.length === 0) return nextOrders
+  const storedWithShipment = storedOrders.filter((order) => order?.shipment)
+  if (storedWithShipment.length === 0) return nextOrders
+  return nextOrders.map((order) => {
+    const stored = findMatchingOperationalOrder(order, storedWithShipment)
+    if (!stored?.shipment) return order
+    // Desi override her durumda korunur (yeni kopyada yoksa).
+    const desiPreserved =
+      order.desi == null && stored.desi != null
+        ? { desi: stored.desi, desiSource: stored.desiSource }
+        : {}
+    if (order.shipment) {
+      return { ...order, ...desiPreserved }
+    }
+    return {
+      ...order,
+      ...desiPreserved,
+      shipment: stored.shipment,
+      label: order.label ?? stored.label,
+      labelStatus: order.labelStatus ?? stored.labelStatus,
+      shipmentStatus: stored.shipmentStatus,
+      suratVerificationStatus: stored.suratVerificationStatus,
+      zplReady: stored.zplReady,
+      printEnabled: stored.printEnabled,
+      matchStatus: stored.matchStatus,
+      matchReason: stored.matchReason,
+      noTrackingReason: stored.noTrackingReason,
+      labelBlockedReason: stored.labelBlockedReason,
+      zplDisabledReason: stored.zplDisabledReason,
+      printMigrationNote: stored.printMigrationNote,
+      status:
+        stored.status && stored.status !== 'Yeni' ? stored.status : order.status,
+      operationStatus: stored.operationStatus ?? order.operationStatus,
+    }
+  })
 }
 
 function mergeOrdersWithLocalState(
