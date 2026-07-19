@@ -20,9 +20,77 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
   const { OrdersPage } = await vite.ssrLoadModule(
     '/src/pages/OrdersPage.tsx',
   )
-  const { defaultLabelTemplate } = await vite.ssrLoadModule(
+  const { IntegrationsPage } = await vite.ssrLoadModule(
+    '/src/pages/IntegrationsPage.tsx',
+  )
+  const {
+    integrationCategoryTabs,
+    suratDetailTabs,
+    trendyolDetailTabs,
+  } = await vite.ssrLoadModule('/src/utils/integrationWorkspace.ts')
+  const { defaultIntegrationConfig, defaultLabelTemplate } = await vite.ssrLoadModule(
     '/src/services/integrationConfigService.ts',
   )
+
+  const integrationsHtml = renderToStaticMarkup(
+    createElement(IntegrationsPage, {
+      config: {
+        ...defaultIntegrationConfig,
+        trendyol: {
+          ...defaultIntegrationConfig.trendyol,
+          sellerId: 'seller-ui-test',
+          apiKey: 'key-ui-test',
+          apiSecret: 'secret-ui-test',
+        },
+      },
+      busy: false,
+      onSave: () => {},
+      onTestTrendyol: () => {},
+      onTestSurat: () => {},
+      onFetchOrders: () => {},
+      onFetchProducts: () => {},
+    }),
+  )
+  assert.deepEqual(
+    integrationCategoryTabs.map((tab) => tab.label),
+    [
+      'Pazaryerleri',
+      'E-Ticaret Siteleri',
+      'Kargo Firmaları',
+      'Fatura Entegratörleri',
+      'Diğer Servisler',
+      'Sistem Ayarları',
+    ],
+  )
+  assert.deepEqual(
+    trendyolDetailTabs.map((tab) => tab.label),
+    [
+      'Genel Ayarlar',
+      'API Bilgileri',
+      'Mağaza',
+      'Sipariş Ayarları',
+      'Ürün Ayarları',
+      'Stok Ayarları',
+      'Loglar',
+    ],
+  )
+  assert.deepEqual(
+    suratDetailTabs.map((tab) => tab.label),
+    [
+      'Genel',
+      'Hesap',
+      'Anlaşmalı Kargo',
+      'Ortak Barkod',
+      'Etiket',
+      'Senkronizasyon',
+      'Loglar',
+    ],
+  )
+  assert.match(integrationsHtml, /Entegrasyonlar \/ Ayarlar/)
+  assert.match(integrationsHtml, /Trendyol/)
+  assert.match(integrationsHtml, /Senkronize Et/)
+  assert.match(integrationsHtml, /Ayarlar/)
+  assert.doesNotMatch(integrationsHtml, /Servis Çalışma Saatleri/)
 
   assert.ok(statusesForFetch('delivered').includes('Delivered'))
   assert.ok(statusesForFetch('delivered').includes('Created'))
