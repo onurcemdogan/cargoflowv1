@@ -9,6 +9,30 @@ import {
 } from '../utils/orderStatus'
 import { resolveProductImageCandidates } from '../utils/productImage'
 import type { OrdersActionFilter } from '../utils/ordersNavigation'
+import {
+  DASHBOARD_SALES_REPORTING_TIME_ZONE,
+  resolveReportingComparisonRange,
+  resolveReportingRange,
+  type ReportingPeriodKey,
+} from './reportingRange'
+
+// Yalnız SATIŞ analitiği rapor günü UTC'dir (Durusoft mutabakatı);
+// operasyon sayaçları ve tarih GÖSTERİMLERİ yerel (Europe/Istanbul)
+// semantiğini korur.
+function toReportingPeriodKey(key: DashboardPeriodKey): ReportingPeriodKey {
+  if (key === 'last7') return 'last7Days'
+  if (key === 'last30') return 'last30Days'
+  if (key === 'month') return 'thisMonth'
+  if (key === 'custom') return 'custom'
+  return key
+}
+
+function withReportingBounds(
+  base: DashboardDateRange,
+  bounds: { start: Date; end: Date },
+): DashboardDateRange {
+  return { ...base, start: bounds.start, end: bounds.end }
+}
 
 export type DashboardPeriodKey =
   | 'today'
@@ -226,9 +250,34 @@ export function buildDashboardViewModel({
   now = new Date(),
 }: BuildDashboardViewModelInput): DashboardViewModel {
   const uniqueOrders = dedupeDashboardOrders(orders)
-  const period = resolveDashboardPeriod(selectedPeriod, now)
+  // Yerel (Europe/Istanbul) dönem: operasyon sayaçları ve etiket/kargo
+  // dönem filtreleri MEVCUT semantiğini korur.
+  const localPeriod = resolveDashboardPeriod(selectedPeriod, now)
+  // SATIŞ analitiği dönemi: UTC rapor günü (etiketler yerel dönemden).
+  const reportingKey = toReportingPeriodKey(selectedPeriod.key)
+  const period = withReportingBounds(
+    localPeriod,
+    resolveReportingRange(
+      reportingKey,
+      now,
+      DASHBOARD_SALES_REPORTING_TIME_ZONE,
+      {
+        startDate: selectedPeriod.startDate,
+        endDate: selectedPeriod.endDate,
+      },
+    ),
+  )
   const resolvedComparison =
-    comparisonPeriod ?? resolveComparisonPeriod(period, selectedPeriod.key)
+    comparisonPeriod ??
+    withReportingBounds(
+      resolveComparisonPeriod(localPeriod, selectedPeriod.key),
+      resolveReportingComparisonRange(
+        reportingKey,
+        period,
+        now,
+        DASHBOARD_SALES_REPORTING_TIME_ZONE,
+      ),
+    )
   const periodOrders = uniqueOrders.filter((order) =>
     orderIsInRange(order, period),
   )
@@ -241,7 +290,11 @@ export function buildDashboardViewModel({
     order,
     state: classifyOrderForTabs(order),
   }))
-  const periodClassified = periodOrders.map((order) => ({
+  // Operasyonel dönem sayaçları YEREL güne göre sayılmaya devam eder.
+  const operationalPeriodOrders = uniqueOrders.filter((order) =>
+    orderIsInRange(order, localPeriod),
+  )
+  const periodClassified = operationalPeriodOrders.map((order) => ({
     order,
     state: classifyOrderForTabs(order),
   }))
@@ -252,7 +305,7 @@ export function buildDashboardViewModel({
     (order) =>
       classifyOrderForTabs(order).isLabelPrinted &&
       Boolean(order.label?.printedAt) &&
-      timestampInRange(order.label?.printedAt, period),
+      timestampInRange(order.label?.printedAt, localPeriod),
   ).length
   const handedToCargo = periodClassified.filter(
     ({ state }) => state.isHandedToCargo,
@@ -489,7 +542,7 @@ export function buildDashboardSalesPeriodCards(
 
   return keys.map((key) => {
     const period = resolveSalesPeriodRange(key, now)
-    const comparisonPeriod = resolveSalesCardComparisonRange(key, period)
+    const comparisonPeriod = resolveSalesCardComparisonRange(key, period, now)
     const periodOrders = uniqueOrders.filter((order) =>
       orderIsInRange(order, period),
     )
@@ -547,88 +600,84 @@ function resolveComparisonPeriod(
   return range('comparison', 'Karşılaştırma', period.helper, start, end)
 }
 
+// Satış kartlarının gün sınırları saf UTC raporlama helper'ından gelir
+// (Durusoft mutabakatı); yalnız etiket/başlık metinleri burada kalır.
+function salesCardReportingKey(
+  key: DashboardSalesPeriodKey,
+): ReportingPeriodKey {
+  if (key === 'month') return 'thisMonth'
+  if (key === 'lastMonth') return 'lastMonth'
+  return key
+}
+
 function resolveSalesPeriodRange(
   key: DashboardSalesPeriodKey,
   now: Date,
 ): DashboardDateRange {
-  const todayStart = startOfDay(now)
-  const todayEnd = endOfDay(now)
+  const bounds = resolveReportingRange(
+    salesCardReportingKey(key),
+    now,
+    DASHBOARD_SALES_REPORTING_TIME_ZONE,
+  )
   if (key === 'today') {
-    return range('today', 'Bugün', 'Bugünün net satış özeti', todayStart, todayEnd)
+    return range('today', 'Bugün', 'Bugünün net satış özeti', bounds.start, bounds.end)
   }
   if (key === 'yesterday') {
-    return range(
-      'yesterday',
-      'Dün',
-      'Dünün net satış özeti',
-      addDays(todayStart, -1),
-      addDays(todayEnd, -1),
-    )
+    return range('yesterday', 'Dün', 'Dünün net satış özeti', bounds.start, bounds.end)
   }
   if (key === 'month') {
     return range(
       'month',
       'Bu Ay',
       'Ay başından bugüne net satış özeti',
-      new Date(now.getFullYear(), now.getMonth(), 1),
-      todayEnd,
+      bounds.start,
+      bounds.end,
     )
   }
-  const previousMonthStart = new Date(
-    now.getFullYear(),
-    now.getMonth() - 1,
-    1,
-  )
-  const previousMonthEnd = endOfDay(
-    new Date(now.getFullYear(), now.getMonth(), 0),
-  )
   return range(
     'lastMonth',
     'Geçen Ay',
     'Önceki takvim ayının net satış özeti',
-    previousMonthStart,
-    previousMonthEnd,
+    bounds.start,
+    bounds.end,
   )
 }
 
 function resolveSalesCardComparisonRange(
   key: DashboardSalesPeriodKey,
   period: DashboardDateRange,
+  now: Date,
 ): DashboardDateRange {
+  const bounds = resolveReportingComparisonRange(
+    salesCardReportingKey(key),
+    period,
+    now,
+    DASHBOARD_SALES_REPORTING_TIME_ZONE,
+  )
   if (key === 'today' || key === 'yesterday') {
     return range(
       'comparison',
       'Önceki Gün',
       'Önceki gün ile karşılaştırılıyor',
-      addDays(period.start, -1),
-      addDays(period.end, -1),
+      bounds.start,
+      bounds.end,
     )
   }
   if (key === 'month') {
-    const previousMonthStart = new Date(
-      period.start.getFullYear(),
-      period.start.getMonth() - 1,
-      1,
-    )
     return range(
       'comparison',
       'Önceki Ayın Aynı Dönemi',
       'Önceki ayın aynı gün sayısı ile karşılaştırılıyor',
-      previousMonthStart,
-      endOfDay(addDays(previousMonthStart, daySpan(period) - 1)),
+      bounds.start,
+      bounds.end,
     )
   }
-  const earlierMonthStart = new Date(
-    period.start.getFullYear(),
-    period.start.getMonth() - 1,
-    1,
-  )
   return range(
     'comparison',
     'Bir Önceki Ay',
     'Bir önceki tam ay ile karşılaştırılıyor',
-    earlierMonthStart,
-    endOfDay(new Date(period.start.getFullYear(), period.start.getMonth(), 0)),
+    bounds.start,
+    bounds.end,
   )
 }
 
@@ -1039,19 +1088,26 @@ function resolveChartGranularity(
   return 'monthly'
 }
 
+// Satış grafiği bucket'ları RAPOR DÖNEMİ başlangıcından saf ms aritmetiğiyle
+// bölünür (UTC rapor günüyle hizalı; makine TZ'sinden bağımsız). Saat
+// etiketleri Türkiye saatiyle, gün etiketleri UTC rapor gününe göre yazılır.
+const CHART_HOUR_MS = 3_600_000
+const CHART_DAY_MS = 86_400_000
+
 function bucketIndex(
   period: DashboardDateRange,
   granularity: DashboardViewModel['salesChart']['granularity'],
   date: Date,
 ): number {
-  if (granularity === 'hourly') return date.getHours()
-  const days = Math.floor((startOfDay(date).getTime() - startOfDay(period.start).getTime()) / 86_400_000)
+  const offsetMs = date.getTime() - period.start.getTime()
+  if (granularity === 'hourly') return Math.floor(offsetMs / CHART_HOUR_MS)
+  const days = Math.floor(offsetMs / CHART_DAY_MS)
   if (granularity === 'daily') return days
   if (granularity === 'weekly') return Math.floor(days / 7)
   return (
-    (date.getFullYear() - period.start.getFullYear()) * 12 +
-    date.getMonth() -
-    period.start.getMonth()
+    (date.getUTCFullYear() - period.start.getUTCFullYear()) * 12 +
+    date.getUTCMonth() -
+    period.start.getUTCMonth()
   )
 }
 
@@ -1060,11 +1116,45 @@ function bucketLabel(
   granularity: DashboardViewModel['salesChart']['granularity'],
   index: number,
 ): string {
-  if (granularity === 'hourly') return `${String(index).padStart(2, '0')}:00`
-  if (granularity === 'daily') return formatShortDate(addDays(period.start, index))
-  if (granularity === 'weekly') return `${formatShortDate(addDays(period.start, index * 7))}`
-  const date = new Date(period.start.getFullYear(), period.start.getMonth() + index, 1)
-  return date.toLocaleDateString('tr-TR', { month: 'short', year: '2-digit' })
+  if (granularity === 'hourly') {
+    return new Intl.DateTimeFormat('tr-TR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23',
+      timeZone: 'Europe/Istanbul',
+    }).format(new Date(period.start.getTime() + index * CHART_HOUR_MS))
+  }
+  if (granularity === 'daily') {
+    return formatUtcShortDate(
+      new Date(period.start.getTime() + index * CHART_DAY_MS),
+    )
+  }
+  if (granularity === 'weekly') {
+    return formatUtcShortDate(
+      new Date(period.start.getTime() + index * 7 * CHART_DAY_MS),
+    )
+  }
+  return new Intl.DateTimeFormat('tr-TR', {
+    month: 'short',
+    year: '2-digit',
+    timeZone: 'UTC',
+  }).format(
+    new Date(
+      Date.UTC(
+        period.start.getUTCFullYear(),
+        period.start.getUTCMonth() + index,
+        1,
+      ),
+    ),
+  )
+}
+
+function formatUtcShortDate(date: Date): string {
+  return new Intl.DateTimeFormat('tr-TR', {
+    day: '2-digit',
+    month: '2-digit',
+    timeZone: 'UTC',
+  }).format(date)
 }
 
 function dashboardOrderKey(order: CargoOrder): string {
@@ -1155,10 +1245,14 @@ function addDays(value: Date, days: number): Date {
   return result
 }
 
+// Dönem gün sayısı saf ms aritmetiğiyle (sınırlar gün-hizalı olduğundan
+// tam sayıdır; makine TZ'sinden bağımsız — UTC rapor dönemleriyle uyumlu).
 function daySpan(period: DashboardDateRange): number {
   return Math.max(
     1,
-    Math.round((startOfDay(period.end).getTime() - startOfDay(period.start).getTime()) / 86_400_000) + 1,
+    Math.round(
+      (period.end.getTime() + 1 - period.start.getTime()) / 86_400_000,
+    ),
   )
 }
 
@@ -1199,6 +1293,3 @@ function firstString(...values: Array<string | undefined>): string {
   return values.map((value) => String(value ?? '').trim()).find(Boolean) ?? ''
 }
 
-function formatShortDate(value: Date): string {
-  return value.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' })
-}

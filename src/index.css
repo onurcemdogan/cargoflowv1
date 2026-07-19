@@ -5823,3 +5823,11 @@ button:disabled {
     width: 100%;
   }
 }
+
+/* Satış analitiği rapor günü notu (UTC mutabakatı) */
+.dashboard-reporting-note {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: help;
+}

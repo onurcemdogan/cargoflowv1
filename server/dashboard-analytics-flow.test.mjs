@@ -372,8 +372,9 @@ test('dashboard satış dönemleri Bugün, Dün, 7 Gün, 30 Gün, Bu Ay ve Geçe
   assert.equal(cards.month.cancelPackageCount, 1)
   assert.equal(cards.lastMonth.salesAmount, 900)
   assert.equal(cards.lastMonth.packageCount, 2)
-  assert.equal(cards.lastMonth.range.start.getDate(), 1)
-  assert.equal(cards.lastMonth.range.end.getDate(), 30)
+  // UTC rapor günü sözleşmesi: sınırlar UTC takvimine göre okunur.
+  assert.equal(cards.lastMonth.range.start.getUTCDate(), 1)
+  assert.equal(cards.lastMonth.range.end.getUTCDate(), 30)
 })
 
 function item(barcode, quantity = 1, price = 100, size = '38') {

@@ -347,6 +347,12 @@ export function DashboardPage({
           <h2 id="sales-analytics-title">Dönemsel satış özeti</h2>
         </div>
         <p>Satış metrikleri yalnız sipariş, paket ve ürün satırı verilerinden hesaplanır.</p>
+        <p
+          className="dashboard-reporting-note"
+          title="Durusoft satış raporlarıyla aynı gün sınırı kullanılır. Sipariş saatleri Türkiye saatiyle gösterilmeye devam eder."
+        >
+          Rapor günü UTC bazında hesaplanır.
+        </p>
       </section>
 
       <section className="dashboard-sales-period-cards" aria-label="Dönemsel satış kartları">
