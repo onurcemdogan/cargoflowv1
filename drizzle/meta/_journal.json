@@ -15,6 +15,13 @@
       "when": 1784566458925,
       "tag": "0001_next_outlaw_kid",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784567714727,
+      "tag": "0002_greedy_yellow_claw",
+      "breakpoints": true
     }
   ]
 }

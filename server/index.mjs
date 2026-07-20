@@ -262,6 +262,7 @@ const TENANT_AUTH_PATHS = [
   '/api/integrations/surat',
   '/api/analytics/orders',
   '/api/analytics/claims',
+  '/api/orders',
   '/api/shipments/surat',
   '/api/labels/zpl',
   '/api/printing/zebra',
@@ -270,6 +271,7 @@ const TENANT_INJECT_PATHS = [
   '/api/trendyol',
   '/api/integrations/trendyol',
   '/api/integrations/surat',
+  '/api/orders/sync',
   '/api/shipments/surat',
 ]
 app.use(TENANT_AUTH_PATHS, tenantAuth)
@@ -466,6 +468,145 @@ app.post('/api/integrations/trendyol/test', async (request, response) => {
 app.post('/api/trendyol/orders/fetch', handleTrendyolOrdersFetch)
 app.post('/api/integrations/trendyol/orders', handleTrendyolOrdersFetch)
 app.post('/api/integrations/trendyol/fetch-orders', handleTrendyolOrdersFetch)
+
+// AUTH modu sipariş persistence API'si. Kaynak-of-truth PostgreSQL; her
+// organization YALNIZ kendi siparişlerini görür (org req.auth'tan gelir,
+// query/body'den ASLA). Legacy modda (DATABASE_URL yok) bu route'lar 404
+// döner; frontend legacy akışı localStorage'da kalır ve buraya çağrı yapmaz.
+function strOrUndef(value) {
+  const text = String(value ?? '').trim()
+  return text ? text : undefined
+}
+
+async function requireOrderPersistenceContext(request, response) {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) {
+    response.status(404).json({ ok: false, message: 'Sipariş persistence yalnız auth modda kullanılabilir.' })
+    return null
+  }
+  try {
+    const [{ getDb }, service] = await Promise.all([
+      import('./db/client.ts'),
+      import('./orders/orderPersistenceService.ts'),
+    ])
+    return { db: getDb(), service, organizationId: request.auth.organizationId }
+  } catch {
+    response.status(503).json({
+      ok: false,
+      message: 'Sipariş persistence katmanı yüklenemedi; PostgreSQL yapılandırmasını kontrol edin.',
+    })
+    return null
+  }
+}
+
+// GET /api/orders — org-scoped, server-side sayfalı liste. Filtreler yalnız
+// query string'ten okunur; organization override edilemez.
+app.get('/api/orders', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const query = request.query ?? {}
+    const result = await context.service.listOrders(context.db, context.organizationId, {
+      status: strOrUndef(query.status),
+      operationStatus: strOrUndef(query.operationStatus),
+      search: strOrUndef(query.search),
+      startDate: strOrUndef(query.startDate),
+      endDate: strOrUndef(query.endDate),
+      city: strOrUndef(query.city),
+      district: strOrUndef(query.district),
+      page: query.page,
+      pageSize: query.pageSize,
+      sort: query.sort === 'orderDateAsc' ? 'orderDateAsc' : 'orderDateDesc',
+    })
+    response.json({
+      ok: true,
+      orders: result.orders,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Siparişler yüklenemedi.' })
+  }
+})
+
+// GET /api/orders/:id — org-scoped tekil sipariş. Başka org'un siparişi
+// (veya yok) 404 döner (findOrderById zaten org filtresi uygular).
+app.get('/api/orders/:id', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const order = await context.service.getOrder(
+      context.db,
+      context.organizationId,
+      String(request.params.id),
+    )
+    if (!order) {
+      response.status(404).json({ ok: false, message: 'Sipariş bulunamadı.' })
+      return
+    }
+    response.json({ ok: true, order })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Sipariş yüklenemedi.' })
+  }
+})
+
+// POST /api/orders/sync — mevcut Trendyol sync ile (org credential DB'den
+// enjekte edilir) çeker, normalize eder ve org bazında upsert eder. KISMİ/
+// başarısız sync sipariş SİLMEZ/ARŞİVLEMEZ; arşivleme yalnız kanıtlı TAM
+// sync'te (complete=true) reconcile ile yapılır.
+app.post('/api/orders/sync', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const credentials = request.body?.credentials ?? {}
+  const query = request.body?.query ?? {}
+  let result
+  try {
+    result = await callTrendyolOrdersByStatuses(credentials, { size: 50, ...query })
+  } catch {
+    response.status(502).json({ ok: false, message: 'Trendyol sipariş senkronu başarısız.' })
+    return
+  }
+
+  const complete = Boolean(result.ok) && result.debug?.syncStatus === 'COMPLETE'
+  if (!result.ok) {
+    // Başarısız çekim: mevcut siparişlere DOKUNMA (silme/arşivleme/ezme yok).
+    response.status(502).json({
+      ok: false,
+      complete: false,
+      message: `Trendyol sipariş senkronu başarısız: ${result.message}`,
+      fetchedCount: 0,
+      persistedCount: 0,
+      updatedCount: 0,
+      insertedCount: 0,
+      failedCount: 0,
+      syncBatchId: null,
+    })
+    return
+  }
+
+  try {
+    const normalized = normalizeTrendyolOrders(result.data)
+    const persistResult = await context.service.persistSyncResult(
+      context.db,
+      context.organizationId,
+      normalized.orders,
+      { complete, fetchedCount: normalized.orders.length },
+    )
+    response.json({
+      ok: true,
+      complete: persistResult.complete,
+      fetchedCount: persistResult.fetchedCount,
+      persistedCount: persistResult.persistedCount,
+      updatedCount: persistResult.updatedCount,
+      insertedCount: persistResult.insertedCount,
+      failedCount: persistResult.failedCount,
+      archivedCount: persistResult.archivedCount,
+      syncBatchId: persistResult.syncBatchId,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Siparişler kaydedilemedi.' })
+  }
+})
 
 // Dashboard SATIŞ analitiği için CAP'SİZ, read-only dönemsel sipariş
 // kaynağı. Operational store'a yazmaz, Sürat/shipment işlemi yapmaz,

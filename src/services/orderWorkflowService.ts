@@ -208,6 +208,17 @@ export class OrderWorkflowService {
   private readonly printProvider: PrintProvider
   private readonly auditLogService: AuditLogService
   private marketplaceAccountScope = ''
+  // AUTH modu: siparişlerin kaynak-of-truth'ı sunucudaki PostgreSQL'dir.
+  // Frontend PII'yi localStorage'a YAZMAZ; oturum boyunca yalnız in-memory
+  // snapshot tutar ve yenilemede sunucudan tekrar yükler. Legacy modda bu
+  // bayrak kapalıdır ve tüm localStorage akışı DEĞİŞMEDEN çalışır.
+  private authMode = false
+  private authOrdersCache: CargoOrder[] = []
+  private authOrdersMeta: { total: number; page: number; pageSize: number } = {
+    total: 0,
+    page: 1,
+    pageSize: 25,
+  }
   private readonly productCatalogMemory = new Map<
     string,
     ProductCatalogCacheEnvelope
@@ -225,6 +236,69 @@ export class OrderWorkflowService {
     this.labelProvider = labelProvider
     this.printProvider = printProvider
     this.auditLogService = auditLogService
+  }
+
+  // Auth modu integrationConfigService tespitinden (auth/me + integration
+  // response mode sözleşmesi) gelir; frontend organizationId'sinden TÜRETİLMEZ.
+  setAuthMode(value: boolean): void {
+    this.authMode = value
+  }
+
+  isAuthMode(): boolean {
+    return this.authMode
+  }
+
+  getAuthOrdersMeta(): { total: number; page: number; pageSize: number } {
+    return this.authOrdersMeta
+  }
+
+  // Auth modda sunucudan (GET /api/orders) org-scoped, server-side sayfalı
+  // liste yükler ve in-memory snapshot'ı günceller. Organization req.auth'tan
+  // çözülür; frontend'ten org parametresi GÖNDERİLMEZ.
+  async loadOrdersFromServer(
+    filters: {
+      status?: string
+      operationStatus?: string
+      search?: string
+      startDate?: string
+      endDate?: string
+      city?: string
+      district?: string
+      page?: number
+      pageSize?: number
+      sort?: 'orderDateDesc' | 'orderDateAsc'
+    } = {},
+  ): Promise<CargoOrder[]> {
+    const params = new URLSearchParams()
+    for (const [key, value] of Object.entries(filters)) {
+      if (value != null && String(value).trim() !== '') {
+        params.set(key, String(value))
+      }
+    }
+    const query = params.toString()
+    const response = await fetch(
+      `/api/orders${query ? `?${query}` : ''}`,
+      { credentials: 'include' },
+    )
+    if (!response.ok) {
+      throw new Error(`Siparişler yüklenemedi (${response.status}).`)
+    }
+    const payload = (await response.json()) as {
+      orders?: CargoOrder[]
+      total?: number
+      page?: number
+      pageSize?: number
+    }
+    const orders = Array.isArray(payload.orders)
+      ? payload.orders.map((order) => withDerivedOperationStatus(order))
+      : []
+    this.authOrdersCache = orders
+    this.authOrdersMeta = {
+      total: Number(payload.total ?? orders.length),
+      page: Number(payload.page ?? 1),
+      pageSize: Number(payload.pageSize ?? orders.length),
+    }
+    return orders
   }
 
   setMarketplaceAccount(sellerId: string | number | undefined): boolean {
@@ -251,6 +325,12 @@ export class OrderWorkflowService {
   // tarafından ASLA silinemez. Reconciled liste geri döner ki UI'ya giden
   // in-memory kopya da storage ile aynı operasyonel state'i taşısın.
   private persistOrders(orders: CargoOrder[]): CargoOrder[] {
+    // Auth modda kaynak-of-truth sunucudur: PII localStorage'a YAZILMAZ,
+    // 120 cap uygulanmaz. Yalnız oturum içi in-memory snapshot güncellenir.
+    if (this.authMode) {
+      this.authOrdersCache = orders
+      return orders
+    }
     const storedOrders = loadFromStorage<CargoOrder[]>(
       this.ordersStorageKey(),
       [],
@@ -264,6 +344,10 @@ export class OrderWorkflowService {
   }
 
   loadOrders(): CargoOrder[] {
+    // Auth modda localStorage okunmaz; son sunucu snapshot'ı döner.
+    if (this.authMode) {
+      return this.authOrdersCache
+    }
     const orders = loadFromStorage<CargoOrder[]>(this.ordersStorageKey(), [])
     return enrichStoredOrders(orders)
   }
@@ -466,6 +550,9 @@ export class OrderWorkflowService {
       endDate?: Date
     } = {},
   ): Promise<{ orders: CargoOrder[]; result: WorkflowResult }> {
+    if (this.authMode) {
+      return this.fetchOrdersAuthMode(options)
+    }
     this.setMarketplaceAccount(config.trendyol.sellerId)
     const response = await this.marketplaceProvider.fetchOrders({
       credentials: config.trendyol,
@@ -520,6 +607,86 @@ export class OrderWorkflowService {
         source: response.source,
         message: `${response.orders.length} sipariş/paket senkronize edildi. Kalıcı operasyon listesi: ${nextOrders.length}. ${response.message}`,
         debug: response.debug,
+      },
+    }
+  }
+
+  // AUTH modu sipariş çekme: sunucudaki Sürat/Trendyol sync'i tetikler (org
+  // credential DB'den enjekte edilir; frontend credential GÖNDERMEZ), sonra
+  // kaynak-of-truth PostgreSQL'den yeniden yükler. KISMİ/başarısız sync
+  // mevcut siparişleri SİLMEZ; sunucu reconcile yalnız tam sync'te arşivler.
+  private async fetchOrdersAuthMode(
+    options: {
+      statuses?: MarketplaceStatus[]
+      startDate?: Date
+      endDate?: Date
+    } = {},
+  ): Promise<{ orders: CargoOrder[]; result: WorkflowResult }> {
+    const query: Record<string, unknown> = {}
+    if (options.statuses && options.statuses.length > 0) {
+      query.statuses = options.statuses
+    }
+    if (options.startDate) query.startDate = options.startDate.getTime()
+    if (options.endDate) query.endDate = options.endDate.getTime()
+
+    let syncPayload: {
+      ok?: boolean
+      complete?: boolean
+      message?: string
+      insertedCount?: number
+      updatedCount?: number
+      persistedCount?: number
+      failedCount?: number
+    } = {}
+    let syncOk = false
+    try {
+      const response = await fetch('/api/orders/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ query }),
+      })
+      syncPayload = (await response.json().catch(() => ({}))) as typeof syncPayload
+      syncOk = response.ok && syncPayload.ok === true
+    } catch (error) {
+      syncPayload = {
+        ok: false,
+        message:
+          error instanceof Error ? error.message : 'Sunucu senkronu erişilemedi.',
+      }
+    }
+
+    // Sync başarılı olsun ya da olmasın, sunucudaki güncel (korunmuş) listeyi
+    // yükle. Başarısız sync veri kaybettirmez; mevcut kayıtlar sunucuda durur.
+    const orders = await this.loadOrdersFromServer().catch(() => this.authOrdersCache)
+
+    if (!syncOk) {
+      this.auditLogService.append({
+        action: 'Siparişler çekildi',
+        level: 'warning',
+        details: `${syncPayload.message ?? 'Senkron tamamlanamadı.'} Mevcut ${orders.length} sipariş korunuyor.`,
+      })
+      return {
+        orders,
+        result: {
+          level: 'warning',
+          source: 'real',
+          message: `${syncPayload.message ?? 'Senkron tamamlanamadı.'} Kısmi/başarısız sonuç sunucu kaydını silmedi; ${orders.length} sipariş korundu.`,
+        },
+      }
+    }
+
+    this.auditLogService.append({
+      action: 'Siparişler çekildi',
+      level: 'success',
+      details: `Sunucu senkronu tamamlandı: ${syncPayload.insertedCount ?? 0} yeni, ${syncPayload.updatedCount ?? 0} güncellendi. Toplam ${orders.length} sipariş.`,
+    })
+    return {
+      orders,
+      result: {
+        level: orders.length > 0 ? 'success' : 'warning',
+        source: 'real',
+        message: `Sunucu senkronu tamamlandı (${syncPayload.persistedCount ?? 0} kaydedildi, ${syncPayload.failedCount ?? 0} başarısız). Kalıcı operasyon listesi: ${orders.length}.`,
       },
     }
   }

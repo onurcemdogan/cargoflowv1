@@ -7,6 +7,8 @@ import {
   check,
   index,
   integer,
+  jsonb,
+  numeric,
   pgTable,
   text,
   timestamp,
@@ -200,6 +202,130 @@ export const shipmentOperations = pgTable(
     check(
       'shipment_operations_status_check',
       sql`${table.status} in ('pending', 'succeeded', 'failed', 'blocked')`,
+    ),
+  ],
+)
+
+// Siparişler (organization bazlı). Auth modda source-of-truth. Marketplace
+// alanları (fresh sync) ve operasyonel alanlar (operation_status vb.) ayrı;
+// PII/adres ve raw payload şifreli kolonlarda. Organization silinirse cascade.
+export const orders = pgTable(
+  'orders',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    marketplace: text('marketplace').notNull(),
+    packageId: text('package_id').notNull(),
+    orderNumber: text('order_number').notNull(),
+    externalOrderId: text('external_order_id'),
+    marketplaceStatus: text('marketplace_status'),
+    operationStatus: text('operation_status'),
+    customerFirstName: text('customer_first_name'),
+    customerLastName: text('customer_last_name'),
+    customerEmail: text('customer_email'),
+    customerPhone: text('customer_phone'),
+    shippingAddressEncrypted: text('shipping_address_encrypted'),
+    shippingCity: text('shipping_city'),
+    shippingDistrict: text('shipping_district'),
+    cargoProviderName: text('cargo_provider_name'),
+    cargoTrackingNumber: text('cargo_tracking_number'),
+    cargoSenderNumber: text('cargo_sender_number'),
+    cargoTrackingLink: text('cargo_tracking_link'),
+    totalAmount: numeric('total_amount', { precision: 14, scale: 2 }),
+    currency: text('currency'),
+    orderDate: timestamp('order_date', { withTimezone: true }).notNull(),
+    marketplaceLastModifiedAt: timestamp('marketplace_last_modified_at', {
+      withTimezone: true,
+    }),
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    archivedAt: timestamp('archived_at', { withTimezone: true }),
+    rawPayloadEncrypted: text('raw_payload_encrypted'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('orders_org_marketplace_package_unique').on(
+      table.organizationId,
+      table.marketplace,
+      table.packageId,
+    ),
+    index('orders_org_order_date_idx').on(table.organizationId, table.orderDate),
+    index('orders_org_marketplace_status_idx').on(
+      table.organizationId,
+      table.marketplaceStatus,
+    ),
+    index('orders_org_operation_status_idx').on(
+      table.organizationId,
+      table.operationStatus,
+    ),
+    index('orders_org_order_number_idx').on(
+      table.organizationId,
+      table.orderNumber,
+    ),
+    index('orders_org_archived_at_idx').on(
+      table.organizationId,
+      table.archivedAt,
+    ),
+  ],
+)
+
+// Sipariş satırları (organization bazlı). Barcode/sku/product_id açık (arama);
+// raw payload şifreli. Order silinirse cascade.
+export const orderLines = pgTable(
+  'order_lines',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    externalLineId: text('external_line_id').notNull(),
+    productId: text('product_id'),
+    merchantSku: text('merchant_sku'),
+    barcode: text('barcode'),
+    productName: text('product_name').notNull(),
+    variantAttributes: jsonb('variant_attributes'),
+    quantity: integer('quantity').notNull(),
+    unitPrice: numeric('unit_price', { precision: 14, scale: 2 }),
+    lineTotal: numeric('line_total', { precision: 14, scale: 2 }),
+    discountTotal: numeric('discount_total', { precision: 14, scale: 2 }),
+    lineStatus: text('line_status'),
+    imageUrl: text('image_url'),
+    rawPayloadEncrypted: text('raw_payload_encrypted'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('order_lines_org_order_line_unique').on(
+      table.organizationId,
+      table.orderId,
+      table.externalLineId,
+    ),
+    index('order_lines_org_barcode_idx').on(table.organizationId, table.barcode),
+    index('order_lines_org_merchant_sku_idx').on(
+      table.organizationId,
+      table.merchantSku,
+    ),
+    index('order_lines_org_product_id_idx').on(
+      table.organizationId,
+      table.productId,
     ),
   ],
 )

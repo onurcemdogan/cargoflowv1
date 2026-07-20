@@ -151,18 +151,27 @@ function App() {
       await migrateAlternateLoopbackStorage()
       const hydrated =
         await integrationConfigService.hydrateIntegrationConfig()
+      // Auth modu bağlantı response mode sözleşmesinden gelir (auth/me +
+      // integration hydrate). Frontend organizationId'sinden türetilmez.
+      const authMode = integrationConfigService.isAuthMode()
+      workflowService.setAuthMode(authMode)
       if (active) {
         workflowService.setMarketplaceAccount(
           hydrated.trendyol.sellerId,
         )
         const cachedCatalog = await workflowService.hydrateProductCatalog()
         const cachedProducts = cachedCatalog.products
+        // Auth modda sipariş kaynak-of-truth PostgreSQL'dir: yenilemede
+        // sunucudan (org-scoped) yüklenir. Legacy modda localStorage'tan.
+        const baseOrders = authMode
+          ? await workflowService.loadOrdersFromServer().catch(() => [])
+          : workflowService.loadOrders()
         setIntegrationConfig(hydrated)
         setIntegrationConfigRevision((current) => current + 1)
         setSelectedIds([])
         setOrdersState({
           orders: workflowService.enrichOrderImages(
-            workflowService.loadOrders(),
+            baseOrders,
             cachedProducts,
           ),
           ordersLoading: false,

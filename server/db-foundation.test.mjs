@@ -54,6 +54,8 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
     tables.rows.map((row) => row.table_name),
     [
       'integration_credentials',
+      'order_lines',
+      'orders',
       'organizations',
       'sessions',
       'shipment_operations',

@@ -50,6 +50,25 @@ export interface OperationColumns {
   completedAt?: Date | null
 }
 
+export async function findLatestOperationByPackage(
+  db: OperationDb,
+  organizationId: string,
+  packageId: string,
+): Promise<Record<string, unknown> | null> {
+  const rows = await db
+    .select()
+    .from(shipmentOperations)
+    .where(
+      and(
+        eq(shipmentOperations.organizationId, organizationId),
+        eq(shipmentOperations.packageId, packageId),
+      ),
+    )
+  // Başarılı olanı tercih et; yoksa herhangi biri.
+  const succeeded = rows.find((row) => String(row.status) === 'succeeded')
+  return toRow(succeeded ?? rows[0] ?? null)
+}
+
 function toRow(record: Record<string, unknown> | null): Record<string, unknown> | null {
   if (!record) return null
   return {
