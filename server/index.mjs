@@ -69,6 +69,10 @@ const ALL_TRENDYOL_ORDER_STATUSES = [
   ...ARCHIVE_TRENDYOL_ORDER_STATUSES,
 ]
 const TRENDYOL_ACTIVE_STATUS_WINDOW_MS = 10 * 24 * 60 * 60 * 1000
+// Claims (iade) API tarih penceresi. Trendyol getClaims için doküman net
+// bir üst sınır vermiyor; sipariş API'sinin 30 günlük sınırının altında,
+// güvenli 14 günlük dilimler halinde çekilir.
+const TRENDYOL_CLAIMS_WINDOW_MS = 14 * 24 * 60 * 60 * 1000
 const SURAT_LABEL_REGISTRATION_GRACE_MS = 30 * 60 * 1000
 const SURAT_BARCODE_FAILED_MESSAGE =
   'OrtakBarkodOlustur çağrıldı ancak Sürat KargoTakipNo/Barcode döndürmedi. Sürat ortak barkod yetkisi, SOAP parametreleri veya hesap ayarları kontrol edilmeli.'
@@ -365,6 +369,86 @@ app.get('/api/analytics/orders', async (request, response) => {
         error instanceof Error
           ? error.message
           : 'Satış analitiği verisi alınamadı.',
+    })
+  }
+})
+
+// Dashboard SATIŞ analitiği için read-only iade (claims) veri yolu. Teslim
+// sonrası kabul edilen iadeler orders API'de çoğunlukla Delivered kalır;
+// bu endpoint claim event tarihine göre iadeleri döner. persistOrders,
+// operational store veya Sürat çağrısı YAPMAZ.
+app.get('/api/analytics/claims', async (request, response) => {
+  if (!isTrustedLocalConfigRequest(request)) {
+    response.status(403).json({
+      ok: false,
+      message: 'İade analitiği yalnızca bu bilgisayardan okunabilir.',
+    })
+    return
+  }
+  const startDate = Date.parse(String(request.query?.startDate ?? ''))
+  const endDate = Date.parse(String(request.query?.endDate ?? ''))
+  if (!Number.isFinite(startDate) || !Number.isFinite(endDate) || startDate > endDate) {
+    response.status(400).json({
+      ok: false,
+      message: 'Geçerli startDate/endDate (ISO) gerekli.',
+    })
+    return
+  }
+  try {
+    const storedConfig = await readEncryptedIntegrationConfig()
+    const credentials = storedConfig
+      ? normalizeLocalIntegrationConfig(storedConfig)?.trendyol
+      : undefined
+    if (!credentials?.sellerId || !credentials?.apiKey || !credentials?.apiSecret) {
+      response.status(400).json({
+        ok: false,
+        message:
+          'Trendyol entegrasyonu yapılandırılmadan iade analitiği verisi çekilemez.',
+      })
+      return
+    }
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const rawClaims = []
+    let cursor = startDate
+    while (cursor <= endDate) {
+      const windowEnd = Math.min(endDate, cursor + TRENDYOL_CLAIMS_WINDOW_MS)
+      const windowResult = await fetchTrendyolClaimsWindow(
+        credentials,
+        cursor,
+        windowEnd,
+        wait,
+      )
+      if (!windowResult.ok) {
+        response.json({
+          ok: false,
+          message: `İade analitiği verisi alınamadı: ${windowResult.message}`,
+          statusCode: windowResult.statusCode,
+        })
+        return
+      }
+      rawClaims.push(...windowResult.claims)
+      if (windowEnd === endDate) break
+      cursor = windowEnd + 1
+      await wait(400)
+    }
+    const normalized = normalizeTrendyolClaims(rawClaims)
+    response.json({
+      ok: true,
+      startDate: new Date(startDate).toISOString(),
+      endDate: new Date(endDate).toISOString(),
+      fetchedCount: normalized.claims.length,
+      uniqueClaimCount: normalized.uniqueClaimCount,
+      affectedPackageCount: normalized.affectedPackageCount,
+      amountBasis: normalized.amountBasis,
+      claims: normalized.claims,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'İade analitiği verisi alınamadı.',
     })
   }
 })
@@ -8059,6 +8143,86 @@ async function callTrendyolOrders(credentials, query) {
   )
 }
 
+// Trendyol getClaims: GET /integration/order/sellers/{sellerId}/claims
+// (doğrulanan sözleşme; startDate/endDate epoch ms, page, size<=200,
+// claimItemStatus enum). Tek pencere için tüm sayfaları çeker; 429/rate
+// limitte artan beklemeyle tekrar dener.
+async function fetchTrendyolClaimsWindow(credentials, startDate, endDate, wait) {
+  const size = 200
+  const maxPages = 500
+  const claims = []
+  let expectedPages = 1
+  for (let page = 0; page < expectedPages && page < maxPages; page += 1) {
+    const params = new URLSearchParams({
+      startDate: String(startDate),
+      endDate: String(endDate),
+      page: String(page),
+      size: String(size),
+    })
+    const url = `${getTrendyolBaseUrl(credentials)}/integration/order/sellers/${credentials.sellerId}/claims?${params}`
+    let result
+    for (let attempt = 0; attempt <= 6; attempt += 1) {
+      if (attempt > 0) {
+        const rateLimited =
+          Number(result?.statusCode) === 429 ||
+          /rate limit/i.test(String(result?.message ?? ''))
+        await wait(rateLimited ? 15000 : 1500 * attempt)
+      }
+      result = await fetchTrendyolJson(url, credentials)
+      if (result.ok) break
+    }
+    if (!result.ok) {
+      return {
+        ok: false,
+        statusCode: result.statusCode,
+        message: result.message,
+      }
+    }
+    const content = getTrendyolOrderPackagesArray(result.data)
+    claims.push(...content)
+    if (page === 0) {
+      const totalPages = Number(result.data?.totalPages ?? 0)
+      expectedPages =
+        totalPages > 0
+          ? Math.min(totalPages, maxPages)
+          : content.length >= size
+            ? maxPages
+            : 1
+      if (content[0]) logTrendyolClaimShape(content[0])
+    }
+    // totalPages bilgisi yoksa boş sayfada dur; aksi halde for koşulu
+    // (page < expectedPages) sayfa sayısını yönetir.
+    if (content.length === 0) break
+    await wait(300)
+  }
+  return { ok: true, claims }
+}
+
+// PII'siz canlı sözleşme doğrulaması: yalnız alan adlarını ve JS tiplerini
+// (değer YOK) loglar. CARGOFLOW_CLAIMS_DEBUG set edilmeden çalışmaz.
+function logTrendyolClaimShape(sample) {
+  if (!process.env.CARGOFLOW_CLAIMS_DEBUG) return
+  console.info(
+    '[claims] CLAIM_SHAPE_SAMPLE',
+    JSON.stringify(describeShapePiiFree(sample, 0)),
+  )
+}
+
+function describeShapePiiFree(value, depth) {
+  if (depth > 5) return typeof value
+  if (Array.isArray(value)) {
+    return value.length ? [describeShapePiiFree(value[0], depth + 1)] : []
+  }
+  if (value && typeof value === 'object') {
+    const out = {}
+    for (const key of Object.keys(value)) {
+      out[key] = describeShapePiiFree(value[key], depth + 1)
+    }
+    return out
+  }
+  return typeof value
+}
+
 async function callTrendyolProducts(credentials) {
   const validation = validateTrendyol(credentials)
   if (validation) return validation
@@ -9537,6 +9701,156 @@ function normalizeTrendyolOrders(data) {
       totalQuantity,
     },
   }
+}
+
+// Trendyol claim statü adları → analitik sınıflar. YALNIZ kabul edilmiş
+// iadeler satıştan düşülür; Rejected/Cancelled ve bekleyen statüler düşmez.
+const TRENDYOL_ACCEPTED_CLAIM_STATUSES = ['Accepted']
+const TRENDYOL_REJECTED_CLAIM_STATUSES = ['Rejected', 'Cancelled']
+
+// Ham getClaims içeriğini analitik claim kayıtlarına dönüştürür. Granülarite
+// (claimId, orderLineId, statusName): aynı satırda kısmi kabul/ret ayrışır.
+// Değer üretmez, salt okuma normalizasyondur.
+function normalizeTrendyolClaims(rawClaims) {
+  const uniqueClaims = new Map()
+  for (const claim of Array.isArray(rawClaims) ? rawClaims : []) {
+    const claimId = String(claim?.id ?? claim?.claimId ?? '')
+    if (!claimId) continue
+    if (!uniqueClaims.has(claimId)) uniqueClaims.set(claimId, claim)
+  }
+
+  const distinctStatuses = new Set()
+  const amountFieldsSeen = new Set()
+  const normalized = []
+  const affectedPackages = new Set()
+  let fallbackAmountUsed = false
+
+  for (const [claimId, claim] of uniqueClaims) {
+    // Orijinal SATIŞ paketi orderOutboundPackageId'dir; orderShipmentPackageId
+    // iade (inbound) paketinin id'sidir. Sipariş eşleşmesi için outbound
+    // kullanılır (canlı sözleşmede doğrulandı).
+    const packageId = String(
+      claim?.orderOutboundPackageId ??
+        claim?.orderShipmentPackageId ??
+        claim?.shipmentPackageId ??
+        claim?.packageId ??
+        '',
+    )
+    const returnPackageId = String(
+      claim?.orderShipmentPackageId ?? claim?.shipmentPackageId ?? '',
+    )
+    const orderNumber = String(claim?.orderNumber ?? '')
+    const eventBase = toIsoDate(
+      claim?.claimDate ?? claim?.createdDate ?? claim?.orderDate,
+    )
+    const items = Array.isArray(claim?.items) ? claim.items : []
+    for (const item of items) {
+      const orderLine = item?.orderLine ?? {}
+      const orderLineId = String(orderLine?.id ?? orderLine?.orderLineId ?? '')
+      const unitPrice = Number(orderLine?.price ?? orderLine?.amount ?? 0)
+      const claimItems = Array.isArray(item?.claimItems) ? item.claimItems : []
+      // (statusName) bazında grupla: kısmi iade desteği (adet = claimItem sayısı).
+      const byStatus = new Map()
+      for (const claimItem of claimItems) {
+        const statusName = String(
+          claimItem?.claimItemStatus?.name ??
+            claimItem?.claimItemStatus ??
+            claimItem?.status ??
+            '',
+        )
+        distinctStatuses.add(statusName)
+        for (const key of Object.keys(claimItem ?? {})) {
+          if (/amount|refund/i.test(key)) amountFieldsSeen.add(`item.${key}`)
+        }
+        const reason = String(
+          claimItem?.customerClaimItemReason?.name ??
+            claimItem?.trendyolClaimItemReason?.name ??
+            claimItem?.claimReason ??
+            '',
+        )
+        // Canlı sözleşmede (doğrulandı) claimItem'da güvenilir bir refund
+        // tutarı YOK; yine de ileride eklenirse otomatik kullanılsın diye
+        // bilinen aday alanlar toplanır.
+        const claimAmount = firstFiniteNumber([
+          claimItem?.refundAmount,
+          claimItem?.claimAmount,
+        ])
+        const group = byStatus.get(statusName) ?? {
+          quantity: 0,
+          reason,
+          claimAmount: null,
+        }
+        group.quantity += 1
+        if (claimAmount != null) {
+          group.claimAmount = (group.claimAmount ?? 0) + claimAmount
+        }
+        byStatus.set(statusName, group)
+      }
+      for (const [statusName, group] of byStatus) {
+        // Event tarihi claim seviyesindeki claimDate'tir (iade olayı).
+        const eventDate = eventBase
+        const fallbackAmount = Number.isFinite(unitPrice)
+          ? Math.round(unitPrice * group.quantity * 100) / 100
+          : null
+        const amount =
+          group.claimAmount != null
+            ? Math.round(group.claimAmount * 100) / 100
+            : fallbackAmount
+        const amountSource =
+          group.claimAmount != null ? 'claim_amount' : 'line_price_fallback'
+        if (amountSource === 'line_price_fallback') fallbackAmountUsed = true
+        const isAcceptedReturn =
+          TRENDYOL_ACCEPTED_CLAIM_STATUSES.includes(statusName)
+        const isCancelledOrRejected =
+          TRENDYOL_REJECTED_CLAIM_STATUSES.includes(statusName)
+        if (isAcceptedReturn && packageId) affectedPackages.add(packageId)
+        normalized.push({
+          claimId,
+          packageId,
+          returnPackageId,
+          orderNumber,
+          orderLineId,
+          claimStatus: statusName,
+          claimType: group.reason,
+          eventDate,
+          quantity: group.quantity,
+          amount,
+          amountSource,
+          isAcceptedReturn,
+          isCancelledOrRejected,
+        })
+      }
+    }
+  }
+
+  if (process.env.CARGOFLOW_CLAIMS_DEBUG) {
+    console.info(
+      '[claims] CLAIM_CONTRACT',
+      JSON.stringify({
+        uniqueClaimCount: uniqueClaims.size,
+        normalizedRecords: normalized.length,
+        distinctStatuses: [...distinctStatuses],
+        amountFieldsSeen: [...amountFieldsSeen],
+      }),
+    )
+  }
+
+  return {
+    claims: normalized,
+    uniqueClaimCount: uniqueClaims.size,
+    affectedPackageCount: affectedPackages.size,
+    // Tutar tabanı: claim API refund tutarı vermediği için satır birim
+    // fiyatı × iade adedi fallback'i kullanıldığında işaretlenir.
+    amountBasis: fallbackAmountUsed ? 'line_price_fallback' : 'claim_amount',
+  }
+}
+
+function firstFiniteNumber(candidates) {
+  for (const candidate of candidates) {
+    const parsed = Number(candidate)
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed
+  }
+  return null
 }
 
 function normalizeTrendyolOrderLines(lines, orderId) {

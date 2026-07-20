@@ -15,6 +15,11 @@ import {
   resolveReportingRange,
   type ReportingPeriodKey,
 } from './reportingRange'
+import {
+  summarizeAcceptedClaimsForPeriod,
+  type AnalyticsClaim,
+  type ClaimPeriodAdjustment,
+} from './analyticsClaims'
 
 // Yalnız SATIŞ analitiği rapor günü UTC'dir (Durusoft mutabakatı);
 // operasyon sayaçları ve tarih GÖSTERİMLERİ yerel (Europe/Istanbul)
@@ -221,6 +226,9 @@ interface BuildDashboardViewModelInput {
   // verilmezse satış alanları da operational orders'tan hesaplanır
   // (geriye dönük davranış). Operasyon sayaçları HER ZAMAN orders'tan.
   analyticsOrders?: CargoOrder[]
+  // Kabul edilmiş iadeler (claims endpoint'i); verilirse net satış
+  // metriklerinden claim effectiveDate dönemine göre düşülür.
+  analyticsClaims?: AnalyticsClaim[]
   products?: CargoProduct[]
   selectedPeriod: DashboardPeriodSelection
   comparisonPeriod?: DashboardDateRange
@@ -248,6 +256,7 @@ interface PeriodTotals {
 export function buildDashboardViewModel({
   orders,
   analyticsOrders,
+  analyticsClaims,
   products = [],
   selectedPeriod,
   comparisonPeriod,
@@ -294,8 +303,33 @@ export function buildDashboardViewModel({
   const comparisonOrders = salesSource.filter((order) =>
     orderIsInRange(order, resolvedComparison),
   )
-  const currentTotals = calculatePeriodTotals(periodOrders)
-  const previousTotals = calculatePeriodTotals(comparisonOrders)
+  // İade mutabakatı: kabul edilen claim'ler effectiveDate dönemine göre net
+  // satış toplamlarından düşülür (salesSource üzerinden tam/kısmi ayrımı).
+  const packageQuantityLookup = buildPackageQuantityLookup(salesSource)
+  const lineQuantityLookup = buildLineQuantityLookup(salesSource)
+  const resolveClaimOrder = buildClaimOrderResolver(salesSource)
+  const currentTotals = applyClaimAdjustment(
+    calculatePeriodTotals(periodOrders),
+    buildClaimAdjustment(
+      analyticsClaims,
+      period,
+      periodOrders,
+      resolveClaimOrder,
+      packageQuantityLookup,
+      lineQuantityLookup,
+    ),
+  )
+  const previousTotals = applyClaimAdjustment(
+    calculatePeriodTotals(comparisonOrders),
+    buildClaimAdjustment(
+      analyticsClaims,
+      resolvedComparison,
+      comparisonOrders,
+      resolveClaimOrder,
+      packageQuantityLookup,
+      lineQuantityLookup,
+    ),
+  )
   const classified = uniqueOrders.map((order) => ({
     order,
     state: classifyOrderForTabs(order),
@@ -339,7 +373,11 @@ export function buildDashboardViewModel({
   return {
     period,
     comparisonPeriod: resolvedComparison,
-    salesPeriodCards: buildDashboardSalesPeriodCards(salesSource, now),
+    salesPeriodCards: buildDashboardSalesPeriodCards(
+      salesSource,
+      now,
+      analyticsClaims,
+    ),
     salesSummary: {
       salesAmount: metric(
         currentTotals.salesAmount,
@@ -541,8 +579,12 @@ export function dedupeDashboardOrders(orders: CargoOrder[]): CargoOrder[] {
 export function buildDashboardSalesPeriodCards(
   orders: CargoOrder[],
   now = new Date(),
+  claims?: AnalyticsClaim[],
 ): DashboardSalesPeriodCard[] {
   const uniqueOrders = dedupeDashboardOrders(orders)
+  const packageQuantityLookup = buildPackageQuantityLookup(uniqueOrders)
+  const lineQuantityLookup = buildLineQuantityLookup(uniqueOrders)
+  const resolveClaimOrder = buildClaimOrderResolver(uniqueOrders)
   const keys: DashboardSalesPeriodKey[] = [
     'today',
     'yesterday',
@@ -559,8 +601,29 @@ export function buildDashboardSalesPeriodCards(
     const comparisonOrders = uniqueOrders.filter((order) =>
       orderIsInRange(order, comparisonPeriod),
     )
-    const totals = calculatePeriodTotals(periodOrders)
-    const comparisonTotals = calculatePeriodTotals(comparisonOrders)
+    // Kabul edilen iadeler claim effectiveDate dönemine göre düşülür.
+    const totals = applyClaimAdjustment(
+      calculatePeriodTotals(periodOrders),
+      buildClaimAdjustment(
+        claims,
+        period,
+        periodOrders,
+        resolveClaimOrder,
+        packageQuantityLookup,
+        lineQuantityLookup,
+      ),
+    )
+    const comparisonTotals = applyClaimAdjustment(
+      calculatePeriodTotals(comparisonOrders),
+      buildClaimAdjustment(
+        claims,
+        comparisonPeriod,
+        comparisonOrders,
+        resolveClaimOrder,
+        packageQuantityLookup,
+        lineQuantityLookup,
+      ),
+    )
 
     return {
       key,
@@ -753,6 +816,168 @@ function calculatePeriodTotals(orders: CargoOrder[]): PeriodTotals {
     returnCancellationAmountAvailable:
       returnAmountAvailable && cancelAmountAvailable,
     packageAverage: salesOrders.length > 0 ? productCount / salesOrders.length : 0,
+  }
+}
+
+// --- İade (claim) mutabakatı ---------------------------------------------
+// Bir siparişin claim eşleşmesinde kullanılabilecek paket kimlikleri.
+// Claim.packageId = Trendyol orderShipmentPackageId; sipariş normalize'ında
+// bu değer packageId ve/veya shipmentPackageId olarak durur.
+function orderPackageIdentifiers(order: CargoOrder): string[] {
+  const ids = new Set<string>()
+  const add = (value: unknown) => {
+    const id = String(value ?? '').trim()
+    if (id) ids.add(id)
+  }
+  add(order.packageId)
+  add(order.shipmentPackageId)
+  return [...ids]
+}
+
+function orderTotalQuantity(order: CargoOrder): number {
+  return order.items.reduce(
+    (sum, item) => sum + Math.max(0, finiteNumber(item.quantity)),
+    0,
+  )
+}
+
+// packageId → satış toplam adedi (tam/kısmi iade ayrımı için). Yalnız satış
+// disposition'lı siparişler indekslenir; hem packageId hem shipmentPackageId
+// anahtar olur.
+function buildPackageQuantityLookup(
+  salesSource: CargoOrder[],
+): (packageId: string) => number | undefined {
+  const map = new Map<string, number>()
+  for (const order of salesSource) {
+    if (salesDisposition(order) !== 'sale') continue
+    const quantity = orderTotalQuantity(order)
+    for (const id of orderPackageIdentifiers(order)) {
+      map.set(id, (map.get(id) ?? 0) + quantity)
+    }
+  }
+  return (packageId: string) => map.get(String(packageId ?? ''))
+}
+
+// (packageId, lineId) → satış satır adedi. claim.orderLineId Trendyol ham
+// satır id'sidir; sipariş item.id ise `ty_line_<hamId>` biçimindedir, bu yüzden
+// hem tam id hem ön eki kaldırılmış id anahtarlanır.
+function buildLineQuantityLookup(
+  salesSource: CargoOrder[],
+): (packageId: string, lineId: string) => number | undefined {
+  const map = new Map<string, number>()
+  const stripLineId = (id: string) =>
+    id.startsWith('ty_line_') ? id.slice('ty_line_'.length) : id
+  for (const order of salesSource) {
+    if (salesDisposition(order) !== 'sale') continue
+    for (const packageId of orderPackageIdentifiers(order)) {
+      for (const item of order.items) {
+        const quantity = Math.max(0, finiteNumber(item.quantity))
+        const rawId = String(item.id ?? '')
+        for (const lineKey of new Set([rawId, stripLineId(rawId)])) {
+          if (!lineKey) continue
+          const key = `${packageId}::${lineKey}`
+          map.set(key, (map.get(key) ?? 0) + quantity)
+        }
+      }
+    }
+  }
+  return (packageId: string, lineId: string) =>
+    map.get(`${String(packageId ?? '')}::${String(lineId ?? '')}`)
+}
+
+// Dönemde status ile ZATEN iade/iptal sayılan paket kimlikleri; claim çift
+// düşümünü önler (Orders API Returned + aynı paket claim → tek düşüm).
+function buildStatusReturnCancelPackageIds(
+  periodOrders: CargoOrder[],
+): Set<string> {
+  const ids = new Set<string>()
+  for (const order of periodOrders) {
+    const disposition = salesDisposition(order)
+    if (disposition === 'return' || disposition === 'cancel') {
+      for (const id of orderPackageIdentifiers(order)) ids.add(id)
+    }
+  }
+  return ids
+}
+
+// Claim → satış siparişi çözümleyici. İade edilen paket (outbound packageId)
+// veya orderNumber ile eşleşir. order-cohort attribution ve tam/kısmi iade
+// tespiti bu çözümlemeye dayanır.
+function buildClaimOrderResolver(
+  salesSource: CargoOrder[],
+): (claim: AnalyticsClaim) => CargoOrder | undefined {
+  const byPackage = new Map<string, CargoOrder>()
+  const byNumber = new Map<string, CargoOrder>()
+  for (const order of salesSource) {
+    if (salesDisposition(order) !== 'sale') continue
+    for (const id of orderPackageIdentifiers(order)) {
+      if (!byPackage.has(id)) byPackage.set(id, order)
+    }
+    const orderNumber = String(order.orderNumber ?? '').trim()
+    if (orderNumber && !byNumber.has(orderNumber)) byNumber.set(orderNumber, order)
+  }
+  return (claim: AnalyticsClaim) =>
+    byPackage.get(String(claim.packageId ?? '')) ??
+    byNumber.get(String(claim.orderNumber ?? ''))
+}
+
+// Verilen dönem için kabul edilmiş iade etkisini üretir. Döneme aitlik
+// ORDER-COHORT'tur: iade, iade edilen SİPARİŞİN orderDate ayına yazılır
+// (Durusoft mutabakatı). Siparişi bulunamayan (fetch penceresinden eski)
+// iadeler hiçbir döneme yazılmaz.
+function buildClaimAdjustment(
+  claims: AnalyticsClaim[] | undefined,
+  period: DashboardDateRange,
+  periodOrders: CargoOrder[],
+  resolveClaimOrder: (claim: AnalyticsClaim) => CargoOrder | undefined,
+  packageQuantityLookup: (packageId: string) => number | undefined,
+  lineQuantityLookup: (packageId: string, lineId: string) => number | undefined,
+): ClaimPeriodAdjustment {
+  return summarizeAcceptedClaimsForPeriod(
+    claims,
+    (claim) => {
+      const order = resolveClaimOrder(claim)
+      if (!order) return false
+      return orderIsInRange(order, period)
+    },
+    {
+      excludePackageIds: buildStatusReturnCancelPackageIds(periodOrders),
+      packageQuantityLookup,
+      lineQuantityLookup,
+    },
+  )
+}
+
+// Kabul edilen iade etkisini net satış toplamlarına uygular. Satış düşer,
+// iade/iptal tutarına eklenir, iade paket sayısı artar. Değerler 0'ın
+// altına düşürülmez (görüntü güvenliği).
+function applyClaimAdjustment(
+  totals: PeriodTotals,
+  adjustment: ClaimPeriodAdjustment,
+): PeriodTotals {
+  const salesAmount = Math.max(0, totals.salesAmount - adjustment.amountDeduction)
+  const orderCount = Math.max(0, totals.orderCount - adjustment.packageDeduction)
+  const lineCount = Math.max(0, totals.lineCount - adjustment.lineDeduction)
+  const productCount = Math.max(
+    0,
+    totals.productCount - adjustment.unitDeduction,
+  )
+  const amountAvailable = !adjustment.amountUnavailable
+  return {
+    ...totals,
+    salesAmount,
+    salesAmountAvailable: totals.salesAmountAvailable && amountAvailable,
+    orderCount,
+    lineCount,
+    productCount,
+    returnAmount: totals.returnAmount + adjustment.amountDeduction,
+    returnAmountAvailable: totals.returnAmountAvailable && amountAvailable,
+    returnCount: totals.returnCount + adjustment.returnedPackageCount,
+    returnCancellationAmount:
+      totals.returnCancellationAmount + adjustment.amountDeduction,
+    returnCancellationAmountAvailable:
+      totals.returnCancellationAmountAvailable && amountAvailable,
+    packageAverage: orderCount > 0 ? productCount / orderCount : 0,
   }
 }
 

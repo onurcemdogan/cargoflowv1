@@ -40,7 +40,11 @@ import type {
 import { formatDisplayDate } from '../utils/formatters'
 import type { OrdersNavigationFilters } from '../utils/ordersNavigation'
 import type { QuickTab } from '../utils/ordersTabs'
-import { fetchDashboardAnalyticsOrders } from '../services/dashboardAnalyticsService'
+import {
+  fetchDashboardAnalyticsClaims,
+  fetchDashboardAnalyticsOrders,
+} from '../services/dashboardAnalyticsService'
+import type { AnalyticsClaim } from '../dashboard/analyticsClaims'
 
 interface DashboardPageProps {
   orders: CargoOrder[]
@@ -126,16 +130,33 @@ export function DashboardPage({
   }>()
   const [analyticsRetryTick, setAnalyticsRetryTick] = useState(0)
   const analyticsOrders = analyticsResult?.orders ?? null
+  // Kabul edilmiş iadeler; satış NET metriklerini düşürür. Orders'tan
+  // bağımsız yüklenir: claims hatası satış panelini bloklamaz, yalnız
+  // "net eksik olabilir" uyarısı gösterir.
+  const [claimsResult, setClaimsResult] = useState<{
+    key: string
+    claims?: AnalyticsClaim[]
+    error?: string
+  }>()
+  const analyticsClaims = claimsResult?.claims ?? null
   const viewModel = useMemo(
     () =>
       buildDashboardViewModel({
         orders,
         analyticsOrders: analyticsOrders ?? undefined,
+        analyticsClaims: analyticsClaims ?? undefined,
         products,
         selectedPeriod,
         latestSyncAt: lastSyncedAt,
       }),
-    [analyticsOrders, lastSyncedAt, orders, products, selectedPeriod],
+    [
+      analyticsOrders,
+      analyticsClaims,
+      lastSyncedAt,
+      orders,
+      products,
+      selectedPeriod,
+    ],
   )
   // İlk açılışta kartların tamamını (Geçen Ay başı → Bugün sonu) kapsayan
   // TEK aralık çekilir; seçili dönem bu kapsamın dışına çıkarsa service
@@ -178,6 +199,34 @@ export function DashboardPage({
       active = false
     }
   }, [analyticsRequestKey])
+  // İade verisi orders ile aynı geniş kapsam için ayrı yüklenir.
+  useEffect(() => {
+    const [startMs, endMs] = analyticsRequestKey
+      .split('#')[0]
+      .split('|')
+      .map(Number)
+    let active = true
+    fetchDashboardAnalyticsClaims(new Date(startMs), new Date(endMs))
+      .then((result) => {
+        if (active) {
+          setClaimsResult({ key: analyticsRequestKey, claims: result.claims })
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setClaimsResult({
+            key: analyticsRequestKey,
+            error:
+              error instanceof Error
+                ? error.message
+                : 'İade verisi yüklenemedi.',
+          })
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [analyticsRequestKey])
   // SSR/test render'ında effect çalışmaz; skeleton'da kilitlenmemek için
   // loading yalnız tarayıcıda türetilir (fallback: operasyon verisi).
   const analyticsLoading =
@@ -187,6 +236,9 @@ export function DashboardPage({
       ? analyticsResult.error
       : undefined
   const analyticsPending = analyticsLoading && !analyticsOrders
+  // İade verisi yüklenemediyse satış NET değerleri iade düşümü içermez.
+  const claimsError =
+    claimsResult?.key === analyticsRequestKey ? claimsResult.error : undefined
   const providerHealth = useMemo(
     () =>
       buildDashboardProviderHealth({
@@ -442,6 +494,12 @@ export function DashboardPage({
         </section>
       ) : (
         <>
+      {claimsError ? (
+        <section className="dashboard-analytics-warning" role="status">
+          <AlertTriangle size={16} />
+          <span>İade verisi yüklenemedi; satış net değerleri eksik olabilir.</span>
+        </section>
+      ) : null}
       <section className="dashboard-sales-period-cards" aria-label="Dönemsel satış kartları">
         {viewModel.salesPeriodCards.map((card) => (
           <SalesPeriodCard key={card.key} card={card} />
