@@ -202,6 +202,62 @@ test('LoginPage ve BootstrapPage erişilebilir formlar üretir', async (t) => {
   assert.match(bootstrapHtml, /autocomplete="new-password"/i)
 })
 
+test('integrationConfigService auth modda secret localStorage\'a yazmaz (M)', async (t) => {
+  const { vite } = await loadModules(t)
+  const module = await vite.ssrLoadModule('/src/services/integrationConfigService.ts')
+  const storageWrites = []
+  const putBodies = []
+  const previousWindow = globalThis.window
+  const previousFetch = globalThis.fetch
+  globalThis.window = {
+    location: { hostname: 'localhost' },
+    localStorage: {
+      getItem: () => null,
+      setItem: (key, value) => storageWrites.push({ key, value }),
+      removeItem: () => {},
+    },
+  }
+  globalThis.fetch = async (url, init = {}) => {
+    if (init.method === 'PUT') putBodies.push(String(init.body))
+    // GET/PUT → auth mode maskeli yanıt (secret yok).
+    return {
+      ok: true,
+      json: async () => ({
+        mode: 'auth',
+        configured: true,
+        trendyol: { configured: true, sellerId: 'S1', apiKeyMasked: '••••1234' },
+        surat: { configured: false, customerCode: '', usernameMasked: '' },
+      }),
+    }
+  }
+  t.after(() => {
+    globalThis.window = previousWindow
+    globalThis.fetch = previousFetch
+  })
+
+  const service = new module.IntegrationConfigService()
+  await service.hydrateIntegrationConfig()
+  assert.equal(service.isAuthMode(), true, 'mode:auth tespit edilmeli')
+
+  // Auth modda kaydetme: secret localStorage'a YAZILMAZ, sunucuya PUT edilir.
+  service.saveIntegrationConfig({
+    trendyol: { sellerId: 'S1', apiKey: 'GIZLI-APIKEY', apiSecret: 'GIZLI-SECRET', environment: 'prod', userAgentName: '' },
+    surat: {},
+    desi: undefined,
+  })
+  await new Promise((resolve) => setTimeout(resolve, 10))
+
+  // Hiçbir localStorage yazımında secret olmamalı (integration key hiç yazılmadı).
+  const wroteIntegration = storageWrites.some((w) => w.key === 'cargoflow.integrationConfig')
+  assert.equal(wroteIntegration, false, 'auth modda integration config localStorage\'a yazılmaz')
+  for (const write of storageWrites) {
+    assert.ok(!String(write.value).includes('GIZLI-SECRET'))
+    assert.ok(!String(write.value).includes('GIZLI-APIKEY'))
+  }
+  // Secret sunucuya PUT ile gitti.
+  assert.ok(putBodies.some((b) => b.includes('GIZLI-SECRET')))
+})
+
 test('AppShell oturum bilgisi ve Çıkış Yap gösterir (N)', async (t) => {
   const { vite, renderToStaticMarkup, createElement } = await loadModules(t)
   const { AuthContext } = await vite.ssrLoadModule('/src/auth/AuthProvider.tsx')

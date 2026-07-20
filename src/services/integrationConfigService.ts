@@ -13,8 +13,17 @@ import {
 const INTEGRATION_KEY = 'cargoflow.integrationConfig'
 const PRINTER_KEY = 'cargoflow.printerSettings'
 const LABEL_TEMPLATE_KEY = 'cargoflow.labelTemplate'
-const LOCAL_CONFIG_ENDPOINT =
-  'http://127.0.0.1:8787/api/local-config/integration'
+// Relative path: tarayıcıda vite proxy (dev) / same-origin (prod) üzerinden
+// gider, böylece auth cookie'si (credentials:'include') sunucuya ulaşır.
+const LOCAL_CONFIG_ENDPOINT = '/api/local-config/integration'
+
+// Maskelenmiş auth-mode durum yanıtı (secret İÇERMEZ).
+export interface MaskedIntegrationStatus {
+  mode: 'auth'
+  configured: boolean
+  trendyol: { configured: boolean; sellerId: string; apiKeyMasked: string }
+  surat: { configured: boolean; customerCode: string; usernameMasked: string }
+}
 
 export function mmToDots(mm: number): number {
   return Math.round((mm / 25.4) * 203)
@@ -131,6 +140,21 @@ export const defaultLabelTemplate: LabelTemplate = {
 }
 
 export class IntegrationConfigService {
+  // Auth modda (PostgreSQL + oturum): frontend düz credential TUTMAZ/YAZMAZ;
+  // secret'lar DB'de kalır ve sunucu Sürat/analytics'e enjekte eder. hydrate
+  // sırasında sunucudan tespit edilir.
+  private authMode = false
+  // UI'ın "configured" durumunu göstermesi için maskeli durum (secret yok).
+  private maskedStatus: MaskedIntegrationStatus | null = null
+
+  isAuthMode(): boolean {
+    return this.authMode
+  }
+
+  getMaskedStatus(): MaskedIntegrationStatus | null {
+    return this.maskedStatus
+  }
+
   loadIntegrationConfig(): IntegrationConfig {
     const stored = loadFromStorage<IntegrationConfig>(
       INTEGRATION_KEY,
@@ -163,19 +187,28 @@ export class IntegrationConfigService {
 
   async hydrateIntegrationConfig(): Promise<IntegrationConfig> {
     const localConfig = this.loadIntegrationConfig()
-    if (!isLoopbackBrowser()) return localConfig
+    if (typeof window === 'undefined') return localConfig
 
     try {
       const response = await fetch(LOCAL_CONFIG_ENDPOINT, {
         headers: localConfigHeaders(),
+        credentials: 'include',
       })
       const payload = await response.json()
+      // Auth mod: secret DB'de; frontend düz credential tutmaz/yazmaz.
+      // localStorage'daki eski değerler bu turda SİLİNMEZ ama okunmaz.
+      if (payload?.mode === 'auth') {
+        this.authMode = true
+        this.maskedStatus = payload as MaskedIntegrationStatus
+        return normalizeIntegrationConfig(defaultIntegrationConfig)
+      }
+      this.authMode = false
       if (response.ok && payload?.configured && payload?.config) {
         const normalized = normalizeIntegrationConfig(payload.config)
         saveToStorage(INTEGRATION_KEY, normalized)
         return normalized
       }
-      if (hasIntegrationCredentials(localConfig)) {
+      if (isLoopbackBrowser() && hasIntegrationCredentials(localConfig)) {
         await this.persistIntegrationConfig(localConfig)
       }
     } catch {
@@ -186,13 +219,20 @@ export class IntegrationConfigService {
 
   saveIntegrationConfig(config: IntegrationConfig): IntegrationConfig {
     const normalized = normalizeIntegrationConfig(config)
-    saveToStorage(INTEGRATION_KEY, normalized)
+    // Auth modda düz credential localStorage'a YAZILMAZ; yalnız sunucuya
+    // (şifreli DB) PUT edilir. Legacy modda mevcut davranış korunur.
+    if (!this.authMode) {
+      saveToStorage(INTEGRATION_KEY, normalized)
+    }
     void this.persistIntegrationConfig(normalized)
     return normalized
   }
 
   async persistIntegrationConfig(config: IntegrationConfig): Promise<boolean> {
-    if (!isLoopbackBrowser()) return false
+    // Auth modda cookie ile same-origin (proxy) PUT; legacy modda yalnız
+    // loopback tarayıcıdan.
+    if (typeof window === 'undefined') return false
+    if (!this.authMode && !isLoopbackBrowser()) return false
     try {
       const response = await fetch(LOCAL_CONFIG_ENDPOINT, {
         method: 'PUT',
@@ -200,8 +240,15 @@ export class IntegrationConfigService {
           'Content-Type': 'application/json',
           ...localConfigHeaders(),
         },
+        credentials: 'include',
         body: JSON.stringify({ config: normalizeIntegrationConfig(config) }),
       })
+      if (this.authMode && response.ok) {
+        const payload = await response.json().catch(() => null)
+        if (payload?.mode === 'auth') {
+          this.maskedStatus = payload as MaskedIntegrationStatus
+        }
+      }
       return response.ok
     } catch {
       return false

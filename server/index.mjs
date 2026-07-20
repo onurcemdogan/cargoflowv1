@@ -168,6 +168,113 @@ app.use('/api/auth', (request, response, next) => {
     })
 })
 
+// --- Tenant izolasyonu (faz 3) -------------------------------------------
+// İki mod: (1) DATABASE_URL yoksa LEGACY — mevcut local-config akışı ve
+// isTrustedLocalConfigRequest guard'ı aynen çalışır, auth zorunlu değildir
+// (mevcut yerel geliştirme ve test davranışı korunur). (2) DATABASE_URL
+// varsa AUTH — korumalı route'lar requireAuth ister, credential yalnız
+// oturumdaki organization'ın PostgreSQL kaydından çözülür, local/global
+// config'e DÜŞÜLMEZ. organizationId yalnız req.auth'tan gelir.
+function isTenantAuthMode() {
+  return Boolean(String(process.env.DATABASE_URL ?? '').trim())
+}
+const CREDENTIAL_ENCRYPTION_MISSING = 'CREDENTIAL_ENCRYPTION_MISSING'
+
+// Korumalı route middleware: auth modda requireAuth; legacy modda no-op.
+async function tenantAuth(request, response, next) {
+  if (!isTenantAuthMode()) return next()
+  try {
+    const [{ requireAuth }, { getDb }] = await Promise.all([
+      import('./auth/middleware.ts'),
+      import('./db/client.ts'),
+    ])
+    return requireAuth(getDb())(request, response, next)
+  } catch {
+    response.status(503).json({
+      ok: false,
+      message: 'Kimlik doğrulama katmanı yüklenemedi; PostgreSQL yapılandırmasını kontrol edin.',
+    })
+  }
+}
+
+// Oturumdaki organization credential'ını (DB) normalize config olarak çözer.
+// Auth modda encryption key yoksa özel hata fırlatır (endpoint 503 döner).
+async function loadRequestOrgConfig(request) {
+  const { isCredentialEncryptionConfigured, loadOrganizationIntegrationConfig } =
+    await import('./integrations/credentialService.ts')
+  if (!isCredentialEncryptionConfigured()) {
+    const error = new Error('CREDENTIAL_ENCRYPTION_KEY tanımlı değil.')
+    error.code = CREDENTIAL_ENCRYPTION_MISSING
+    throw error
+  }
+  const { getDb } = await import('./db/client.ts')
+  const config = await loadOrganizationIntegrationConfig(
+    getDb(),
+    request.auth.organizationId,
+  )
+  return normalizeLocalIntegrationConfig(config)
+}
+
+// Korumalı POST route'ları için: auth modda body'deki config/credentials'ı
+// DB'den gelen org credential'ıyla EZER (frontend'in gönderdiği credential/
+// organizationId yok sayılır). Sürat create/idempotency ve mevcut handler'lar
+// değişmez; yalnız credential KAYNAĞI değişir.
+async function tenantInjectCredentials(request, response, next) {
+  if (!isTenantAuthMode() || !request.auth) return next()
+  try {
+    const config = await loadRequestOrgConfig(request)
+    if (request.body && typeof request.body === 'object') {
+      request.body.config = config
+      request.body.credentials = config.trendyol
+    }
+    next()
+  } catch (error) {
+    if (error?.code === CREDENTIAL_ENCRYPTION_MISSING) {
+      response.status(503).json({
+        ok: false,
+        message: 'Credential şifreleme anahtarı (CREDENTIAL_ENCRYPTION_KEY) yapılandırılmamış.',
+      })
+      return
+    }
+    response.status(500).json({ ok: false, message: 'Organization credential çözülemedi.' })
+  }
+}
+
+// Auth modda org config, legacy modda local şifreli config. Production'da
+// auth modda local/global fallback KULLANILMAZ.
+async function getRequestIntegrationConfig(request) {
+  if (isTenantAuthMode() && request.auth?.organizationId) {
+    return loadRequestOrgConfig(request)
+  }
+  if (isTenantAuthMode() && process.env.NODE_ENV === 'production') {
+    return null
+  }
+  const stored = await readEncryptedIntegrationConfig()
+  return stored ? normalizeLocalIntegrationConfig(stored) : null
+}
+
+// Korumalı route ön ekleri: auth (hepsi) + credential injection (body
+// kullananlar). Route tanımlarından ÖNCE kayıtlıdır.
+const TENANT_AUTH_PATHS = [
+  '/api/local-config/integration',
+  '/api/trendyol',
+  '/api/integrations/trendyol',
+  '/api/integrations/surat',
+  '/api/analytics/orders',
+  '/api/analytics/claims',
+  '/api/shipments/surat',
+  '/api/labels/zpl',
+  '/api/printing/zebra',
+]
+const TENANT_INJECT_PATHS = [
+  '/api/trendyol',
+  '/api/integrations/trendyol',
+  '/api/integrations/surat',
+  '/api/shipments/surat',
+]
+app.use(TENANT_AUTH_PATHS, tenantAuth)
+app.use(TENANT_INJECT_PATHS, tenantInjectCredentials)
+
 app.get('/api/health', async (_request, response) => {
   // Mevcut davranış korunur: DATABASE_URL tanımlı değilse yanıt eskisiyle
   // birebir aynıdır (db alanı eklenmez, ok:true kalır). DB yalnız
@@ -196,6 +303,39 @@ app.get('/api/health', async (_request, response) => {
 })
 
 app.get('/api/local-config/integration', async (request, response) => {
+  // Auth modda: yalnız oturumdaki organization'ın MASKELENMİŞ durumu; secret
+  // DÖNMEZ. organizationId yalnız req.auth'tan gelir.
+  if (isTenantAuthMode()) {
+    try {
+      const { isCredentialEncryptionConfigured, getMaskedIntegrationStatus } =
+        await import('./integrations/credentialService.ts')
+      if (!isCredentialEncryptionConfigured()) {
+        response.status(503).json({
+          ok: false,
+          message: 'Credential şifreleme anahtarı (CREDENTIAL_ENCRYPTION_KEY) yapılandırılmamış.',
+        })
+        return
+      }
+      const { getDb } = await import('./db/client.ts')
+      const status = await getMaskedIntegrationStatus(
+        getDb(),
+        request.auth.organizationId,
+      )
+      response.json({
+        ok: true,
+        mode: 'auth',
+        configured: status.trendyol.configured || status.surat.configured,
+        trendyol: status.trendyol,
+        surat: status.surat,
+      })
+    } catch {
+      response.status(500).json({
+        ok: false,
+        message: 'Organization entegrasyon durumu okunamadı.',
+      })
+    }
+    return
+  }
   if (!isTrustedLocalConfigRequest(request)) {
     response.status(403).json({
       ok: false,
@@ -228,6 +368,51 @@ app.get('/api/local-config/integration', async (request, response) => {
 })
 
 app.put('/api/local-config/integration', async (request, response) => {
+  // Auth modda: yalnız oturum organization'ına yazar; boş secret eski değeri
+  // korur; frontend'den gelen organizationId yok sayılır; DB'ye şifreli yazar.
+  if (isTenantAuthMode()) {
+    const incoming = request.body?.config
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+      response.status(400).json({ ok: false, message: 'Geçerli entegrasyon ayarı gerekli.' })
+      return
+    }
+    try {
+      const {
+        isCredentialEncryptionConfigured,
+        saveIntegrationCredential,
+        getMaskedIntegrationStatus,
+      } = await import('./integrations/credentialService.ts')
+      if (!isCredentialEncryptionConfigured()) {
+        response.status(503).json({
+          ok: false,
+          message: 'Credential şifreleme anahtarı (CREDENTIAL_ENCRYPTION_KEY) yapılandırılmamış.',
+        })
+        return
+      }
+      const { getDb } = await import('./db/client.ts')
+      const db = getDb()
+      const organizationId = request.auth.organizationId
+      const normalized = normalizeLocalIntegrationConfig(incoming)
+      if (incoming.trendyol && typeof incoming.trendyol === 'object') {
+        await saveIntegrationCredential(db, organizationId, 'trendyol', normalized.trendyol)
+      }
+      if (incoming.surat && typeof incoming.surat === 'object') {
+        await saveIntegrationCredential(db, organizationId, 'surat', normalized.surat)
+      }
+      const status = await getMaskedIntegrationStatus(db, organizationId)
+      response.json({
+        ok: true,
+        mode: 'auth',
+        configured: status.trendyol.configured || status.surat.configured,
+        trendyol: status.trendyol,
+        surat: status.surat,
+        message: 'Entegrasyon bilgileri organization için şifreli olarak saklandı.',
+      })
+    } catch {
+      response.status(500).json({ ok: false, message: 'Organization entegrasyon ayarları kaydedilemedi.' })
+    }
+    return
+  }
   if (!isTrustedLocalConfigRequest(request)) {
     response.status(403).json({
       ok: false,
@@ -301,7 +486,9 @@ const ANALYTICS_ORDER_STATUSES = [
 ]
 
 app.get('/api/analytics/orders', async (request, response) => {
-  if (!isTrustedLocalConfigRequest(request)) {
+  // Auth modda requireAuth (tenantAuth) gate'i geçilmiştir; legacy modda
+  // local-trust guard'ı korunur.
+  if (!isTenantAuthMode() && !isTrustedLocalConfigRequest(request)) {
     response.status(403).json({
       ok: false,
       message: 'Analitik verisi yalnızca bu bilgisayardan okunabilir.',
@@ -318,12 +505,10 @@ app.get('/api/analytics/orders', async (request, response) => {
     return
   }
   try {
-    const storedConfig = await readEncryptedIntegrationConfig()
-    const credentials = storedConfig
-      ? normalizeLocalIntegrationConfig(storedConfig)?.trendyol
-      : undefined
+    const orgConfig = await getRequestIntegrationConfig(request)
+    const credentials = orgConfig?.trendyol
     if (!credentials?.sellerId || !credentials?.apiKey || !credentials?.apiSecret) {
-      response.status(400).json({
+      response.status(422).json({
         ok: false,
         message:
           'Trendyol entegrasyonu yapılandırılmadan satış analitiği verisi çekilemez.',
@@ -402,6 +587,13 @@ app.get('/api/analytics/orders', async (request, response) => {
       orders,
     })
   } catch (error) {
+    if (error?.code === CREDENTIAL_ENCRYPTION_MISSING) {
+      response.status(503).json({
+        ok: false,
+        message: 'Credential şifreleme anahtarı (CREDENTIAL_ENCRYPTION_KEY) yapılandırılmamış.',
+      })
+      return
+    }
     response.status(500).json({
       ok: false,
       message:
@@ -417,7 +609,7 @@ app.get('/api/analytics/orders', async (request, response) => {
 // bu endpoint claim event tarihine göre iadeleri döner. persistOrders,
 // operational store veya Sürat çağrısı YAPMAZ.
 app.get('/api/analytics/claims', async (request, response) => {
-  if (!isTrustedLocalConfigRequest(request)) {
+  if (!isTenantAuthMode() && !isTrustedLocalConfigRequest(request)) {
     response.status(403).json({
       ok: false,
       message: 'İade analitiği yalnızca bu bilgisayardan okunabilir.',
@@ -434,12 +626,10 @@ app.get('/api/analytics/claims', async (request, response) => {
     return
   }
   try {
-    const storedConfig = await readEncryptedIntegrationConfig()
-    const credentials = storedConfig
-      ? normalizeLocalIntegrationConfig(storedConfig)?.trendyol
-      : undefined
+    const orgConfig = await getRequestIntegrationConfig(request)
+    const credentials = orgConfig?.trendyol
     if (!credentials?.sellerId || !credentials?.apiKey || !credentials?.apiSecret) {
-      response.status(400).json({
+      response.status(422).json({
         ok: false,
         message:
           'Trendyol entegrasyonu yapılandırılmadan iade analitiği verisi çekilemez.',
