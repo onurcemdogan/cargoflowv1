@@ -5870,6 +5870,146 @@ button:disabled {
 .dashboard-analytics-error p { margin: 0; font-weight: 600; color: #b91c1c; }
 .dashboard-analytics-error small { color: var(--muted); }
 
+/* --- Auth ekranları -------------------------------------------------- */
+.auth-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
+}
+
+.auth-card {
+  width: min(400px, 100%);
+  display: grid;
+  gap: 14px;
+  padding: 28px 26px;
+  border: 1px solid #dfe6ef;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 18px 50px rgba(2, 6, 23, 0.35);
+}
+
+.auth-brand { display: flex; align-items: center; gap: 10px; }
+.auth-brand strong { display: block; font-size: 15px; }
+.auth-brand span { color: var(--muted); font-size: 11px; }
+.auth-brand-mark {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: #0f766e;
+  color: #fff;
+  font-weight: 800;
+}
+
+.auth-card h1 { margin: 2px 0 0; font-size: 20px; }
+.auth-helper { margin: 0; color: var(--muted); font-size: 12px; }
+
+.auth-card label { display: grid; gap: 6px; font-size: 12px; font-weight: 600; }
+.auth-card input {
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  width: 100%;
+}
+.auth-card input:focus-visible,
+.auth-card button:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.auth-password-row { display: flex; gap: 8px; }
+.auth-password-row input { flex: 1; }
+.auth-password-toggle {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 0 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.auth-submit {
+  min-height: 42px;
+  border: 0;
+  border-radius: 8px;
+  background: #0f766e;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+}
+.auth-submit:disabled { opacity: 0.6; }
+
+.auth-link {
+  border: 0;
+  background: none;
+  color: #2563eb;
+  font-size: 12px;
+  text-decoration: underline;
+  justify-self: center;
+  padding: 4px;
+}
+
+.auth-error {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 12px;
+}
+
+.auth-banner {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid #fde68a;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+}
+
+.auth-loading-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  background: #0f172a;
+  color: #cbd5f5;
+  font-size: 13px;
+}
+
+/* --- Sidebar oturum bloğu -------------------------------------------- */
+.sidebar-session {
+  margin-top: auto;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  border-radius: 10px;
+  background: rgba(15, 118, 110, 0.12);
+}
+.sidebar-session-identity { display: grid; gap: 2px; }
+.sidebar-session-identity strong { font-size: 12px; }
+.sidebar-session-identity span { color: var(--muted); font-size: 11px; }
+.sidebar-signout {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
 .dashboard-analytics-warning {
   display: flex;
   align-items: center;

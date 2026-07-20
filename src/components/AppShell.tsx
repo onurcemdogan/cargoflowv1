@@ -3,13 +3,16 @@ import {
   ClipboardList,
   LayoutDashboard,
   ListChecks,
+  LogOut,
   PackageSearch,
   Plug,
   ScrollText,
   Tag,
   Truck,
 } from 'lucide-react'
+import { useContext } from 'react'
 import type { ComponentType, ReactNode } from 'react'
+import { AuthContext } from '../auth/AuthProvider'
 import type { PageKey } from '../types/cargoflow'
 
 interface AppShellProps {
@@ -38,6 +41,10 @@ export function AppShell({
   onNavigate,
   children,
 }: AppShellProps) {
+  // AuthGate içinde context her zaman mevcuttur; testlerde/izole render'da
+  // yoksa kullanıcı bloğu sessizce gizlenir (throw yok).
+  const auth = useContext(AuthContext)
+  const sessionUser = auth?.user ?? null
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -66,6 +73,23 @@ export function AppShell({
             )
           })}
         </nav>
+
+        {sessionUser ? (
+          <div className="sidebar-session" aria-label="Oturum bilgisi">
+            <div className="sidebar-session-identity">
+              <strong>{sessionUser.organization.name}</strong>
+              <span>{sessionUser.username}</span>
+            </div>
+            <button
+              type="button"
+              className="sidebar-signout"
+              onClick={() => void auth?.signOut()}
+            >
+              <LogOut size={15} />
+              Çıkış Yap
+            </button>
+          </div>
+        ) : null}
 
         <div className="sidebar-note">
           <ScrollText size={16} />

@@ -250,6 +250,35 @@ test('auth akışı A-M: bootstrap, login, session, izolasyon', async (t) => {
   await pglite.exec(`UPDATE users SET status = 'active' WHERE username = 'zeynaadmin'`)
 })
 
+test('K) ortak parola politikası: 6 karakter kabul, 5 karakter 400', async (t) => {
+  const { pglite, db } = await createTestDb()
+  t.after(() => pglite.close())
+  const appHandle = await startApp(db, { windowMs: 60_000, limit: 100 })
+  t.after(() => appHandle.close())
+  const { base } = appHandle
+
+  // 5 karakter: backend 400 (frontend ile aynı ortak sabit: MIN=6).
+  const tooShort = await post(base, '/api/auth/bootstrap', {
+    organizationName: 'Alti Karakter AS',
+    username: 'altikarakter',
+    password: '12345',
+  })
+  assert.equal(tooShort.status, 400)
+  // 6 karakter: kabul.
+  const exactSix = await post(base, '/api/auth/bootstrap', {
+    organizationName: 'Alti Karakter AS',
+    username: 'altikarakter',
+    password: '123456',
+  })
+  assert.equal(exactSix.status, 201)
+  // Login de 6 karakterlik parolayla çalışır.
+  const login = await post(base, '/api/auth/login', {
+    username: 'altikarakter',
+    password: '123456',
+  })
+  assert.equal(login.status, 200)
+})
+
 test('N) login rate limit başarısız denemeleri sınırlar', async (t) => {
   const { pglite, db } = await createTestDb()
   t.after(() => pglite.close())

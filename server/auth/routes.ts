@@ -7,6 +7,10 @@ import express, { type Response, type Router } from 'express'
 import { rateLimit } from 'express-rate-limit'
 import { and, eq, sql } from 'drizzle-orm'
 import { organizations, users } from '../db/schema.ts'
+import {
+  isPasswordLongEnough,
+  PASSWORD_TOO_SHORT_MESSAGE,
+} from '../../src/auth/passwordPolicy.ts'
 import { hashPassword, verifyPassword } from './password.ts'
 import { requireAuth, type AuthedRequest } from './middleware.ts'
 import {
@@ -158,10 +162,11 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
       })
       return
     }
-    if (password.length < 12) {
+    // Ortak politika: frontend ile aynı sabit (src/auth/passwordPolicy.ts).
+    if (!isPasswordLongEnough(password)) {
       response.status(400).json({
         ok: false,
-        message: 'Parola en az 12 karakter olmalıdır.',
+        message: PASSWORD_TOO_SHORT_MESSAGE,
       })
       return
     }
