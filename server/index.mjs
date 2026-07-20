@@ -17,6 +17,10 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
+import {
+  classifyNetworkFailure,
+  userMessageForNetworkFailure,
+} from './surat-network-diagnostics.mjs'
 
 const app = express()
 const execFileAsync = promisify(execFile)
@@ -8423,6 +8427,7 @@ async function callSuratSoap(operation, innerXml) {
   </soap:Body>
 </soap:Envelope>`
 
+  const startedAt = Date.now()
   try {
     const apiResponse = await fetch(SURAT_SOAP_URL, {
       method: 'POST',
@@ -8441,15 +8446,30 @@ async function callSuratSoap(operation, innerXml) {
       text,
     }
   } catch (error) {
+    // Ağ hatası: fetch cause zincirini GÜVENLİ sınıflandır (DNS/TCP/TLS/connect
+    // -timeout/reset). sent='not_sent' → istek Sürat'e HİÇ gitmedi; 'unknown' →
+    // bağlantı kurulduktan sonra koptu, gönderi oluşmuş OLABİLİR. Kör retry YOK;
+    // endpoint/TLS değişmez. Yalnız güvenli teşhis alanları + net mesaj eklenir.
+    const networkError = classifyNetworkFailure(error)
+    const friendly = userMessageForNetworkFailure(networkError)
+    if (process.env.SURAT_DEBUG === '1') {
+      // GÜVENLİ log: yalnız kategori/faz/kod/host/süre. SOAP body/credential YOK.
+      console.info(
+        `[surat-net] operation=${operation} category=${networkError.category} phase=${networkError.phase} ` +
+          `code=${networkError.code} sent=${networkError.sent} host=${networkError.hostname ?? 'n/a'} elapsedMs=${Date.now() - startedAt}`,
+      )
+    }
     return {
       ok: false,
       statusCode: 0,
       contentType: '',
       body,
-      text:
-        error instanceof Error
-          ? `Sürat SOAP bağlantı hatası: ${error.message}`
-          : 'Sürat SOAP bağlantı hatası.',
+      // "Sürat SOAP bağlantı hatası:" öneki korunur (parser/log uyumu); ham
+      // "fetch failed" yerine anlaşılır, secret'sız mesaj gösterilir.
+      text: `Sürat SOAP bağlantı hatası: ${friendly}`,
+      networkError,
+      networkPhase: networkError.sent, // 'not_sent' | 'unknown'
+      networkUserMessage: friendly,
     }
   }
 }
