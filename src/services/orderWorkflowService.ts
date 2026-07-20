@@ -219,6 +219,9 @@ export class OrderWorkflowService {
     page: 1,
     pageSize: 25,
   }
+  // Auth modda ürün kataloğu kaynak-of-truth sunucudur; IndexedDB/localStorage
+  // source-of-truth DEĞİLDİR. Oturum boyunca yalnız in-memory cache tutulur.
+  private authProductsCache: CargoProduct[] = []
   private readonly productCatalogMemory = new Map<
     string,
     ProductCatalogCacheEnvelope
@@ -301,6 +304,40 @@ export class OrderWorkflowService {
     return orders
   }
 
+  // Auth modda sunucudan (GET /api/products) org-scoped TÜM katalog varyantlarını
+  // yükler (resolver/görsel eşleme tam katalog ister). Sayfa sayfa çekip birleştirir;
+  // in-memory cache'i günceller. Organization req.auth'tan çözülür.
+  async loadProductsFromServer(): Promise<CargoProduct[]> {
+    const pageSize = 100
+    let page = 1
+    let total = Infinity
+    const all: CargoProduct[] = []
+    while (all.length < total) {
+      const params = new URLSearchParams({
+        page: String(page),
+        pageSize: String(pageSize),
+      })
+      const response = await fetch(`/api/products?${params.toString()}`, {
+        credentials: 'include',
+      })
+      if (!response.ok) {
+        throw new Error(`Ürünler yüklenemedi (${response.status}).`)
+      }
+      const payload = (await response.json()) as {
+        products?: CargoProduct[]
+        total?: number
+      }
+      const batch = Array.isArray(payload.products) ? payload.products : []
+      all.push(...batch)
+      total = Number(payload.total ?? all.length)
+      if (batch.length === 0) break
+      page += 1
+      if (page > 1000) break // güvenlik: sonsuz döngü koruması
+    }
+    this.authProductsCache = all
+    return all
+  }
+
   setMarketplaceAccount(sellerId: string | number | undefined): boolean {
     const nextScope = normalizeMarketplaceAccountScope(sellerId)
     const changed = nextScope !== this.marketplaceAccountScope
@@ -364,6 +401,11 @@ export class OrderWorkflowService {
     products: CargoProduct[]
     metadata?: ProductCatalogCacheMetadata
   } {
+    // Auth modda IndexedDB/localStorage source-of-truth DEĞİLDİR; son sunucu
+    // snapshot'ı (memory cache) döner.
+    if (this.authMode) {
+      return { products: this.authProductsCache }
+    }
     const inMemory = this.productCatalogMemory.get(this.productsStorageKey())
     if (inMemory && isValidProductCatalogCache(inMemory)) {
       return {
@@ -386,6 +428,12 @@ export class OrderWorkflowService {
     products: CargoProduct[]
     metadata?: ProductCatalogCacheMetadata
   }> {
+    // Auth modda katalog sunucudan yüklenir (IndexedDB'den değil); eski
+    // IndexedDB/localStorage kataloğu otomatik import EDİLMEZ/SİLİNMEZ.
+    if (this.authMode) {
+      const products = await this.loadProductsFromServer().catch(() => [])
+      return { products }
+    }
     const key = this.productsStorageKey()
     const persisted = await loadPersistedProductCatalog(key).catch(() => null)
     if (isValidProductCatalogCache(persisted)) {
@@ -691,9 +739,83 @@ export class OrderWorkflowService {
     }
   }
 
+  // AUTH modu ürün çekme: sunucudaki Trendyol ürün sync'ini tetikler (org
+  // credential DB'den enjekte edilir; frontend credential GÖNDERMEZ), sonra
+  // kaynak-of-truth PostgreSQL'den TÜM kataloğu yeniden yükler. Raw payload
+  // IndexedDB/localStorage'a YAZILMAZ. KISMİ/başarısız sync katalogu SİLMEZ.
+  private async fetchProductsAuthMode(): Promise<{
+    products: CargoProduct[]
+    result: WorkflowResult
+  }> {
+    let syncPayload: {
+      ok?: boolean
+      complete?: boolean
+      message?: string
+      insertedProducts?: number
+      updatedProducts?: number
+      insertedVariants?: number
+      updatedVariants?: number
+      fetchedVariantCount?: number
+    } = {}
+    let syncOk = false
+    try {
+      const response = await fetch('/api/products/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({}),
+      })
+      syncPayload = (await response.json().catch(() => ({}))) as typeof syncPayload
+      syncOk = response.ok && syncPayload.ok === true
+    } catch (error) {
+      syncPayload = {
+        ok: false,
+        message:
+          error instanceof Error ? error.message : 'Sunucu ürün senkronu erişilemedi.',
+      }
+    }
+
+    const products = await this.loadProductsFromServer().catch(
+      () => this.authProductsCache,
+    )
+
+    if (!syncOk) {
+      this.auditLogService.append({
+        action: 'Ürünler çekildi',
+        level: 'warning',
+        details: `${syncPayload.message ?? 'Ürün senkronu tamamlanamadı.'} Mevcut ${products.length} ürün korunuyor.`,
+      })
+      return {
+        products,
+        result: {
+          level: 'error',
+          source: 'real',
+          message: `${syncPayload.message ?? 'Ürün senkronu tamamlanamadı.'} Kısmi/başarısız sonuç sunucu kataloğunu değiştirmedi; ${products.length} ürün korundu.`,
+        },
+      }
+    }
+
+    this.auditLogService.append({
+      action: 'Ürünler çekildi',
+      level: 'success',
+      details: `Sunucu ürün senkronu tamamlandı: ${syncPayload.insertedProducts ?? 0} yeni ürün, ${syncPayload.insertedVariants ?? 0} yeni varyant. Toplam ${products.length} varyant.`,
+    })
+    return {
+      products,
+      result: {
+        level: products.length > 0 ? 'success' : 'warning',
+        source: 'real',
+        message: `Sunucu ürün senkronu tamamlandı (${syncPayload.fetchedVariantCount ?? products.length} varyant işlendi). Katalog: ${products.length}.`,
+      },
+    }
+  }
+
   async fetchProducts(
     config: IntegrationConfig,
   ): Promise<{ products: CargoProduct[]; result: WorkflowResult }> {
+    if (this.authMode) {
+      return this.fetchProductsAuthMode()
+    }
     this.setMarketplaceAccount(config.trendyol.sellerId)
     const cachedCatalog = this.loadProductCatalog()
     const response = await this.marketplaceProvider.fetchProducts(config.trendyol)

@@ -263,6 +263,7 @@ const TENANT_AUTH_PATHS = [
   '/api/analytics/orders',
   '/api/analytics/claims',
   '/api/orders',
+  '/api/products',
   '/api/shipments/surat',
   '/api/labels/zpl',
   '/api/printing/zebra',
@@ -272,6 +273,7 @@ const TENANT_INJECT_PATHS = [
   '/api/integrations/trendyol',
   '/api/integrations/surat',
   '/api/orders/sync',
+  '/api/products/sync',
   '/api/shipments/surat',
 ]
 app.use(TENANT_AUTH_PATHS, tenantAuth)
@@ -825,6 +827,154 @@ app.get('/api/analytics/claims', async (request, response) => {
 
 app.post('/api/trendyol/products/fetch', handleTrendyolProductsFetch)
 app.post('/api/integrations/trendyol/products', handleTrendyolProductsFetch)
+
+// AUTH modu ürün kataloğu persistence API'si. Kaynak-of-truth PostgreSQL; her
+// organization YALNIZ kendi ürünlerini görür (org req.auth'tan; query/body'den
+// ASLA). Legacy modda (DATABASE_URL yok) bu route'lar 404 döner; frontend legacy
+// akışı IndexedDB/localStorage'da kalır ve buraya çağrı yapmaz.
+async function requireProductPersistenceContext(request, response) {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) {
+    response.status(404).json({ ok: false, message: 'Ürün persistence yalnız auth modda kullanılabilir.' })
+    return null
+  }
+  try {
+    const [{ getDb }, service] = await Promise.all([
+      import('./db/client.ts'),
+      import('./products/productPersistenceService.ts'),
+    ])
+    return { db: getDb(), service, organizationId: request.auth.organizationId }
+  } catch {
+    response.status(503).json({
+      ok: false,
+      message: 'Ürün persistence katmanı yüklenemedi; PostgreSQL yapılandırmasını kontrol edin.',
+    })
+    return null
+  }
+}
+
+// GET /api/products — org-scoped, server-side sayfalı düz varyant listesi.
+app.get('/api/products', async (request, response) => {
+  const context = await requireProductPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const query = request.query ?? {}
+    const archivedParam = strOrUndef(query.archived)
+    const result = await context.service.listProducts(context.db, context.organizationId, {
+      search: strOrUndef(query.search),
+      barcode: strOrUndef(query.barcode),
+      merchantSku: strOrUndef(query.merchantSku),
+      archived:
+        archivedParam === undefined
+          ? undefined
+          : archivedParam === 'true' || archivedParam === '1',
+      page: query.page,
+      pageSize: query.pageSize,
+      sort:
+        query.sort === 'titleDesc' || query.sort === 'recent'
+          ? query.sort
+          : 'titleAsc',
+    })
+    response.json({
+      ok: true,
+      products: result.products,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Ürünler yüklenemedi.' })
+  }
+})
+
+// GET /api/products/:id — org-scoped tekil ürün (düz view-model id = varyant id).
+// Başka org'un ürünü (veya yok) 404 döner.
+app.get('/api/products/:id', async (request, response) => {
+  const context = await requireProductPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const product = await context.service.getProduct(
+      context.db,
+      context.organizationId,
+      String(request.params.id),
+    )
+    if (!product) {
+      response.status(404).json({ ok: false, message: 'Ürün bulunamadı.' })
+      return
+    }
+    response.json({ ok: true, product })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Ürün yüklenemedi.' })
+  }
+})
+
+// POST /api/products/sync — mevcut Trendyol ürün sync altyapısıyla (org credential
+// DB'den enjekte edilir) çeker, normalize eder ve org bazında upsert eder.
+// KISMİ/başarısız sync ürün SİLMEZ/ARŞİVLEMEZ; arşivleme yalnız kanıtlı TAM
+// sync'te (complete=true) reconcile ile yapılır.
+app.post('/api/products/sync', async (request, response) => {
+  const context = await requireProductPersistenceContext(request, response)
+  if (!context) return
+  const credentials = request.body?.credentials ?? {}
+  let result
+  try {
+    result = await callTrendyolProducts(credentials)
+  } catch {
+    response.status(502).json({ ok: false, message: 'Trendyol ürün senkronu başarısız.' })
+    return
+  }
+
+  if (!result.ok) {
+    // Başarısız çekim: mevcut kataloğa DOKUNMA (silme/arşivleme/ezme yok).
+    response.status(502).json({
+      ok: false,
+      complete: false,
+      message: `Trendyol ürün senkronu başarısız: ${result.message}`,
+      fetchedProductCount: 0,
+      fetchedVariantCount: 0,
+      insertedProducts: 0,
+      updatedProducts: 0,
+      insertedVariants: 0,
+      updatedVariants: 0,
+      failedCount: 0,
+      syncBatchId: null,
+    })
+    return
+  }
+
+  try {
+    const products = normalizeTrendyolProducts(result.data)
+    const expectedTotal = Number(result.debug?.expectedTotal ?? products.length)
+    const normalizedRatio =
+      expectedTotal > 0
+        ? products.length / expectedTotal
+        : products.length === 0
+          ? 1
+          : 0
+    // Tam sync kararı mevcut ürün fetch'iyle aynı eşik (%99) üzerinden verilir.
+    const complete = result.debug?.status === 'COMPLETE' && normalizedRatio >= 0.99
+    const persistResult = await context.service.persistProductSyncResult(
+      context.db,
+      context.organizationId,
+      products,
+      { complete },
+    )
+    response.json({
+      ok: true,
+      complete: persistResult.complete,
+      fetchedProductCount: persistResult.fetchedProductCount,
+      fetchedVariantCount: persistResult.fetchedVariantCount,
+      insertedProducts: persistResult.insertedProducts,
+      updatedProducts: persistResult.updatedProducts,
+      insertedVariants: persistResult.insertedVariants,
+      updatedVariants: persistResult.updatedVariants,
+      failedCount: persistResult.failedCount,
+      archivedCount: persistResult.archivedCount,
+      syncBatchId: persistResult.syncBatchId,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Ürünler kaydedilemedi.' })
+  }
+})
 
 async function handleTrendyolOrdersFetch(request, response) {
   const credentials = request.body?.credentials ?? {}

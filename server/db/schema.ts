@@ -329,3 +329,121 @@ export const orderLines = pgTable(
     ),
   ],
 )
+
+// Ürün kataloğu ana kayıtları (organization bazlı). Başlık/marka/kategori açık
+// (arama); raw payload şifreli. Yeni organization boş katalogla başlar.
+export const products = pgTable(
+  'products',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    marketplace: text('marketplace').notNull(),
+    externalProductId: text('external_product_id').notNull(),
+    title: text('title').notNull(),
+    brand: text('brand'),
+    categoryName: text('category_name'),
+    productMainId: text('product_main_id'),
+    approved: boolean('approved'),
+    archived: boolean('archived').notNull().default(false),
+    rawPayloadEncrypted: text('raw_payload_encrypted'),
+    marketplaceCreatedAt: timestamp('marketplace_created_at', {
+      withTimezone: true,
+    }),
+    marketplaceLastModifiedAt: timestamp('marketplace_last_modified_at', {
+      withTimezone: true,
+    }),
+    firstSeenAt: timestamp('first_seen_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lastSeenAt: timestamp('last_seen_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('products_org_marketplace_external_unique').on(
+      table.organizationId,
+      table.marketplace,
+      table.externalProductId,
+    ),
+    index('products_org_title_idx').on(table.organizationId, table.title),
+    index('products_org_product_main_id_idx').on(
+      table.organizationId,
+      table.productMainId,
+    ),
+    index('products_org_archived_idx').on(
+      table.organizationId,
+      table.archived,
+    ),
+  ],
+)
+
+// Ürün varyantları (organization bazlı). Barcode/sku/stock_code açık (arama);
+// raw payload şifreli. Product silinirse cascade. Düz varyant listesi (4293
+// varyant koruması) buradan reconstruct edilir.
+export const productVariants = pgTable(
+  'product_variants',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    productId: uuid('product_id')
+      .notNull()
+      .references(() => products.id, { onDelete: 'cascade' }),
+    externalVariantId: text('external_variant_id').notNull(),
+    merchantSku: text('merchant_sku'),
+    barcode: text('barcode'),
+    stockCode: text('stock_code'),
+    color: text('color'),
+    size: text('size'),
+    attributes: jsonb('attributes'),
+    imageUrls: jsonb('image_urls'),
+    primaryImageUrl: text('primary_image_url'),
+    quantity: integer('quantity'),
+    salePrice: numeric('sale_price', { precision: 14, scale: 2 }),
+    listPrice: numeric('list_price', { precision: 14, scale: 2 }),
+    approved: boolean('approved'),
+    archived: boolean('archived').notNull().default(false),
+    rawPayloadEncrypted: text('raw_payload_encrypted'),
+    marketplaceLastModifiedAt: timestamp('marketplace_last_modified_at', {
+      withTimezone: true,
+    }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('product_variants_org_product_variant_unique').on(
+      table.organizationId,
+      table.productId,
+      table.externalVariantId,
+    ),
+    index('product_variants_org_barcode_idx').on(
+      table.organizationId,
+      table.barcode,
+    ),
+    index('product_variants_org_merchant_sku_idx').on(
+      table.organizationId,
+      table.merchantSku,
+    ),
+    index('product_variants_org_stock_code_idx').on(
+      table.organizationId,
+      table.stockCode,
+    ),
+    index('product_variants_org_archived_idx').on(
+      table.organizationId,
+      table.archived,
+    ),
+  ],
+)

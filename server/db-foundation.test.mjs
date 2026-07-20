@@ -57,6 +57,8 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
       'order_lines',
       'orders',
       'organizations',
+      'product_variants',
+      'products',
       'sessions',
       'shipment_operations',
       'shipments',
