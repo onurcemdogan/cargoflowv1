@@ -171,6 +171,28 @@ app.use('/api/auth', (request, response, next) => {
     })
 })
 
+// /api/platform-admin: organization kullanıcılarından AYRI platform yönetici
+// paneli (ayrı cookie, ayrı tablo, requirePlatformAdmin). Router lazy yüklenir;
+// DATABASE_URL yoksa router 503 döner. Organization cargoflow_session cookie'si
+// admin erişimi SAĞLAMAZ.
+let adminRouterPromise = null
+app.use('/api/platform-admin', (request, response, next) => {
+  if (!adminRouterPromise) {
+    adminRouterPromise = import('./admin/adminRoutes.ts').then((module) =>
+      module.createPlatformAdminRouter(),
+    )
+  }
+  adminRouterPromise
+    .then((router) => router(request, response, next))
+    .catch(() => {
+      adminRouterPromise = null
+      response.status(503).json({
+        ok: false,
+        message: 'Platform admin servisi yüklenemedi; PostgreSQL yapılandırmasını kontrol edin.',
+      })
+    })
+})
+
 // --- Tenant izolasyonu (faz 3) -------------------------------------------
 // İki mod: (1) DATABASE_URL yoksa LEGACY — mevcut local-config akışı ve
 // isTrustedLocalConfigRequest guard'ı aynen çalışır, auth zorunlu değildir

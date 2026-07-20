@@ -506,3 +506,59 @@ export const integrationSyncState = pgTable(
     ),
   ],
 )
+
+// Platform yöneticileri: organization kullanıcılarından TAMAMEN AYRI model.
+// Bu tablo organizations/users ile ilişkili DEĞİLDİR; platform genelinde
+// hesap yönetimi yetkisi taşır. İlk admin yalnız CLI ile oluşturulur (public
+// bootstrap YOK). Parola argon2id hash; düz parola asla saklanmaz.
+export const platformAdmins = pgTable('platform_admins', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  username: text('username').notNull().unique(),
+  passwordHash: text('password_hash').notNull(),
+  status: text('status').notNull().default('active'),
+  lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
+
+// Platform admin oturumları. Organization session'larından AYRI tablo ve AYRI
+// cookie (cargoflow_admin_session). Cookie'ye ham token; DB'de yalnız SHA-256
+// token_hash. expired/revoked kabul edilmez.
+export const platformAdminSessions = pgTable('platform_admin_sessions', {
+  id: uuid('id').primaryKey().defaultRandom(),
+  adminId: uuid('admin_id')
+    .notNull()
+    .references(() => platformAdmins.id, { onDelete: 'cascade' }),
+  tokenHash: text('token_hash').notNull().unique(),
+  expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
+  revokedAt: timestamp('revoked_at', { withTimezone: true }),
+})
+
+// Platform admin denetim günlüğü. Parola/credential/müşteri verisi/secret
+// BURAYA YAZILMAZ — yalnız aksiyon ve hedef kimlikleri (id) + güvenli metadata.
+export const platformAdminAuditLogs = pgTable(
+  'platform_admin_audit_logs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    adminId: uuid('admin_id'),
+    action: text('action').notNull(),
+    targetOrganizationId: uuid('target_organization_id'),
+    targetUserId: uuid('target_user_id'),
+    metadataJson: jsonb('metadata_json'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    index('platform_admin_audit_logs_admin_idx').on(table.adminId),
+    index('platform_admin_audit_logs_created_at_idx').on(table.createdAt),
+  ],
+)
