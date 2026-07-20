@@ -147,13 +147,31 @@ const TRENDYOL_1002_RECOMMENDED_ACTIONS = [
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 
-app.get('/api/health', (_request, response) => {
-  response.json({
+app.get('/api/health', async (_request, response) => {
+  // Mevcut davranış korunur: DATABASE_URL tanımlı değilse yanıt eskisiyle
+  // birebir aynıdır (db alanı eklenmez, ok:true kalır). DB yalnız
+  // yapılandırıldığında opsiyonel `db` alanı olarak raporlanır; DB hatası
+  // health'i başarısız YAPMAZ.
+  const payload = {
     ok: true,
     service: 'cargoflow-api',
     buildRevision: BUILD_REVISION,
     checkedAt: new Date().toISOString(),
-  })
+  }
+  if (String(process.env.DATABASE_URL ?? '').trim()) {
+    try {
+      const { checkDatabaseHealth } = await import('./db/client.ts')
+      payload.db = await checkDatabaseHealth()
+    } catch (error) {
+      payload.db = {
+        configured: true,
+        ok: false,
+        message:
+          error instanceof Error ? error.message : 'DB health kontrol edilemedi.',
+      }
+    }
+  }
+  response.json(payload)
 })
 
 app.get('/api/local-config/integration', async (request, response) => {
