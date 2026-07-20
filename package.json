@@ -9,7 +9,7 @@
     "dev:web:host": "vite --host 0.0.0.0 --port 5173 --strictPort",
     "dev:api": "node server/index.mjs",
     "dev:host": "concurrently -k \"npm:dev:api\" \"npm:dev:web:host\"",
-    "test:surat": "node --test --test-concurrency=1 server/surat-lifecycle.test.mjs server/surat-flow.test.mjs server/trendyol-fetch-flow.test.mjs server/product-catalog-flow.test.mjs server/label-flow.test.mjs server/print-flow.test.mjs server/dashboard-flow.test.mjs server/dashboard-analytics-flow.test.mjs server/orders-ui-flow.test.mjs server/persistence-flow.test.mjs server/local-config-flow.test.mjs server/desi-flow.test.mjs server/multi-item-print.test.mjs server/image-matching-flow.test.mjs server/order-detail-flow.test.mjs server/sync-merge-flow.test.mjs server/reporting-range.test.mjs",
+    "test:surat": "node --test --test-concurrency=1 server/surat-lifecycle.test.mjs server/surat-flow.test.mjs server/trendyol-fetch-flow.test.mjs server/product-catalog-flow.test.mjs server/label-flow.test.mjs server/print-flow.test.mjs server/dashboard-flow.test.mjs server/dashboard-analytics-flow.test.mjs server/orders-ui-flow.test.mjs server/persistence-flow.test.mjs server/local-config-flow.test.mjs server/desi-flow.test.mjs server/multi-item-print.test.mjs server/image-matching-flow.test.mjs server/order-detail-flow.test.mjs server/sync-merge-flow.test.mjs server/reporting-range.test.mjs server/analytics-source-flow.test.mjs",
     "test:dashboard": "node --test server/dashboard-analytics-flow.test.mjs",
     "test:surat:serendip": "node server/surat-serendip-live-check.mjs",
     "build": "tsc -b && vite build",

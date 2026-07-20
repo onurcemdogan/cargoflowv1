@@ -217,6 +217,10 @@ export interface DashboardViewModel {
 
 interface BuildDashboardViewModelInput {
   orders: CargoOrder[]
+  // SATIŞ analitiği için cap'siz dönemsel veri (analytics endpoint'i);
+  // verilmezse satış alanları da operational orders'tan hesaplanır
+  // (geriye dönük davranış). Operasyon sayaçları HER ZAMAN orders'tan.
+  analyticsOrders?: CargoOrder[]
   products?: CargoProduct[]
   selectedPeriod: DashboardPeriodSelection
   comparisonPeriod?: DashboardDateRange
@@ -243,6 +247,7 @@ interface PeriodTotals {
 
 export function buildDashboardViewModel({
   orders,
+  analyticsOrders,
   products = [],
   selectedPeriod,
   comparisonPeriod,
@@ -250,6 +255,11 @@ export function buildDashboardViewModel({
   now = new Date(),
 }: BuildDashboardViewModelInput): DashboardViewModel {
   const uniqueOrders = dedupeDashboardOrders(orders)
+  // Satış alanlarının kaynağı: analytics verisi varsa o (120'lik operasyon
+  // cache'inden bağımsız), yoksa operational liste.
+  const salesSource = analyticsOrders
+    ? dedupeDashboardOrders(analyticsOrders)
+    : uniqueOrders
   // Yerel (Europe/Istanbul) dönem: operasyon sayaçları ve etiket/kargo
   // dönem filtreleri MEVCUT semantiğini korur.
   const localPeriod = resolveDashboardPeriod(selectedPeriod, now)
@@ -278,10 +288,10 @@ export function buildDashboardViewModel({
         DASHBOARD_SALES_REPORTING_TIME_ZONE,
       ),
     )
-  const periodOrders = uniqueOrders.filter((order) =>
+  const periodOrders = salesSource.filter((order) =>
     orderIsInRange(order, period),
   )
-  const comparisonOrders = uniqueOrders.filter((order) =>
+  const comparisonOrders = salesSource.filter((order) =>
     orderIsInRange(order, resolvedComparison),
   )
   const currentTotals = calculatePeriodTotals(periodOrders)
@@ -329,7 +339,7 @@ export function buildDashboardViewModel({
   return {
     period,
     comparisonPeriod: resolvedComparison,
-    salesPeriodCards: buildDashboardSalesPeriodCards(uniqueOrders, now),
+    salesPeriodCards: buildDashboardSalesPeriodCards(salesSource, now),
     salesSummary: {
       salesAmount: metric(
         currentTotals.salesAmount,

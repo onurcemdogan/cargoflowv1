@@ -239,6 +239,136 @@ app.post('/api/trendyol/orders/fetch', handleTrendyolOrdersFetch)
 app.post('/api/integrations/trendyol/orders', handleTrendyolOrdersFetch)
 app.post('/api/integrations/trendyol/fetch-orders', handleTrendyolOrdersFetch)
 
+// Dashboard SATIŞ analitiği için CAP'SİZ, read-only dönemsel sipariş
+// kaynağı. Operational store'a yazmaz, Sürat/shipment işlemi yapmaz,
+// persistOrders zinciriyle ilişkisi yoktur; yalnız istenen aralığın
+// normalize edilmiş Trendyol sipariş/paket verisini döndürür. Kimlik
+// bilgileri sunucudaki şifreli local-config'ten okunur.
+const ANALYTICS_ORDER_STATUSES = [
+  'Created',
+  'Picking',
+  'Invoiced',
+  'Shipped',
+  'Delivered',
+  'Cancelled',
+  'Returned',
+  'UnDelivered',
+  'UnSupplied',
+  'AtCollectionPoint',
+]
+
+app.get('/api/analytics/orders', async (request, response) => {
+  if (!isTrustedLocalConfigRequest(request)) {
+    response.status(403).json({
+      ok: false,
+      message: 'Analitik verisi yalnızca bu bilgisayardan okunabilir.',
+    })
+    return
+  }
+  const startDate = Date.parse(String(request.query?.startDate ?? ''))
+  const endDate = Date.parse(String(request.query?.endDate ?? ''))
+  if (!Number.isFinite(startDate) || !Number.isFinite(endDate) || startDate > endDate) {
+    response.status(400).json({
+      ok: false,
+      message: 'Geçerli startDate/endDate (ISO) gerekli.',
+    })
+    return
+  }
+  try {
+    const storedConfig = await readEncryptedIntegrationConfig()
+    const credentials = storedConfig
+      ? normalizeLocalIntegrationConfig(storedConfig)?.trendyol
+      : undefined
+    if (!credentials?.sellerId || !credentials?.apiKey || !credentials?.apiSecret) {
+      response.status(400).json({
+        ok: false,
+        message:
+          'Trendyol entegrasyonu yapılandırılmadan satış analitiği verisi çekilemez.',
+      })
+      return
+    }
+    // Trendyol orders API uzun aralıkları reddeder; pasif statüler sync
+    // akışında pencerelenmediği için aralık BURADA aktif-statü penceresi
+    // boyutunda dilimlenir ve sonuçlar paket kimliğiyle birleştirilir.
+    // Analitik statü listesi zaten tamdır; sync'in unfiltered discovery
+    // adımına gerek yoktur. Statü×pencere istekleri rate limite takılmasın
+    // diye istekler aralıklı gönderilir, 429'da uzun beklemeyle tekrar
+    // denenir.
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const windowContents = []
+    let windowCursor = startDate
+    while (windowCursor <= endDate) {
+      const windowEnd = Math.min(
+        endDate,
+        windowCursor + TRENDYOL_ACTIVE_STATUS_WINDOW_MS,
+      )
+      for (const status of ANALYTICS_ORDER_STATUSES) {
+        let result
+        for (let attempt = 0; attempt <= 6; attempt += 1) {
+          if (attempt > 0) {
+            const rateLimited =
+              Number(result?.statusCode) === 429 ||
+              /rate limit/i.test(String(result?.message ?? ''))
+            await wait(rateLimited ? 15000 : 1500 * attempt)
+          }
+          result = await callTrendyolOrdersAllPages(credentials, {
+            status,
+            startDate: windowCursor,
+            endDate: windowEnd,
+            size: 200,
+          })
+          if (result.ok) break
+        }
+        if (!result.ok) {
+          response.json({
+            ok: false,
+            message: `Satış analitiği verisi alınamadı (${status}): ${result.message}`,
+            statusCode: result.statusCode,
+          })
+          return
+        }
+        windowContents.push(getTrendyolOrderPackagesArray(result.data))
+        await wait(500)
+      }
+      if (windowEnd === endDate) break
+      windowCursor = windowEnd + 1
+    }
+    const combinedContent = mergeTrendyolPackageCollections(...windowContents)
+    const normalized = normalizeTrendyolOrders({
+      content: combinedContent,
+      totalElements: combinedContent.length,
+      totalPages: 1,
+    })
+    const orders = normalized.orders ?? []
+    const packageCount = new Set(
+      orders.map((order) =>
+        String(
+          order.packageId ??
+            order.shipmentPackageId ??
+            `${order.marketplace}::${order.orderNumber}`,
+        ),
+      ),
+    ).size
+    response.json({
+      ok: true,
+      startDate: new Date(startDate).toISOString(),
+      endDate: new Date(endDate).toISOString(),
+      totalElements: combinedContent.length,
+      fetchedCount: orders.length,
+      packageCount,
+      orders,
+    })
+  } catch (error) {
+    response.status(500).json({
+      ok: false,
+      message:
+        error instanceof Error
+          ? error.message
+          : 'Satış analitiği verisi alınamadı.',
+    })
+  }
+})
+
 app.post('/api/trendyol/products/fetch', handleTrendyolProductsFetch)
 app.post('/api/integrations/trendyol/products', handleTrendyolProductsFetch)
 

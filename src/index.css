@@ -5831,3 +5831,43 @@ button:disabled {
   font-size: 12px;
   cursor: help;
 }
+
+/* Satış analitiği yükleme/hata durumları (analytics veri yolu) */
+.dashboard-analytics-loading {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.dashboard-skeleton {
+  border-radius: 10px;
+  background: linear-gradient(90deg, var(--surface-muted) 25%, var(--border) 50%, var(--surface-muted) 75%);
+  background-size: 200% 100%;
+  animation: dashboard-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+
+.dashboard-skeleton-cards { height: 96px; }
+.dashboard-skeleton-chart { height: 180px; }
+
+@keyframes dashboard-skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.dashboard-analytics-error {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid #fecaca;
+  border-radius: 12px;
+  background: #fef2f2;
+}
+
+.dashboard-analytics-error p { margin: 0; font-weight: 600; color: #b91c1c; }
+.dashboard-analytics-error small { color: var(--muted); }

@@ -40,6 +40,7 @@ import type {
 import { formatDisplayDate } from '../utils/formatters'
 import type { OrdersNavigationFilters } from '../utils/ordersNavigation'
 import type { QuickTab } from '../utils/ordersTabs'
+import { fetchDashboardAnalyticsOrders } from '../services/dashboardAnalyticsService'
 
 interface DashboardPageProps {
   orders: CargoOrder[]
@@ -114,16 +115,78 @@ export function DashboardPage({
     }),
     [customEndDate, customStartDate, periodKey],
   )
+  // SATIŞ analitiği: operational ordersState'ten bağımsız, cap'siz dönemsel
+  // veri (analytics endpoint'i). Operasyon panelleri ordersState'i kullanmaya
+  // devam eder. Loading/error render'da TÜRETİLİR (effect'te senkron setState
+  // yok): sonuç, üretildiği istek anahtarıyla birlikte saklanır.
+  const [analyticsResult, setAnalyticsResult] = useState<{
+    key: string
+    orders?: CargoOrder[]
+    error?: string
+  }>()
+  const [analyticsRetryTick, setAnalyticsRetryTick] = useState(0)
+  const analyticsOrders = analyticsResult?.orders ?? null
   const viewModel = useMemo(
     () =>
       buildDashboardViewModel({
         orders,
+        analyticsOrders: analyticsOrders ?? undefined,
         products,
         selectedPeriod,
         latestSyncAt: lastSyncedAt,
       }),
-    [lastSyncedAt, orders, products, selectedPeriod],
+    [analyticsOrders, lastSyncedAt, orders, products, selectedPeriod],
   )
+  // İlk açılışta kartların tamamını (Geçen Ay başı → Bugün sonu) kapsayan
+  // TEK aralık çekilir; seçili dönem bu kapsamın dışına çıkarsa service
+  // birleşik aralığı yeniden çeker, kapsam içindeyse cache'ten döner.
+  const analyticsRangeKey = useMemo(() => {
+    const ranges = [
+      viewModel.period,
+      viewModel.comparisonPeriod,
+      ...viewModel.salesPeriodCards.map((card) => card.range),
+    ]
+    const start = Math.min(...ranges.map((range) => range.start.getTime()))
+    const end = Math.max(...ranges.map((range) => range.end.getTime()))
+    return `${start}|${end}`
+  }, [viewModel.period, viewModel.comparisonPeriod, viewModel.salesPeriodCards])
+  const analyticsRequestKey = `${analyticsRangeKey}#${analyticsRetryTick}`
+  useEffect(() => {
+    const [startMs, endMs] = analyticsRequestKey
+      .split('#')[0]
+      .split('|')
+      .map(Number)
+    let active = true
+    fetchDashboardAnalyticsOrders(new Date(startMs), new Date(endMs))
+      .then((result) => {
+        if (active) {
+          setAnalyticsResult({ key: analyticsRequestKey, orders: result.orders })
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setAnalyticsResult({
+            key: analyticsRequestKey,
+            error:
+              error instanceof Error
+                ? error.message
+                : 'Satış analitiği yüklenemedi.',
+          })
+        }
+      })
+    return () => {
+      active = false
+    }
+  }, [analyticsRequestKey])
+  // SSR/test render'ında effect çalışmaz; skeleton'da kilitlenmemek için
+  // loading yalnız tarayıcıda türetilir (fallback: operasyon verisi).
+  const analyticsLoading =
+    typeof window !== 'undefined' && analyticsResult?.key !== analyticsRequestKey
+  const analyticsError =
+    analyticsResult?.key === analyticsRequestKey
+      ? analyticsResult.error
+      : undefined
+  const analyticsPending = analyticsLoading && !analyticsOrders
   const providerHealth = useMemo(
     () =>
       buildDashboardProviderHealth({
@@ -355,6 +418,30 @@ export function DashboardPage({
         </p>
       </section>
 
+      {analyticsError ? (
+        <section className="dashboard-analytics-error" role="alert">
+          <p>Satış analitiği yüklenemedi.</p>
+          <small>{analyticsError}</small>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setAnalyticsRetryTick((tick) => tick + 1)}
+          >
+            Tekrar dene
+          </button>
+        </section>
+      ) : analyticsPending ? (
+        <section
+          className="dashboard-analytics-loading"
+          aria-busy="true"
+          aria-label="Satış analitiği yükleniyor"
+        >
+          <div className="dashboard-skeleton dashboard-skeleton-cards" />
+          <div className="dashboard-skeleton dashboard-skeleton-chart" />
+          <span>Satış analitiği yükleniyor…</span>
+        </section>
+      ) : (
+        <>
       <section className="dashboard-sales-period-cards" aria-label="Dönemsel satış kartları">
         {viewModel.salesPeriodCards.map((card) => (
           <SalesPeriodCard key={card.key} card={card} />
@@ -453,6 +540,8 @@ export function DashboardPage({
           )}
         </article>
       </section>
+        </>
+      )}
 
       <section className="dashboard-section-heading dashboard-operation-heading" aria-labelledby="operation-analytics-title">
         <div>
