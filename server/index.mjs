@@ -147,6 +147,27 @@ const TRENDYOL_1002_RECOMMENDED_ACTIONS = [
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 
+// /api/auth: organization bazlı backend auth (faz 2). Router lazy yüklenir;
+// DATABASE_URL yoksa router kendi içinde 503 döner, TS modülü yüklenemezse
+// da 503 — mevcut yerel kullanım davranışı hiçbir durumda etkilenmez.
+let authRouterPromise = null
+app.use('/api/auth', (request, response, next) => {
+  if (!authRouterPromise) {
+    authRouterPromise = import('./auth/routes.ts').then((module) =>
+      module.createAuthRouter(),
+    )
+  }
+  authRouterPromise
+    .then((router) => router(request, response, next))
+    .catch(() => {
+      authRouterPromise = null
+      response.status(503).json({
+        ok: false,
+        message: 'Auth servisi yüklenemedi; PostgreSQL yapılandırmasını kontrol edin.',
+      })
+    })
+})
+
 app.get('/api/health', async (_request, response) => {
   // Mevcut davranış korunur: DATABASE_URL tanımlı değilse yanıt eskisiyle
   // birebir aynıdır (db alanı eklenmez, ok:true kalır). DB yalnız
