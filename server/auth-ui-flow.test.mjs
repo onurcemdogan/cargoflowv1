@@ -195,7 +195,9 @@ test('LoginPage ve BootstrapPage erişilebilir formlar üretir', async (t) => {
   assert.match(loginHtml, /for="login-username"/)
   assert.match(loginHtml, /for="login-password"/)
   assert.match(loginHtml, /Giriş Yap/)
-  assert.match(loginHtml, /İlk kurulumu yap/)
+  // Public "İlk kurulumu yap" bağlantısı kaldırıldı: organization hesapları
+  // platform yöneticisi tarafından oluşturulur (backend bootstrap koruması ayrı).
+  assert.doesNotMatch(loginHtml, /İlk kurulumu yap/)
   const bootstrapHtml = withContext(BootstrapPage)
   assert.match(bootstrapHtml, /Şirket adı/)
   assert.match(bootstrapHtml, /Şifre tekrarı/)

@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { useAuth } from '../auth/useAuth'
 import {
   fetchOnboardingStatus,
+  UnauthorizedError,
   type OnboardingStatus,
 } from '../services/onboardingService'
 import { OnboardingPage } from '../pages/OnboardingPage'
@@ -40,15 +41,27 @@ export function OnboardingGate({ children }: { children: ReactNode }) {
     )
   }, [])
 
+  // Hata işleyici: 401 → organization oturumu geçersiz; auth state temizlenir
+  // (refreshSession /api/auth/me'yi yeniden kontrol eder; oturum yoksa
+  // AuthGate LoginPage'i gösterir). Admin session/cookie AYRI olduğundan
+  // etkilenmez. Diğer hatalar "error" ekranına düşer.
+  const handleError = useCallback(
+    (error: unknown) => {
+      if (!active.current) return
+      if (error instanceof UnauthorizedError) {
+        void auth.refreshSession()
+        return
+      }
+      setState({ phase: 'error' })
+    },
+    [auth],
+  )
+
   // Yeniden dene butonu için: loading göster, sonra tekrar sorgula.
   const load = useCallback(() => {
     setState({ phase: 'loading' })
-    fetchOnboardingStatus()
-      .then(applyStatus)
-      .catch(() => {
-        if (active.current) setState({ phase: 'error' })
-      })
-  }, [applyStatus])
+    fetchOnboardingStatus().then(applyStatus).catch(handleError)
+  }, [applyStatus, handleError])
 
   useEffect(() => {
     active.current = true
@@ -58,15 +71,13 @@ export function OnboardingGate({ children }: { children: ReactNode }) {
         .then((status) => {
           if (active.current) applyStatus(status)
         })
-        .catch(() => {
-          if (active.current) setState({ phase: 'error' })
-        })
+        .catch(handleError)
     }
     return () => {
       active.current = false
     }
     // auth.user değişince (login/logout/refresh) yeniden hesaplanır.
-  }, [auth.devBypass, auth.user, applyStatus])
+  }, [auth.devBypass, auth.user, applyStatus, handleError])
 
   if (state.phase === 'loading') {
     return (

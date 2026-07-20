@@ -1,3 +1,4 @@
+import cookieParser from 'cookie-parser'
 import cors from 'cors'
 import express from 'express'
 import { execFile } from 'node:child_process'
@@ -149,6 +150,14 @@ const TRENDYOL_1002_RECOMMENDED_ACTIONS = [
 
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
+// KRİTİK: tenantAuth (requireAuth) ve onboarding/orders/products endpoint'leri
+// ana app üzerinde çalışır ve session token'ını request.cookies'ten okur.
+// cookie-parser burada kayıtlı OLMAZSA request.cookies undefined kalır ve auth
+// modunda (production/DATABASE_URL) geçerli cargoflow_session cookie'si gelse
+// bile 401 "Oturum gerekli" döner. /api/auth ve /api/platform-admin router'ları
+// kendi cookieParser'larını çalıştırdığından bu sorun yalnız ana app route'larını
+// etkiler. cookieParser idempotent'tir; router içi ikinci çağrı zararsızdır.
+app.use(cookieParser())
 
 // /api/auth: organization bazlı backend auth (faz 2). Router lazy yüklenir;
 // DATABASE_URL yoksa router kendi içinde 503 döner, TS modülü yüklenemezse

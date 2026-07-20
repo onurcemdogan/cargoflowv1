@@ -23,14 +23,30 @@ function readSessionToken(request: AuthedRequest): string {
   return String(request.cookies?.[sessionCookieName()] ?? '').trim()
 }
 
+// Güvenli tanılama: yalnız AUTH_DEBUG=1 iken ve YALNIZ boolean/durum bilgisi
+// loglanır. Ham cookie, token, hash veya credential ASLA loglanmaz.
+function authDebug(message: string): void {
+  if (process.env.AUTH_DEBUG === '1') {
+    console.info(`[auth] ${message}`)
+  }
+}
+
 async function resolveAuth(
   db: AuthDb,
   request: AuthedRequest,
 ): Promise<boolean> {
+  const cookiePresent = Boolean(request.cookies)
   const token = readSessionToken(request)
-  if (!token) return false
+  if (!token) {
+    authDebug(`session yok: cookieParser=${cookiePresent} token=absent`)
+    return false
+  }
   const context = await findActiveSession(db, token)
-  if (!context) return false
+  if (!context) {
+    authDebug('session lookup: not_found_or_inactive (expired/revoked/user-disabled/org-suspended)')
+    return false
+  }
+  authDebug('session lookup: found_active')
   request.auth = {
     userId: context.userId,
     organizationId: context.organizationId,

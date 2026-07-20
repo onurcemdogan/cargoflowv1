@@ -24,12 +24,24 @@ export interface OnboardingCompleteResult {
   status?: OnboardingStatus
 }
 
-// Backend durumu. 404 → legacy mod (onboarding yok) → null. Ağ hatası fırlatır.
+// 401: organization oturumu geçersiz (expired/revoked/disabled/suspended).
+// Çağıran taraf auth state'i temizleyip /login'e yönlendirmek için yakalar.
+export class UnauthorizedError extends Error {
+  status = 401
+  constructor() {
+    super('Organization oturumu geçersiz.')
+    this.name = 'UnauthorizedError'
+  }
+}
+
+// Backend durumu. 404 → legacy mod (onboarding yok) → null. 401 →
+// UnauthorizedError. Diğer hatalar genel Error fırlatır.
 export async function fetchOnboardingStatus(): Promise<OnboardingStatus | null> {
   const response = await fetch('/api/onboarding/status', {
     credentials: 'include',
   })
   if (response.status === 404) return null
+  if (response.status === 401) throw new UnauthorizedError()
   if (!response.ok) {
     throw new Error(`Onboarding durumu alınamadı (${response.status}).`)
   }

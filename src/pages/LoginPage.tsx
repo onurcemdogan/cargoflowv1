@@ -11,9 +11,6 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [formError, setFormError] = useState<string>()
-  // Bootstrap 409 sonrası "İlk kurulumu yap" bağlantısı gizlenir.
-  const setupCompleted =
-    auth.error === 'Sistem kurulumu daha önce tamamlanmış. Giriş yapın.'
   const bannerMessage = auth.unavailableMessage ?? auth.error
 
   async function handleSubmit(event: FormEvent) {
@@ -107,16 +104,9 @@ export function LoginPage() {
         >
           {submitting ? 'Giriş yapılıyor…' : 'Giriş Yap'}
         </button>
-
-        {!setupCompleted && !auth.unavailableMessage ? (
-          <button
-            type="button"
-            className="auth-link"
-            onClick={auth.requestSetup}
-          >
-            İlk kurulumu yap
-          </button>
-        ) : null}
+        {/* Public "İlk kurulumu yap" bağlantısı kaldırıldı: organization
+            hesapları platform yöneticisi tarafından oluşturulur. Backend
+            ALLOW_PUBLIC_BOOTSTRAP=false koruması ayrıca geçerlidir. */}
       </form>
     </div>
   )

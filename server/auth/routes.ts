@@ -144,6 +144,20 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
 
   // POST /api/auth/bootstrap — yalnız sistemde hiç organization yokken.
   router.post('/bootstrap', limiter, async (request, response) => {
+    // Production'da public self-bootstrap KAPALIDIR: organization hesapları
+    // platform yöneticisi tarafından oluşturulur. ALLOW_PUBLIC_BOOTSTRAP=true
+    // açıkça verilmedikçe production'da 403. (Mevcut zero-org guard ayrıca
+    // geçerlidir.) Test/geliştirme ortamı (NODE_ENV!=production) etkilenmez.
+    if (
+      process.env.NODE_ENV === 'production' &&
+      String(process.env.ALLOW_PUBLIC_BOOTSTRAP ?? '').toLowerCase() !== 'true'
+    ) {
+      response.status(403).json({
+        ok: false,
+        message: 'Public kurulum devre dışı. Hesabınız platform yöneticisi tarafından oluşturulur.',
+      })
+      return
+    }
     const db = dbOf(request as AuthedRequest)
     const organizationName = String(
       (request.body as Record<string, unknown> | undefined)?.organizationName ??
