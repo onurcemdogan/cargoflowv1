@@ -6021,3 +6021,160 @@ button:disabled {
   color: #92400e;
   font-size: 0.85rem;
 }
+
+/* Onboarding (organization ilk kurulum) akışı */
+.onboarding-screen {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 2.5rem 1rem;
+  background: var(--bg);
+}
+.onboarding-shell {
+  width: 100%;
+  max-width: 640px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: 1.75rem;
+}
+.onboarding-header {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+}
+.onboarding-header h1 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+.onboarding-header p {
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.onboarding-logout {
+  margin-left: auto;
+  background: var(--surface-muted);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.onboarding-steps {
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0;
+  margin: 1.25rem 0;
+}
+.onboarding-steps li {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+  padding: 0.35rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.onboarding-steps li.is-active {
+  color: var(--primary);
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+.onboarding-steps li.is-done {
+  color: var(--green);
+  border-color: var(--green);
+}
+.onboarding-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.3rem;
+  height: 1.3rem;
+  border-radius: 999px;
+  background: var(--surface-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+.onboarding-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.onboarding-card h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+.onboarding-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+.onboarding-card input {
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 0.9rem;
+}
+.onboarding-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+.onboarding-counts,
+.onboarding-summary {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.9rem;
+}
+.onboarding-chips {
+  display: flex;
+  gap: 0.4rem;
+}
+.onboarding-chip {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+.onboarding-chip.is-on {
+  color: var(--green);
+  border-color: var(--green);
+  background: var(--green-soft);
+}
+.onboarding-ok,
+.onboarding-info {
+  color: var(--green);
+  font-size: 0.85rem;
+  margin: 0;
+}
+.onboarding-info {
+  color: var(--muted);
+}
+.onboarding-warn {
+  color: var(--amber);
+  font-size: 0.85rem;
+  margin: 0;
+}
+.onboarding-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0;
+}
+.onboarding-footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-top: 1.5rem;
+}

@@ -264,6 +264,7 @@ const TENANT_AUTH_PATHS = [
   '/api/analytics/claims',
   '/api/orders',
   '/api/products',
+  '/api/onboarding',
   '/api/shipments/surat',
   '/api/labels/zpl',
   '/api/printing/zebra',
@@ -572,6 +573,12 @@ app.post('/api/orders/sync', async (request, response) => {
   const complete = Boolean(result.ok) && result.debug?.syncStatus === 'COMPLETE'
   if (!result.ok) {
     // Başarısız çekim: mevcut siparişlere DOKUNMA (silme/arşivleme/ezme yok).
+    await recordOnboardingSyncState(context.db, context.organizationId, {
+      provider: 'trendyol',
+      resource: 'orders',
+      status: 'failed',
+      errorCode: result.statusCode ? String(result.statusCode) : null,
+    })
     response.status(502).json({
       ok: false,
       complete: false,
@@ -832,6 +839,17 @@ app.post('/api/integrations/trendyol/products', handleTrendyolProductsFetch)
 // organization YALNIZ kendi ürünlerini görür (org req.auth'tan; query/body'den
 // ASLA). Legacy modda (DATABASE_URL yok) bu route'lar 404 döner; frontend legacy
 // akışı IndexedDB/localStorage'da kalır ve buraya çağrı yapmaz.
+// Onboarding sync metadata kaydı (best-effort). Sync akışını BOZMAZ: hata
+// olursa sessizce yutulur. Dashboard analytics sync'leri buraya YAZILMAZ.
+async function recordOnboardingSyncState(db, organizationId, entry) {
+  try {
+    const { recordSyncState } = await import('./onboarding/onboardingRepository.ts')
+    await recordSyncState(db, organizationId, entry)
+  } catch {
+    // metadata kaydı best-effort; sync sonucunu etkilemez
+  }
+}
+
 async function requireProductPersistenceContext(request, response) {
   if (!isTenantAuthMode() || !request.auth?.organizationId) {
     response.status(404).json({ ok: false, message: 'Ürün persistence yalnız auth modda kullanılabilir.' })
@@ -925,6 +943,12 @@ app.post('/api/products/sync', async (request, response) => {
 
   if (!result.ok) {
     // Başarısız çekim: mevcut kataloğa DOKUNMA (silme/arşivleme/ezme yok).
+    await recordOnboardingSyncState(context.db, context.organizationId, {
+      provider: 'trendyol',
+      resource: 'products',
+      status: 'failed',
+      errorCode: result.statusCode ? String(result.statusCode) : null,
+    })
     response.status(502).json({
       ok: false,
       complete: false,
@@ -958,6 +982,12 @@ app.post('/api/products/sync', async (request, response) => {
       products,
       { complete },
     )
+    await recordOnboardingSyncState(context.db, context.organizationId, {
+      provider: 'trendyol',
+      resource: 'products',
+      status: complete ? 'success' : 'partial',
+      fetchedCount: persistResult.fetchedVariantCount,
+    })
     response.json({
       ok: true,
       complete: persistResult.complete,
@@ -973,6 +1003,69 @@ app.post('/api/products/sync', async (request, response) => {
     })
   } catch {
     response.status(500).json({ ok: false, message: 'Ürünler kaydedilemedi.' })
+  }
+})
+
+// AUTH modu onboarding (organization kurulum) API'si. Durum GERÇEK DB
+// kayıtlarından türetilir; secret/credential DÖNMEZ. org yalnız req.auth'tan.
+// Legacy modda (DATABASE_URL yok) bu route'lar 404 döner.
+async function requireOnboardingContext(request, response) {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) {
+    response.status(404).json({ ok: false, message: 'Onboarding yalnız auth modda kullanılabilir.' })
+    return null
+  }
+  try {
+    const [{ getDb }, service] = await Promise.all([
+      import('./db/client.ts'),
+      import('./onboarding/onboardingService.ts'),
+    ])
+    return { db: getDb(), service, organizationId: request.auth.organizationId }
+  } catch {
+    response.status(503).json({
+      ok: false,
+      message: 'Onboarding katmanı yüklenemedi; PostgreSQL yapılandırmasını kontrol edin.',
+    })
+    return null
+  }
+}
+
+// GET /api/onboarding/status — org-scoped kurulum durumu (DB'den türetilir).
+app.get('/api/onboarding/status', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const status = await context.service.deriveOnboardingStatus(
+      context.db,
+      context.organizationId,
+    )
+    response.json({ ok: true, ...status })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Onboarding durumu okunamadı.' })
+  }
+})
+
+// POST /api/onboarding/complete — koşullar sağlanmıyorsa 409 + eksik adımlar;
+// sağlanıyorsa onboardingCompleted=true. Sürat create çağrısı YAPILMAZ.
+app.post('/api/onboarding/complete', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const result = await context.service.completeOnboarding(
+      context.db,
+      context.organizationId,
+    )
+    if (!result.ok) {
+      response.status(409).json({
+        ok: false,
+        message: 'Onboarding tamamlanamadı; eksik adımlar var.',
+        missing: result.missing,
+        ...result.status,
+      })
+      return
+    }
+    response.json({ ok: true, ...result.status })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Onboarding tamamlanamadı.' })
   }
 })
 

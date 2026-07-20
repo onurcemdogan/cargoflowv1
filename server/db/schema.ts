@@ -447,3 +447,62 @@ export const productVariants = pgTable(
     ),
   ],
 )
+
+// Organization onboarding/kurulum durumu. organization_id primary key (1:1).
+// onboarding_completed frontend'te DEĞİL, burada kaynak-of-truth'tur; her
+// yenilemede backend'den yeniden hesaplanır. settings_json opsiyonel esnek alan.
+export const organizationSettings = pgTable('organization_settings', {
+  organizationId: uuid('organization_id')
+    .primaryKey()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  onboardingCompleted: boolean('onboarding_completed').notNull().default(false),
+  onboardingCompletedAt: timestamp('onboarding_completed_at', {
+    withTimezone: true,
+  }),
+  settingsJson: jsonb('settings_json'),
+  createdAt: timestamp('created_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+})
+
+// Sağlayıcı/kaynak bazlı son başarılı senkron durumu (organization bazlı).
+// Onboarding tamamlanma kriteri "kayıt sayısı > 0"a değil, başarılı sync
+// metadata'sına dayanır (ilk sync boş sonuç dönebilir). Dashboard analytics
+// sync'leri BURAYA YAZILMAZ (onboarding kriteri sayılmaz).
+export const integrationSyncState = pgTable(
+  'integration_sync_state',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    resource: text('resource').notNull(),
+    lastSuccessfulSyncAt: timestamp('last_successful_sync_at', {
+      withTimezone: true,
+    }),
+    lastSyncStatus: text('last_sync_status'),
+    lastFetchedCount: integer('last_fetched_count'),
+    lastErrorCode: text('last_error_code'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('integration_sync_state_org_provider_resource_unique').on(
+      table.organizationId,
+      table.provider,
+      table.resource,
+    ),
+    index('integration_sync_state_org_resource_idx').on(
+      table.organizationId,
+      table.resource,
+    ),
+  ],
+)

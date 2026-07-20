@@ -12,14 +12,12 @@ import { IntegrationDebugPage } from './pages/IntegrationDebugPage'
 import { LabelTemplatesPage } from './pages/LabelTemplatesPage'
 import { OrdersPage, type OrdersFetchOptions } from './pages/OrdersPage'
 import { ProductsPage } from './pages/ProductsPage'
-import { ZebraZplLabelProvider } from './providers/labels/ZebraZplLabelProvider'
-import { TrendyolProvider } from './providers/marketplace/TrendyolProvider'
-import { BrowserDownloadPrintProvider } from './providers/printing/BrowserDownloadPrintProvider'
-import { SuratKargoProvider } from './providers/shipping/SuratKargoProvider'
-import { AuditLogService } from './services/auditLogService'
 import { apiDebugService } from './services/apiDebugService'
-import { IntegrationConfigService } from './services/integrationConfigService'
-import { OrderWorkflowService } from './services/orderWorkflowService'
+import {
+  auditLogService,
+  integrationConfigService,
+  workflowService,
+} from './services/appServices'
 import {
   buildSuratZplDownload,
   suratPrintTrace,
@@ -67,16 +65,6 @@ interface ProductsState {
   productsDebug?: TrendyolProductSyncDebug
   metadata?: ProductCatalogCacheMetadata
 }
-
-const integrationConfigService = new IntegrationConfigService()
-const auditLogService = new AuditLogService()
-const workflowService = new OrderWorkflowService(
-  new TrendyolProvider(),
-  new SuratKargoProvider(),
-  new ZebraZplLabelProvider(),
-  new BrowserDownloadPrintProvider(),
-  auditLogService,
-)
 
 function App() {
   const ordersFetchRequestId = useRef(0)
