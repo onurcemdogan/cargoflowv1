@@ -22,7 +22,10 @@ const execFileAsync = promisify(execFile)
 const serverDirectory = dirname(fileURLToPath(import.meta.url))
 const BUILD_REVISION = await resolveBuildRevision()
 loadLocalEnvFile(join(serverDirectory, '..', '.env'))
-const port = Number(process.env.CARGOFLOW_API_PORT ?? 8787)
+// Production (Railway) PORT/HOST enjekte eder; local geliştirme mevcut portu
+// korur. Host varsayılanı 0.0.0.0 (container'da dış erişim için gereklidir).
+const port = Number(process.env.PORT ?? process.env.CARGOFLOW_API_PORT ?? 8787)
+const host = process.env.HOST ?? '0.0.0.0'
 const localConfigDirectory =
   process.env.CARGOFLOW_CONFIG_DIR ||
   join(process.env.LOCALAPPDATA || homedir(), 'CargoFlow')
@@ -1448,6 +1451,35 @@ app.post('/api/printing/zebra/raw', async (request, response) => {
   })
 })
 
+// Bilinmeyen /api/* istekleri SPA fallback'e DÜŞMEZ; 404 JSON döner. Tüm
+// gerçek /api route'ları yukarıda tanımlıdır; buraya yalnız eşleşmeyen API
+// yolları düşer.
+app.use('/api', (_request, response) => {
+  response.status(404).json({ ok: false, message: 'API endpoint bulunamadı.' })
+})
+
+// Production'da (Railway) Express, Vite `dist` build çıktısını sunar:
+//  - statik asset'ler dist'ten (doğru MIME + ETag/Last-Modified cache),
+//  - bilinmeyen frontend GET route'ları SPA girişine (dist/index.html) düşer.
+// Local geliştirmede (Vite dev server ayrı) bu blok devreye girmez.
+const distPath = join(serverDirectory, '..', 'dist')
+const indexHtmlPath = join(distPath, 'index.html')
+if (process.env.NODE_ENV === 'production' && existsSync(indexHtmlPath)) {
+  // Hash'li asset'ler ETag/Last-Modified ile doğru MIME'de sunulur (revalidate).
+  app.use(express.static(distPath, { index: false }))
+  // SPA fallback: yalnız GET; /api yukarıda 404 ile tüketildiğinden buraya
+  // API isteği düşmez. index.html revalidate edilir (yeni build hemen görünür).
+  app.use((request, response, next) => {
+    if (request.method !== 'GET') {
+      next()
+      return
+    }
+    response.sendFile(indexHtmlPath, {
+      headers: { 'Cache-Control': 'no-cache' },
+    })
+  })
+}
+
 app.use((error, _request, response, _next) => {
   response.status(500).json({
     ok: false,
@@ -1456,8 +1488,30 @@ app.use((error, _request, response, _next) => {
   })
 })
 
-app.listen(port, '127.0.0.1', () => {
-  console.log(`CargoFlow API listening on http://127.0.0.1:${port}`)
+// Production başlangıç güvenlik uyarısı: zorunlu env'ler eksikse AÇIKÇA (yalnız
+// isimlerle; DEĞER LOGLANMAZ) uyarır. Uygulama healthcheck için ayakta kalır;
+// tenant/auth özellikleri DATABASE_URL olmadan zaten 503/legacy davranır.
+function warnMissingProductionSecrets() {
+  if (process.env.NODE_ENV !== 'production') return
+  const required = [
+    'DATABASE_URL',
+    'CREDENTIAL_ENCRYPTION_KEY',
+    'SHIPMENT_ENCRYPTION_KEY',
+    'ORDER_DATA_ENCRYPTION_KEY',
+    'PRODUCT_DATA_ENCRYPTION_KEY',
+  ]
+  const missing = required.filter((name) => !String(process.env[name] ?? '').trim())
+  if (missing.length > 0) {
+    console.warn(
+      `[startup] Production için eksik zorunlu env değişkenleri: ${missing.join(', ')}. ` +
+        'Bunlar ayarlanmadan çok kiracılı auth/persistence devre dışıdır (secret DEĞERLERİ loglanmaz).',
+    )
+  }
+}
+warnMissingProductionSecrets()
+
+app.listen(port, host, () => {
+  console.log(`CargoFlow API listening on http://${host}:${port}`)
 })
 
 async function createSuratShipment(request, response) {
