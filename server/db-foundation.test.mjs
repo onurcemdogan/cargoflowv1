@@ -52,7 +52,14 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
   )
   assert.deepEqual(
     tables.rows.map((row) => row.table_name),
-    ['integration_credentials', 'organizations', 'sessions', 'users'],
+    [
+      'integration_credentials',
+      'organizations',
+      'sessions',
+      'shipment_operations',
+      'shipments',
+      'users',
+    ],
   )
 
   // İki organization.

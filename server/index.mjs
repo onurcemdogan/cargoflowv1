@@ -1319,6 +1319,7 @@ async function createSuratLabelForRegisteredShipment(request, response) {
   )
   const createRecord = await readSuratCreateOperation(
     operationContext.idempotencyKey,
+    operationContext.organizationId,
   )
   if (
     !createRecord ||
@@ -1485,13 +1486,22 @@ function buildSuratCreateOperationContext(request, config) {
     )
       ? 'MANUAL_USER_CONFIRMED'
       : String(order.desiSource ?? '').trim()
+  // Auth modda idempotency SCOPE'u YALNIZ session organizationId'dir;
+  // frontend tenantId/sellerId/kullaniciAdi fallback'i kullanılmaz. Legacy
+  // modda mevcut anahtar davranışı aynen korunur.
+  const authOrganizationId =
+    isTenantAuthMode() && request.auth?.organizationId
+      ? String(request.auth.organizationId)
+      : null
   const tenantSeed = firstNonEmpty(
     request.body?.tenantId,
     fullConfig?.trendyol?.sellerId,
     config.kullaniciAdi,
     'local',
   )
-  const tenantId = `tenant_${shortHash(tenantSeed)}`
+  const tenantId = authOrganizationId
+    ? `org_${authOrganizationId}`
+    : `tenant_${shortHash(tenantSeed)}`
   const orderId = String(order.id ?? order.orderNumber ?? '').trim()
   const fingerprintPayload = {
     tenantId,
@@ -1506,6 +1516,12 @@ function buildSuratCreateOperationContext(request, config) {
   }
   return {
     tenantId,
+    // Auth modda PG persistence için organization + kimlik alanları.
+    organizationId: authOrganizationId,
+    marketplace: String(order.marketplace ?? 'Trendyol'),
+    packageId: String(order.packageId ?? order.shipmentPackageId ?? ''),
+    orderNumber: String(order.orderNumber ?? ''),
+    provider: 'surat',
     orderId,
     idempotencyKey: `SURAT:${tenantId}:${orderId}:CREATE`,
     requestFingerprint: createHash('sha256')
@@ -1549,7 +1565,10 @@ function resolveSuratCreateOperationName(configOrServiceMode) {
 }
 
 async function executeIdempotentSuratCreate(request, operation) {
-  const existing = await readSuratCreateOperation(operation.idempotencyKey)
+  const existing = await readSuratCreateOperation(
+    operation.idempotencyKey,
+    operation.organizationId,
+  )
   const retryAuthorized = Boolean(
     request.body?.retryAfterConfirmedNoRecord === true &&
       request.body?.confirmedNoCarrierRecord === true,
@@ -1589,7 +1608,25 @@ async function executeIdempotentSuratCreate(request, operation) {
     startedAt,
     updatedAt: startedAt,
   }
-  await writeSuratCreateOperation(inProgressRecord)
+  // Auth modda IN_PROGRESS yazımı ATOMİK rezervasyondur (unique constraint +
+  // insert-on-conflict): eşzamanlı/çok-süreçli iki create'te yalnız kazanan
+  // taşıyıcıya gider; kaybeden blocked yanıtı alır. Legacy modda mevcut
+  // dosya yazımı aynen korunur.
+  if (useShipmentDbPersistence(operation.organizationId)) {
+    const reservation = await reserveShipmentCreateOperation(
+      operation.organizationId,
+      inProgressRecord,
+    )
+    if (!reservation.won) {
+      return buildSuratIdempotencyBlockedResponse(
+        reservation.existing ?? inProgressRecord,
+        operation,
+        'Bu sipariş için başka bir create isteği hâlihazırda taşıyıcı sonucunu bekliyor. Yeni gönderi oluşturulmadı.',
+      )
+    }
+  } else {
+    await writeSuratCreateOperation(inProgressRecord)
+  }
 
   let result
   try {
@@ -1613,7 +1650,10 @@ async function executeIdempotentSuratCreate(request, operation) {
 
   const carrierCreateCalled = didSuratCreateReachCarrier(result)
   if (!carrierCreateCalled) {
-    await deleteSuratCreateOperation(operation.idempotencyKey)
+    await deleteSuratCreateOperation(
+      operation.idempotencyKey,
+      operation.organizationId,
+    )
     return withSuratIdempotencyDebug(result, operation, {
       carrierCreateCalled: false,
       createCallCount: Number(existing?.createCallCount ?? 0),
@@ -2060,18 +2100,56 @@ function maskCarrierAccount(value) {
   )}${text.slice(-2)}`
 }
 
-async function readSuratCreateOperation(idempotencyKey) {
+// Persistence adapter'ı: auth modda (organizationId varsa) organization bazlı
+// PostgreSQL; legacy modda mevcut JSON dosyası (surat-create-operations.json).
+// İki kaynak birden source-of-truth OLMAZ.
+function useShipmentDbPersistence(organizationId) {
+  return Boolean(isTenantAuthMode() && organizationId)
+}
+
+async function reserveShipmentCreateOperation(organizationId, inProgressRecord) {
+  const [{ getDb }, service] = await Promise.all([
+    import('./db/client.ts'),
+    import('./shipments/shipmentPersistenceService.ts'),
+  ])
+  return service.reserveOperationRecord(getDb(), organizationId, inProgressRecord)
+}
+
+async function readSuratCreateOperation(idempotencyKey, organizationId) {
+  if (useShipmentDbPersistence(organizationId)) {
+    const [{ getDb }, service] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/shipmentPersistenceService.ts'),
+    ])
+    return service.readOperationRecord(getDb(), organizationId, idempotencyKey)
+  }
   const store = await readSuratCreateOperationStore()
   return store.operations?.[idempotencyKey]
 }
 
 async function writeSuratCreateOperation(record) {
+  if (useShipmentDbPersistence(record?.organizationId)) {
+    const [{ getDb }, service] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/shipmentPersistenceService.ts'),
+    ])
+    await service.writeOperationRecord(getDb(), record.organizationId, record)
+    return
+  }
   await queueSuratCreateStoreUpdate((store) => {
     store.operations[record.idempotencyKey] = record
   })
 }
 
-async function deleteSuratCreateOperation(idempotencyKey) {
+async function deleteSuratCreateOperation(idempotencyKey, organizationId) {
+  if (useShipmentDbPersistence(organizationId)) {
+    const [{ getDb }, service] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/shipmentPersistenceService.ts'),
+    ])
+    await service.deleteOperationRecord(getDb(), organizationId, idempotencyKey)
+    return
+  }
   await queueSuratCreateStoreUpdate((store) => {
     delete store.operations[idempotencyKey]
   })
