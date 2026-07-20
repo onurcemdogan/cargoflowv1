@@ -4805,7 +4805,7 @@ button:disabled {
 
 .orders-workspace .quick-tabs {
   display: grid;
-  grid-template-columns: repeat(12, minmax(112px, 1fr));
+  grid-template-columns: repeat(6, minmax(112px, 1fr));
   gap: 0;
   margin-bottom: 12px;
   overflow-x: auto;

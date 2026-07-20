@@ -56,6 +56,10 @@ export interface BuildVisibleOrdersInput {
   districtFilter?: string
   multiProductFilter?: 'all' | 'single' | 'multi'
   actionFilter?: OrdersActionFilter
+  // "İşlem Durumu" filtresi: teknik yaşam-döngüsü durumlarına (barkod bekliyor,
+  // kargo oluşturulacak, doğrulama bekliyor, etiket basılacak/basıldı, arşiv)
+  // mevcut classifier'larla erişim. 'all' veya tanımsız → filtre uygulanmaz.
+  operationTabFilter?: QuickTab | 'all'
   dateFilter: VisibleOrdersDateFilter
   searchQuery: string
   customerQuery?: string
@@ -85,6 +89,7 @@ export interface VisibleOrdersDebug {
   latestSyncCount: number
   afterSelectedTabCount: number
   afterTabFilter: number
+  afterOperationTabFilter: number
   afterMarketplaceFilter: number
   afterOperationStatusFilter: number
   afterCargoFilter: number
@@ -280,6 +285,18 @@ export function orderMatchesQuickTab(
     case 'currentSync':
     case 'today':
       return true
+    // Yeni Siparişler: aktif açık ama henüz etiket hazır/basılı olmayanlar
+    // (barkod bekleyen, kargo oluşturulacak, doğrulama bekleyen ve diğer
+    // açık siparişlerin birleşimi). Mevcut bayrakların türevi; yeni kural yok.
+    case 'newOrders':
+      return (
+        classification.isOpenOperation &&
+        !classification.isLabelReady &&
+        !classification.isLabelPrinted
+      )
+    // Etiket Hazır sekmesi: hazır + basılmış kayıtların birleşimi.
+    case 'labelStage':
+      return classification.isLabelReady || classification.isLabelPrinted
     case 'open':
       return classification.isOpenOperation
     case 'barcodePending':
@@ -337,6 +354,7 @@ export function buildVisibleOrders({
   districtFilter = 'all',
   multiProductFilter = 'all',
   actionFilter = 'all',
+  operationTabFilter = 'all',
   dateFilter,
   searchQuery,
   customerQuery = '',
@@ -382,6 +400,7 @@ export function buildVisibleOrders({
       : 0,
     afterSelectedTabCount: 0,
     afterTabFilter: 0,
+    afterOperationTabFilter: 0,
     afterMarketplaceFilter: 0,
     afterOperationStatusFilter: 0,
     afterCargoFilter: 0,
@@ -442,6 +461,22 @@ export function buildVisibleOrders({
   }
   debug.afterTabFilter = current.length
   debug.afterSelectedTabCount = current.length
+
+  // "İşlem Durumu" teknik filtresi: mevcut classifier ile ek daraltma.
+  if (operationTabFilter && operationTabFilter !== 'all') {
+    current = applyOrderFilter(
+      current,
+      (order) =>
+        orderMatchesQuickTab(
+          classifyOrderForTabs(order),
+          operationTabFilter as QuickTab,
+        ),
+      exclusions,
+      'operationTabFilter',
+      `Sipariş ${operationTabFilter} işlem durumu kapsamına girmiyor.`,
+    )
+  }
+  debug.afterOperationTabFilter = current.length
 
   const beforeMarketplaceFilter = current
   if (!isAllFilter(marketplaceFilter)) {

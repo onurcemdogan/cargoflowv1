@@ -708,10 +708,21 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
       onMarkHandedToCargo: () => {},
     }),
   )
-  assert.match(ordersHtml, /Tüm Açık Operasyonlar \(12\)/)
-  assert.match(ordersHtml, /Barkod Bekleyenler \(12\)/)
-  assert.match(ordersHtml, /Kargoya Verilenler \(4\)/)
+  // Sadeleştirilmiş 6 ana sekme (initialQuickTab='barcodePending' → Yeni
+  // Siparişler sekmesi + Barkod Bekliyor işlem filtresi). Ana sekme sayaçları
+  // aşama toplamını gösterir (teknik alt-filtreden etkilenmez).
+  assert.match(ordersHtml, /Yeni Siparişler \(12\)/)
+  assert.match(ordersHtml, /Etiket Hazır \(0\)/)
+  assert.match(ordersHtml, /Kargoya Verildi \(4\)/)
+  assert.match(ordersHtml, /Teslim Edildi \(0\)/)
   assert.match(ordersHtml, /Tümü \(16\)/)
+  // Eski ana sekmeler artık görünmez.
+  assert.doesNotMatch(ordersHtml, /Tüm Açık Operasyonlar/)
+  assert.doesNotMatch(ordersHtml, /Barkod Bekleyenler \(/)
+  assert.doesNotMatch(ordersHtml, /Son Senkron \(/)
+  // Teknik durumlar "İşlem Durumu" filtresinden erişilir.
+  assert.match(ordersHtml, /İşlem Durumu/)
+  assert.match(ordersHtml, /Barkod Bekliyor/)
   assert.match(ordersHtml, /Tüm Tarihler/)
   assert.match(ordersHtml, /Filtreler/)
   assert.match(ordersHtml, /Kargo Fişi No/)

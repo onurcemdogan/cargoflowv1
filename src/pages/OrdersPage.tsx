@@ -35,7 +35,9 @@ import {
 } from '../utils/orderStatus'
 import { buildVisibleOrders } from '../utils/orderClassification'
 import {
+  resolveLegacyTab,
   statusesForFetch,
+  type OperationTabFilter,
   type QuickTab,
 } from '../utils/ordersTabs'
 import { mapMarketplaceStatus } from '../utils/statusPresentation'
@@ -130,20 +132,28 @@ const statusOptions: OrderStatusFilter[] = [
 
 const cargoOptions: CargoFilter[] = ['all', 'Sürat Kargo', 'Bekliyor', 'Hatalı']
 
+// Görünür ana sekmeler: yalnız temel iş akışı. Teknik durumlar "İşlem
+// Durumu" filtresiyle, "Bugün Gelenler" ise tarih filtresiyle erişilir.
+// Mevcut tab key'leri, classifier'ları ve sayaç hesapları korunur.
 const quickTabs: Array<{ key: QuickTab; label: string }> = [
-  { key: 'currentSync', label: 'Son Senkron' },
-  { key: 'today', label: 'Bugün Gelenler' },
-  { key: 'open', label: 'Tüm Açık Operasyonlar' },
-  { key: 'barcodePending', label: 'Barkod Bekleyenler' },
-  { key: 'shipmentPending', label: 'Kargo Oluşturulacaklar' },
-  { key: 'suratVerificationPending', label: 'Sürat Doğrulama Bekleyenler' },
-  { key: 'labelReady', label: 'Etiket Basılacaklar' },
-  { key: 'labelPrinted', label: 'Etiket Basılanlar' },
-  { key: 'handedToCargo', label: 'Kargoya Verilenler' },
-  { key: 'delivered', label: 'Teslim Edilenler' },
+  { key: 'newOrders', label: 'Yeni Siparişler' },
+  { key: 'labelStage', label: 'Etiket Hazır' },
+  { key: 'handedToCargo', label: 'Kargoya Verildi' },
+  { key: 'delivered', label: 'Teslim Edildi' },
   { key: 'cancelReturn', label: 'İptal / İade' },
-  { key: 'archive', label: 'Arşiv' },
   { key: 'all', label: 'Tümü' },
+]
+
+// "İşlem Durumu" filtresi seçenekleri: teknik yaşam-döngüsü durumlarına
+// (mevcut classifier'lar) kullanıcı dostu etiketlerle erişim.
+const operationTabOptions: Array<{ key: OperationTabFilter; label: string }> = [
+  { key: 'all', label: 'Tüm İşlem Durumları' },
+  { key: 'barcodePending', label: 'Barkod Bekliyor' },
+  { key: 'shipmentPending', label: 'Kargo Oluşturulacak' },
+  { key: 'suratVerificationPending', label: 'Doğrulama Bekliyor' },
+  { key: 'labelReady', label: 'Etiket Basılacak' },
+  { key: 'labelPrinted', label: 'Etiket Basıldı' },
+  { key: 'archive', label: 'Arşiv' },
 ]
 
 const dateRangeOptions: Array<{ key: OrdersDatePreset; label: string }> = [
@@ -210,7 +220,10 @@ export function OrdersPage({
     initialFilters?.actionFilter ?? 'all',
   )
   const [activeQuickTab, setActiveQuickTab] = useState<QuickTab>(
-    initialQuickTab ?? 'today',
+    () => resolveLegacyTab(initialQuickTab).tab,
+  )
+  const [operationTab, setOperationTab] = useState<OperationTabFilter>(
+    () => resolveLegacyTab(initialQuickTab).operationTab,
   )
   const [activeOrderId, setActiveOrderId] = useState<string | undefined>(
     initialOrderId,
@@ -239,6 +252,7 @@ export function OrdersPage({
         districtFilter: district,
         multiProductFilter,
         actionFilter,
+        operationTabFilter: operationTab,
         dateFilter: {
           preset: datePreset,
           startTime: dateRange.startTime,
@@ -254,6 +268,7 @@ export function OrdersPage({
     [
       activeQuickTab,
       actionFilter,
+      operationTab,
       cargo,
       cargoSlipQuery,
       city,
@@ -321,6 +336,9 @@ export function OrdersPage({
             districtFilter: district,
             multiProductFilter,
             actionFilter,
+            // operationTab (İşlem Durumu) SAYAÇLARA uygulanmaz: ana sekme
+            // sayaçları aşama toplamını gösterir, teknik alt-filtre yalnız
+            // görünür listeyi daraltır.
             dateFilter: {
               preset: datePreset,
               startTime: dateRange.startTime,
@@ -401,6 +419,7 @@ export function OrdersPage({
 
   function refreshForTab(tab: QuickTab) {
     setActiveQuickTab(tab)
+    setOperationTab('all')
     setMarketplace('all')
     setStatus('all')
     setCargo('all')
@@ -424,6 +443,7 @@ export function OrdersPage({
   }
 
   function clearFilters() {
+    setOperationTab('all')
     setMarketplace('all')
     setStatus('all')
     setCargo('all')
@@ -515,6 +535,22 @@ export function OrdersPage({
         </header>
         {filtersExpanded ? (
           <div className="filter-panel orders-filter-grid">
+        <label>
+          <span>İşlem Durumu</span>
+          <select
+            value={operationTab}
+            onChange={(event) => {
+              setOperationTab(event.target.value as OperationTabFilter)
+              setCurrentPage(1)
+            }}
+          >
+            {operationTabOptions.map((item) => (
+              <option key={item.key} value={item.key}>
+                {item.label}
+              </option>
+            ))}
+          </select>
+        </label>
         <label>
           <span>Pazaryeri</span>
           <select
