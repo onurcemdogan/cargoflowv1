@@ -33,10 +33,7 @@ import {
   canMarkHandedToCargo,
   canMarkPrinted,
 } from '../utils/orderStatus'
-import {
-  buildVisibleOrders,
-  classifyOrderForTabs,
-} from '../utils/orderClassification'
+import { buildVisibleOrders } from '../utils/orderClassification'
 import {
   statusesForFetch,
   type QuickTab,
@@ -164,7 +161,6 @@ export function OrdersPage({
   products,
   selectedIds,
   lastResult,
-  syncDebug,
   busy,
   lastSyncAt,
   initialQuickTab,
@@ -359,14 +355,6 @@ export function OrdersPage({
       status,
     ],
   )
-  const orderSummary = useMemo(() => {
-    const classifications = orders.map(classifyOrderForTabs)
-    return {
-      totalOrders: orders.length,
-      openOperations: classifications.filter((item) => item.isOpenOperation)
-        .length,
-    }
-  }, [orders])
   const cityOptions = useMemo(
     () =>
       Array.from(
@@ -820,84 +808,6 @@ export function OrdersPage({
       </section>
 
       <ActionResult result={lastResult} />
-
-      {import.meta.env.DEV ? (
-        <>
-          <section className="debug-panel orders-filter-debug">
-        <strong>Sipariş Listeleme Debug</strong>
-        <div>
-          <span>rawOrdersCount</span>
-          <code>
-            {syncDebug?.rawOrdersCount ??
-              lastResult?.debug?.rawOrdersCount ??
-              '-'}
-          </code>
-        </div>
-        <div>
-          <span>normalizedOrdersCount</span>
-          <code>
-            {syncDebug?.normalizedOrdersCount ??
-              lastResult?.debug?.normalizedOrdersCount ??
-              '-'}
-          </code>
-        </div>
-        <div><span>persistentOrdersCount</span><code>{orders.length}</code></div>
-        <div><span>afterInvalidRecordFilterCount</span><code>{visibleOrdersResult.debug.afterInvalidRecordFilterCount}</code></div>
-        <div><span>afterPackageDedupCount</span><code>{visibleOrdersResult.debug.afterPackageDedupCount}</code></div>
-        <div><span>OrdersPageCatalogCount</span><code>{products.length}</code></div>
-        <div><span>catalogRevision</span><code>{products.length}</code></div>
-        <div><span>latestSyncAt</span><code>{visibleOrdersResult.debug.latestSyncAt ? formatDisplayDate(visibleOrdersResult.debug.latestSyncAt) : '-'}</code></div>
-        <div><span>latestSyncOrderCount</span><code>{visibleOrdersResult.debug.latestSyncCount}</code></div>
-        <div><span>latestSyncBatchId</span><code>{visibleOrdersResult.debug.latestSyncBatchId ?? '-'}</code></div>
-        <div><span>dashboardSummary.totalOrders</span><code>{orderSummary.totalOrders}</code></div>
-        <div><span>dashboardSummary.openOperations</span><code>{orderSummary.openOperations}</code></div>
-        <div><span>visibleOrdersCount</span><code>{filteredOrders.length}</code></div>
-        <div><span>selectedTab</span><code>{activeQuickTab}</code></div>
-        <div><span>selectedMarketplaceFilter</span><code>{marketplace}</code></div>
-        <div><span>selectedStatusFilter</span><code>{status}</code></div>
-        <div><span>selectedCargoFilter</span><code>{cargo}</code></div>
-        <div><span>selectedDateFilter</span><code>{datePreset}</code></div>
-        <div><span>selectedActionFilter</span><code>{actionFilter}</code></div>
-        <div><span>searchQuery</span><code>{query || '-'}</code></div>
-        <div><span>afterTabFilterCount</span><code>{visibleOrdersResult.debug.afterTabFilter}</code></div>
-        <div><span>afterMarketplaceFilterCount</span><code>{visibleOrdersResult.debug.afterMarketplaceFilter}</code></div>
-        <div><span>afterStatusFilterCount</span><code>{visibleOrdersResult.debug.afterOperationStatusFilter}</code></div>
-        <div><span>afterCargoFilterCount</span><code>{visibleOrdersResult.debug.afterCargoFilter}</code></div>
-        <div><span>afterActionFilterCount</span><code>{visibleOrdersResult.debug.afterActionFilter}</code></div>
-        <div><span>afterDateFilterCount</span><code>{visibleOrdersResult.debug.afterDateFilter}</code></div>
-        <div><span>afterSearchFilterCount</span><code>{visibleOrdersResult.debug.afterSearch}</code></div>
-        <div><span>uniquePackageCount</span><code>{visibleOrdersResult.debug.uniquePackageCount}</code></div>
-        <div><span>uniqueOrderNumberCount</span><code>{visibleOrdersResult.debug.uniqueOrderNumberCount}</code></div>
-        <div><span>lineCount</span><code>{visibleOrdersResult.debug.lineCount}</code></div>
-        <div><span>quantityTotal</span><code>{visibleOrdersResult.debug.quantityTotal}</code></div>
-        <div><span>excludedOrderCount</span><code>{visibleOrdersResult.debug.exclusions.length}</code></div>
-          </section>
-          {visibleOrdersResult.debug.exclusions.length > 0 ? (
-            <details className="debug-panel orders-exclusion-debug">
-              <summary>
-                Elenen paketler ({visibleOrdersResult.debug.exclusions.length})
-              </summary>
-              <pre>
-                {JSON.stringify(visibleOrdersResult.debug.exclusions, null, 2)}
-              </pre>
-            </details>
-          ) : null}
-
-          {lastResult?.bulkActionDebug ? (
-            <section className="debug-panel bulk-action-debug">
-              <strong>Toplu İşlem Debug</strong>
-              {Object.entries(lastResult.bulkActionDebug).map(([key, value]) => (
-                <div key={key}>
-                  <span>{key}</span>
-                  <code>
-                    {Array.isArray(value) ? value.join(', ') || '-' : String(value)}
-                  </code>
-                </div>
-              ))}
-            </section>
-          ) : null}
-        </>
-      ) : null}
 
       <OrdersTable
         orders={pagination.items}

@@ -330,7 +330,9 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
   assert.match(html, /7 Gün/)
   assert.match(html, /Operasyon Akışı/)
   assert.match(html, /Operasyon Analitiği/)
-  assert.match(html, /Aksiyon Gerektirenler/)
+  // "Aksiyon Gerektirenler" kartı UI'dan kaldırıldı (viewModel.actionRequired
+  // hesabı korunur, yalnız render yok).
+  assert.doesNotMatch(html, /Aksiyon Gerektirenler/)
   assert.match(html, /Son Operasyonlar/)
   assert.match(html, /En Çok Satan Ürünler/)
   assert.match(html, /Sürat Kargo/)

@@ -5,7 +5,6 @@ import {
   ListChecks,
   PackageSearch,
   Plug,
-  Printer,
   ScrollText,
   Tag,
   Truck,
@@ -31,7 +30,6 @@ const navItems: Array<{
   { key: 'labelTemplates', label: 'Etiket Şablonları', icon: Tag },
   { key: 'integrations', label: 'Entegrasyonlar / Ayarlar', icon: Plug },
   { key: 'debug', label: 'Entegrasyonlar / Debug Merkezi', icon: Bug },
-  { key: 'printers', label: 'Yazıcı Ayarları', icon: Printer },
   { key: 'logs', label: 'İşlem Logları', icon: ListChecks },
 ]
 

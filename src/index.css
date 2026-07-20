@@ -4455,9 +4455,8 @@ button:disabled {
 .dashboard-sales-chart-card { grid-column: span 5; }
 .dashboard-city-card { grid-column: span 4; }
 .dashboard-marketplace-card { grid-column: span 3; }
-.dashboard-actions-card-new { grid-column: span 4; }
-.dashboard-operation-flow-card { grid-column: span 5; }
-.dashboard-picking-card { grid-column: span 3; }
+.dashboard-operation-flow-card { grid-column: span 8; }
+.dashboard-picking-card { grid-column: span 4; }
 .dashboard-top-products-card { grid-column: span 5; }
 .dashboard-recent-ops-card { grid-column: span 7; }
 
@@ -4747,7 +4746,6 @@ button:disabled {
   .dashboard-sales-chart-card,
   .dashboard-city-card,
   .dashboard-marketplace-card,
-  .dashboard-actions-card-new,
   .dashboard-operation-flow-card,
   .dashboard-picking-card,
   .dashboard-top-products-card,

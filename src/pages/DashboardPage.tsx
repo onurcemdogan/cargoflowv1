@@ -610,42 +610,6 @@ export function DashboardPage({
       </section>
 
       <section className="dashboard-analytics-grid dashboard-analytics-row-ops">
-        <article className="dashboard-analytics-card dashboard-actions-card-new">
-          <DashboardCardHeader
-            title="Aksiyon Gerektirenler"
-            icon={<AlertTriangle size={18} />}
-          />
-          <div className="dashboard-action-list-new">
-            {viewModel.actionRequired
-              .filter((item) => item.count > 0)
-              .map((item) => (
-                <button
-                  type="button"
-                  key={item.key}
-                  className={`severity-${item.severity}`}
-                  onClick={() =>
-                    navigateOrders(
-                      item.filterTarget,
-                      item.actionFilter
-                        ? { actionFilter: item.actionFilter }
-                        : undefined,
-                    )
-                  }
-                >
-                  <span>
-                    <strong>{item.label}</strong>
-                    <small>{item.description}</small>
-                  </span>
-                  <b>{item.count}</b>
-                  <ArrowRight size={14} />
-                </button>
-              ))}
-            {viewModel.actionRequired.every((item) => item.count === 0) ? (
-              <div className="dashboard-empty-compact">Aksiyon gerektiren işlem yok.</div>
-            ) : null}
-          </div>
-        </article>
-
         <article className="dashboard-analytics-card dashboard-operation-flow-card">
           <DashboardCardHeader
             title="Operasyon Akışı"

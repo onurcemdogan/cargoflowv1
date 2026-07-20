@@ -11,7 +11,6 @@ import { IntegrationsPage } from './pages/IntegrationsPage'
 import { IntegrationDebugPage } from './pages/IntegrationDebugPage'
 import { LabelTemplatesPage } from './pages/LabelTemplatesPage'
 import { OrdersPage, type OrdersFetchOptions } from './pages/OrdersPage'
-import { PrinterSettingsPage } from './pages/PrinterSettingsPage'
 import { ProductsPage } from './pages/ProductsPage'
 import { ZebraZplLabelProvider } from './providers/labels/ZebraZplLabelProvider'
 import { TrendyolProvider } from './providers/marketplace/TrendyolProvider'
@@ -87,7 +86,9 @@ function App() {
   )
   const [integrationHydrated, setIntegrationHydrated] = useState(false)
   const [integrationConfigRevision, setIntegrationConfigRevision] = useState(0)
-  const [printerSettings, setPrinterSettings] = useState<PrinterSettings>(() =>
+  // Yazıcı Ayarları SAYFASI kaldırıldı; ayarlar kayıtlıdan yüklenir ve print
+  // akışında kullanılmaya devam eder (yazdırma altyapısı korunur).
+  const [printerSettings] = useState<PrinterSettings>(() =>
     integrationConfigService.loadPrinterSettings(),
   )
   const [labelTemplate, setLabelTemplate] = useState<LabelTemplate>(() =>
@@ -128,14 +129,18 @@ function App() {
   const orders = ordersState.orders
   const products = productsState.products
 
+  // Yazıcı Ayarları sayfası kaldırıldı; eski route'a düşen kullanıcı boş
+  // ekran görmesin diye Dashboard'a yönlendirilir (yazdırma ALTYAPISI
+  // korunur; yalnız ayar SAYFASI kapatıldı).
+  const effectivePage: PageKey =
+    activePage === 'printers' ? 'dashboard' : activePage
+
   const pageResult = useMemo(
     () =>
-      activePage === 'integrations' ||
-      activePage === 'printers' ||
-      activePage === 'labelTemplates'
+      effectivePage === 'integrations' || effectivePage === 'labelTemplates'
         ? lastResult
         : undefined,
-    [activePage, lastResult],
+    [effectivePage, lastResult],
   )
   const integrationBusy =
     busy || ordersState.ordersLoading || productsState.productsLoading
@@ -755,21 +760,6 @@ function App() {
     }
   }
 
-  function handleSavePrinterSettings(settings: PrinterSettings) {
-    const saved = integrationConfigService.savePrinterSettings(settings)
-    setPrinterSettings(saved)
-    const nextLogs = auditLogService.append({
-      action: 'Yazıcı ayarı kaydedildi',
-      level: 'success',
-      details: `${settings.printerName} için ${settings.mode} modu kaydedildi.`,
-    })
-    setLogs(nextLogs)
-    setLastResult({
-      level: 'success',
-      message: 'Yazıcı ayarları kaydedildi.',
-    })
-  }
-
   function handleSaveLabelTemplate(template: LabelTemplate) {
     const saved = integrationConfigService.saveLabelTemplate(template)
     setLabelTemplate(saved)
@@ -810,8 +800,8 @@ function App() {
   }
 
   return (
-    <AppShell activePage={activePage} onNavigate={handleNavigate}>
-      {activePage === 'dashboard' ? (
+    <AppShell activePage={effectivePage} onNavigate={handleNavigate}>
+      {effectivePage === 'dashboard' ? (
         <DashboardPage
           orders={orders}
           products={products}
@@ -928,14 +918,6 @@ function App() {
           logs={apiDebugLogs}
           orders={orders}
           onClear={handleClearApiDebugLogs}
-        />
-      ) : null}
-
-      {activePage === 'printers' ? (
-        <PrinterSettingsPage
-          settings={printerSettings}
-          result={pageResult}
-          onSave={handleSavePrinterSettings}
         />
       ) : null}
 
