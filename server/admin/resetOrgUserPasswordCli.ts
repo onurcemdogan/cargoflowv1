@@ -5,7 +5,7 @@
 // Auth bypass EKLEMEZ, giriş ekranını DEĞİŞTİRMEZ, tenant kurallarına dokunmaz.
 import { closePool, getDb, isDatabaseConfigured } from '../db/client.ts'
 import { resetOrganizationUserPassword } from './orgUserPassword.ts'
-import { promptHiddenPassword } from './promptSecret.ts'
+import { resolveCliPassword } from './promptSecret.ts'
 
 function parseArg(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`)
@@ -25,13 +25,10 @@ if (!username) {
 }
 
 try {
-  const password = await promptHiddenPassword(`'${username}' için yeni parola: `)
-  const confirm = await promptHiddenPassword('Yeni parolayı tekrar girin: ')
-  if (password !== confirm) {
-    console.error('[org-user] Parolalar eşleşmiyor.')
-    await closePool().catch(() => undefined)
-    process.exit(1)
-  }
+  const password = await resolveCliPassword({
+    question: `'${username}' için yeni parola: `,
+    confirmQuestion: 'Yeni parolayı tekrar girin: ',
+  })
   const result = await resetOrganizationUserPassword(getDb(), username, password)
   console.info(`[org-user] '${result.username}' parolası güncellendi.`)
   // Yalnız UZUNLUK gösterilir (hash değil): geçerli argon2id hash 97 karakterdir.

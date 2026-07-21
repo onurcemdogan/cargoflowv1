@@ -44,6 +44,31 @@ export async function createPlatformAdmin(
 
 // Mevcut admin parolasını günceller (argon2id) ve TÜM admin session'larını
 // revoke eder. Admin yoksa hata.
+// Oluşturma/sıfırlama sonrası DOĞRULAMA: kaydın gerçekten yazıldığını ve
+// hash'in geçerli uzunlukta olduğunu raporlar. Hash'in KENDİSİ dönmez.
+// (Geçerli argon2id hash = 97 karakter.)
+export async function describePlatformAdmin(
+  db: Db,
+  usernameRaw: string,
+): Promise<{ username: string; status: string; hashLength: number } | null> {
+  const username = normalizeUsername(usernameRaw)
+  const rows = await db
+    .select({
+      username: platformAdmins.username,
+      status: platformAdmins.status,
+      passwordHash: platformAdmins.passwordHash,
+    })
+    .from(platformAdmins)
+    .where(eq(platformAdmins.username, username))
+    .limit(1)
+  if (rows.length === 0) return null
+  return {
+    username: String(rows[0].username),
+    status: String(rows[0].status),
+    hashLength: String(rows[0].passwordHash ?? '').length,
+  }
+}
+
 export async function resetPlatformAdminPassword(
   db: Db,
   usernameRaw: string,
