@@ -1559,6 +1559,16 @@ function warnMissingProductionSecrets() {
 }
 warnMissingProductionSecrets()
 
+// TEST modu uyarısı: auth bypass açıkken her başlangıçta AÇIKÇA bildirilir.
+if (String(process.env.CARGOFLOW_AUTH_BYPASS ?? '').trim().toLowerCase() === 'true') {
+  console.warn(
+    '[startup] ⚠⚠ CARGOFLOW_AUTH_BYPASS=true — GİRİŞ EKRANI DEVRE DIŞI. ' +
+      'Uygulama ve /admin paneli parolasız açılır. YALNIZ TEST İÇİNDİR. ' +
+      'Kapatmak için .env içindeki CARGOFLOW_AUTH_BYPASS satırını silip ' +
+      'pm2 restart cargoflow çalıştırın.',
+  )
+}
+
 app.listen(port, host, () => {
   console.log(`CargoFlow API listening on http://${host}:${port}`)
 })

@@ -8,9 +8,15 @@ import {
   touchAdminSession,
   type AdminDb,
 } from './adminSession.ts'
+import { isAuthBypassEnabled } from '../auth/devBypass.ts'
+
+// Bypass modunda gerçek bir platform_admins kaydı yoktur; audit log adminId
+// alanı nullable olduğundan null kullanılır (uuid cast hatası oluşmaz).
+const BYPASS_ADMIN_ID = null
 
 export interface PlatformAdminContext {
-  adminId: string
+  // Bypass modunda null olabilir (gerçek admin kaydı yok).
+  adminId: string | null
   username: string
 }
 
@@ -44,6 +50,14 @@ export function requirePlatformAdmin(db: AdminDb) {
     next: NextFunction,
   ): Promise<void> => {
     try {
+      // TEST modu (varsayılan KAPALI): CARGOFLOW_AUTH_BYPASS=true iken admin
+      // paneli parolasız açılır; böylece gerçek organization/kullanıcı
+      // hesaplarını oluşturup ardından bypass'ı kapatabilirsiniz.
+      if (isAuthBypassEnabled()) {
+        request.platformAdmin = { adminId: BYPASS_ADMIN_ID, username: 'bypass-admin' }
+        next()
+        return
+      }
       if (await resolveAdmin(db, request)) {
         next()
         return

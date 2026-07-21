@@ -7,6 +7,7 @@ import {
   touchSession,
   type AuthDb,
 } from './session.ts'
+import { isAuthBypassEnabled, resolveBypassContext } from './devBypass.ts'
 
 export interface AuthContext {
   userId: string
@@ -64,6 +65,14 @@ export function requireAuth(db: AuthDb) {
     next: NextFunction,
   ): Promise<void> => {
     try {
+      // TEST modu (varsayılan KAPALI): CARGOFLOW_AUTH_BYPASS=true ise istek
+      // gerçek bir organization kullanıcısına bağlanır. Auth mantığı aşağıda
+      // olduğu gibi durur; bayrak kapatılınca normal davranış geri gelir.
+      if (isAuthBypassEnabled()) {
+        request.auth = await resolveBypassContext(db)
+        next()
+        return
+      }
       if (await resolveAuth(db, request)) {
         next()
         return

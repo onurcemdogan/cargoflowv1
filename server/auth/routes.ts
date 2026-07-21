@@ -13,6 +13,7 @@ import {
 } from '../../src/auth/passwordPolicy.ts'
 import { hashPassword, verifyPassword } from './password.ts'
 import { requireAuth, type AuthedRequest } from './middleware.ts'
+import { isAuthBypassEnabled, resolveBypassContext } from './devBypass.ts'
 import {
   createSession,
   findActiveSession,
@@ -338,6 +339,24 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
   // GET /api/auth/me — hash/token/credential DÖNDÜRMEZ.
   router.get('/me', async (request, response, next) => {
     const db = dbOf(request as AuthedRequest)
+    // TEST modu (varsayılan KAPALI): oturum yokken de demo organization
+    // döndürülür ki frontend giriş ekranını atlayıp dashboard'a geçsin.
+    if (isAuthBypassEnabled()) {
+      const context = await resolveBypassContext(db)
+      response.json({
+        authenticated: true,
+        bypass: true,
+        user: {
+          username: context.username,
+          organization: {
+            id: context.organizationId,
+            name: context.organizationName,
+            slug: context.organizationSlug,
+          },
+        },
+      })
+      return
+    }
     return requireAuth(db)(request as AuthedRequest, response, next)
   })
   router.get('/me', async (request, response) => {
