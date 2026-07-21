@@ -14,16 +14,17 @@ export function isDatabaseConfigured(): boolean {
 }
 
 function resolveSsl(url: string): { rejectUnauthorized: boolean } | undefined {
-  // Railway internal ağ (railway.internal) SSL istemez; public proxy ve
-  // sslmode=require içeren URL'ler self-signed zincirle SSL ister.
-  if (url.includes('sslmode=disable')) return undefined
-  if (url.includes('railway.internal')) return undefined
-  if (
-    url.includes('sslmode=require') ||
-    url.includes('proxy.rlwy.net') ||
-    process.env.PGSSLMODE === 'require'
-  ) {
-    return { rejectUnauthorized: false }
+  // Self-hosted varsayılan: PostgreSQL aynı sunucuda (localhost) → SSL YOK.
+  // Uzak DB için yalnız sslmode=require / PGSSLMODE=require ile SSL açılır ve
+  // sertifika DOĞRULANIR. Self-signed zincir için bilinçli opt-out:
+  // PGSSL_REJECT_UNAUTHORIZED=false.
+  const sslMode = String(process.env.PGSSLMODE ?? '').trim().toLowerCase()
+  if (url.includes('sslmode=disable') || sslMode === 'disable') return undefined
+  if (url.includes('sslmode=require') || sslMode === 'require') {
+    return {
+      rejectUnauthorized:
+        String(process.env.PGSSL_REJECT_UNAUTHORIZED ?? '').toLowerCase() !== 'false',
+    }
   }
   return undefined
 }

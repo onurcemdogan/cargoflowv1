@@ -152,6 +152,20 @@ const TRENDYOL_1002_RECOMMENDED_ACTIONS = [
   'Gerekirse bu packageId ve cargoTrackingNumber ile Trendyol/Sürat destek birimine sor.',
 ]
 
+// Reverse proxy (Nginx) arkasında gerçek istemci IP'si X-Forwarded-For'dan
+// çözülür; bu olmadan express-rate-limit tüm istekleri 127.0.0.1 sayar ve
+// login/bootstrap limiti KULLANICILAR ARASINDA ORTAK hale gelir.
+// KÖRLEMESİNE AÇILMAZ: yalnız TRUST_PROXY tanımlıysa etkinleşir. Uygulama
+// doğrudan internete açıksa bu değer AYARLANMAMALIDIR (XFF spoof edilebilir).
+// Nginx arkasında önerilen: TRUST_PROXY=1 (yalnız ilk hop'a güven).
+const trustProxySetting = String(process.env.TRUST_PROXY ?? '').trim()
+if (trustProxySetting) {
+  app.set(
+    'trust proxy',
+    /^\d+$/.test(trustProxySetting) ? Number(trustProxySetting) : trustProxySetting,
+  )
+}
+
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 // KRİTİK: tenantAuth (requireAuth) ve onboarding/orders/products endpoint'leri
