@@ -28,13 +28,20 @@ test('DB SSL: localhost SSL istemez, sslmode=require doğrulamalı SSL açar', a
   assert.match(client, /rejectUnauthorized:\s*\n?\s*String\(process\.env\.PGSSL_REJECT_UNAUTHORIZED/)
 })
 
-test('trust proxy: varsayılan KAPALI, TRUST_PROXY ile opt-in', () => {
+test('trust proxy: varsayılan KAPALI, TRUST_PROXY ile opt-in', async () => {
   const source = readFileSync(join(here, 'index.mjs'), 'utf8')
-  assert.match(source, /const trustProxySetting = String\(process\.env\.TRUST_PROXY/)
+  // Çözüm resolveTrustProxy ile yapılır ("false" string'i truthy tuzağı yok).
+  assert.match(source, /const trustProxySetting = resolveTrustProxy\(process\.env\.TRUST_PROXY\)/)
   // Koşulsuz app.set('trust proxy', true) OLMAMALI (XFF spoof riski).
   assert.doesNotMatch(source, /app\.set\(\s*'trust proxy',\s*true\s*\)/)
-  // Yalnız değer verilmişse etkinleşir.
-  assert.match(source, /if \(trustProxySetting\)/)
+  // Yalnız çözümlenmiş değer varsa etkinleşir.
+  assert.match(source, /if \(trustProxySetting !== null\)/)
+
+  // Davranış doğrulaması: kapalı sayılan değerler null döner.
+  const { resolveTrustProxy } = await import('./env-requirements.mjs')
+  assert.equal(resolveTrustProxy(undefined), null)
+  assert.equal(resolveTrustProxy('false'), null)
+  assert.equal(resolveTrustProxy('1'), 1)
 })
 
 test('PORT/HOST: env ile yönetilir (Nginx arkasında 127.0.0.1 bağlanabilir)', () => {
