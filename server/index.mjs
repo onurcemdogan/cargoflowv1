@@ -18,6 +18,11 @@ import { promisify } from 'node:util'
 
 import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
 import {
+  findMissingProductionEnv,
+  isProductionEnvironment,
+  resolveTrustProxy,
+} from './env-requirements.mjs'
+import {
   classifyNetworkFailure,
   userMessageForNetworkFailure,
 } from './surat-network-diagnostics.mjs'
@@ -158,12 +163,11 @@ const TRENDYOL_1002_RECOMMENDED_ACTIONS = [
 // KÖRLEMESİNE AÇILMAZ: yalnız TRUST_PROXY tanımlıysa etkinleşir. Uygulama
 // doğrudan internete açıksa bu değer AYARLANMAMALIDIR (XFF spoof edilebilir).
 // Nginx arkasında önerilen: TRUST_PROXY=1 (yalnız ilk hop'a güven).
-const trustProxySetting = String(process.env.TRUST_PROXY ?? '').trim()
-if (trustProxySetting) {
-  app.set(
-    'trust proxy',
-    /^\d+$/.test(trustProxySetting) ? Number(trustProxySetting) : trustProxySetting,
-  )
+// resolveTrustProxy: "false"/"0"/"off"/boş → KAPALI (string "false" truthy
+// olduğu için düz kontrol yanlış sonuç veriyordu).
+const trustProxySetting = resolveTrustProxy(process.env.TRUST_PROXY)
+if (trustProxySetting !== null) {
+  app.set('trust proxy', trustProxySetting)
 }
 
 app.use(cors())
@@ -1540,24 +1544,26 @@ app.use((error, _request, response, _next) => {
 // Production başlangıç güvenlik uyarısı: zorunlu env'ler eksikse AÇIKÇA (yalnız
 // isimlerle; DEĞER LOGLANMAZ) uyarır. Uygulama healthcheck için ayakta kalır;
 // tenant/auth özellikleri DATABASE_URL olmadan zaten 503/legacy davranır.
-function warnMissingProductionSecrets() {
-  if (process.env.NODE_ENV !== 'production') return
-  const required = [
-    'DATABASE_URL',
-    'CREDENTIAL_ENCRYPTION_KEY',
-    'SHIPMENT_ENCRYPTION_KEY',
-    'ORDER_DATA_ENCRYPTION_KEY',
-    'PRODUCT_DATA_ENCRYPTION_KEY',
-  ]
-  const missing = required.filter((name) => !String(process.env[name] ?? '').trim())
-  if (missing.length > 0) {
-    console.warn(
-      `[startup] Production için eksik zorunlu env değişkenleri: ${missing.join(', ')}. ` +
-        'Bunlar ayarlanmadan çok kiracılı auth/persistence devre dışıdır (secret DEĞERLERİ loglanmaz).',
-    )
+// Production'da eksik zorunlu env varsa uygulama SESSİZCE BAŞLAMAZ: hangi
+// değişkenin eksik olduğu açıkça yazılır ve süreç durur. Secret DEĞERLERİ
+// asla loglanmaz; yalnız değişken ADI ve örnek üretme komutu gösterilir.
+function assertProductionEnvironment() {
+  if (!isProductionEnvironment()) return
+  const missing = findMissingProductionEnv()
+  if (missing.length === 0) return
+  console.error(
+    '[startup] HATA: Production için zorunlu ortam değişkenleri eksik/doldurulmamış:',
+  )
+  for (const entry of missing) {
+    console.error(`  - ${entry.name}   (örn: ${entry.hint})`)
   }
+  console.error(
+    '[startup] Proje kökündeki .env dosyasını doldurun (uygulama .env dosyasını ' +
+      'kendisi okur), ardından tekrar başlatın. Kurulum yardımı: npm run setup:server',
+  )
+  process.exit(1)
 }
-warnMissingProductionSecrets()
+assertProductionEnvironment()
 
 // TEST modu uyarısı: auth bypass açıkken her başlangıçta AÇIKÇA bildirilir.
 if (String(process.env.CARGOFLOW_AUTH_BYPASS ?? '').trim().toLowerCase() === 'true') {

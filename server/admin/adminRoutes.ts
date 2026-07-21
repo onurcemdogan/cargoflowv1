@@ -19,6 +19,7 @@ import {
   revokeAdminSessionByToken,
 } from './adminSession.ts'
 import { requirePlatformAdmin, type AdminRequest } from './adminMiddleware.ts'
+import { isCookieSecure } from '../auth/cookieOptions.ts'
 import { recordAdminAudit } from './adminAuditLog.ts'
 import {
   createOrganizationWithUser,
@@ -50,7 +51,7 @@ function normalizeUsername(value: unknown): string {
 function setAdminCookie(response: Response, token: string): void {
   response.cookie(adminSessionCookieName(), token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isCookieSecure(),
     sameSite: 'lax',
     path: '/',
     maxAge: adminSessionDurationMs(),
@@ -60,7 +61,7 @@ function setAdminCookie(response: Response, token: string): void {
 function clearAdminCookie(response: Response): void {
   response.clearCookie(adminSessionCookieName(), {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isCookieSecure(),
     sameSite: 'lax',
     path: '/',
   })

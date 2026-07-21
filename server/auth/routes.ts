@@ -14,6 +14,7 @@ import {
 import { hashPassword, verifyPassword } from './password.ts'
 import { requireAuth, type AuthedRequest } from './middleware.ts'
 import { isAuthBypassEnabled, resolveBypassContext } from './devBypass.ts'
+import { isCookieSecure } from './cookieOptions.ts'
 import {
   createSession,
   findActiveSession,
@@ -78,7 +79,7 @@ function setSessionCookie(
 ): void {
   response.cookie(sessionCookieName(), token, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isCookieSecure(),
     sameSite: 'lax',
     path: '/',
     maxAge: sessionDurationMs(),
@@ -88,7 +89,7 @@ function setSessionCookie(
 function clearSessionCookie(response: Response): void {
   response.clearCookie(sessionCookieName(), {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
+    secure: isCookieSecure(),
     sameSite: 'lax',
     path: '/',
   })
