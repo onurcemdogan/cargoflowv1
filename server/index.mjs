@@ -620,60 +620,111 @@ app.get('/api/orders/:id', async (request, response) => {
 app.post('/api/orders/sync', async (request, response) => {
   const context = await requireOrderPersistenceContext(request, response)
   if (!context) return
-  const credentials = request.body?.credentials ?? {}
-  const query = request.body?.query ?? {}
-  let result
-  try {
-    result = await callTrendyolOrdersByStatuses(credentials, { size: 50, ...query })
-  } catch {
-    response.status(502).json({ ok: false, message: 'Trendyol sipariş senkronu başarısız.' })
-    return
-  }
 
-  const complete = Boolean(result.ok) && result.debug?.syncStatus === 'COMPLETE'
-  if (!result.ok) {
-    // Başarısız çekim: mevcut siparişlere DOKUNMA (silme/arşivleme/ezme yok).
-    await recordOnboardingSyncState(context.db, context.organizationId, {
-      provider: 'trendyol',
-      resource: 'orders',
-      status: 'failed',
-      errorCode: result.statusCode ? String(result.statusCode) : null,
-    })
-    response.status(502).json({
+  // Org bazlı kilit: aynı organization için aynı anda yalnız BİR sipariş sync'i
+  // çalışır. Frontend kilidine ek olarak (ve ondan bağımsız) DB satırı üzerinde
+  // atomik alınır; birden çok PM2 instance'ı arasında güvenlidir. Farklı
+  // tenant'lar ayrı satır kullandığından birbirini bloklamaz.
+  const locked = await acquireOrgSyncLock(context.db, context.organizationId, 'orders')
+  if (!locked) {
+    const state = await readOrgSyncState(context.db, context.organizationId, 'orders')
+    response.status(409).json({
       ok: false,
-      complete: false,
-      message: `Trendyol sipariş senkronu başarısız: ${result.message}`,
-      fetchedCount: 0,
-      persistedCount: 0,
-      updatedCount: 0,
-      insertedCount: 0,
-      failedCount: 0,
-      syncBatchId: null,
+      code: 'sync_in_progress',
+      message: 'Bu hesap için bir sipariş senkronizasyonu zaten çalışıyor.',
+      status: state,
     })
     return
   }
+  // Terminal statü (success/partial/failed) yazıldığında kilit serbest kalır.
+  // released=true ise finally'de ek serbest bırakmaya gerek yoktur.
+  let released = false
 
   try {
-    const normalized = normalizeTrendyolOrders(result.data)
-    const persistResult = await context.service.persistSyncResult(
-      context.db,
-      context.organizationId,
-      normalized.orders,
-      { complete, fetchedCount: normalized.orders.length },
-    )
-    response.json({
-      ok: true,
-      complete: persistResult.complete,
-      fetchedCount: persistResult.fetchedCount,
-      persistedCount: persistResult.persistedCount,
-      updatedCount: persistResult.updatedCount,
-      insertedCount: persistResult.insertedCount,
-      failedCount: persistResult.failedCount,
-      archivedCount: persistResult.archivedCount,
-      syncBatchId: persistResult.syncBatchId,
-    })
-  } catch {
-    response.status(500).json({ ok: false, message: 'Siparişler kaydedilemedi.' })
+    const credentials = request.body?.credentials ?? {}
+    const query = request.body?.query ?? {}
+    let result
+    try {
+      result = await callTrendyolOrdersByStatuses(credentials, { size: 50, ...query })
+    } catch {
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'orders',
+        status: 'failed',
+        errorCode: null,
+      })
+      released = true
+      response.status(502).json({ ok: false, message: 'Trendyol sipariş senkronu başarısız.' })
+      return
+    }
+
+    const complete = Boolean(result.ok) && result.debug?.syncStatus === 'COMPLETE'
+    if (!result.ok) {
+      // Başarısız çekim: mevcut siparişlere DOKUNMA (silme/arşivleme/ezme yok).
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'orders',
+        status: 'failed',
+        errorCode: result.statusCode ? String(result.statusCode) : null,
+      })
+      released = true
+      response.status(502).json({
+        ok: false,
+        complete: false,
+        message: `Trendyol sipariş senkronu başarısız: ${result.message}`,
+        fetchedCount: 0,
+        persistedCount: 0,
+        updatedCount: 0,
+        insertedCount: 0,
+        failedCount: 0,
+        syncBatchId: null,
+      })
+      return
+    }
+
+    try {
+      const normalized = normalizeTrendyolOrders(result.data)
+      const persistResult = await context.service.persistSyncResult(
+        context.db,
+        context.organizationId,
+        normalized.orders,
+        { complete, fetchedCount: normalized.orders.length },
+      )
+      // Başarı/kısmi metadata'sını yaz (kilidi serbest bırakır + UI'ye "son
+      // başarılı sync" zamanı sağlar). complete=true tam sync'i, aksi kısmî.
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'orders',
+        status: persistResult.complete ? 'success' : 'partial',
+        fetchedCount: persistResult.fetchedCount,
+      })
+      released = true
+      response.json({
+        ok: true,
+        complete: persistResult.complete,
+        fetchedCount: persistResult.fetchedCount,
+        persistedCount: persistResult.persistedCount,
+        updatedCount: persistResult.updatedCount,
+        insertedCount: persistResult.insertedCount,
+        failedCount: persistResult.failedCount,
+        archivedCount: persistResult.archivedCount,
+        syncBatchId: persistResult.syncBatchId,
+      })
+    } catch {
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'orders',
+        status: 'failed',
+        errorCode: null,
+      })
+      released = true
+      response.status(500).json({ ok: false, message: 'Siparişler kaydedilemedi.' })
+    }
+  } finally {
+    if (!released) {
+      // Beklenmedik yol (ör. response gönderilmeden bir throw): kilidi bırak.
+      await releaseOrgSyncLock(context.db, context.organizationId, 'orders')
+    }
   }
 })
 
@@ -910,6 +961,49 @@ async function recordOnboardingSyncState(db, organizationId, entry) {
   }
 }
 
+// Org+resource bazlı sync kilidini alır. Cross-instance güvenli (DB satırı
+// üzerinde atomik). Kilit altyapısı yüklenemezse fail-open (true) döner: geçici
+// bir altyapı hatası sync'i tamamen engellemesin. Normal koşulda aynı org için
+// aynı anda ikinci bir sync false alır.
+async function acquireOrgSyncLock(db, organizationId, resource) {
+  try {
+    const { acquireSyncLock } = await import('./onboarding/onboardingRepository.ts')
+    return await acquireSyncLock(db, organizationId, resource)
+  } catch {
+    return true
+  }
+}
+
+// Beklenmedik hata yolunda kilidi serbest bırakır (best-effort). Normal akışta
+// recordOnboardingSyncState terminal statü yazarak kilidi zaten bırakır.
+async function releaseOrgSyncLock(db, organizationId, resource, errorCode) {
+  try {
+    const { releaseSyncLock } = await import('./onboarding/onboardingRepository.ts')
+    await releaseSyncLock(db, organizationId, resource, { errorCode: errorCode ?? null })
+  } catch {
+    // best-effort; bayat kilit staleMs sonrası kendiliğinden devralınır
+  }
+}
+
+// UI'nin sync durumunu (son başarılı zaman, son statü, çekilen adet, hata kodu)
+// yüzeye çıkarabilmesi için tek resource'un sync state satırını döner.
+async function readOrgSyncState(db, organizationId, resource) {
+  try {
+    const { getSyncState } = await import('./onboarding/onboardingRepository.ts')
+    const row = await getSyncState(db, organizationId, resource)
+    if (!row) return null
+    return {
+      lastSyncStatus: row.lastSyncStatus ?? null,
+      lastSuccessfulSyncAt: row.lastSuccessfulSyncAt ?? null,
+      lastFetchedCount: row.lastFetchedCount ?? null,
+      lastErrorCode: row.lastErrorCode ?? null,
+      updatedAt: row.updatedAt ?? null,
+    }
+  } catch {
+    return null
+  }
+}
+
 async function requireProductPersistenceContext(request, response) {
   if (!isTenantAuthMode() || !request.auth?.organizationId) {
     response.status(404).json({ ok: false, message: 'Ürün persistence yalnız auth modda kullanılabilir.' })
@@ -992,77 +1086,114 @@ app.get('/api/products/:id', async (request, response) => {
 app.post('/api/products/sync', async (request, response) => {
   const context = await requireProductPersistenceContext(request, response)
   if (!context) return
-  const credentials = request.body?.credentials ?? {}
-  let result
-  try {
-    result = await callTrendyolProducts(credentials)
-  } catch {
-    response.status(502).json({ ok: false, message: 'Trendyol ürün senkronu başarısız.' })
-    return
-  }
 
-  if (!result.ok) {
-    // Başarısız çekim: mevcut kataloğa DOKUNMA (silme/arşivleme/ezme yok).
-    await recordOnboardingSyncState(context.db, context.organizationId, {
-      provider: 'trendyol',
-      resource: 'products',
-      status: 'failed',
-      errorCode: result.statusCode ? String(result.statusCode) : null,
-    })
-    response.status(502).json({
+  // Org bazlı kilit (siparişteki ile aynı mantık; ayrı resource='products').
+  const locked = await acquireOrgSyncLock(context.db, context.organizationId, 'products')
+  if (!locked) {
+    const state = await readOrgSyncState(context.db, context.organizationId, 'products')
+    response.status(409).json({
       ok: false,
-      complete: false,
-      message: `Trendyol ürün senkronu başarısız: ${result.message}`,
-      fetchedProductCount: 0,
-      fetchedVariantCount: 0,
-      insertedProducts: 0,
-      updatedProducts: 0,
-      insertedVariants: 0,
-      updatedVariants: 0,
-      failedCount: 0,
-      syncBatchId: null,
+      code: 'sync_in_progress',
+      message: 'Bu hesap için bir ürün senkronizasyonu zaten çalışıyor.',
+      status: state,
     })
     return
   }
+  let released = false
 
   try {
-    const products = normalizeTrendyolProducts(result.data)
-    const expectedTotal = Number(result.debug?.expectedTotal ?? products.length)
-    const normalizedRatio =
-      expectedTotal > 0
-        ? products.length / expectedTotal
-        : products.length === 0
-          ? 1
-          : 0
-    // Tam sync kararı mevcut ürün fetch'iyle aynı eşik (%99) üzerinden verilir.
-    const complete = result.debug?.status === 'COMPLETE' && normalizedRatio >= 0.99
-    const persistResult = await context.service.persistProductSyncResult(
-      context.db,
-      context.organizationId,
-      products,
-      { complete },
-    )
-    await recordOnboardingSyncState(context.db, context.organizationId, {
-      provider: 'trendyol',
-      resource: 'products',
-      status: complete ? 'success' : 'partial',
-      fetchedCount: persistResult.fetchedVariantCount,
-    })
-    response.json({
-      ok: true,
-      complete: persistResult.complete,
-      fetchedProductCount: persistResult.fetchedProductCount,
-      fetchedVariantCount: persistResult.fetchedVariantCount,
-      insertedProducts: persistResult.insertedProducts,
-      updatedProducts: persistResult.updatedProducts,
-      insertedVariants: persistResult.insertedVariants,
-      updatedVariants: persistResult.updatedVariants,
-      failedCount: persistResult.failedCount,
-      archivedCount: persistResult.archivedCount,
-      syncBatchId: persistResult.syncBatchId,
-    })
-  } catch {
-    response.status(500).json({ ok: false, message: 'Ürünler kaydedilemedi.' })
+    const credentials = request.body?.credentials ?? {}
+    let result
+    try {
+      result = await callTrendyolProducts(credentials)
+    } catch {
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'products',
+        status: 'failed',
+        errorCode: null,
+      })
+      released = true
+      response.status(502).json({ ok: false, message: 'Trendyol ürün senkronu başarısız.' })
+      return
+    }
+
+    if (!result.ok) {
+      // Başarısız çekim: mevcut kataloğa DOKUNMA (silme/arşivleme/ezme yok).
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'products',
+        status: 'failed',
+        errorCode: result.statusCode ? String(result.statusCode) : null,
+      })
+      released = true
+      response.status(502).json({
+        ok: false,
+        complete: false,
+        message: `Trendyol ürün senkronu başarısız: ${result.message}`,
+        fetchedProductCount: 0,
+        fetchedVariantCount: 0,
+        insertedProducts: 0,
+        updatedProducts: 0,
+        insertedVariants: 0,
+        updatedVariants: 0,
+        failedCount: 0,
+        syncBatchId: null,
+      })
+      return
+    }
+
+    try {
+      const products = normalizeTrendyolProducts(result.data)
+      const expectedTotal = Number(result.debug?.expectedTotal ?? products.length)
+      const normalizedRatio =
+        expectedTotal > 0
+          ? products.length / expectedTotal
+          : products.length === 0
+            ? 1
+            : 0
+      // Tam sync kararı mevcut ürün fetch'iyle aynı eşik (%99) üzerinden verilir.
+      const complete = result.debug?.status === 'COMPLETE' && normalizedRatio >= 0.99
+      const persistResult = await context.service.persistProductSyncResult(
+        context.db,
+        context.organizationId,
+        products,
+        { complete },
+      )
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'products',
+        status: complete ? 'success' : 'partial',
+        fetchedCount: persistResult.fetchedVariantCount,
+      })
+      released = true
+      response.json({
+        ok: true,
+        complete: persistResult.complete,
+        fetchedProductCount: persistResult.fetchedProductCount,
+        fetchedVariantCount: persistResult.fetchedVariantCount,
+        insertedProducts: persistResult.insertedProducts,
+        updatedProducts: persistResult.updatedProducts,
+        insertedVariants: persistResult.insertedVariants,
+        updatedVariants: persistResult.updatedVariants,
+        failedCount: persistResult.failedCount,
+        archivedCount: persistResult.archivedCount,
+        syncBatchId: persistResult.syncBatchId,
+      })
+    } catch {
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'products',
+        status: 'failed',
+        errorCode: null,
+      })
+      released = true
+      response.status(500).json({ ok: false, message: 'Ürünler kaydedilemedi.' })
+    }
+  } finally {
+    if (!released) {
+      await releaseOrgSyncLock(context.db, context.organizationId, 'products')
+    }
   }
 })
 
@@ -8982,7 +9113,10 @@ async function callTrendyolOrders(credentials, query) {
   if (query.orderNumber) params.set('orderNumber', query.orderNumber)
 
   const url = `${getTrendyolBaseUrl(credentials)}/integration/order/sellers/${credentials.sellerId}/orders?${params}`
-  const retryDelaysMs = [2000, 4000, 8000]
+  // Sınırlı (en çok 3) exponential backoff. Prod'da [2000,4000,8000] ms; test
+  // ortamı TRENDYOL_ORDER_RETRY_DELAYS_MS ile kısa değerler enjekte edebilir.
+  // Değerden bağımsız retry sayısı üst sınırı korunur → sonsuz retry YOK.
+  const retryDelaysMs = getOrderRetryDelaysMs()
   let result
   let rateLimitRetries = 0
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
@@ -9379,6 +9513,20 @@ async function fetchTrendyolJson(url, credentials, options = {}) {
 function buildTrendyolUserAgent(credentials) {
   const sellerId = String(credentials?.sellerId ?? '').trim()
   return `${sellerId || 'CargoFlow'} - CargoFlow`
+}
+
+// Sipariş fetch'inde 429 için sınırlı backoff gecikmeleri (ms). Prod
+// varsayılanı [2000,4000,8000]; TRENDYOL_ORDER_RETRY_DELAYS_MS virgülle ayrılmış
+// pozitif sayılar verirse (test için) onu kullanır. Geçersiz/boş → varsayılan.
+// Uzunluk retry ÜST SINIRINI belirler (max 3); sonsuz retry mümkün değildir.
+function getOrderRetryDelaysMs() {
+  const raw = String(process.env.TRENDYOL_ORDER_RETRY_DELAYS_MS ?? '').trim()
+  if (!raw) return [2000, 4000, 8000]
+  const parsed = raw
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+  return parsed.length > 0 ? parsed.slice(0, 3) : [2000, 4000, 8000]
 }
 
 function parseRetryAfterMs(value) {

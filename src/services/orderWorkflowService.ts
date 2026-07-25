@@ -679,6 +679,7 @@ export class OrderWorkflowService {
 
     let syncPayload: {
       ok?: boolean
+      code?: string
       complete?: boolean
       message?: string
       insertedCount?: number
@@ -687,6 +688,9 @@ export class OrderWorkflowService {
       failedCount?: number
     } = {}
     let syncOk = false
+    // 409: aynı org için başka bir sync zaten çalışıyor (backend org kilidi).
+    // Veri kaybı yok; mevcut liste korunur, bilgilendirici mesaj gösterilir.
+    let syncInProgress = false
     try {
       const response = await fetch('/api/orders/sync', {
         method: 'POST',
@@ -696,6 +700,7 @@ export class OrderWorkflowService {
       })
       syncPayload = (await response.json().catch(() => ({}))) as typeof syncPayload
       syncOk = response.ok && syncPayload.ok === true
+      syncInProgress = response.status === 409 || syncPayload.code === 'sync_in_progress'
     } catch (error) {
       syncPayload = {
         ok: false,
@@ -707,6 +712,23 @@ export class OrderWorkflowService {
     // Sync başarılı olsun ya da olmasın, sunucudaki güncel (korunmuş) listeyi
     // yükle. Başarısız sync veri kaybettirmez; mevcut kayıtlar sunucuda durur.
     const orders = await this.loadOrdersFromServer().catch(() => this.authOrdersCache)
+
+    if (syncInProgress) {
+      // Zaten çalışan sync veri silmez; kullanıcıya beklemesini bildir.
+      this.auditLogService.append({
+        action: 'Siparişler çekildi',
+        level: 'info',
+        details: `Senkronizasyon zaten sürüyor; ${orders.length} sipariş listelendi.`,
+      })
+      return {
+        orders,
+        result: {
+          level: 'info',
+          source: 'real',
+          message: `Bu hesap için bir senkronizasyon zaten çalışıyor. Mevcut ${orders.length} sipariş gösteriliyor; tamamlanınca "Yenile" ile listeyi güncelleyin.`,
+        },
+      }
+    }
 
     if (!syncOk) {
       this.auditLogService.append({

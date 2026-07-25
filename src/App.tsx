@@ -46,7 +46,7 @@ import {
   ACTIVE_MARKETPLACE_STATUSES,
   ARCHIVE_MARKETPLACE_STATUSES,
 } from './utils/orderStatus'
-import { statusesForFetch, type QuickTab } from './utils/ordersTabs'
+import { type QuickTab } from './utils/ordersTabs'
 import type { OrdersNavigationFilters } from './utils/ordersNavigation'
 
 interface OrdersState {
@@ -69,6 +69,11 @@ interface ProductsState {
 
 function App() {
   const ordersFetchRequestId = useRef(0)
+  // Eşzamanlı Trendyol sync koruması (çift tıklama / hızlı ardışık istek):
+  // bir sync sürerken ikinci çağrı NO-OP olur (frontend kilidi; backend org
+  // kilidi ayrıca vardır). state yerine ref: anında ve render-bağımsız.
+  const ordersSyncInFlight = useRef(false)
+  const productsSyncInFlight = useRef(false)
   const [activePage, setActivePage] = useState<PageKey>('dashboard')
   const [integrationConfig, setIntegrationConfig] = useState<IntegrationConfig>(
     () => integrationConfigService.loadIntegrationConfig(),
@@ -183,17 +188,44 @@ function App() {
     }
   }, [])
 
+  // Yalnız DB'den (auth: GET /api/orders, legacy: localStorage) okur; Trendyol'a
+  // İSTEK ATMAZ. Route/tab/mount/dashboard geçişleri bunu kullanır. Trendyol
+  // sync YALNIZ açık "Şimdi Yenile / Senkronize Et" butonuyla (handleFetchOrders).
+  async function handleReloadOrders() {
+    const authMode = integrationConfigService.isAuthMode()
+    if (!authMode) {
+      // Legacy: siparişler zaten localStorage'tan yüklü; yeniden oku.
+      setOrdersState((current) => ({
+        ...current,
+        orders: workflowService.enrichOrderImages(
+          workflowService.loadOrders(),
+          productsState.products,
+        ),
+      }))
+      return
+    }
+    setOrdersState((current) => ({ ...current, ordersLoading: true }))
+    try {
+      const baseOrders = await workflowService.loadOrdersFromServer()
+      setOrdersState((current) => ({
+        ...current,
+        orders: workflowService.enrichOrderImages(
+          baseOrders,
+          productsState.products,
+        ),
+        ordersLoading: false,
+      }))
+    } catch {
+      // Ağ hatasında mevcut liste KORUNUR (silinmez); yalnız yükleme biter.
+      setOrdersState((current) => ({ ...current, ordersLoading: false }))
+    }
+  }
+
   function handleNavigate(page: PageKey) {
     setActivePage(page)
     if (page === 'orders') {
-      void handleFetchOrders(integrationConfig, {
-        statuses: [
-          ...ACTIVE_MARKETPLACE_STATUSES,
-          ...ARCHIVE_MARKETPLACE_STATUSES,
-        ],
-        ...marketplaceSyncRange(),
-        silent: true,
-      })
+      // Sayfa açılışında YALNIZ DB'den oku; Trendyol'a otomatik istek YOK.
+      void handleReloadOrders()
     }
   }
 
@@ -214,10 +246,8 @@ function App() {
       orderId,
       filters,
     })
-    void handleFetchOrders(integrationConfig, {
-      statuses: statusesForFetch(tab),
-      silent: true,
-    })
+    // Dashboard kartından geçiş: YALNIZ DB'den oku; Trendyol'a otomatik istek YOK.
+    void handleReloadOrders()
   }
 
   function refreshLogs() {
@@ -225,23 +255,11 @@ function App() {
     setApiDebugLogs(apiDebugService.load())
   }
 
-  // Açılışta persisted siparişlerde görseli çözülemeyen satır varsa ürün
-  // cache'i BİR kez arka planda tazelenir (bayat localStorage ürün listesi,
-  // render-time çözümlemenin eşleşememesinin ana nedeni). Sipariş/Sürat
-  // akışına dokunmaz; yalnız productsState güncellenir.
-  const productsAutoRefreshAttempted = useRef(false)
-  useEffect(() => {
-    if (
-      productsAutoRefreshAttempted.current ||
-      orders.length === 0 ||
-      !ordersMissingImages(orders)
-    ) {
-      return
-    }
-    productsAutoRefreshAttempted.current = true
-    void handleFetchProducts()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders])
+  // NOT: Görsel eksikliğinde ürün kataloğunu OTOMATİK Trendyol sync'iyle
+  // tazeleyen efekt KALDIRILDI — mount/render sırasında istem dışı Trendyol
+  // isteği (ve rate limit) üretiyordu. Ürün senkronu artık YALNIZ açık
+  // "Ürünleri Senkronize Et" butonuyla yapılır. Görsel çözümleme, kayıtlı
+  // katalogdan (DB/cache) yapılmaya devam eder.
 
   function toggleOrder(orderId: string) {
     setSelectedIds((current) =>
@@ -290,6 +308,10 @@ function App() {
     config = integrationConfig,
     options: OrdersFetchOptions = {},
   ) {
+    // Eşzamanlı/çift sync koruması: bir sipariş sync'i sürerken ikinci çağrı
+    // NO-OP olur (yeni Trendyol isteği başlatılmaz).
+    if (ordersSyncInFlight.current) return
+    ordersSyncInFlight.current = true
     const defaultSyncRange = marketplaceSyncRange()
     const requestId = ++ordersFetchRequestId.current
     setOrdersState((current) => ({
@@ -356,6 +378,7 @@ function App() {
       }))
       if (!options.silent) setSelectedIds([])
     } finally {
+      ordersSyncInFlight.current = false
       refreshLogs()
       if (requestId === ordersFetchRequestId.current) {
         setOrdersState((current) => ({ ...current, ordersLoading: false }))
@@ -364,6 +387,9 @@ function App() {
   }
 
   async function handleFetchProducts(config = integrationConfig) {
+    // Eşzamanlı/çift ürün sync koruması.
+    if (productsSyncInFlight.current) return
+    productsSyncInFlight.current = true
     setProductsState((current) => ({
       ...current,
       productsLoading: true,
@@ -394,6 +420,7 @@ function App() {
         ),
       }))
     } finally {
+      productsSyncInFlight.current = false
       refreshLogs()
       setProductsState((current) => ({ ...current, productsLoading: false }))
     }
@@ -801,7 +828,7 @@ function App() {
   async function handleSaveIntegrations(config: IntegrationConfig) {
     setBusy(true)
     try {
-      const { saved, accountChanged } =
+      const { accountChanged } =
         await saveConfigAndActivateMarketplaceAccount(config)
       const nextLogs = auditLogService.append({
         action: 'Entegrasyon kaydedildi',
@@ -812,17 +839,13 @@ function App() {
       setLastResult({
         level: 'success',
         message: accountChanged
-          ? 'Yeni Trendyol hesabı kaydedildi. Siparişler bu hesaba göre yenileniyor.'
+          ? 'Yeni Trendyol hesabı kaydedildi. Siparişleri görmek için "Senkronize Et" ile Trendyol\'dan çekebilirsiniz.'
           : 'Entegrasyon bilgileri kaydedildi.',
       })
       if (accountChanged) {
-        void handleFetchOrders(saved, {
-          statuses: [
-            ...ACTIVE_MARKETPLACE_STATUSES,
-            ...ARCHIVE_MARKETPLACE_STATUSES,
-          ],
-          ...marketplaceSyncRange(),
-        })
+        // Hesap değişince YALNIZ DB'den oku; Trendyol'a OTOMATİK istek YOK.
+        // Kullanıcı gerektiğinde açık "Senkronize Et" ile çeker.
+        void handleReloadOrders()
       }
     } catch (error) {
       setLastResult({
