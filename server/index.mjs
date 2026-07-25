@@ -541,6 +541,37 @@ function strOrUndef(value) {
   return text ? text : undefined
 }
 
+// Analitik cache modülü (tek örnek). Dinamik import ESM kaydından TEK örnek
+// döndürür; endpoint'ler ve sync-invalidation aynı singleton'ı paylaşır.
+let analyticsCacheModulePromise = null
+function getAnalyticsCacheModule() {
+  if (!analyticsCacheModulePromise) {
+    analyticsCacheModulePromise = import('./cache/analyticsCache.ts')
+  }
+  return analyticsCacheModulePromise
+}
+
+// Analitik cache tenant kimliği: auth modda organization; legacy tek-tenant
+// kurulumda sabit 'local-single-tenant'. HER ZAMAN tenant-özgü; global/tenant-
+// bilgisiz anahtar üretilmez.
+function resolveAnalyticsTenantId(request) {
+  if (isTenantAuthMode() && request?.auth?.organizationId) {
+    return String(request.auth.organizationId)
+  }
+  return 'local-single-tenant'
+}
+
+// Bir tenant'ın TÜM analitik cache kayıtlarını düşürür (best-effort). Başarılı
+// sipariş sync'i veya durum/tutar/iptal/iade değişiminden sonra çağrılır.
+async function invalidateTenantAnalyticsCache(tenantId) {
+  try {
+    const { analyticsCache } = await getAnalyticsCacheModule()
+    await analyticsCache.invalidateTenant(String(tenantId))
+  } catch {
+    // cache invalidation best-effort; sync sonucunu etkilemez
+  }
+}
+
 async function requireOrderPersistenceContext(request, response) {
   if (!isTenantAuthMode() || !request.auth?.organizationId) {
     response.status(404).json({ ok: false, message: 'Sipariş persistence yalnız auth modda kullanılabilir.' })
@@ -698,6 +729,9 @@ app.post('/api/orders/sync', async (request, response) => {
         status: persistResult.complete ? 'success' : 'partial',
         fetchedCount: persistResult.fetchedCount,
       })
+      // Sipariş durum/tutar/iptal/iade verisi değişti → bu tenant'ın satış
+      // analitiği cache'i geçersizleşir; sonraki Dashboard isteği yeniden hesaplar.
+      await invalidateTenantAnalyticsCache(context.organizationId)
       released = true
       response.json({
         ok: true,
@@ -746,6 +780,17 @@ const ANALYTICS_ORDER_STATUSES = [
   'AtCollectionPoint',
 ]
 
+// Analitik hesaplaması sırasında Trendyol upstream başarısızlığı. getOrCompute
+// içinde fırlatılır ki BAŞARISIZ sonuç cache'e YAZILMASIN; endpoint bunu
+// ok:false + statusCode yanıtına çevirir (mevcut sözleşme korunur).
+class AnalyticsUpstreamError extends Error {
+  constructor(message, statusCode) {
+    super(message)
+    this.name = 'AnalyticsUpstreamError'
+    this.statusCode = statusCode ?? null
+  }
+}
+
 app.get('/api/analytics/orders', async (request, response) => {
   // Auth modda requireAuth (tenantAuth) gate'i geçilmiştir; legacy modda
   // local-trust guard'ı korunur.
@@ -765,6 +810,13 @@ app.get('/api/analytics/orders', async (request, response) => {
     })
     return
   }
+  // Cache anahtarı: tenant + aralık + timezone + filtre + rapor sürümü. Yenile
+  // butonu refresh=true ile cache'i bypass eder (yetkilendirme: endpoint zaten
+  // requireAuth/local-trust gate'inden geçmiştir; kullanıcı kendi tenant'ının
+  // verisini yeniler).
+  const timezone = strOrUndef(request.query?.timezone)
+  const refresh = String(request.query?.refresh ?? '') === 'true'
+  const tenantId = resolveAnalyticsTenantId(request)
   try {
     const orgConfig = await getRequestIntegrationConfig(request)
     const credentials = orgConfig?.trendyol
@@ -776,78 +828,107 @@ app.get('/api/analytics/orders', async (request, response) => {
       })
       return
     }
-    // Trendyol orders API uzun aralıkları reddeder; pasif statüler sync
-    // akışında pencerelenmediği için aralık BURADA aktif-statü penceresi
-    // boyutunda dilimlenir ve sonuçlar paket kimliğiyle birleştirilir.
-    // Analitik statü listesi zaten tamdır; sync'in unfiltered discovery
-    // adımına gerek yoktur. Statü×pencere istekleri rate limite takılmasın
-    // diye istekler aralıklı gönderilir, 429'da uzun beklemeyle tekrar
-    // denenir.
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const windowContents = []
-    let windowCursor = startDate
-    while (windowCursor <= endDate) {
-      const windowEnd = Math.min(
-        endDate,
-        windowCursor + TRENDYOL_ACTIVE_STATUS_WINDOW_MS,
-      )
-      for (const status of ANALYTICS_ORDER_STATUSES) {
-        let result
-        for (let attempt = 0; attempt <= 6; attempt += 1) {
-          if (attempt > 0) {
-            const rateLimited =
-              Number(result?.statusCode) === 429 ||
-              /rate limit/i.test(String(result?.message ?? ''))
-            await wait(rateLimited ? 15000 : 1500 * attempt)
-          }
-          result = await callTrendyolOrdersAllPages(credentials, {
-            status,
-            startDate: windowCursor,
-            endDate: windowEnd,
-            size: 200,
-          })
-          if (result.ok) break
-        }
-        if (!result.ok) {
-          response.json({
-            ok: false,
-            message: `Satış analitiği verisi alınamadı (${status}): ${result.message}`,
-            statusCode: result.statusCode,
-          })
-          return
-        }
-        windowContents.push(getTrendyolOrderPackagesArray(result.data))
-        await wait(500)
-      }
-      if (windowEnd === endDate) break
-      windowCursor = windowEnd + 1
-    }
-    const combinedContent = mergeTrendyolPackageCollections(...windowContents)
-    const normalized = normalizeTrendyolOrders({
-      content: combinedContent,
-      totalElements: combinedContent.length,
-      totalPages: 1,
+    const { analyticsCache, buildAnalyticsCacheKey, sanitizeAnalyticsOrders } =
+      await getAnalyticsCacheModule()
+    const cacheKey = buildAnalyticsCacheKey({
+      resource: 'orders',
+      tenantId,
+      startMs: startDate,
+      endMs: endDate,
+      timezone,
+      filters: {},
     })
-    const orders = normalized.orders ?? []
-    const packageCount = new Set(
-      orders.map((order) =>
-        String(
-          order.packageId ??
-            order.shipmentPackageId ??
-            `${order.marketplace}::${order.orderNumber}`,
-        ),
-      ),
-    ).size
+    const { value, cached, generatedAt, cacheAgeMs } = await analyticsCache.getOrCompute(
+      cacheKey,
+      async () => {
+        // Trendyol orders API uzun aralıkları reddeder; pasif statüler sync
+        // akışında pencerelenmediği için aralık BURADA aktif-statü penceresi
+        // boyutunda dilimlenir ve sonuçlar paket kimliğiyle birleştirilir.
+        // İstekler aralıklı gönderilir; 429'da uzun beklemeyle tekrar denenir.
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+        const windowContents = []
+        let windowCursor = startDate
+        while (windowCursor <= endDate) {
+          const windowEnd = Math.min(
+            endDate,
+            windowCursor + TRENDYOL_ACTIVE_STATUS_WINDOW_MS,
+          )
+          for (const status of ANALYTICS_ORDER_STATUSES) {
+            let result
+            for (let attempt = 0; attempt <= 6; attempt += 1) {
+              if (attempt > 0) {
+                const rateLimited =
+                  Number(result?.statusCode) === 429 ||
+                  /rate limit/i.test(String(result?.message ?? ''))
+                await wait(rateLimited ? 15000 : 1500 * attempt)
+              }
+              result = await callTrendyolOrdersAllPages(credentials, {
+                status,
+                startDate: windowCursor,
+                endDate: windowEnd,
+                size: 200,
+              })
+              if (result.ok) break
+            }
+            if (!result.ok) {
+              // BAŞARISIZ: throw → cache'e YAZILMAZ.
+              throw new AnalyticsUpstreamError(
+                `Satış analitiği verisi alınamadı (${status}): ${result.message}`,
+                result.statusCode,
+              )
+            }
+            windowContents.push(getTrendyolOrderPackagesArray(result.data))
+            await wait(500)
+          }
+          if (windowEnd === endDate) break
+          windowCursor = windowEnd + 1
+        }
+        const combinedContent = mergeTrendyolPackageCollections(...windowContents)
+        const normalized = normalizeTrendyolOrders({
+          content: combinedContent,
+          totalElements: combinedContent.length,
+          totalPages: 1,
+        })
+        const orders = normalized.orders ?? []
+        const packageCount = new Set(
+          orders.map((order) =>
+            String(
+              order.packageId ??
+                order.shipmentPackageId ??
+                `${order.marketplace}::${order.orderNumber}`,
+            ),
+          ),
+        ).size
+        // Cache'e ve yanıta PII-azaltılmış (aggregate) sonuç yazılır: ham
+        // payload, açık adres, telefon, e-posta düşer.
+        return {
+          totalElements: combinedContent.length,
+          fetchedCount: orders.length,
+          packageCount,
+          orders: sanitizeAnalyticsOrders(orders),
+        }
+      },
+      { bypass: refresh },
+    )
     response.json({
       ok: true,
       startDate: new Date(startDate).toISOString(),
       endDate: new Date(endDate).toISOString(),
-      totalElements: combinedContent.length,
-      fetchedCount: orders.length,
-      packageCount,
-      orders,
+      ...value,
+      // Cache metadata (secret/PII içermez).
+      cached,
+      generatedAt: new Date(generatedAt).toISOString(),
+      cacheAgeMs,
     })
   } catch (error) {
+    if (error instanceof AnalyticsUpstreamError) {
+      response.json({
+        ok: false,
+        message: error.message,
+        statusCode: error.statusCode,
+      })
+      return
+    }
     if (error?.code === CREDENTIAL_ENCRYPTION_MISSING) {
       response.status(503).json({
         ok: false,
@@ -886,6 +967,9 @@ app.get('/api/analytics/claims', async (request, response) => {
     })
     return
   }
+  const timezone = strOrUndef(request.query?.timezone)
+  const refresh = String(request.query?.refresh ?? '') === 'true'
+  const tenantId = resolveAnalyticsTenantId(request)
   try {
     const orgConfig = await getRequestIntegrationConfig(request)
     const credentials = orgConfig?.trendyol
@@ -897,42 +981,72 @@ app.get('/api/analytics/claims', async (request, response) => {
       })
       return
     }
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const rawClaims = []
-    let cursor = startDate
-    while (cursor <= endDate) {
-      const windowEnd = Math.min(endDate, cursor + TRENDYOL_CLAIMS_WINDOW_MS)
-      const windowResult = await fetchTrendyolClaimsWindow(
-        credentials,
-        cursor,
-        windowEnd,
-        wait,
-      )
-      if (!windowResult.ok) {
-        response.json({
-          ok: false,
-          message: `İade analitiği verisi alınamadı: ${windowResult.message}`,
-          statusCode: windowResult.statusCode,
-        })
-        return
-      }
-      rawClaims.push(...windowResult.claims)
-      if (windowEnd === endDate) break
-      cursor = windowEnd + 1
-      await wait(400)
-    }
-    const normalized = normalizeTrendyolClaims(rawClaims)
+    const { analyticsCache, buildAnalyticsCacheKey } = await getAnalyticsCacheModule()
+    const cacheKey = buildAnalyticsCacheKey({
+      resource: 'claims',
+      tenantId,
+      startMs: startDate,
+      endMs: endDate,
+      timezone,
+      filters: {},
+    })
+    const { value, cached, generatedAt, cacheAgeMs } = await analyticsCache.getOrCompute(
+      cacheKey,
+      async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+        const rawClaims = []
+        let cursor = startDate
+        while (cursor <= endDate) {
+          const windowEnd = Math.min(endDate, cursor + TRENDYOL_CLAIMS_WINDOW_MS)
+          const windowResult = await fetchTrendyolClaimsWindow(
+            credentials,
+            cursor,
+            windowEnd,
+            wait,
+          )
+          if (!windowResult.ok) {
+            // BAŞARISIZ: throw → cache'e YAZILMAZ.
+            throw new AnalyticsUpstreamError(
+              `İade analitiği verisi alınamadı: ${windowResult.message}`,
+              windowResult.statusCode,
+            )
+          }
+          rawClaims.push(...windowResult.claims)
+          if (windowEnd === endDate) break
+          cursor = windowEnd + 1
+          await wait(400)
+        }
+        const normalized = normalizeTrendyolClaims(rawClaims)
+        // Claims kaydı PII taşımaz (claimId/paket/tutar/statü/tarih); aggregate
+        // olarak olduğu gibi cache'lenir.
+        return {
+          fetchedCount: normalized.claims.length,
+          uniqueClaimCount: normalized.uniqueClaimCount,
+          affectedPackageCount: normalized.affectedPackageCount,
+          amountBasis: normalized.amountBasis,
+          claims: normalized.claims,
+        }
+      },
+      { bypass: refresh },
+    )
     response.json({
       ok: true,
       startDate: new Date(startDate).toISOString(),
       endDate: new Date(endDate).toISOString(),
-      fetchedCount: normalized.claims.length,
-      uniqueClaimCount: normalized.uniqueClaimCount,
-      affectedPackageCount: normalized.affectedPackageCount,
-      amountBasis: normalized.amountBasis,
-      claims: normalized.claims,
+      ...value,
+      cached,
+      generatedAt: new Date(generatedAt).toISOString(),
+      cacheAgeMs,
     })
   } catch (error) {
+    if (error instanceof AnalyticsUpstreamError) {
+      response.json({
+        ok: false,
+        message: error.message,
+        statusCode: error.statusCode,
+      })
+      return
+    }
     response.status(500).json({
       ok: false,
       message:

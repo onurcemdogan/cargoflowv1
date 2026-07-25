@@ -13,7 +13,7 @@ import {
   Store,
   XCircle,
 } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ProductImageThumb } from '../components/ProductImageThumb'
 import { OrderDetailDrawer } from '../components/OrderDetailDrawer'
 import { buildDashboardProviderHealth } from '../dashboard/dashboardSummary'
@@ -129,6 +129,11 @@ export function DashboardPage({
     error?: string
   }>()
   const [analyticsRetryTick, setAnalyticsRetryTick] = useState(0)
+  // Yenile: analitik cache'i (frontend + backend) bypass edip yeniden hesaplatır.
+  // Sayfa geçişi/mount bu tick'i DEĞİŞTİRMEZ; yalnız açık Yenile aksiyonu artırır.
+  const [analyticsRefreshTick, setAnalyticsRefreshTick] = useState(0)
+  const ordersRefreshSeen = useRef(0)
+  const claimsRefreshSeen = useRef(0)
   const analyticsOrders = analyticsResult?.orders ?? null
   // Kabul edilmiş iadeler; satış NET metriklerini düşürür. Orders'tan
   // bağımsız yüklenir: claims hatası satış panelini bloklamaz, yalnız
@@ -171,14 +176,18 @@ export function DashboardPage({
     const end = Math.max(...ranges.map((range) => range.end.getTime()))
     return `${start}|${end}`
   }, [viewModel.period, viewModel.comparisonPeriod, viewModel.salesPeriodCards])
-  const analyticsRequestKey = `${analyticsRangeKey}#${analyticsRetryTick}`
+  const analyticsRequestKey = `${analyticsRangeKey}#${analyticsRetryTick}#${analyticsRefreshTick}`
   useEffect(() => {
     const [startMs, endMs] = analyticsRequestKey
       .split('#')[0]
       .split('|')
       .map(Number)
+    // Bu çalıştırma bir Yenile (refresh) tetiklemesi mi? refreshTick değiştiyse
+    // evet → cache bypass. Aralık/retry değişiminde refresh=false (cache kullan).
+    const refresh = analyticsRefreshTick !== ordersRefreshSeen.current
+    ordersRefreshSeen.current = analyticsRefreshTick
     let active = true
-    fetchDashboardAnalyticsOrders(new Date(startMs), new Date(endMs))
+    fetchDashboardAnalyticsOrders(new Date(startMs), new Date(endMs), { refresh })
       .then((result) => {
         if (active) {
           setAnalyticsResult({ key: analyticsRequestKey, orders: result.orders })
@@ -198,15 +207,19 @@ export function DashboardPage({
     return () => {
       active = false
     }
-  }, [analyticsRequestKey])
+    // analyticsRefreshTick zaten analyticsRequestKey içinde kodlanır; linter
+    // için açıkça listelenir (değer yalnız key ile birlikte değişir).
+  }, [analyticsRequestKey, analyticsRefreshTick])
   // İade verisi orders ile aynı geniş kapsam için ayrı yüklenir.
   useEffect(() => {
     const [startMs, endMs] = analyticsRequestKey
       .split('#')[0]
       .split('|')
       .map(Number)
+    const refresh = analyticsRefreshTick !== claimsRefreshSeen.current
+    claimsRefreshSeen.current = analyticsRefreshTick
     let active = true
-    fetchDashboardAnalyticsClaims(new Date(startMs), new Date(endMs))
+    fetchDashboardAnalyticsClaims(new Date(startMs), new Date(endMs), { refresh })
       .then((result) => {
         if (active) {
           setClaimsResult({ key: analyticsRequestKey, claims: result.claims })
@@ -226,7 +239,7 @@ export function DashboardPage({
     return () => {
       active = false
     }
-  }, [analyticsRequestKey])
+  }, [analyticsRequestKey, analyticsRefreshTick])
   // SSR/test render'ında effect çalışmaz; skeleton'da kilitlenmemek için
   // loading yalnız tarayıcıda türetilir (fallback: operasyon verisi).
   const analyticsLoading =
@@ -239,6 +252,13 @@ export function DashboardPage({
   // İade verisi yüklenemediyse satış NET değerleri iade düşümü içermez.
   const claimsError =
     claimsResult?.key === analyticsRequestKey ? claimsResult.error : undefined
+  // Yenile: operasyonel sync'i tetikler (başarıda backend analitik cache'i
+  // invalidate olur) VE analitik refresh tick'ini artırır (frontend + backend
+  // cache bypass, refresh=true). Yalnız açık Yenile aksiyonunda çağrılır.
+  const handleRefresh = () => {
+    setAnalyticsRefreshTick((tick) => tick + 1)
+    onRefresh()
+  }
   const providerHealth = useMemo(
     () =>
       buildDashboardProviderHealth({
@@ -413,7 +433,7 @@ export function DashboardPage({
           <button
             type="button"
             className="dashboard-refresh-button"
-            onClick={onRefresh}
+            onClick={handleRefresh}
             disabled={loading || !hasConfiguredMarketplace}
           >
             <RefreshCcw size={16} className={loading ? 'spin-icon' : ''} />
@@ -437,7 +457,7 @@ export function DashboardPage({
             <strong>Dashboard verileri yenilenemedi</strong>
             <span>{error}</span>
           </div>
-          <button type="button" onClick={onRefresh} disabled={loading}>
+          <button type="button" onClick={handleRefresh} disabled={loading}>
             Tekrar dene
           </button>
         </section>
