@@ -18,7 +18,11 @@ import {
 import { useState } from 'react'
 import { ActionResult } from '../components/ActionResult'
 import { PageHeader } from '../components/PageHeader'
-import { routeFromServiceMode } from '../services/integrationConfigService'
+import {
+  routeFromServiceMode,
+  SAVED_SECRET_PLACEHOLDER,
+  type MaskedIntegrationStatus,
+} from '../services/integrationConfigService'
 import type {
   IntegrationConfig,
   IntegrationTestResult,
@@ -40,6 +44,7 @@ interface IntegrationsPageProps {
   busy: boolean
   trendyolTest?: IntegrationTestResult
   suratTest?: IntegrationTestResult
+  maskedStatus?: MaskedIntegrationStatus | null
   onSave: (config: IntegrationConfig) => void
   onTestTrendyol: (config: IntegrationConfig) => void
   onTestSurat: (config: IntegrationConfig) => void
@@ -75,6 +80,7 @@ export function IntegrationsPage({
   busy,
   trendyolTest,
   suratTest,
+  maskedStatus,
   onSave,
   onTestTrendyol,
   onTestSurat,
@@ -107,12 +113,19 @@ export function IntegrationsPage({
   const [activeSuratTab, setActiveSuratTab] =
     useState<SuratDetailTab>('general')
 
-  const trendyolConfigured = Boolean(
-    form.trendyol.sellerId && form.trendyol.apiKey && form.trendyol.apiSecret,
-  )
-  const suratConfigured = Boolean(
-    form.surat.kullaniciAdi && form.surat.sifre && form.surat.firmaId,
-  )
+  const trendyolConfigured =
+    maskedStatus?.trendyol.configured ??
+    Boolean(
+      form.trendyol.sellerId &&
+        form.trendyol.apiKey &&
+        form.trendyol.apiSecret,
+    )
+  const suratConfigured =
+    maskedStatus?.surat.configured ??
+    Boolean(
+      form.surat.kullaniciAdi &&
+        (form.surat.sifre || form.surat.webPassword),
+    )
 
   function selectCategory(category: IntegrationCategory) {
     setActiveCategory(category)
@@ -220,6 +233,8 @@ export function IntegrationsPage({
             setActiveTab={setActiveTrendyolTab}
             busy={busy}
             test={trendyolTest}
+            savedApiKey={maskedStatus?.trendyol.hasApiKey ?? false}
+            savedApiSecret={maskedStatus?.trendyol.hasApiSecret ?? false}
             onSave={onSave}
             onTest={onTestTrendyol}
             onFetchOrders={onFetchOrders}
@@ -235,6 +250,8 @@ export function IntegrationsPage({
             setActiveTab={setActiveSuratTab}
             busy={busy}
             test={suratTest}
+            savedPassword={maskedStatus?.surat.hasPassword ?? false}
+            savedWebPassword={maskedStatus?.surat.hasWebPassword ?? false}
             onSave={onSave}
             onTest={onTestSurat}
           />
@@ -354,6 +371,10 @@ interface TrendyolSettingsPanelProps {
   setActiveTab: (tab: TrendyolDetailTab) => void
   busy: boolean
   test?: IntegrationTestResult
+  // Kayıtlı secret varlık bayrakları (backend maskeli status'tan). Secret'ın
+  // KENDİSİ değil; yalnız input placeholder'ı için "kayıtlı" göstergesi.
+  savedApiKey?: boolean
+  savedApiSecret?: boolean
   onSave: (config: IntegrationConfig) => void
   onTest: (config: IntegrationConfig) => void
   onFetchOrders: (config: IntegrationConfig) => void
@@ -367,6 +388,8 @@ function TrendyolSettingsPanel({
   setActiveTab,
   busy,
   test,
+  savedApiKey,
+  savedApiSecret,
   onSave,
   onTest,
   onFetchOrders,
@@ -462,7 +485,10 @@ function TrendyolSettingsPanel({
                   onChange={(event) =>
                     updateTrendyol({ apiKey: event.target.value })
                   }
-                  placeholder="Trendyol API key"
+                  placeholder={
+                    savedApiKey ? SAVED_SECRET_PLACEHOLDER : 'Trendyol API key'
+                  }
+                  autoComplete="off"
                 />
               </label>
               <label>
@@ -474,7 +500,12 @@ function TrendyolSettingsPanel({
                   onChange={(event) =>
                     updateTrendyol({ apiSecret: event.target.value })
                   }
-                  placeholder="Trendyol API secret"
+                  placeholder={
+                    savedApiSecret
+                      ? SAVED_SECRET_PLACEHOLDER
+                      : 'Trendyol API secret'
+                  }
+                  autoComplete="off"
                 />
               </label>
               <label className="wide">
@@ -596,6 +627,9 @@ interface SuratSettingsPanelProps {
   setActiveTab: (tab: SuratDetailTab) => void
   busy: boolean
   test?: IntegrationTestResult
+  // Kayıtlı secret varlık bayrakları (secret'ın kendisi değil).
+  savedPassword?: boolean
+  savedWebPassword?: boolean
   onSave: (config: IntegrationConfig) => void
   onTest: (config: IntegrationConfig) => void
 }
@@ -607,6 +641,8 @@ function SuratSettingsPanel({
   setActiveTab,
   busy,
   test,
+  savedPassword,
+  savedWebPassword,
   onSave,
   onTest,
 }: SuratSettingsPanelProps) {
@@ -698,11 +734,16 @@ function SuratSettingsPanel({
                   type="password"
                   value={form.surat.sifre}
                   onChange={(event) => updateSurat({ sifre: event.target.value })}
-                  placeholder="Sürat web servis şifresi"
+                  placeholder={
+                    savedPassword
+                      ? SAVED_SECRET_PLACEHOLDER
+                      : 'Sürat web servis şifresi'
+                  }
+                  autoComplete="off"
                 />
               </label>
               <label>
-                <span>FirmaId</span>
+                <span>FirmaId (opsiyonel, REST/V2)</span>
                 <input
                   aria-label="Sürat FirmaId"
                   value={form.surat.firmaId}
@@ -711,7 +752,7 @@ function SuratSettingsPanel({
                 />
               </label>
               <label>
-                <span>WebPassword / Sorgulama Şifresi</span>
+                <span>WebPassword / Sorgulama Şifresi (opsiyonel)</span>
                 <input
                   aria-label="Sürat WebPassword"
                   type="password"
@@ -719,10 +760,20 @@ function SuratSettingsPanel({
                   onChange={(event) =>
                     updateSurat({ webPassword: event.target.value })
                   }
-                  placeholder="e-Sürat WebPassword"
+                  placeholder={
+                    savedWebPassword
+                      ? SAVED_SECRET_PLACEHOLDER
+                      : 'e-Sürat WebPassword'
+                  }
+                  autoComplete="off"
                 />
               </label>
             </div>
+            <p className="integration-field-note">
+              Temel bağlantı testi için Cari Kodu ve Şifre yeterlidir.
+              WebPassword boşsa bağlantı testinde Şifre kullanılır; FirmaId
+              yalnız REST/V2 akışında gerekir.
+            </p>
 
             <h3 className="integration-subheading">Satıcı Öder Hesabı</h3>
             <div className="integration-field-grid three-columns">

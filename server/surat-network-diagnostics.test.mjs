@@ -104,12 +104,29 @@ test('A/B/L: SOAP endpoint webservices (tek), prova endpoint yok', () => {
   assert.match(source, /webservices\.suratkargo\.com\.tr\/services\.asmx/)
   // prova/test SOAP endpoint kullanılmıyor (ortam yalnız credential seçer).
   assert.doesNotMatch(source, /prova\.suratkargo\.com\.tr/)
-  // callSuratSoap tek fetch (kör retry döngüsü yok).
-  const soapFn = source.slice(source.indexOf('async function callSuratSoap'))
-  const soapBody = soapFn.slice(0, soapFn.indexOf('\n}\n'))
+  // callSuratSoap tek fetch (kör retry döngüsü yok). Gövde brace-matching ile
+  // çıkarılır — kırılgan '\n}\n' slice'ı bitişik fonksiyonlara taşabiliyordu.
+  const soapBody = extractFunctionBody(source, 'async function callSuratSoap')
   const fetchCount = (soapBody.match(/await fetch\(/g) || []).length
   assert.equal(fetchCount, 1, 'callSuratSoap tek fetch yapar (retry döngüsü yok)')
 })
+
+// Bir fonksiyonun gövdesini süslü parantez eşlemesiyle çıkarır (kaynak-seviyesi
+// guard'lar için sağlam; bitişik fonksiyonlara taşmaz).
+function extractFunctionBody(source, signature) {
+  const start = source.indexOf(signature)
+  if (start < 0) return ''
+  let index = source.indexOf('{', start)
+  let depth = 0
+  for (; index < source.length; index += 1) {
+    if (source[index] === '{') depth += 1
+    else if (source[index] === '}') {
+      depth -= 1
+      if (depth === 0) return source.slice(start, index + 1)
+    }
+  }
+  return source.slice(start)
+}
 
 // I/J/N) Diagnose script ve probe SALT-OKUMA: SOAP POST/SOAPAction YOK.
 test('I/J/N: tanılama read-only (SOAP POST/create yok)', () => {

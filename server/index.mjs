@@ -26,6 +26,10 @@ import {
   classifyNetworkFailure,
   userMessageForNetworkFailure,
 } from './surat-network-diagnostics.mjs'
+import {
+  extractSuratConfigCandidate,
+  resolveSuratConnectionTestPassword,
+} from './integrations/requestConfig.mjs'
 
 const app = express()
 const execFileAsync = promisify(execFile)
@@ -1258,22 +1262,27 @@ app.post('/api/integrations/surat/save', (request, response) => {
 })
 
 app.post('/api/integrations/surat/test', async (request, response) => {
-  const config = normalizeSuratConfig(request.body?.config)
-  const validation = validateSuratSoapCredentials(config)
-
-  if (validation) {
-    response.json(validation)
+  const config = normalizeSuratConfig(
+    extractSuratConfigCandidate(request.body),
+  )
+  if (!config.kullaniciAdi) {
+    response.json({
+      provider: 'surat-kargo',
+      ok: false,
+      source: 'real',
+      message: 'Eksik Sürat alanları: Cari Kodu / Kullanıcı Adı',
+      checkedAt: new Date().toISOString(),
+    })
     return
   }
-
-  const webPasswordInfo = resolveSuratWebPassword(config)
-  if (!webPasswordInfo.value) {
+  const connectionPassword = resolveSuratConnectionTestPassword(config)
+  if (!connectionPassword) {
     response.json({
       provider: 'surat-kargo',
       ok: false,
       source: 'real',
       message:
-        'Sürat bağlantı testi için e-Sürat WebPassword / sorgulama şifresi gerekli.',
+        'Eksik Sürat alanları: Şifre / WebPassword (Sorgulama Şifresi)',
       checkedAt: new Date().toISOString(),
     })
     return
@@ -1285,7 +1294,7 @@ app.post('/api/integrations/surat/test', async (request, response) => {
     'CariKoduveSifre',
     `
       <GonderenCariKodu>${xmlEscape(config.kullaniciAdi)}</GonderenCariKodu>
-      <WebPassword>${xmlEscape(webPasswordInfo.value)}</WebPassword>
+      <WebPassword>${xmlEscape(connectionPassword)}</WebPassword>
       <BasTar>${formatSoapDate(yesterday)}</BasTar>
       <BitTar>${formatSoapDate(today)}</BitTar>
       <IsWebSiparisKoduOlsun>true</IsWebSiparisKoduOlsun>
@@ -1309,7 +1318,8 @@ app.post('/api/integrations/surat/test', async (request, response) => {
       operation: 'CariKoduveSifre',
       endpoint: SURAT_SOAP_URL,
       message,
-      bodyPreview: soap.text.slice(0, 1200),
+      responseReceived: Boolean(soap.text),
+      responseLength: String(soap.text ?? '').length,
     },
   })
 })
@@ -1331,7 +1341,9 @@ app.post('/api/diagnostics/surat/common-barcode-loop', (request, response) => {
 })
 
 app.post('/api/shipments/surat/track', async (request, response) => {
-  const config = normalizeSuratConfig(request.body?.config)
+  const config = normalizeSuratConfig(
+    extractSuratConfigCandidate(request.body),
+  )
   const queryReference = resolveSuratTrackingQueryReference(request.body)
   const validation = validateSuratSoapCredentials(config)
 
@@ -8628,6 +8640,8 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
           statusCode: entry.result.statusCode,
           message: entry.result.message,
           requestUrl: entry.result.debug?.requestUrl,
+          userAgent: entry.result.debug?.userAgent,
+          sellerId: entry.result.debug?.sellerId,
           pageRequests: entry.result.debug?.pageRequests,
           rawResponsePreview: entry.result.debug?.rawResponsePreview,
           parsedError: entry.result.debug?.parsedError,
@@ -8667,6 +8681,8 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
           statusCode: entry.result.statusCode,
           message: entry.result.message,
           requestUrl: entry.result.debug?.requestUrl,
+          userAgent: entry.result.debug?.userAgent,
+          sellerId: entry.result.debug?.sellerId,
           pageRequests: entry.result.debug?.pageRequests,
           rawResponsePreview: entry.result.debug?.rawResponsePreview,
           parsedError: entry.result.debug?.parsedError,
@@ -8694,6 +8710,8 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
         statusCode: entry.result.statusCode,
         message: entry.result.message,
         requestUrl: entry.result.debug?.requestUrl,
+        userAgent: entry.result.debug?.userAgent,
+        sellerId: entry.result.debug?.sellerId,
         pageRequests: entry.result.debug?.pageRequests,
         rawResponsePreview: entry.result.debug?.rawResponsePreview,
         parsedError: entry.result.debug?.parsedError,
@@ -8963,10 +8981,30 @@ async function callTrendyolOrders(credentials, query) {
   if (query.status) params.set('status', query.status)
   if (query.orderNumber) params.set('orderNumber', query.orderNumber)
 
-  return fetchTrendyolJson(
-    `${getTrendyolBaseUrl(credentials)}/integration/order/sellers/${credentials.sellerId}/orders?${params}`,
-    credentials,
-  )
+  const url = `${getTrendyolBaseUrl(credentials)}/integration/order/sellers/${credentials.sellerId}/orders?${params}`
+  const retryDelaysMs = [2000, 4000, 8000]
+  let result
+  let rateLimitRetries = 0
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    result = await fetchTrendyolJson(url, credentials)
+    if (Number(result.statusCode) !== 429 || attempt === retryDelaysMs.length) {
+      break
+    }
+    rateLimitRetries += 1
+    const retryAfterMs = Number(result.debug?.retryAfterMs ?? 0)
+    const delayMs = Math.max(
+      retryDelaysMs[attempt],
+      Number.isFinite(retryAfterMs) ? retryAfterMs : 0,
+    )
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+  }
+  return {
+    ...result,
+    debug: {
+      ...(result?.debug ?? {}),
+      rateLimitRetries,
+    },
+  }
 }
 
 // Trendyol getClaims: GET /integration/order/sellers/{sellerId}/claims
@@ -9248,8 +9286,12 @@ async function fetchTrendyolJson(url, credentials, options = {}) {
     })
     const text = await response.text()
     const contentType = response.headers.get('content-type') ?? ''
-    const rawResponsePreview = text.slice(0, 2000)
     const parsed = parseTrendyolResponse(text, contentType)
+    const rawResponsePreview = buildTrendyolDebugResponsePreview(
+      parsed.data,
+      text,
+      contentType,
+    )
     const debug = {
       requestUrl: url,
       status: response.status,
@@ -9257,10 +9299,13 @@ async function fetchTrendyolJson(url, credentials, options = {}) {
       rawResponsePreview,
       parsedError: parsed.error,
       method,
+      userAgent,
+      sellerId: String(credentials?.sellerId ?? '').trim(),
       rateLimitRemaining:
         response.headers.get('x-ratelimit-remaining') ??
         response.headers.get('x-rate-limit-remaining') ??
         undefined,
+      retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
     }
 
     if (response.ok && !text.trim()) {
@@ -9334,6 +9379,45 @@ async function fetchTrendyolJson(url, credentials, options = {}) {
 function buildTrendyolUserAgent(credentials) {
   const sellerId = String(credentials?.sellerId ?? '').trim()
   return `${sellerId || 'CargoFlow'} - CargoFlow`
+}
+
+function parseRetryAfterMs(value) {
+  const text = String(value ?? '').trim()
+  if (!text) return 0
+  const seconds = Number(text)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, 60_000)
+  }
+  const dateMs = Date.parse(text)
+  if (!Number.isFinite(dateMs)) return 0
+  return Math.min(Math.max(0, dateMs - Date.now()), 60_000)
+}
+
+function buildTrendyolDebugResponsePreview(data, text, contentType) {
+  if (data && typeof data === 'object') {
+    const content = Array.isArray(data.content) ? data.content : undefined
+    const safe = {
+      totalElements: Number.isFinite(Number(data.totalElements))
+        ? Number(data.totalElements)
+        : undefined,
+      totalPages: Number.isFinite(Number(data.totalPages))
+        ? Number(data.totalPages)
+        : undefined,
+      page: Number.isFinite(Number(data.page)) ? Number(data.page) : undefined,
+      size: Number.isFinite(Number(data.size)) ? Number(data.size) : undefined,
+      contentCount: content?.length,
+      contentShape:
+        content && content.length > 0
+          ? describeShapePiiFree(content[0])
+          : undefined,
+      errorMessage: extractTrendyolErrorMessage(data) || undefined,
+      responseShape: content ? undefined : describeShapePiiFree(data),
+    }
+    return JSON.stringify(safe).slice(0, 2000)
+  }
+  const lowerContentType = String(contentType ?? '').toLowerCase()
+  if (lowerContentType.includes('application/json')) return ''
+  return String(text ?? '').slice(0, 500)
 }
 
 function parseTrendyolResponse(text, contentType) {

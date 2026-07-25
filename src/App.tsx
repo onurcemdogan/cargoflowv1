@@ -18,6 +18,7 @@ import {
   integrationConfigService,
   workflowService,
 } from './services/appServices'
+import type { MaskedIntegrationStatus } from './services/integrationConfigService'
 import {
   buildSuratZplDownload,
   suratPrintTrace,
@@ -74,6 +75,8 @@ function App() {
   )
   const [integrationHydrated, setIntegrationHydrated] = useState(false)
   const [integrationConfigRevision, setIntegrationConfigRevision] = useState(0)
+  const [maskedIntegrationStatus, setMaskedIntegrationStatus] =
+    useState<MaskedIntegrationStatus | null>(null)
   // Yazıcı Ayarları SAYFASI kaldırıldı; ayarlar kayıtlıdan yüklenir ve print
   // akışında kullanılmaya devam eder (yazdırma altyapısı korunur).
   const [printerSettings] = useState<PrinterSettings>(() =>
@@ -144,6 +147,9 @@ function App() {
       const authMode = integrationConfigService.isAuthMode()
       workflowService.setAuthMode(authMode)
       if (active) {
+        setMaskedIntegrationStatus(
+          integrationConfigService.getMaskedStatus(),
+        )
         workflowService.setMarketplaceAccount(
           hydrated.trendyol.sellerId,
         )
@@ -393,8 +399,17 @@ function App() {
     }
   }
 
-  function saveConfigAndActivateMarketplaceAccount(config: IntegrationConfig) {
+  async function saveConfigAndActivateMarketplaceAccount(
+    config: IntegrationConfig,
+  ) {
     const saved = integrationConfigService.saveIntegrationConfig(config)
+    const persisted = await integrationConfigService.waitForPendingPersistence()
+    if (integrationConfigService.isAuthMode() && !persisted) {
+      throw new Error(
+        'Entegrasyon bilgileri sunucuya kaydedilemedi. Test eski bilgilerle çalıştırılmadı.',
+      )
+    }
+    setMaskedIntegrationStatus(integrationConfigService.getMaskedStatus())
     const accountChanged = workflowService.setMarketplaceAccount(
       saved.trendyol.sellerId,
     )
@@ -435,13 +450,21 @@ function App() {
   async function handleTestTrendyol(config: IntegrationConfig) {
     setBusy(true)
     try {
-      const { saved } = saveConfigAndActivateMarketplaceAccount(config)
+      const { saved } = await saveConfigAndActivateMarketplaceAccount(config)
       const result = await workflowService.testTrendyolConnection(saved)
       setTrendyolTest(result)
       setLastResult({
         level: result.ok ? 'success' : 'warning',
         source: result.source,
         message: result.message,
+      })
+    } catch (error) {
+      setLastResult({
+        level: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Trendyol bağlantı testi başlatılamadı.',
       })
     } finally {
       refreshLogs()
@@ -452,7 +475,7 @@ function App() {
   async function handleTestSurat(config: IntegrationConfig) {
     setBusy(true)
     try {
-      const { saved } = saveConfigAndActivateMarketplaceAccount(config)
+      const { saved } = await saveConfigAndActivateMarketplaceAccount(config)
       const result = await workflowService.testSuratConnection(saved)
       setSuratTest(result)
       setLastResult({
@@ -460,8 +483,52 @@ function App() {
         source: result.source,
         message: result.message,
       })
+    } catch (error) {
+      setLastResult({
+        level: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Sürat bağlantı testi başlatılamadı.',
+      })
     } finally {
       refreshLogs()
+      setBusy(false)
+    }
+  }
+
+  async function handleIntegrationFetchOrders(config: IntegrationConfig) {
+    setBusy(true)
+    try {
+      const { saved } = await saveConfigAndActivateMarketplaceAccount(config)
+      await handleFetchOrders(saved)
+    } catch (error) {
+      setLastResult({
+        level: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Trendyol sipariş senkronu başlatılamadı.',
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleIntegrationFetchProducts(config: IntegrationConfig) {
+    setBusy(true)
+    try {
+      const { saved } = await saveConfigAndActivateMarketplaceAccount(config)
+      await handleFetchProducts(saved)
+    } catch (error) {
+      setLastResult({
+        level: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Trendyol ürün senkronu başlatılamadı.',
+      })
+    } finally {
       setBusy(false)
     }
   }
@@ -731,29 +798,42 @@ function App() {
     refreshLogs()
   }
 
-  function handleSaveIntegrations(config: IntegrationConfig) {
-    const { saved, accountChanged } =
-      saveConfigAndActivateMarketplaceAccount(config)
-    const nextLogs = auditLogService.append({
-      action: 'Entegrasyon kaydedildi',
-      level: 'success',
-      details: 'Trendyol ve Sürat Kargo bağlantı bilgileri kaydedildi.',
-    })
-    setLogs(nextLogs)
-    setLastResult({
-      level: 'success',
-      message: accountChanged
-        ? 'Yeni Trendyol hesabı kaydedildi. Siparişler bu hesaba göre yenileniyor.'
-        : 'Entegrasyon bilgileri kaydedildi.',
-    })
-    if (accountChanged) {
-      void handleFetchOrders(saved, {
-        statuses: [
-          ...ACTIVE_MARKETPLACE_STATUSES,
-          ...ARCHIVE_MARKETPLACE_STATUSES,
-        ],
-        ...marketplaceSyncRange(),
+  async function handleSaveIntegrations(config: IntegrationConfig) {
+    setBusy(true)
+    try {
+      const { saved, accountChanged } =
+        await saveConfigAndActivateMarketplaceAccount(config)
+      const nextLogs = auditLogService.append({
+        action: 'Entegrasyon kaydedildi',
+        level: 'success',
+        details: 'Trendyol ve Sürat Kargo bağlantı bilgileri kaydedildi.',
       })
+      setLogs(nextLogs)
+      setLastResult({
+        level: 'success',
+        message: accountChanged
+          ? 'Yeni Trendyol hesabı kaydedildi. Siparişler bu hesaba göre yenileniyor.'
+          : 'Entegrasyon bilgileri kaydedildi.',
+      })
+      if (accountChanged) {
+        void handleFetchOrders(saved, {
+          statuses: [
+            ...ACTIVE_MARKETPLACE_STATUSES,
+            ...ARCHIVE_MARKETPLACE_STATUSES,
+          ],
+          ...marketplaceSyncRange(),
+        })
+      }
+    } catch (error) {
+      setLastResult({
+        level: 'error',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Entegrasyon bilgileri kaydedilemedi.',
+      })
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -902,11 +982,12 @@ function App() {
           busy={integrationBusy}
           trendyolTest={trendyolTest}
           suratTest={suratTest}
+          maskedStatus={maskedIntegrationStatus}
           onSave={handleSaveIntegrations}
           onTestTrendyol={handleTestTrendyol}
           onTestSurat={handleTestSurat}
-          onFetchOrders={(config) => handleFetchOrders(config)}
-          onFetchProducts={(config) => handleFetchProducts(config)}
+          onFetchOrders={handleIntegrationFetchOrders}
+          onFetchProducts={handleIntegrationFetchProducts}
         />
       ) : null}
 
