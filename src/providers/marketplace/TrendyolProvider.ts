@@ -232,6 +232,14 @@ function appendTrendyolDebug({
     const requestUrl =
       String(item.requestUrl ?? rawPreview.requestUrl ?? '') ||
       `/integration/order/sellers/${credentials.sellerId}`
+    const actualSellerId = String(
+      item.sellerId ?? rawPreview.sellerId ?? credentials.sellerId ?? '',
+    ).trim()
+    const actualUserAgent = String(
+      item.userAgent ??
+        rawPreview.userAgent ??
+        `${actualSellerId || 'CargoFlow'} - CargoFlow`,
+    )
     apiDebugService.append({
       provider: 'Trendyol',
       operation:
@@ -242,9 +250,7 @@ function appendTrendyolDebug({
       requestUrl,
       requestHeaders: {
         Authorization: 'Basic ***',
-        'User-Agent': `${credentials.sellerId} - ${
-          credentials.userAgentName || 'CargoFlow'
-        }`,
+        'User-Agent': actualUserAgent,
         Accept: 'application/json',
       },
       requestBody,
@@ -260,7 +266,7 @@ function appendTrendyolDebug({
           : 'SUCCESS',
       durationMs: Math.round(durationMs),
       fields: {
-        sellerId: credentials.sellerId,
+        sellerId: actualSellerId,
         contentType: item.contentType ?? rawPreview.contentType,
         parsedError: item.parsedError ?? rawPreview.parsedError,
       },

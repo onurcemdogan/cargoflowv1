@@ -56,20 +56,25 @@ export function resetDashboardAnalyticsCache(): void {
 export async function fetchDashboardAnalyticsOrders(
   startDate: Date,
   endDate: Date,
+  options: { refresh?: boolean } = {},
 ): Promise<DashboardAnalyticsResult> {
   const startMs = startDate.getTime()
   const endMs = endDate.getTime()
-  if (cache && cache.startMs <= startMs && cache.endMs >= endMs) {
+  const refresh = options.refresh === true
+  // Yenile DIŞINDA: kapsayan aralık cache'teyse ağa çıkma (sayfa geçişi/mount
+  // yeniden hesaplatmaz). Yenile'de hem bu frontend cache'i hem backend cache'i
+  // (refresh=true) bypass edilir.
+  if (!refresh && cache && cache.startMs <= startMs && cache.endMs >= endMs) {
     return cache.result
   }
   // Kapsam genişletme: mevcut cache ile birleşik tek aralık çekilir ki
   // dönem değişimlerinde tekrar tekrar dar aralıklar istenmesin.
   const unionStart = cache ? Math.min(cache.startMs, startMs) : startMs
   const unionEnd = cache ? Math.max(cache.endMs, endMs) : endMs
-  const key = `${unionStart}|${unionEnd}`
+  const key = `${refresh ? 'refresh:' : ''}${unionStart}|${unionEnd}`
   if (inFlight && inFlightKey === key) return inFlight
   inFlightKey = key
-  inFlight = requestAnalytics(unionStart, unionEnd)
+  inFlight = requestAnalytics(unionStart, unionEnd, refresh)
     .then((result) => {
       cache = { startMs: unionStart, endMs: unionEnd, result }
       return result
@@ -86,10 +91,13 @@ export async function fetchDashboardAnalyticsOrders(
 export async function fetchDashboardAnalyticsClaims(
   startDate: Date,
   endDate: Date,
+  options: { refresh?: boolean } = {},
 ): Promise<DashboardClaimsResult> {
   const startMs = startDate.getTime()
   const endMs = endDate.getTime()
+  const refresh = options.refresh === true
   if (
+    !refresh &&
     claimsCache &&
     claimsCache.startMs <= startMs &&
     claimsCache.endMs >= endMs
@@ -98,10 +106,10 @@ export async function fetchDashboardAnalyticsClaims(
   }
   const unionStart = claimsCache ? Math.min(claimsCache.startMs, startMs) : startMs
   const unionEnd = claimsCache ? Math.max(claimsCache.endMs, endMs) : endMs
-  const key = `${unionStart}|${unionEnd}`
+  const key = `${refresh ? 'refresh:' : ''}${unionStart}|${unionEnd}`
   if (claimsInFlight && claimsInFlightKey === key) return claimsInFlight
   claimsInFlightKey = key
-  claimsInFlight = requestClaims(unionStart, unionEnd)
+  claimsInFlight = requestClaims(unionStart, unionEnd, refresh)
     .then((result) => {
       claimsCache = { startMs: unionStart, endMs: unionEnd, result }
       return result
@@ -116,11 +124,13 @@ export async function fetchDashboardAnalyticsClaims(
 async function requestClaims(
   startMs: number,
   endMs: number,
+  refresh = false,
 ): Promise<DashboardClaimsResult> {
   const params = new URLSearchParams({
     startDate: new Date(startMs).toISOString(),
     endDate: new Date(endMs).toISOString(),
   })
+  if (refresh) params.set('refresh', 'true')
   const response = await fetch(`/api/analytics/claims?${params}`, {
     headers: {
       'X-CargoFlow-Client-Host':
@@ -146,11 +156,13 @@ async function requestClaims(
 async function requestAnalytics(
   startMs: number,
   endMs: number,
+  refresh = false,
 ): Promise<DashboardAnalyticsResult> {
   const params = new URLSearchParams({
     startDate: new Date(startMs).toISOString(),
     endDate: new Date(endMs).toISOString(),
   })
+  if (refresh) params.set('refresh', 'true')
   const response = await fetch(`/api/analytics/orders?${params}`, {
     headers: {
       'X-CargoFlow-Client-Host':

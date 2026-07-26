@@ -434,12 +434,9 @@ export function OrdersPage({
     setCargoSlipQuery('')
     setCurrentPage(1)
     setExpandedOrderId(undefined)
-    onFetchOrders({
-      statuses: statusesForFetch(tab),
-      startDate: dateRange.startDate,
-      endDate: dateRange.endDate,
-      allDates: datePreset === 'all',
-    })
+    // Sekme değişimi YALNIZ client-side filtreleme yapar; Trendyol'a otomatik
+    // istek ATMAZ. Liste zaten DB'den yüklüdür. Trendyol sync yalnız "Şimdi
+    // Yenile" butonuyla (aşağıdaki onFetchOrders) yapılır.
   }
 
   function clearFilters() {

@@ -26,6 +26,10 @@ import {
   classifyNetworkFailure,
   userMessageForNetworkFailure,
 } from './surat-network-diagnostics.mjs'
+import {
+  extractSuratConfigCandidate,
+  resolveSuratConnectionTestPassword,
+} from './integrations/requestConfig.mjs'
 
 const app = express()
 const execFileAsync = promisify(execFile)
@@ -537,6 +541,37 @@ function strOrUndef(value) {
   return text ? text : undefined
 }
 
+// Analitik cache modülü (tek örnek). Dinamik import ESM kaydından TEK örnek
+// döndürür; endpoint'ler ve sync-invalidation aynı singleton'ı paylaşır.
+let analyticsCacheModulePromise = null
+function getAnalyticsCacheModule() {
+  if (!analyticsCacheModulePromise) {
+    analyticsCacheModulePromise = import('./cache/analyticsCache.ts')
+  }
+  return analyticsCacheModulePromise
+}
+
+// Analitik cache tenant kimliği: auth modda organization; legacy tek-tenant
+// kurulumda sabit 'local-single-tenant'. HER ZAMAN tenant-özgü; global/tenant-
+// bilgisiz anahtar üretilmez.
+function resolveAnalyticsTenantId(request) {
+  if (isTenantAuthMode() && request?.auth?.organizationId) {
+    return String(request.auth.organizationId)
+  }
+  return 'local-single-tenant'
+}
+
+// Bir tenant'ın TÜM analitik cache kayıtlarını düşürür (best-effort). Başarılı
+// sipariş sync'i veya durum/tutar/iptal/iade değişiminden sonra çağrılır.
+async function invalidateTenantAnalyticsCache(tenantId) {
+  try {
+    const { analyticsCache } = await getAnalyticsCacheModule()
+    await analyticsCache.invalidateTenant(String(tenantId))
+  } catch {
+    // cache invalidation best-effort; sync sonucunu etkilemez
+  }
+}
+
 async function requireOrderPersistenceContext(request, response) {
   if (!isTenantAuthMode() || !request.auth?.organizationId) {
     response.status(404).json({ ok: false, message: 'Sipariş persistence yalnız auth modda kullanılabilir.' })
@@ -609,6 +644,48 @@ app.get('/api/orders/:id', async (request, response) => {
   }
 })
 
+// POST /api/orders/:id/label-ready — etiket başarıyla oluşturulduğunda siparişi
+// canonical LABEL_READY durumuna KALICI geçirir (org yalnız req.auth'tan).
+// Backend-doğrulamalı: gerçek Sürat gönderisi yoksa geçiş yapılmaz (409). Atomik +
+// idempotent + no-regress. marketplaceStatus AYRI alandır, dokunulmaz. Sonra
+// tenant analitik cache'i invalidate edilir; frontend listeyi DB'den yeniden okur.
+app.post('/api/orders/:id/label-ready', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const orderId = String(request.params.id)
+  try {
+    const result = await context.service.markLabelReady(
+      context.db,
+      context.organizationId,
+      orderId,
+    )
+    if (!result.found) {
+      response.status(404).json({ ok: false, message: 'Sipariş bulunamadı.' })
+      return
+    }
+    if (result.reason === 'shipment_required') {
+      response.status(409).json({
+        ok: false,
+        code: 'shipment_required',
+        message:
+          'Etiket-hazır için önce doğrulanmış Sürat gönderisi oluşturulmalıdır.',
+        operationStatus: result.operationStatus,
+      })
+      return
+    }
+    // Operasyon durumu değişti → bu tenant'ın satış analitiği cache'i geçersizleşir.
+    await invalidateTenantAnalyticsCache(context.organizationId)
+    response.json({
+      ok: true,
+      updated: result.updated,
+      operationStatus: result.operationStatus,
+      order: result.order,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Etiket durumu kaydedilemedi.' })
+  }
+})
+
 // POST /api/orders/sync — mevcut Trendyol sync ile (org credential DB'den
 // enjekte edilir) çeker, normalize eder ve org bazında upsert eder. KISMİ/
 // başarısız sync sipariş SİLMEZ/ARŞİVLEMEZ; arşivleme yalnız kanıtlı TAM
@@ -616,60 +693,114 @@ app.get('/api/orders/:id', async (request, response) => {
 app.post('/api/orders/sync', async (request, response) => {
   const context = await requireOrderPersistenceContext(request, response)
   if (!context) return
-  const credentials = request.body?.credentials ?? {}
-  const query = request.body?.query ?? {}
-  let result
-  try {
-    result = await callTrendyolOrdersByStatuses(credentials, { size: 50, ...query })
-  } catch {
-    response.status(502).json({ ok: false, message: 'Trendyol sipariş senkronu başarısız.' })
-    return
-  }
 
-  const complete = Boolean(result.ok) && result.debug?.syncStatus === 'COMPLETE'
-  if (!result.ok) {
-    // Başarısız çekim: mevcut siparişlere DOKUNMA (silme/arşivleme/ezme yok).
-    await recordOnboardingSyncState(context.db, context.organizationId, {
-      provider: 'trendyol',
-      resource: 'orders',
-      status: 'failed',
-      errorCode: result.statusCode ? String(result.statusCode) : null,
-    })
-    response.status(502).json({
+  // Org bazlı kilit: aynı organization için aynı anda yalnız BİR sipariş sync'i
+  // çalışır. Frontend kilidine ek olarak (ve ondan bağımsız) DB satırı üzerinde
+  // atomik alınır; birden çok PM2 instance'ı arasında güvenlidir. Farklı
+  // tenant'lar ayrı satır kullandığından birbirini bloklamaz.
+  const locked = await acquireOrgSyncLock(context.db, context.organizationId, 'orders')
+  if (!locked) {
+    const state = await readOrgSyncState(context.db, context.organizationId, 'orders')
+    response.status(409).json({
       ok: false,
-      complete: false,
-      message: `Trendyol sipariş senkronu başarısız: ${result.message}`,
-      fetchedCount: 0,
-      persistedCount: 0,
-      updatedCount: 0,
-      insertedCount: 0,
-      failedCount: 0,
-      syncBatchId: null,
+      code: 'sync_in_progress',
+      message: 'Bu hesap için bir sipariş senkronizasyonu zaten çalışıyor.',
+      status: state,
     })
     return
   }
+  // Terminal statü (success/partial/failed) yazıldığında kilit serbest kalır.
+  // released=true ise finally'de ek serbest bırakmaya gerek yoktur.
+  let released = false
 
   try {
-    const normalized = normalizeTrendyolOrders(result.data)
-    const persistResult = await context.service.persistSyncResult(
-      context.db,
-      context.organizationId,
-      normalized.orders,
-      { complete, fetchedCount: normalized.orders.length },
-    )
-    response.json({
-      ok: true,
-      complete: persistResult.complete,
-      fetchedCount: persistResult.fetchedCount,
-      persistedCount: persistResult.persistedCount,
-      updatedCount: persistResult.updatedCount,
-      insertedCount: persistResult.insertedCount,
-      failedCount: persistResult.failedCount,
-      archivedCount: persistResult.archivedCount,
-      syncBatchId: persistResult.syncBatchId,
-    })
-  } catch {
-    response.status(500).json({ ok: false, message: 'Siparişler kaydedilemedi.' })
+    const credentials = request.body?.credentials ?? {}
+    const query = request.body?.query ?? {}
+    let result
+    try {
+      result = await callTrendyolOrdersByStatuses(credentials, { size: 50, ...query })
+    } catch {
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'orders',
+        status: 'failed',
+        errorCode: null,
+      })
+      released = true
+      response.status(502).json({ ok: false, message: 'Trendyol sipariş senkronu başarısız.' })
+      return
+    }
+
+    const complete = Boolean(result.ok) && result.debug?.syncStatus === 'COMPLETE'
+    if (!result.ok) {
+      // Başarısız çekim: mevcut siparişlere DOKUNMA (silme/arşivleme/ezme yok).
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'orders',
+        status: 'failed',
+        errorCode: result.statusCode ? String(result.statusCode) : null,
+      })
+      released = true
+      response.status(502).json({
+        ok: false,
+        complete: false,
+        message: `Trendyol sipariş senkronu başarısız: ${result.message}`,
+        fetchedCount: 0,
+        persistedCount: 0,
+        updatedCount: 0,
+        insertedCount: 0,
+        failedCount: 0,
+        syncBatchId: null,
+      })
+      return
+    }
+
+    try {
+      const normalized = normalizeTrendyolOrders(result.data)
+      const persistResult = await context.service.persistSyncResult(
+        context.db,
+        context.organizationId,
+        normalized.orders,
+        { complete, fetchedCount: normalized.orders.length },
+      )
+      // Başarı/kısmi metadata'sını yaz (kilidi serbest bırakır + UI'ye "son
+      // başarılı sync" zamanı sağlar). complete=true tam sync'i, aksi kısmî.
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'orders',
+        status: persistResult.complete ? 'success' : 'partial',
+        fetchedCount: persistResult.fetchedCount,
+      })
+      // Sipariş durum/tutar/iptal/iade verisi değişti → bu tenant'ın satış
+      // analitiği cache'i geçersizleşir; sonraki Dashboard isteği yeniden hesaplar.
+      await invalidateTenantAnalyticsCache(context.organizationId)
+      released = true
+      response.json({
+        ok: true,
+        complete: persistResult.complete,
+        fetchedCount: persistResult.fetchedCount,
+        persistedCount: persistResult.persistedCount,
+        updatedCount: persistResult.updatedCount,
+        insertedCount: persistResult.insertedCount,
+        failedCount: persistResult.failedCount,
+        archivedCount: persistResult.archivedCount,
+        syncBatchId: persistResult.syncBatchId,
+      })
+    } catch {
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'orders',
+        status: 'failed',
+        errorCode: null,
+      })
+      released = true
+      response.status(500).json({ ok: false, message: 'Siparişler kaydedilemedi.' })
+    }
+  } finally {
+    if (!released) {
+      // Beklenmedik yol (ör. response gönderilmeden bir throw): kilidi bırak.
+      await releaseOrgSyncLock(context.db, context.organizationId, 'orders')
+    }
   }
 })
 
@@ -691,6 +822,17 @@ const ANALYTICS_ORDER_STATUSES = [
   'AtCollectionPoint',
 ]
 
+// Analitik hesaplaması sırasında Trendyol upstream başarısızlığı. getOrCompute
+// içinde fırlatılır ki BAŞARISIZ sonuç cache'e YAZILMASIN; endpoint bunu
+// ok:false + statusCode yanıtına çevirir (mevcut sözleşme korunur).
+class AnalyticsUpstreamError extends Error {
+  constructor(message, statusCode) {
+    super(message)
+    this.name = 'AnalyticsUpstreamError'
+    this.statusCode = statusCode ?? null
+  }
+}
+
 app.get('/api/analytics/orders', async (request, response) => {
   // Auth modda requireAuth (tenantAuth) gate'i geçilmiştir; legacy modda
   // local-trust guard'ı korunur.
@@ -710,6 +852,13 @@ app.get('/api/analytics/orders', async (request, response) => {
     })
     return
   }
+  // Cache anahtarı: tenant + aralık + timezone + filtre + rapor sürümü. Yenile
+  // butonu refresh=true ile cache'i bypass eder (yetkilendirme: endpoint zaten
+  // requireAuth/local-trust gate'inden geçmiştir; kullanıcı kendi tenant'ının
+  // verisini yeniler).
+  const timezone = strOrUndef(request.query?.timezone)
+  const refresh = String(request.query?.refresh ?? '') === 'true'
+  const tenantId = resolveAnalyticsTenantId(request)
   try {
     const orgConfig = await getRequestIntegrationConfig(request)
     const credentials = orgConfig?.trendyol
@@ -721,78 +870,107 @@ app.get('/api/analytics/orders', async (request, response) => {
       })
       return
     }
-    // Trendyol orders API uzun aralıkları reddeder; pasif statüler sync
-    // akışında pencerelenmediği için aralık BURADA aktif-statü penceresi
-    // boyutunda dilimlenir ve sonuçlar paket kimliğiyle birleştirilir.
-    // Analitik statü listesi zaten tamdır; sync'in unfiltered discovery
-    // adımına gerek yoktur. Statü×pencere istekleri rate limite takılmasın
-    // diye istekler aralıklı gönderilir, 429'da uzun beklemeyle tekrar
-    // denenir.
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const windowContents = []
-    let windowCursor = startDate
-    while (windowCursor <= endDate) {
-      const windowEnd = Math.min(
-        endDate,
-        windowCursor + TRENDYOL_ACTIVE_STATUS_WINDOW_MS,
-      )
-      for (const status of ANALYTICS_ORDER_STATUSES) {
-        let result
-        for (let attempt = 0; attempt <= 6; attempt += 1) {
-          if (attempt > 0) {
-            const rateLimited =
-              Number(result?.statusCode) === 429 ||
-              /rate limit/i.test(String(result?.message ?? ''))
-            await wait(rateLimited ? 15000 : 1500 * attempt)
-          }
-          result = await callTrendyolOrdersAllPages(credentials, {
-            status,
-            startDate: windowCursor,
-            endDate: windowEnd,
-            size: 200,
-          })
-          if (result.ok) break
-        }
-        if (!result.ok) {
-          response.json({
-            ok: false,
-            message: `Satış analitiği verisi alınamadı (${status}): ${result.message}`,
-            statusCode: result.statusCode,
-          })
-          return
-        }
-        windowContents.push(getTrendyolOrderPackagesArray(result.data))
-        await wait(500)
-      }
-      if (windowEnd === endDate) break
-      windowCursor = windowEnd + 1
-    }
-    const combinedContent = mergeTrendyolPackageCollections(...windowContents)
-    const normalized = normalizeTrendyolOrders({
-      content: combinedContent,
-      totalElements: combinedContent.length,
-      totalPages: 1,
+    const { analyticsCache, buildAnalyticsCacheKey, sanitizeAnalyticsOrders } =
+      await getAnalyticsCacheModule()
+    const cacheKey = buildAnalyticsCacheKey({
+      resource: 'orders',
+      tenantId,
+      startMs: startDate,
+      endMs: endDate,
+      timezone,
+      filters: {},
     })
-    const orders = normalized.orders ?? []
-    const packageCount = new Set(
-      orders.map((order) =>
-        String(
-          order.packageId ??
-            order.shipmentPackageId ??
-            `${order.marketplace}::${order.orderNumber}`,
-        ),
-      ),
-    ).size
+    const { value, cached, generatedAt, cacheAgeMs } = await analyticsCache.getOrCompute(
+      cacheKey,
+      async () => {
+        // Trendyol orders API uzun aralıkları reddeder; pasif statüler sync
+        // akışında pencerelenmediği için aralık BURADA aktif-statü penceresi
+        // boyutunda dilimlenir ve sonuçlar paket kimliğiyle birleştirilir.
+        // İstekler aralıklı gönderilir; 429'da uzun beklemeyle tekrar denenir.
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+        const windowContents = []
+        let windowCursor = startDate
+        while (windowCursor <= endDate) {
+          const windowEnd = Math.min(
+            endDate,
+            windowCursor + TRENDYOL_ACTIVE_STATUS_WINDOW_MS,
+          )
+          for (const status of ANALYTICS_ORDER_STATUSES) {
+            let result
+            for (let attempt = 0; attempt <= 6; attempt += 1) {
+              if (attempt > 0) {
+                const rateLimited =
+                  Number(result?.statusCode) === 429 ||
+                  /rate limit/i.test(String(result?.message ?? ''))
+                await wait(rateLimited ? 15000 : 1500 * attempt)
+              }
+              result = await callTrendyolOrdersAllPages(credentials, {
+                status,
+                startDate: windowCursor,
+                endDate: windowEnd,
+                size: 200,
+              })
+              if (result.ok) break
+            }
+            if (!result.ok) {
+              // BAŞARISIZ: throw → cache'e YAZILMAZ.
+              throw new AnalyticsUpstreamError(
+                `Satış analitiği verisi alınamadı (${status}): ${result.message}`,
+                result.statusCode,
+              )
+            }
+            windowContents.push(getTrendyolOrderPackagesArray(result.data))
+            await wait(500)
+          }
+          if (windowEnd === endDate) break
+          windowCursor = windowEnd + 1
+        }
+        const combinedContent = mergeTrendyolPackageCollections(...windowContents)
+        const normalized = normalizeTrendyolOrders({
+          content: combinedContent,
+          totalElements: combinedContent.length,
+          totalPages: 1,
+        })
+        const orders = normalized.orders ?? []
+        const packageCount = new Set(
+          orders.map((order) =>
+            String(
+              order.packageId ??
+                order.shipmentPackageId ??
+                `${order.marketplace}::${order.orderNumber}`,
+            ),
+          ),
+        ).size
+        // Cache'e ve yanıta PII-azaltılmış (aggregate) sonuç yazılır: ham
+        // payload, açık adres, telefon, e-posta düşer.
+        return {
+          totalElements: combinedContent.length,
+          fetchedCount: orders.length,
+          packageCount,
+          orders: sanitizeAnalyticsOrders(orders),
+        }
+      },
+      { bypass: refresh },
+    )
     response.json({
       ok: true,
       startDate: new Date(startDate).toISOString(),
       endDate: new Date(endDate).toISOString(),
-      totalElements: combinedContent.length,
-      fetchedCount: orders.length,
-      packageCount,
-      orders,
+      ...value,
+      // Cache metadata (secret/PII içermez).
+      cached,
+      generatedAt: new Date(generatedAt).toISOString(),
+      cacheAgeMs,
     })
   } catch (error) {
+    if (error instanceof AnalyticsUpstreamError) {
+      response.json({
+        ok: false,
+        message: error.message,
+        statusCode: error.statusCode,
+      })
+      return
+    }
     if (error?.code === CREDENTIAL_ENCRYPTION_MISSING) {
       response.status(503).json({
         ok: false,
@@ -831,6 +1009,9 @@ app.get('/api/analytics/claims', async (request, response) => {
     })
     return
   }
+  const timezone = strOrUndef(request.query?.timezone)
+  const refresh = String(request.query?.refresh ?? '') === 'true'
+  const tenantId = resolveAnalyticsTenantId(request)
   try {
     const orgConfig = await getRequestIntegrationConfig(request)
     const credentials = orgConfig?.trendyol
@@ -842,42 +1023,72 @@ app.get('/api/analytics/claims', async (request, response) => {
       })
       return
     }
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-    const rawClaims = []
-    let cursor = startDate
-    while (cursor <= endDate) {
-      const windowEnd = Math.min(endDate, cursor + TRENDYOL_CLAIMS_WINDOW_MS)
-      const windowResult = await fetchTrendyolClaimsWindow(
-        credentials,
-        cursor,
-        windowEnd,
-        wait,
-      )
-      if (!windowResult.ok) {
-        response.json({
-          ok: false,
-          message: `İade analitiği verisi alınamadı: ${windowResult.message}`,
-          statusCode: windowResult.statusCode,
-        })
-        return
-      }
-      rawClaims.push(...windowResult.claims)
-      if (windowEnd === endDate) break
-      cursor = windowEnd + 1
-      await wait(400)
-    }
-    const normalized = normalizeTrendyolClaims(rawClaims)
+    const { analyticsCache, buildAnalyticsCacheKey } = await getAnalyticsCacheModule()
+    const cacheKey = buildAnalyticsCacheKey({
+      resource: 'claims',
+      tenantId,
+      startMs: startDate,
+      endMs: endDate,
+      timezone,
+      filters: {},
+    })
+    const { value, cached, generatedAt, cacheAgeMs } = await analyticsCache.getOrCompute(
+      cacheKey,
+      async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+        const rawClaims = []
+        let cursor = startDate
+        while (cursor <= endDate) {
+          const windowEnd = Math.min(endDate, cursor + TRENDYOL_CLAIMS_WINDOW_MS)
+          const windowResult = await fetchTrendyolClaimsWindow(
+            credentials,
+            cursor,
+            windowEnd,
+            wait,
+          )
+          if (!windowResult.ok) {
+            // BAŞARISIZ: throw → cache'e YAZILMAZ.
+            throw new AnalyticsUpstreamError(
+              `İade analitiği verisi alınamadı: ${windowResult.message}`,
+              windowResult.statusCode,
+            )
+          }
+          rawClaims.push(...windowResult.claims)
+          if (windowEnd === endDate) break
+          cursor = windowEnd + 1
+          await wait(400)
+        }
+        const normalized = normalizeTrendyolClaims(rawClaims)
+        // Claims kaydı PII taşımaz (claimId/paket/tutar/statü/tarih); aggregate
+        // olarak olduğu gibi cache'lenir.
+        return {
+          fetchedCount: normalized.claims.length,
+          uniqueClaimCount: normalized.uniqueClaimCount,
+          affectedPackageCount: normalized.affectedPackageCount,
+          amountBasis: normalized.amountBasis,
+          claims: normalized.claims,
+        }
+      },
+      { bypass: refresh },
+    )
     response.json({
       ok: true,
       startDate: new Date(startDate).toISOString(),
       endDate: new Date(endDate).toISOString(),
-      fetchedCount: normalized.claims.length,
-      uniqueClaimCount: normalized.uniqueClaimCount,
-      affectedPackageCount: normalized.affectedPackageCount,
-      amountBasis: normalized.amountBasis,
-      claims: normalized.claims,
+      ...value,
+      cached,
+      generatedAt: new Date(generatedAt).toISOString(),
+      cacheAgeMs,
     })
   } catch (error) {
+    if (error instanceof AnalyticsUpstreamError) {
+      response.json({
+        ok: false,
+        message: error.message,
+        statusCode: error.statusCode,
+      })
+      return
+    }
     response.status(500).json({
       ok: false,
       message:
@@ -903,6 +1114,49 @@ async function recordOnboardingSyncState(db, organizationId, entry) {
     await recordSyncState(db, organizationId, entry)
   } catch {
     // metadata kaydı best-effort; sync sonucunu etkilemez
+  }
+}
+
+// Org+resource bazlı sync kilidini alır. Cross-instance güvenli (DB satırı
+// üzerinde atomik). Kilit altyapısı yüklenemezse fail-open (true) döner: geçici
+// bir altyapı hatası sync'i tamamen engellemesin. Normal koşulda aynı org için
+// aynı anda ikinci bir sync false alır.
+async function acquireOrgSyncLock(db, organizationId, resource) {
+  try {
+    const { acquireSyncLock } = await import('./onboarding/onboardingRepository.ts')
+    return await acquireSyncLock(db, organizationId, resource)
+  } catch {
+    return true
+  }
+}
+
+// Beklenmedik hata yolunda kilidi serbest bırakır (best-effort). Normal akışta
+// recordOnboardingSyncState terminal statü yazarak kilidi zaten bırakır.
+async function releaseOrgSyncLock(db, organizationId, resource, errorCode) {
+  try {
+    const { releaseSyncLock } = await import('./onboarding/onboardingRepository.ts')
+    await releaseSyncLock(db, organizationId, resource, { errorCode: errorCode ?? null })
+  } catch {
+    // best-effort; bayat kilit staleMs sonrası kendiliğinden devralınır
+  }
+}
+
+// UI'nin sync durumunu (son başarılı zaman, son statü, çekilen adet, hata kodu)
+// yüzeye çıkarabilmesi için tek resource'un sync state satırını döner.
+async function readOrgSyncState(db, organizationId, resource) {
+  try {
+    const { getSyncState } = await import('./onboarding/onboardingRepository.ts')
+    const row = await getSyncState(db, organizationId, resource)
+    if (!row) return null
+    return {
+      lastSyncStatus: row.lastSyncStatus ?? null,
+      lastSuccessfulSyncAt: row.lastSuccessfulSyncAt ?? null,
+      lastFetchedCount: row.lastFetchedCount ?? null,
+      lastErrorCode: row.lastErrorCode ?? null,
+      updatedAt: row.updatedAt ?? null,
+    }
+  } catch {
+    return null
   }
 }
 
@@ -988,77 +1242,114 @@ app.get('/api/products/:id', async (request, response) => {
 app.post('/api/products/sync', async (request, response) => {
   const context = await requireProductPersistenceContext(request, response)
   if (!context) return
-  const credentials = request.body?.credentials ?? {}
-  let result
-  try {
-    result = await callTrendyolProducts(credentials)
-  } catch {
-    response.status(502).json({ ok: false, message: 'Trendyol ürün senkronu başarısız.' })
-    return
-  }
 
-  if (!result.ok) {
-    // Başarısız çekim: mevcut kataloğa DOKUNMA (silme/arşivleme/ezme yok).
-    await recordOnboardingSyncState(context.db, context.organizationId, {
-      provider: 'trendyol',
-      resource: 'products',
-      status: 'failed',
-      errorCode: result.statusCode ? String(result.statusCode) : null,
-    })
-    response.status(502).json({
+  // Org bazlı kilit (siparişteki ile aynı mantık; ayrı resource='products').
+  const locked = await acquireOrgSyncLock(context.db, context.organizationId, 'products')
+  if (!locked) {
+    const state = await readOrgSyncState(context.db, context.organizationId, 'products')
+    response.status(409).json({
       ok: false,
-      complete: false,
-      message: `Trendyol ürün senkronu başarısız: ${result.message}`,
-      fetchedProductCount: 0,
-      fetchedVariantCount: 0,
-      insertedProducts: 0,
-      updatedProducts: 0,
-      insertedVariants: 0,
-      updatedVariants: 0,
-      failedCount: 0,
-      syncBatchId: null,
+      code: 'sync_in_progress',
+      message: 'Bu hesap için bir ürün senkronizasyonu zaten çalışıyor.',
+      status: state,
     })
     return
   }
+  let released = false
 
   try {
-    const products = normalizeTrendyolProducts(result.data)
-    const expectedTotal = Number(result.debug?.expectedTotal ?? products.length)
-    const normalizedRatio =
-      expectedTotal > 0
-        ? products.length / expectedTotal
-        : products.length === 0
-          ? 1
-          : 0
-    // Tam sync kararı mevcut ürün fetch'iyle aynı eşik (%99) üzerinden verilir.
-    const complete = result.debug?.status === 'COMPLETE' && normalizedRatio >= 0.99
-    const persistResult = await context.service.persistProductSyncResult(
-      context.db,
-      context.organizationId,
-      products,
-      { complete },
-    )
-    await recordOnboardingSyncState(context.db, context.organizationId, {
-      provider: 'trendyol',
-      resource: 'products',
-      status: complete ? 'success' : 'partial',
-      fetchedCount: persistResult.fetchedVariantCount,
-    })
-    response.json({
-      ok: true,
-      complete: persistResult.complete,
-      fetchedProductCount: persistResult.fetchedProductCount,
-      fetchedVariantCount: persistResult.fetchedVariantCount,
-      insertedProducts: persistResult.insertedProducts,
-      updatedProducts: persistResult.updatedProducts,
-      insertedVariants: persistResult.insertedVariants,
-      updatedVariants: persistResult.updatedVariants,
-      failedCount: persistResult.failedCount,
-      archivedCount: persistResult.archivedCount,
-      syncBatchId: persistResult.syncBatchId,
-    })
-  } catch {
-    response.status(500).json({ ok: false, message: 'Ürünler kaydedilemedi.' })
+    const credentials = request.body?.credentials ?? {}
+    let result
+    try {
+      result = await callTrendyolProducts(credentials)
+    } catch {
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'products',
+        status: 'failed',
+        errorCode: null,
+      })
+      released = true
+      response.status(502).json({ ok: false, message: 'Trendyol ürün senkronu başarısız.' })
+      return
+    }
+
+    if (!result.ok) {
+      // Başarısız çekim: mevcut kataloğa DOKUNMA (silme/arşivleme/ezme yok).
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'products',
+        status: 'failed',
+        errorCode: result.statusCode ? String(result.statusCode) : null,
+      })
+      released = true
+      response.status(502).json({
+        ok: false,
+        complete: false,
+        message: `Trendyol ürün senkronu başarısız: ${result.message}`,
+        fetchedProductCount: 0,
+        fetchedVariantCount: 0,
+        insertedProducts: 0,
+        updatedProducts: 0,
+        insertedVariants: 0,
+        updatedVariants: 0,
+        failedCount: 0,
+        syncBatchId: null,
+      })
+      return
+    }
+
+    try {
+      const products = normalizeTrendyolProducts(result.data)
+      const expectedTotal = Number(result.debug?.expectedTotal ?? products.length)
+      const normalizedRatio =
+        expectedTotal > 0
+          ? products.length / expectedTotal
+          : products.length === 0
+            ? 1
+            : 0
+      // Tam sync kararı mevcut ürün fetch'iyle aynı eşik (%99) üzerinden verilir.
+      const complete = result.debug?.status === 'COMPLETE' && normalizedRatio >= 0.99
+      const persistResult = await context.service.persistProductSyncResult(
+        context.db,
+        context.organizationId,
+        products,
+        { complete },
+      )
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'products',
+        status: complete ? 'success' : 'partial',
+        fetchedCount: persistResult.fetchedVariantCount,
+      })
+      released = true
+      response.json({
+        ok: true,
+        complete: persistResult.complete,
+        fetchedProductCount: persistResult.fetchedProductCount,
+        fetchedVariantCount: persistResult.fetchedVariantCount,
+        insertedProducts: persistResult.insertedProducts,
+        updatedProducts: persistResult.updatedProducts,
+        insertedVariants: persistResult.insertedVariants,
+        updatedVariants: persistResult.updatedVariants,
+        failedCount: persistResult.failedCount,
+        archivedCount: persistResult.archivedCount,
+        syncBatchId: persistResult.syncBatchId,
+      })
+    } catch {
+      await recordOnboardingSyncState(context.db, context.organizationId, {
+        provider: 'trendyol',
+        resource: 'products',
+        status: 'failed',
+        errorCode: null,
+      })
+      released = true
+      response.status(500).json({ ok: false, message: 'Ürünler kaydedilemedi.' })
+    }
+  } finally {
+    if (!released) {
+      await releaseOrgSyncLock(context.db, context.organizationId, 'products')
+    }
   }
 })
 
@@ -1258,22 +1549,27 @@ app.post('/api/integrations/surat/save', (request, response) => {
 })
 
 app.post('/api/integrations/surat/test', async (request, response) => {
-  const config = normalizeSuratConfig(request.body?.config)
-  const validation = validateSuratSoapCredentials(config)
-
-  if (validation) {
-    response.json(validation)
+  const config = normalizeSuratConfig(
+    extractSuratConfigCandidate(request.body),
+  )
+  if (!config.kullaniciAdi) {
+    response.json({
+      provider: 'surat-kargo',
+      ok: false,
+      source: 'real',
+      message: 'Eksik Sürat alanları: Cari Kodu / Kullanıcı Adı',
+      checkedAt: new Date().toISOString(),
+    })
     return
   }
-
-  const webPasswordInfo = resolveSuratWebPassword(config)
-  if (!webPasswordInfo.value) {
+  const connectionPassword = resolveSuratConnectionTestPassword(config)
+  if (!connectionPassword) {
     response.json({
       provider: 'surat-kargo',
       ok: false,
       source: 'real',
       message:
-        'Sürat bağlantı testi için e-Sürat WebPassword / sorgulama şifresi gerekli.',
+        'Eksik Sürat alanları: Şifre / WebPassword (Sorgulama Şifresi)',
       checkedAt: new Date().toISOString(),
     })
     return
@@ -1285,7 +1581,7 @@ app.post('/api/integrations/surat/test', async (request, response) => {
     'CariKoduveSifre',
     `
       <GonderenCariKodu>${xmlEscape(config.kullaniciAdi)}</GonderenCariKodu>
-      <WebPassword>${xmlEscape(webPasswordInfo.value)}</WebPassword>
+      <WebPassword>${xmlEscape(connectionPassword)}</WebPassword>
       <BasTar>${formatSoapDate(yesterday)}</BasTar>
       <BitTar>${formatSoapDate(today)}</BitTar>
       <IsWebSiparisKoduOlsun>true</IsWebSiparisKoduOlsun>
@@ -1309,7 +1605,8 @@ app.post('/api/integrations/surat/test', async (request, response) => {
       operation: 'CariKoduveSifre',
       endpoint: SURAT_SOAP_URL,
       message,
-      bodyPreview: soap.text.slice(0, 1200),
+      responseReceived: Boolean(soap.text),
+      responseLength: String(soap.text ?? '').length,
     },
   })
 })
@@ -1331,7 +1628,9 @@ app.post('/api/diagnostics/surat/common-barcode-loop', (request, response) => {
 })
 
 app.post('/api/shipments/surat/track', async (request, response) => {
-  const config = normalizeSuratConfig(request.body?.config)
+  const config = normalizeSuratConfig(
+    extractSuratConfigCandidate(request.body),
+  )
   const queryReference = resolveSuratTrackingQueryReference(request.body)
   const validation = validateSuratSoapCredentials(config)
 
@@ -8628,6 +8927,8 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
           statusCode: entry.result.statusCode,
           message: entry.result.message,
           requestUrl: entry.result.debug?.requestUrl,
+          userAgent: entry.result.debug?.userAgent,
+          sellerId: entry.result.debug?.sellerId,
           pageRequests: entry.result.debug?.pageRequests,
           rawResponsePreview: entry.result.debug?.rawResponsePreview,
           parsedError: entry.result.debug?.parsedError,
@@ -8667,6 +8968,8 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
           statusCode: entry.result.statusCode,
           message: entry.result.message,
           requestUrl: entry.result.debug?.requestUrl,
+          userAgent: entry.result.debug?.userAgent,
+          sellerId: entry.result.debug?.sellerId,
           pageRequests: entry.result.debug?.pageRequests,
           rawResponsePreview: entry.result.debug?.rawResponsePreview,
           parsedError: entry.result.debug?.parsedError,
@@ -8694,6 +8997,8 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
         statusCode: entry.result.statusCode,
         message: entry.result.message,
         requestUrl: entry.result.debug?.requestUrl,
+        userAgent: entry.result.debug?.userAgent,
+        sellerId: entry.result.debug?.sellerId,
         pageRequests: entry.result.debug?.pageRequests,
         rawResponsePreview: entry.result.debug?.rawResponsePreview,
         parsedError: entry.result.debug?.parsedError,
@@ -8963,10 +9268,33 @@ async function callTrendyolOrders(credentials, query) {
   if (query.status) params.set('status', query.status)
   if (query.orderNumber) params.set('orderNumber', query.orderNumber)
 
-  return fetchTrendyolJson(
-    `${getTrendyolBaseUrl(credentials)}/integration/order/sellers/${credentials.sellerId}/orders?${params}`,
-    credentials,
-  )
+  const url = `${getTrendyolBaseUrl(credentials)}/integration/order/sellers/${credentials.sellerId}/orders?${params}`
+  // Sınırlı (en çok 3) exponential backoff. Prod'da [2000,4000,8000] ms; test
+  // ortamı TRENDYOL_ORDER_RETRY_DELAYS_MS ile kısa değerler enjekte edebilir.
+  // Değerden bağımsız retry sayısı üst sınırı korunur → sonsuz retry YOK.
+  const retryDelaysMs = getOrderRetryDelaysMs()
+  let result
+  let rateLimitRetries = 0
+  for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
+    result = await fetchTrendyolJson(url, credentials)
+    if (Number(result.statusCode) !== 429 || attempt === retryDelaysMs.length) {
+      break
+    }
+    rateLimitRetries += 1
+    const retryAfterMs = Number(result.debug?.retryAfterMs ?? 0)
+    const delayMs = Math.max(
+      retryDelaysMs[attempt],
+      Number.isFinite(retryAfterMs) ? retryAfterMs : 0,
+    )
+    await new Promise((resolve) => setTimeout(resolve, delayMs))
+  }
+  return {
+    ...result,
+    debug: {
+      ...(result?.debug ?? {}),
+      rateLimitRetries,
+    },
+  }
 }
 
 // Trendyol getClaims: GET /integration/order/sellers/{sellerId}/claims
@@ -9248,8 +9576,12 @@ async function fetchTrendyolJson(url, credentials, options = {}) {
     })
     const text = await response.text()
     const contentType = response.headers.get('content-type') ?? ''
-    const rawResponsePreview = text.slice(0, 2000)
     const parsed = parseTrendyolResponse(text, contentType)
+    const rawResponsePreview = buildTrendyolDebugResponsePreview(
+      parsed.data,
+      text,
+      contentType,
+    )
     const debug = {
       requestUrl: url,
       status: response.status,
@@ -9257,10 +9589,13 @@ async function fetchTrendyolJson(url, credentials, options = {}) {
       rawResponsePreview,
       parsedError: parsed.error,
       method,
+      userAgent,
+      sellerId: String(credentials?.sellerId ?? '').trim(),
       rateLimitRemaining:
         response.headers.get('x-ratelimit-remaining') ??
         response.headers.get('x-rate-limit-remaining') ??
         undefined,
+      retryAfterMs: parseRetryAfterMs(response.headers.get('retry-after')),
     }
 
     if (response.ok && !text.trim()) {
@@ -9334,6 +9669,59 @@ async function fetchTrendyolJson(url, credentials, options = {}) {
 function buildTrendyolUserAgent(credentials) {
   const sellerId = String(credentials?.sellerId ?? '').trim()
   return `${sellerId || 'CargoFlow'} - CargoFlow`
+}
+
+// Sipariş fetch'inde 429 için sınırlı backoff gecikmeleri (ms). Prod
+// varsayılanı [2000,4000,8000]; TRENDYOL_ORDER_RETRY_DELAYS_MS virgülle ayrılmış
+// pozitif sayılar verirse (test için) onu kullanır. Geçersiz/boş → varsayılan.
+// Uzunluk retry ÜST SINIRINI belirler (max 3); sonsuz retry mümkün değildir.
+function getOrderRetryDelaysMs() {
+  const raw = String(process.env.TRENDYOL_ORDER_RETRY_DELAYS_MS ?? '').trim()
+  if (!raw) return [2000, 4000, 8000]
+  const parsed = raw
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+  return parsed.length > 0 ? parsed.slice(0, 3) : [2000, 4000, 8000]
+}
+
+function parseRetryAfterMs(value) {
+  const text = String(value ?? '').trim()
+  if (!text) return 0
+  const seconds = Number(text)
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, 60_000)
+  }
+  const dateMs = Date.parse(text)
+  if (!Number.isFinite(dateMs)) return 0
+  return Math.min(Math.max(0, dateMs - Date.now()), 60_000)
+}
+
+function buildTrendyolDebugResponsePreview(data, text, contentType) {
+  if (data && typeof data === 'object') {
+    const content = Array.isArray(data.content) ? data.content : undefined
+    const safe = {
+      totalElements: Number.isFinite(Number(data.totalElements))
+        ? Number(data.totalElements)
+        : undefined,
+      totalPages: Number.isFinite(Number(data.totalPages))
+        ? Number(data.totalPages)
+        : undefined,
+      page: Number.isFinite(Number(data.page)) ? Number(data.page) : undefined,
+      size: Number.isFinite(Number(data.size)) ? Number(data.size) : undefined,
+      contentCount: content?.length,
+      contentShape:
+        content && content.length > 0
+          ? describeShapePiiFree(content[0])
+          : undefined,
+      errorMessage: extractTrendyolErrorMessage(data) || undefined,
+      responseShape: content ? undefined : describeShapePiiFree(data),
+    }
+    return JSON.stringify(safe).slice(0, 2000)
+  }
+  const lowerContentType = String(contentType ?? '').toLowerCase()
+  if (lowerContentType.includes('application/json')) return ''
+  return String(text ?? '').slice(0, 500)
 }
 
 function parseTrendyolResponse(text, contentType) {

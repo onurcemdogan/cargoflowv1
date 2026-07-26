@@ -122,9 +122,23 @@ export async function getIntegrationCredential(
   return decryptCredentialPayload(String(row.encryptedPayload))
 }
 
-// Boş bırakılan secret alanlar eski değeri korur; sağlanan alanlar üzerine
-// yazılır. Böylece frontend maskeli/boş secret gönderdiğinde eski secret
-// kaybolmaz.
+// Frontend'in secret alanlarda gösterdiği maskeli placeholder (yalnız
+// bullet/yıldız + "(kayıtlı)" gibi). Bu değer ASLA gerçek credential olarak
+// kaydedilmemeli; geldiğinde eski secret korunur.
+export function isMaskedPlaceholder(value: unknown): boolean {
+  const text = String(value ?? '').trim()
+  if (!text) return false
+  // Sistemin ürettiği maskeler bullet (•) ile başlar: "••••<tail>" (maskTail)
+  // veya "•••••••• (kayıtlı)" (SAVED_SECRET_PLACEHOLDER). Ayrıca tamamı
+  // yıldız/nokta olan jenerik maskeler. Gerçek secret'lar bullet ile başlamaz.
+  if (/^•{3,}/.test(text)) return true
+  if (/^[*·●]{3,}$/.test(text)) return true
+  return false
+}
+
+// Boş bırakılan VEYA maskeli-placeholder olan secret alanlar eski değeri korur;
+// yalnız gerçek yeni değer üzerine yazılır. Böylece frontend maskeli/boş secret
+// gönderdiğinde eski secret kaybolmaz ve maske DB'ye gerçek şifre olarak yazılmaz.
 function mergePreservingSecrets(
   existing: Record<string, unknown> | null,
   incoming: Record<string, unknown>,
@@ -132,6 +146,7 @@ function mergePreservingSecrets(
   const merged: Record<string, unknown> = { ...(existing ?? {}) }
   for (const [key, value] of Object.entries(incoming ?? {})) {
     if (value === undefined || value === null || value === '') continue
+    if (typeof value === 'string' && isMaskedPlaceholder(value)) continue
     merged[key] = value
   }
   return merged
@@ -193,20 +208,34 @@ function maskTail(value: unknown): string {
   return `••••${tail}`
 }
 
-// Maskelenmiş durum: secret DÖNDÜRMEZ; yalnız configured + tanımlayıcı +
-// maskeli kuyruk.
+// Maskelenmiş durum: gerçek apiKey/apiSecret/şifre DÖNDÜRMEZ. Yalnız tanımlayıcı
+// (sellerId, cariKod, firmaId), ortam, türetilmiş userAgent ve secret'ların
+// VARLIK bayrakları (hasApiKey/hasApiSecret/hasPassword/hasWebPassword) döner.
+// Frontend bu bilgiyle formu yeniden hydrate eder ve secret alanlarda maskeli
+// placeholder gösterir; secret'ın kendisi hiçbir zaman istemciye gitmez.
 export async function getMaskedIntegrationStatus(
   db: CredentialDb,
   organizationId: string,
 ): Promise<{
   trendyol: {
     configured: boolean
+    connected: boolean
     sellerId: string
+    environment: string
+    userAgent: string
+    hasApiKey: boolean
+    hasApiSecret: boolean
     apiKeyMasked: string
   }
   surat: {
     configured: boolean
+    connected: boolean
     customerCode: string
+    cariKod: string
+    firmaId: string
+    environment: string
+    hasPassword: boolean
+    hasWebPassword: boolean
     usernameMasked: string
   }
 }> {
@@ -214,21 +243,41 @@ export async function getMaskedIntegrationStatus(
     db,
     organizationId,
   )
-  const trendyolConfigured = Boolean(
-    trendyol.sellerId || trendyol.apiKey || trendyol.apiSecret,
-  )
+  const sellerId = String(trendyol.sellerId ?? '')
+  const hasApiKey = Boolean(String(trendyol.apiKey ?? '').trim())
+  const hasApiSecret = Boolean(String(trendyol.apiSecret ?? '').trim())
+  const trendyolConfigured = Boolean(sellerId || hasApiKey || hasApiSecret)
+  const userAgentName = String(trendyol.userAgentName ?? '').trim() || 'CargoFlow'
+
+  const cariKod = String(surat.kullaniciAdi ?? surat.cariKodu ?? '')
+  const hasSuratPassword = Boolean(String(surat.sifre ?? '').trim())
+  const hasWebPassword = Boolean(String(surat.webPassword ?? '').trim())
   const suratConfigured = Boolean(
-    surat.kullaniciAdi || surat.sifre || surat.webPassword || surat.firmaId,
+    cariKod || hasSuratPassword || hasWebPassword || surat.firmaId,
   )
   return {
     trendyol: {
       configured: trendyolConfigured,
-      sellerId: String(trendyol.sellerId ?? ''),
+      // "connected": zorunlu alanların tamamı kayıtlı (gerçek test durumu DEĞİL).
+      connected: Boolean(sellerId && hasApiKey && hasApiSecret),
+      sellerId,
+      environment: String(trendyol.environment ?? ''),
+      userAgent: sellerId ? `${sellerId} - ${userAgentName}` : '',
+      hasApiKey,
+      hasApiSecret,
       apiKeyMasked: maskTail(trendyol.apiKey),
     },
     surat: {
       configured: suratConfigured,
-      customerCode: String(surat.firmaId ?? surat.kullaniciAdi ?? ''),
+      connected: Boolean(cariKod && (hasSuratPassword || hasWebPassword)),
+      // customerCode geriye dönük uyum; cariKod yeni standart ad. Canlı-doğrulanmış
+      // davranış: kullaniciAdi yoksa firmaId'ye düşer (kullaniciAdi ?? firmaId).
+      customerCode: cariKod || String(surat.firmaId ?? ''),
+      cariKod,
+      firmaId: String(surat.firmaId ?? ''),
+      environment: String(surat.ortam ?? ''),
+      hasPassword: hasSuratPassword,
+      hasWebPassword,
       usernameMasked: maskTail(surat.kullaniciAdi),
     },
   }

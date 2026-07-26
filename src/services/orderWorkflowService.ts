@@ -679,6 +679,7 @@ export class OrderWorkflowService {
 
     let syncPayload: {
       ok?: boolean
+      code?: string
       complete?: boolean
       message?: string
       insertedCount?: number
@@ -687,6 +688,9 @@ export class OrderWorkflowService {
       failedCount?: number
     } = {}
     let syncOk = false
+    // 409: aynı org için başka bir sync zaten çalışıyor (backend org kilidi).
+    // Veri kaybı yok; mevcut liste korunur, bilgilendirici mesaj gösterilir.
+    let syncInProgress = false
     try {
       const response = await fetch('/api/orders/sync', {
         method: 'POST',
@@ -696,6 +700,7 @@ export class OrderWorkflowService {
       })
       syncPayload = (await response.json().catch(() => ({}))) as typeof syncPayload
       syncOk = response.ok && syncPayload.ok === true
+      syncInProgress = response.status === 409 || syncPayload.code === 'sync_in_progress'
     } catch (error) {
       syncPayload = {
         ok: false,
@@ -707,6 +712,23 @@ export class OrderWorkflowService {
     // Sync başarılı olsun ya da olmasın, sunucudaki güncel (korunmuş) listeyi
     // yükle. Başarısız sync veri kaybettirmez; mevcut kayıtlar sunucuda durur.
     const orders = await this.loadOrdersFromServer().catch(() => this.authOrdersCache)
+
+    if (syncInProgress) {
+      // Zaten çalışan sync veri silmez; kullanıcıya beklemesini bildir.
+      this.auditLogService.append({
+        action: 'Siparişler çekildi',
+        level: 'info',
+        details: `Senkronizasyon zaten sürüyor; ${orders.length} sipariş listelendi.`,
+      })
+      return {
+        orders,
+        result: {
+          level: 'info',
+          source: 'real',
+          message: `Bu hesap için bir senkronizasyon zaten çalışıyor. Mevcut ${orders.length} sipariş gösteriliyor; tamamlanınca "Yenile" ile listeyi güncelleyin.`,
+        },
+      }
+    }
 
     if (!syncOk) {
       this.auditLogService.append({
@@ -939,6 +961,34 @@ export class OrderWorkflowService {
           : `${response.message} Kısmi sonuç ana ürün kataloğunu değiştirmedi.`,
         productSyncDebug: debug,
       },
+    }
+  }
+
+  // Etiket-hazır canonical durumunu (LABEL_READY) DB'ye KALICI yazar. Backend
+  // siparişin gerçek Sürat gönderisi olduğunu doğrular ve operationStatus'ü atomik
+  // günceller; yeni shipment/barkod OLUŞTURMAZ (idempotency korunur, duplicate
+  // barkod riski yoktur). Legacy modda no-op (localStorage zaten persistOrders ile
+  // yazılır). Başarısızlıkta hata FIRLATIR → çağıran optimistic başarıyı geri alır.
+  async persistLabelReady(orderId: string): Promise<void> {
+    if (!this.authMode) return
+    const id = String(orderId ?? '').trim()
+    if (!id) return
+    const response = await fetch(
+      `/api/orders/${encodeURIComponent(id)}/label-ready`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      },
+    )
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean
+      message?: string
+    }
+    if (!response.ok || payload?.ok !== true) {
+      throw new Error(
+        String(payload?.message ?? 'Etiket durumu sunucuya kaydedilemedi.'),
+      )
     }
   }
 
@@ -1396,6 +1446,80 @@ export class OrderWorkflowService {
           details: `Sürat gönderisi oluşturulamadı: ${errorMessage}`,
           orderNumber: order.orderNumber,
         })
+      }
+    }
+
+    // AUTH modu: "Etiket Hazır" canonical durumunu DB'ye KALICI yaz. persistOrders
+    // yalnız in-memory snapshot günceller; sayfa yenilenince (DB re-read) korunması
+    // için backend'e yazılmalı. Durum backend tarafından doğrulanır (yalnız local
+    // state değişimi başarı sayılmaz). Persist başarısızsa optimistic "Etiket Hazır"
+    // GERİ ALINIR ve gerçek hata yüzeye çıkar.
+    if (this.authMode) {
+      // Etiket-hazır adayları: create bu tur LABEL_READY yaptı VEYA (tekrar deneme)
+      // mevcut doğrulanmış/ön-atanmış printable gönderi zaten var. markLabelReady
+      // yeni shipment/barkod OLUŞTURMAZ; retry mevcut gönderi üzerinden yalnız
+      // canonical durumu onarır (idempotent + no-regress). Böylece persist
+      // hatasından sonra tekrar deneme, provider create'i YENİDEN tetiklemeden
+      // state repair yapabilir. Zaten basılmış/kargoda/teslim (printed-or-beyond)
+      // siparişlere DOKUNULMAZ.
+      const printedOrBeyond = new Set([
+        'LABEL_PRINTED',
+        'SHIPPED',
+        'HANDED_TO_CARGO',
+        'DELIVERED',
+        'DELIVERED_SPECIAL',
+        'RETURNING',
+      ])
+      const repairTargets = nextOrders.filter(
+        (candidate) =>
+          selectedIds.includes(candidate.id) &&
+          !printedOrBeyond.has(String(candidate.operationStatus)) &&
+          (candidate.operationStatus === 'LABEL_READY' ||
+            resolveSuratPrintEligibility(candidate).canPrint),
+      )
+      for (const target of repairTargets) {
+        const wasFreshReady = target.operationStatus === 'LABEL_READY'
+        try {
+          await this.persistLabelReady(target.id)
+          // Persist DB tarafından doğrulandı: retry-repair'de yerel durumu da
+          // canonical LABEL_READY'ye getir (önceki 'Hata'/UNVERIFIED'dan).
+          if (!wasFreshReady) {
+            nextOrders = replaceOrder(nextOrders, {
+              ...target,
+              status: 'Etiket Hazır',
+              operationStatus: 'LABEL_READY',
+              printEnabled: true,
+              errorMessage: undefined,
+            })
+          }
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Etiket durumu sunucuya kaydedilemedi.'
+          // Yalnız local state değişimi başarı sayılmaz: persist başarısızsa
+          // optimistic "Etiket Hazır" GERİ ALINIR ve gerçek hata gösterilir.
+          nextOrders = replaceOrder(nextOrders, {
+            ...target,
+            status: 'Hata',
+            operationStatus: 'LABEL_CREATED_UNVERIFIED',
+            printEnabled: false,
+            errorMessage: `Etiket hazır durumu kaydedilemedi: ${message}`,
+          })
+          if (wasFreshReady) {
+            successCount = Math.max(0, successCount - 1)
+          }
+          failedBarcodeCount += 1
+          if (!failedOrderNumbers.includes(target.orderNumber)) {
+            failedOrderNumbers.push(target.orderNumber)
+          }
+          this.auditLogService.append({
+            action: 'Gönderi oluşturuldu',
+            level: 'error',
+            details: `${target.orderNumber}: etiket hazır durumu DB'ye yazılamadı; durum korunmadı. ${message}`,
+            orderNumber: target.orderNumber,
+          })
+        }
       }
     }
 

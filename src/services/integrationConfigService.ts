@@ -17,13 +17,37 @@ const LABEL_TEMPLATE_KEY = 'cargoflow.labelTemplate'
 // gider, böylece auth cookie'si (credentials:'include') sunucuya ulaşır.
 const LOCAL_CONFIG_ENDPOINT = '/api/local-config/integration'
 
-// Maskelenmiş auth-mode durum yanıtı (secret İÇERMEZ).
+// Maskelenmiş auth-mode durum yanıtı (secret İÇERMEZ). Yalnız tanımlayıcı,
+// ortam ve secret VARLIK bayrakları taşır.
 export interface MaskedIntegrationStatus {
   mode: 'auth'
   configured: boolean
-  trendyol: { configured: boolean; sellerId: string; apiKeyMasked: string }
-  surat: { configured: boolean; customerCode: string; usernameMasked: string }
+  trendyol: {
+    configured: boolean
+    connected?: boolean
+    sellerId: string
+    environment?: string
+    userAgent?: string
+    hasApiKey?: boolean
+    hasApiSecret?: boolean
+    apiKeyMasked: string
+  }
+  surat: {
+    configured: boolean
+    connected?: boolean
+    customerCode: string
+    cariKod?: string
+    firmaId?: string
+    environment?: string
+    hasPassword?: boolean
+    hasWebPassword?: boolean
+    usernameMasked: string
+  }
 }
+
+// Secret alanlarda gösterilecek maskeli placeholder. Bu değer FORM VALUE'su
+// DEĞİLDİR (yalnız input placeholder attribute'u); kaydedilirken gönderilmez.
+export const SAVED_SECRET_PLACEHOLDER = '•••••••• (kayıtlı)'
 
 export function mmToDots(mm: number): number {
   return Math.round((mm / 25.4) * 203)
@@ -146,6 +170,9 @@ export class IntegrationConfigService {
   private authMode = false
   // UI'ın "configured" durumunu göstermesi için maskeli durum (secret yok).
   private maskedStatus: MaskedIntegrationStatus | null = null
+  // saveIntegrationConfig mevcut senkron API sözleşmesini korur; production
+  // akışları aynı PUT işlemini ayrıca başlatmadan bu promise'i bekleyebilir.
+  private pendingPersistence: Promise<boolean> | null = null
 
   isAuthMode(): boolean {
     return this.authMode
@@ -200,7 +227,32 @@ export class IntegrationConfigService {
       if (payload?.mode === 'auth') {
         this.authMode = true
         this.maskedStatus = payload as MaskedIntegrationStatus
-        return normalizeIntegrationConfig(defaultIntegrationConfig)
+        // Formu KAYITLI tanımlayıcı + ortam ile yeniden hydrate et; secret
+        // alanlar BOŞ kalır (placeholder UI'da gösterilir). Böylece sayfa
+        // yenilenince form boş görünmez ve gerçek secret istemciye gelmez.
+        const trendyolEnv = String(payload.trendyol?.environment ?? '')
+        const suratEnv = String(payload.surat?.environment ?? '')
+        return normalizeIntegrationConfig({
+          ...defaultIntegrationConfig,
+          trendyol: {
+            ...defaultIntegrationConfig.trendyol,
+            sellerId: String(payload.trendyol?.sellerId ?? ''),
+            userAgentName: 'CargoFlow',
+            ...(trendyolEnv === 'prod' || trendyolEnv === 'stage'
+              ? { environment: trendyolEnv }
+              : {}),
+          },
+          surat: {
+            ...defaultIntegrationConfig.surat,
+            kullaniciAdi: String(
+              payload.surat?.cariKod ?? payload.surat?.customerCode ?? '',
+            ),
+            firmaId: String(payload.surat?.firmaId ?? ''),
+            ...(suratEnv === 'live' || suratEnv === 'test'
+              ? { ortam: suratEnv }
+              : {}),
+          },
+        })
       }
       this.authMode = false
       if (response.ok && payload?.configured && payload?.config) {
@@ -224,8 +276,20 @@ export class IntegrationConfigService {
     if (!this.authMode) {
       saveToStorage(INTEGRATION_KEY, normalized)
     }
-    void this.persistIntegrationConfig(normalized)
+    this.pendingPersistence = this.persistIntegrationConfig(normalized)
     return normalized
+  }
+
+  async waitForPendingPersistence(): Promise<boolean> {
+    const pending = this.pendingPersistence
+    if (!pending) return true
+    try {
+      return await pending
+    } finally {
+      if (this.pendingPersistence === pending) {
+        this.pendingPersistence = null
+      }
+    }
   }
 
   async persistIntegrationConfig(config: IntegrationConfig): Promise<boolean> {
