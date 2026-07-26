@@ -152,6 +152,42 @@ test('Sürat: kaydet → maskeli hydrate → secret sızmaz → boş secret koru
   assert.equal(afterMask.webPassword, 'REAL-WEB-PASS')
 })
 
+// Canlı-doğrulanmış Sürat davranışları (regresyon uzlaştırması): FirmaId temel
+// bağlantı için ZORUNLU değil; WebPassword yoksa normal şifre yeterli; kullaniciAdi
+// yoksa customerCode firmaId'ye düşer (kullaniciAdi ?? firmaId).
+test('Sürat: firmaId opsiyonel, webPassword opsiyonel, customerCode firmaId fallback', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+
+  // A) FirmaId YOK, yalnız kullaniciAdi + sifre → configured + connected.
+  const orgA = await makeOrg(db, 'Org NoFirma', 'org-nofirma')
+  await cred.saveIntegrationCredential(db, orgA, 'surat', {
+    kullaniciAdi: '1551267127',
+    sifre: 'PASS-ONLY',
+  })
+  const a = await cred.getMaskedIntegrationStatus(db, orgA)
+  assert.equal(a.surat.configured, true, 'firmaId olmadan configured')
+  assert.equal(a.surat.connected, true, 'firmaId olmadan (kullaniciAdi+sifre) connected')
+  assert.equal(a.surat.customerCode, '1551267127')
+  assert.equal(a.surat.firmaId, '')
+
+  // B) WebPassword YOK, yalnız normal sifre → hasPassword true, connected true.
+  assert.equal(a.surat.hasPassword, true)
+  assert.equal(a.surat.hasWebPassword, false)
+
+  // C) kullaniciAdi YOK ama firmaId var → customerCode firmaId'ye düşer.
+  const orgB = await makeOrg(db, 'Org FirmaOnly', 'org-firmaonly')
+  await cred.saveIntegrationCredential(db, orgB, 'surat', {
+    firmaId: '9998887',
+    webPassword: 'WEB-ONLY',
+  })
+  const b = await cred.getMaskedIntegrationStatus(db, orgB)
+  assert.equal(b.surat.customerCode, '9998887', 'kullaniciAdi yoksa customerCode=firmaId')
+  assert.equal(b.surat.firmaId, '9998887')
+  assert.equal(b.surat.hasWebPassword, true)
+  assert.equal(b.surat.configured, true)
+})
+
 test('7) İkinci tenant birinci tenant credential\'ını GÖREMEZ', async (t) => {
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())

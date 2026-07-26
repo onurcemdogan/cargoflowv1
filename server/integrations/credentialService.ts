@@ -270,8 +270,9 @@ export async function getMaskedIntegrationStatus(
     surat: {
       configured: suratConfigured,
       connected: Boolean(cariKod && (hasSuratPassword || hasWebPassword)),
-      // customerCode geriye dönük uyum; cariKod yeni standart ad.
-      customerCode: cariKod,
+      // customerCode geriye dönük uyum; cariKod yeni standart ad. Canlı-doğrulanmış
+      // davranış: kullaniciAdi yoksa firmaId'ye düşer (kullaniciAdi ?? firmaId).
+      customerCode: cariKod || String(surat.firmaId ?? ''),
       cariKod,
       firmaId: String(surat.firmaId ?? ''),
       environment: String(surat.ortam ?? ''),
