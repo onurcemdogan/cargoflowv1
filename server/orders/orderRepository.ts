@@ -8,7 +8,9 @@ import {
   gte,
   ilike,
   inArray,
+  isNull,
   lte,
+  notInArray,
   or,
   sql,
 } from 'drizzle-orm'
@@ -298,4 +300,65 @@ export async function archiveMissingOrders(
     archived += 1
   }
   return archived
+}
+
+// Canonical "Etiket Hazır" operasyon durumu. Pazaryeri (marketplace) status'ünden
+// AYRI bir alandır (orders.operationStatus); re-sync bunu KORUR (marketplaceUpdateSet
+// operationStatus'e dokunmaz).
+export const LABEL_READY_OPERATION_STATUS = 'LABEL_READY'
+
+// Etiket-hazır veya daha ileri (basıldı/kargoda/teslim) durumlar: bunlardan
+// LABEL_READY'ye GERİ dönülmez (no-regress). Idempotency: zaten LABEL_READY ise
+// tekrar yazmaz (updated=false).
+const LABEL_READY_NON_REGRESS_STATES = [
+  'LABEL_READY',
+  'LABEL_PRINTED',
+  'SHIPPED',
+  'HANDED_TO_CARGO',
+  'DELIVERED',
+  'DELIVERED_SPECIAL',
+  'RETURNING',
+]
+
+// Sipariş operasyon durumunu ATOMİK olarak canonical LABEL_READY'ye geçirir.
+// Tenant-scoped (organizationId filtresi). Tek koşullu UPDATE: yalnız kayıt yoksa/
+// etiket-öncesi bir durumdaysa yazar; zaten LABEL_READY veya daha ileri durumda ise
+// DEĞİŞTİRMEZ (idempotent + no-regress). marketplaceStatus'e DOKUNMAZ.
+export async function markOrderLabelReady(
+  db: Db,
+  organizationId: string,
+  orderId: string,
+): Promise<{ found: boolean; updated: boolean; operationStatus: string | null }> {
+  const updated = await db
+    .update(orders)
+    .set({ operationStatus: LABEL_READY_OPERATION_STATUS, updatedAt: new Date() })
+    .where(
+      and(
+        eq(orders.organizationId, organizationId),
+        eq(orders.id, orderId),
+        or(
+          isNull(orders.operationStatus),
+          notInArray(orders.operationStatus, LABEL_READY_NON_REGRESS_STATES),
+        ),
+      ),
+    )
+    .returning({ id: orders.id })
+  if (updated.length > 0) {
+    return { found: true, updated: true, operationStatus: LABEL_READY_OPERATION_STATUS }
+  }
+  // UPDATE eşleşmedi: ya kayıt yok (tenant dışı/silinmiş) ya da zaten non-regress
+  // bir durumda (idempotent). Ayırt etmek için org-scoped tekil okuma yapılır.
+  const existing = await db
+    .select({ operationStatus: orders.operationStatus })
+    .from(orders)
+    .where(and(eq(orders.organizationId, organizationId), eq(orders.id, orderId)))
+    .limit(1)
+  if (existing.length === 0) {
+    return { found: false, updated: false, operationStatus: null }
+  }
+  return {
+    found: true,
+    updated: false,
+    operationStatus: existing[0].operationStatus ?? null,
+  }
 }

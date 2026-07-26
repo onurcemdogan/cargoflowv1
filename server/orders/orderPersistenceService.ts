@@ -8,6 +8,7 @@ import {
   findLinesForOrders,
   findOrderById,
   findOrders,
+  markOrderLabelReady,
   upsertMarketplaceOrders,
   type OrderFilters,
 } from './orderRepository.ts'
@@ -134,6 +135,51 @@ export async function getOrder(
   const lineRows = await findLinesForOrders(db, organizationId, [String(row.id)])
   const base = rowToOrder(row, lineRows)
   return attachShipment(db, organizationId, base)
+}
+
+export interface LabelReadyResult {
+  found: boolean
+  updated: boolean
+  reason?: 'shipment_required'
+  operationStatus: string | null
+  order: Record<string, unknown> | null
+}
+
+// Etiket başarıyla oluşturulduğunda siparişi canonical LABEL_READY durumuna
+// geçirir ve KALICI olarak DB'ye yazar. Backend-doğrulamalı: önce siparişin
+// GERÇEK (persistlenmiş) bir Sürat gönderisi olduğunu kontrol eder — client
+// state'e GÜVENMEZ; gönderi yoksa geçiş yapmaz (reason='shipment_required').
+// Geçiş atomik + idempotent + no-regress (markOrderLabelReady). marketplaceStatus
+// AYRI alandır, dokunulmaz. Güncel sipariş view-model'i döner.
+export async function markLabelReady(
+  db: Db,
+  organizationId: string,
+  orderId: string,
+): Promise<LabelReadyResult> {
+  const orderRow = await findOrderById(db, organizationId, orderId)
+  if (!orderRow) {
+    return { found: false, updated: false, operationStatus: null, order: null }
+  }
+  const shipment = await findShipment(
+    db,
+    organizationId,
+    String(orderRow.marketplace),
+    String(orderRow.packageId),
+    'surat',
+  )
+  if (!shipment) {
+    // Gönderi kaydı olmadan etiket-hazır olunamaz: önceki durum korunur.
+    return {
+      found: true,
+      updated: false,
+      reason: 'shipment_required',
+      operationStatus: (orderRow.operationStatus as string | null) ?? null,
+      order: null,
+    }
+  }
+  const result = await markOrderLabelReady(db, organizationId, orderId)
+  const order = await getOrder(db, organizationId, orderId)
+  return { ...result, order }
 }
 
 export { countOrdersByOrganization }

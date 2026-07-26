@@ -644,6 +644,48 @@ app.get('/api/orders/:id', async (request, response) => {
   }
 })
 
+// POST /api/orders/:id/label-ready — etiket başarıyla oluşturulduğunda siparişi
+// canonical LABEL_READY durumuna KALICI geçirir (org yalnız req.auth'tan).
+// Backend-doğrulamalı: gerçek Sürat gönderisi yoksa geçiş yapılmaz (409). Atomik +
+// idempotent + no-regress. marketplaceStatus AYRI alandır, dokunulmaz. Sonra
+// tenant analitik cache'i invalidate edilir; frontend listeyi DB'den yeniden okur.
+app.post('/api/orders/:id/label-ready', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const orderId = String(request.params.id)
+  try {
+    const result = await context.service.markLabelReady(
+      context.db,
+      context.organizationId,
+      orderId,
+    )
+    if (!result.found) {
+      response.status(404).json({ ok: false, message: 'Sipariş bulunamadı.' })
+      return
+    }
+    if (result.reason === 'shipment_required') {
+      response.status(409).json({
+        ok: false,
+        code: 'shipment_required',
+        message:
+          'Etiket-hazır için önce doğrulanmış Sürat gönderisi oluşturulmalıdır.',
+        operationStatus: result.operationStatus,
+      })
+      return
+    }
+    // Operasyon durumu değişti → bu tenant'ın satış analitiği cache'i geçersizleşir.
+    await invalidateTenantAnalyticsCache(context.organizationId)
+    response.json({
+      ok: true,
+      updated: result.updated,
+      operationStatus: result.operationStatus,
+      order: result.order,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Etiket durumu kaydedilemedi.' })
+  }
+})
+
 // POST /api/orders/sync — mevcut Trendyol sync ile (org credential DB'den
 // enjekte edilir) çeker, normalize eder ve org bazında upsert eder. KISMİ/
 // başarısız sync sipariş SİLMEZ/ARŞİVLEMEZ; arşivleme yalnız kanıtlı TAM

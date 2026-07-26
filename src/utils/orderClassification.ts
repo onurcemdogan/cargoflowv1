@@ -121,6 +121,13 @@ export function classifyOrderForTabs(
     | undefined
   const verification = verifySuratShipment(order)
   const operationStatus = normalizedToken(order.operationStatus)
+  // Canonical (DB'de kalıcı) operasyon durumu — pazaryeri status'ünden AYRI.
+  // Etiket başarıyla oluşturulduğunda backend orders.operationStatus'ü LABEL_READY
+  // (basıldığında LABEL_PRINTED) yapar. Bu KANITLI durum, kısmen persistlenen
+  // shipment payload'ından bağımsız olarak siparişin "Etiket Hazır/Basıldı"
+  // grubuna girmesini sağlar; sayfa yenilenince (DB re-read) korunur.
+  const canonicalLabelReady = operationStatus === 'labelready'
+  const canonicalLabelPrinted = operationStatus === 'labelprinted'
   const marketplaceStatus = String(order.marketplaceStatus ?? '').trim()
   const marketplaceDelivered = marketplaceStatus === 'Delivered'
   const marketplaceHandedToCargo = ['Shipped', 'AtCollectionPoint'].includes(
@@ -153,10 +160,11 @@ export function classifyOrderForTabs(
   )
   const labelStatus = normalizedToken(order.labelStatus)
   const isLabelPrinted = Boolean(
-    (shipment?.dispatchRegistrationConfirmed === true ||
-      isPreassignedAwaitingAcceptance(order.shipment)) &&
-      labelStatus === 'printed' &&
-      order.label?.printedAt,
+    canonicalLabelPrinted ||
+      ((shipment?.dispatchRegistrationConfirmed === true ||
+        isPreassignedAwaitingAcceptance(order.shipment)) &&
+        labelStatus === 'printed' &&
+        order.label?.printedAt),
   )
   const dispatchRegistrationConfirmed =
     shipment?.dispatchRegistrationConfirmed === true
@@ -220,6 +228,10 @@ export function classifyOrderForTabs(
   const isOpenOperation = !processClosed
   const isBarcodeWaiting = Boolean(
     isOpenOperation &&
+      // Canonical etiket-hazır/basıldı durumu "barkod bekliyor" DEĞİLDİR (aksi
+      // hâlde hem bu sekmede hem Etiket Hazır'da çift sayılırdı).
+      !canonicalLabelReady &&
+      !canonicalLabelPrinted &&
       !printableShipment &&
       (!dispatchRegistrationConfirmed || !barcodeRaw) &&
       !isLabelPrinted,
@@ -232,6 +244,9 @@ export function classifyOrderForTabs(
           operationStatus,
         )),
   )
+  // NOT: canonical LABEL_READY doğrulama-bekleyen dışında BIRAKILMAZ; ön-atanmış
+  // (preassigned-awaiting-acceptance) sipariş hem Etiket Hazır hem fiziksel Sürat
+  // kabul doğrulaması bekleyen olarak sayılır (mevcut lifecycle sözleşmesi).
   const isSuratVerificationWaiting = Boolean(
     isOpenOperation &&
       order.shipment &&
@@ -240,11 +255,16 @@ export function classifyOrderForTabs(
   )
   const isLabelReady = Boolean(
     isOpenOperation &&
-      printableShipment &&
-      printableBarcode &&
       !isLabelPrinted &&
-      (['ready', 'generated'].includes(labelStatus) ||
-        ['labelready', 'trackingconfirmed'].includes(operationStatus)),
+      // Canonical LABEL_READY (DB'de kalıcı, backend-doğrulamalı) tek başına
+      // yeterlidir: kısmi persistlenen shipment payload'ından printableShipment
+      // türetilemese bile sipariş Etiket Hazır grubundadır. Aksi hâlde eski
+      // (türetilmiş) yol: doğrulanmış/ön-atanmış gönderi + barkod + label durumu.
+      (canonicalLabelReady ||
+        (printableShipment &&
+          printableBarcode &&
+          (['ready', 'generated'].includes(labelStatus) ||
+            ['labelready', 'trackingconfirmed'].includes(operationStatus)))),
   )
   const isReadyForCargo = Boolean(
     isOpenOperation && printableShipment && printableBarcode,

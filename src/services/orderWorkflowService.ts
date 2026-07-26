@@ -964,6 +964,34 @@ export class OrderWorkflowService {
     }
   }
 
+  // Etiket-hazır canonical durumunu (LABEL_READY) DB'ye KALICI yazar. Backend
+  // siparişin gerçek Sürat gönderisi olduğunu doğrular ve operationStatus'ü atomik
+  // günceller; yeni shipment/barkod OLUŞTURMAZ (idempotency korunur, duplicate
+  // barkod riski yoktur). Legacy modda no-op (localStorage zaten persistOrders ile
+  // yazılır). Başarısızlıkta hata FIRLATIR → çağıran optimistic başarıyı geri alır.
+  async persistLabelReady(orderId: string): Promise<void> {
+    if (!this.authMode) return
+    const id = String(orderId ?? '').trim()
+    if (!id) return
+    const response = await fetch(
+      `/api/orders/${encodeURIComponent(id)}/label-ready`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      },
+    )
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean
+      message?: string
+    }
+    if (!response.ok || payload?.ok !== true) {
+      throw new Error(
+        String(payload?.message ?? 'Etiket durumu sunucuya kaydedilemedi.'),
+      )
+    }
+  }
+
   async createShipments(
     orders: CargoOrder[],
     selectedIds: string[],
@@ -1418,6 +1446,54 @@ export class OrderWorkflowService {
           details: `Sürat gönderisi oluşturulamadı: ${errorMessage}`,
           orderNumber: order.orderNumber,
         })
+      }
+    }
+
+    // AUTH modu: "Etiket Hazır" canonical durumunu DB'ye KALICI yaz. persistOrders
+    // yalnız in-memory snapshot günceller; sayfa yenilenince (DB re-read) korunması
+    // için backend'e yazılmalı. Durum backend tarafından doğrulanır (yalnız local
+    // state değişimi başarı sayılmaz). Persist başarısızsa optimistic "Etiket Hazır"
+    // GERİ ALINIR ve gerçek hata yüzeye çıkar.
+    if (this.authMode) {
+      const readyIds = nextOrders
+        .filter(
+          (candidate) =>
+            selectedIds.includes(candidate.id) &&
+            candidate.operationStatus === 'LABEL_READY',
+        )
+        .map((candidate) => candidate.id)
+      for (const readyId of readyIds) {
+        try {
+          await this.persistLabelReady(readyId)
+        } catch (error) {
+          const message =
+            error instanceof Error
+              ? error.message
+              : 'Etiket durumu sunucuya kaydedilemedi.'
+          const failedOrder = nextOrders.find(
+            (candidate) => candidate.id === readyId,
+          )
+          if (failedOrder) {
+            nextOrders = replaceOrder(nextOrders, {
+              ...failedOrder,
+              status: 'Hata',
+              operationStatus: 'LABEL_CREATED_UNVERIFIED',
+              printEnabled: false,
+              errorMessage: `Etiket hazır durumu kaydedilemedi: ${message}`,
+            })
+            successCount = Math.max(0, successCount - 1)
+            failedBarcodeCount += 1
+            if (!failedOrderNumbers.includes(failedOrder.orderNumber)) {
+              failedOrderNumbers.push(failedOrder.orderNumber)
+            }
+            this.auditLogService.append({
+              action: 'Gönderi oluşturuldu',
+              level: 'error',
+              details: `${failedOrder.orderNumber}: etiket hazır durumu DB'ye yazılamadı; durum korunmadı. ${message}`,
+              orderNumber: failedOrder.orderNumber,
+            })
+          }
+        }
       }
     }
 
