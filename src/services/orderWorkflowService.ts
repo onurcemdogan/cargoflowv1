@@ -1455,44 +1455,70 @@ export class OrderWorkflowService {
     // state değişimi başarı sayılmaz). Persist başarısızsa optimistic "Etiket Hazır"
     // GERİ ALINIR ve gerçek hata yüzeye çıkar.
     if (this.authMode) {
-      const readyIds = nextOrders
-        .filter(
-          (candidate) =>
-            selectedIds.includes(candidate.id) &&
-            candidate.operationStatus === 'LABEL_READY',
-        )
-        .map((candidate) => candidate.id)
-      for (const readyId of readyIds) {
+      // Etiket-hazır adayları: create bu tur LABEL_READY yaptı VEYA (tekrar deneme)
+      // mevcut doğrulanmış/ön-atanmış printable gönderi zaten var. markLabelReady
+      // yeni shipment/barkod OLUŞTURMAZ; retry mevcut gönderi üzerinden yalnız
+      // canonical durumu onarır (idempotent + no-regress). Böylece persist
+      // hatasından sonra tekrar deneme, provider create'i YENİDEN tetiklemeden
+      // state repair yapabilir. Zaten basılmış/kargoda/teslim (printed-or-beyond)
+      // siparişlere DOKUNULMAZ.
+      const printedOrBeyond = new Set([
+        'LABEL_PRINTED',
+        'SHIPPED',
+        'HANDED_TO_CARGO',
+        'DELIVERED',
+        'DELIVERED_SPECIAL',
+        'RETURNING',
+      ])
+      const repairTargets = nextOrders.filter(
+        (candidate) =>
+          selectedIds.includes(candidate.id) &&
+          !printedOrBeyond.has(String(candidate.operationStatus)) &&
+          (candidate.operationStatus === 'LABEL_READY' ||
+            resolveSuratPrintEligibility(candidate).canPrint),
+      )
+      for (const target of repairTargets) {
+        const wasFreshReady = target.operationStatus === 'LABEL_READY'
         try {
-          await this.persistLabelReady(readyId)
+          await this.persistLabelReady(target.id)
+          // Persist DB tarafından doğrulandı: retry-repair'de yerel durumu da
+          // canonical LABEL_READY'ye getir (önceki 'Hata'/UNVERIFIED'dan).
+          if (!wasFreshReady) {
+            nextOrders = replaceOrder(nextOrders, {
+              ...target,
+              status: 'Etiket Hazır',
+              operationStatus: 'LABEL_READY',
+              printEnabled: true,
+              errorMessage: undefined,
+            })
+          }
         } catch (error) {
           const message =
             error instanceof Error
               ? error.message
               : 'Etiket durumu sunucuya kaydedilemedi.'
-          const failedOrder = nextOrders.find(
-            (candidate) => candidate.id === readyId,
-          )
-          if (failedOrder) {
-            nextOrders = replaceOrder(nextOrders, {
-              ...failedOrder,
-              status: 'Hata',
-              operationStatus: 'LABEL_CREATED_UNVERIFIED',
-              printEnabled: false,
-              errorMessage: `Etiket hazır durumu kaydedilemedi: ${message}`,
-            })
+          // Yalnız local state değişimi başarı sayılmaz: persist başarısızsa
+          // optimistic "Etiket Hazır" GERİ ALINIR ve gerçek hata gösterilir.
+          nextOrders = replaceOrder(nextOrders, {
+            ...target,
+            status: 'Hata',
+            operationStatus: 'LABEL_CREATED_UNVERIFIED',
+            printEnabled: false,
+            errorMessage: `Etiket hazır durumu kaydedilemedi: ${message}`,
+          })
+          if (wasFreshReady) {
             successCount = Math.max(0, successCount - 1)
-            failedBarcodeCount += 1
-            if (!failedOrderNumbers.includes(failedOrder.orderNumber)) {
-              failedOrderNumbers.push(failedOrder.orderNumber)
-            }
-            this.auditLogService.append({
-              action: 'Gönderi oluşturuldu',
-              level: 'error',
-              details: `${failedOrder.orderNumber}: etiket hazır durumu DB'ye yazılamadı; durum korunmadı. ${message}`,
-              orderNumber: failedOrder.orderNumber,
-            })
           }
+          failedBarcodeCount += 1
+          if (!failedOrderNumbers.includes(target.orderNumber)) {
+            failedOrderNumbers.push(target.orderNumber)
+          }
+          this.auditLogService.append({
+            action: 'Gönderi oluşturuldu',
+            level: 'error',
+            details: `${target.orderNumber}: etiket hazır durumu DB'ye yazılamadı; durum korunmadı. ${message}`,
+            orderNumber: target.orderNumber,
+          })
         }
       }
     }

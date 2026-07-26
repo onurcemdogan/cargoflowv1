@@ -202,6 +202,27 @@ test('8) Tekrar tıklamada duplicate label/shipment oluşmaz (idempotent)', asyn
   assert.equal(shipmentRows.length, 1, 'duplicate shipment/barkod yok')
 })
 
+test('1b) Persist hatasından sonra tekrar deneme: mevcut shipment üzerinden LABEL_READY onarılır, yeni shipment OLUŞMAZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'Org R', 'lbl-repair')
+  // İlk denemede persist BAŞARISIZ olmuş gibi: shipment persistli ama sipariş
+  // etiket-öncesi bir durumda (rollback sonucu) kalmış.
+  const order = makeOrder({ packageId: 'L-7', orderNumber: 'L-7', operationStatus: 'LABEL_CREATED_UNVERIFIED' })
+  await orderService.persistSyncResult(db, org, [order], { complete: true })
+  await writeShipment(db, org, order)
+  const id = await orderIdByPackage(db, org, 'L-7')
+  const shipmentsBefore = (await db.select().from(schema.shipments).where(eq(schema.shipments.organizationId, org))).length
+
+  // Tekrar deneme (state repair): mevcut gönderi bulunur, yalnız geçiş tamamlanır.
+  const result = await orderService.markLabelReady(db, org, id)
+  assert.equal(result.found, true)
+  assert.equal(result.updated, true)
+  assert.equal(result.operationStatus, 'LABEL_READY')
+  const shipmentsAfter = (await db.select().from(schema.shipments).where(eq(schema.shipments.organizationId, org))).length
+  assert.equal(shipmentsAfter, shipmentsBefore, 'tekrar denemede yeni shipment/barkod oluşmaz')
+})
+
 test('9) Farklı tenant siparişi DEĞİŞTİRİLEMEZ', async (t) => {
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
