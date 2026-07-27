@@ -7,6 +7,7 @@ import type {
 import { apiDebugService } from '../../services/apiDebugService'
 import { createId } from '../../utils/ids'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
+import { resolveSuratCreateBusinessResult } from '../../utils/suratCreateResult'
 import { ZebraZplLabelProvider } from '../labels/ZebraZplLabelProvider'
 import type {
   CreateShipmentInput,
@@ -55,11 +56,15 @@ export class SuratKargoProvider implements ShippingProvider {
       const createResponseStatus = Number(
         createLog?.responseStatus ?? response.status,
       )
+      // İş sonucu (business result): HTTP 200 tek başına SUCCESS DEĞİLDİR. Debug
+      // ve UI'nin aynı sonucu göstermesi için lifecycleStatus + geçerli tracking/
+      // barkod varlığı baz alınır (tek karar noktası).
+      const createBusiness = resolveSuratCreateBusinessResult(data.shipment)
       const createLogFailed = Boolean(
         !response.ok ||
           data?.ok === false ||
           (createResponseStatus >= 400 && !verifiedPrintReady) ||
-          data.shipment?.labelStatus === 'BLOCKED',
+          !createBusiness.businessOk,
       )
       if (data.dispatchRegistration) {
         apiDebugService.append({
@@ -129,6 +134,17 @@ export class SuratKargoProvider implements ShippingProvider {
         orderNumber: input.order.orderNumber,
         shipmentId,
         fields: {
+          // Transport ve business sonucu AYRI güvenli metadata (secret/PII yok):
+          // transportOk yalnız HTTP; businessOk gerçek iş başarısı; ikisi ayrışır.
+          transportOk: response.ok,
+          responseStatus: createResponseStatus,
+          businessOk: createBusiness.businessOk,
+          normalizedTrackingPresent: createBusiness.hasIdentifier,
+          businessResult: createBusiness.businessOk
+            ? 'SUCCESS'
+            : response.ok
+              ? 'BUSINESS_ERROR'
+              : 'TRANSPORT_ERROR',
           CariKod: input.config.surat.kullaniciAdi,
           FirmaId: input.config.surat.firmaId,
           SatisKodu:
