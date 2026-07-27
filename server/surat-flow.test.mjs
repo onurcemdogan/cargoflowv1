@@ -1981,16 +1981,22 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       },
     },
   )
-  assert.equal(webOnlyResponse.ok, false)
+  // YENİ İŞ KURALI (SDP fiziksel kabul ayrı uygulamada): geçerli yazdırılabilir
+  // ZPL alındıysa (technicalZplReceived) etiket oluşturma BAŞARILIDIR. Operasyonel
+  // Code128 barkod / T.No parse edilemese bile ZPL yazdırılabilir → LABEL_READY,
+  // printEnabled=true. operationalBarcodeVerified/verifiedShipment YALNIZ
+  // diagnostic'tir ve LABEL_READY geçişini engellemez.
+  assert.equal(webOnlyResponse.ok, true)
   assert.equal(webOnlyResponse.shipment.technicalZplReceived, true)
   assert.equal(webOnlyResponse.shipment.operationalBarcodeVerified, false)
   assert.equal(webOnlyResponse.shipment.verifiedShipment, false)
   assert.equal(
     webOnlyResponse.shipment.lifecycleStatus,
-    'SURAT_TRACKING_MISSING',
+    'LABEL_READY_AWAITING_ACCEPTANCE',
   )
-  assert.equal(webOnlyResponse.shipment.labelStatus, 'BLOCKED')
-  assert.equal(webOnlyResponse.shipment.printEnabled, false)
+  assert.equal(webOnlyResponse.shipment.labelStatus, 'READY')
+  assert.equal(webOnlyResponse.shipment.printEnabled, true)
+  // Operasyonel barkod parse edilemedi → canonical barkod alanları boş (diagnostic).
   assert.equal(webOnlyResponse.shipment.finalSuratBarcode, '')
   assert.equal(webOnlyResponse.shipment.barcode, '')
   assert.equal(webOnlyResponse.shipment.barkodNo, '')
@@ -2195,7 +2201,7 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
   assert.equal(failedRegistrationResponse.ok, false)
   assert.match(
     failedRegistrationResponse.message,
-    /geçerli takip\/barkod kodu alınamadı/i,
+    /yazdırılabilir ZPL etiketi alınamadı/i,
   )
   assert.equal(failedRegistrationResponse.responseStatus, 500)
   assert.equal(

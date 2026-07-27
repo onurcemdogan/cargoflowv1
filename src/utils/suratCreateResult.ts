@@ -8,17 +8,22 @@
 // ÇELİŞKİLİ görünüyordu. Bu helper, üç yüzeyin AYNI iş sonucunu göstermesi için
 // tek karar noktasıdır.
 //
-// İş BAŞARISI kriteri: geçerli tracking/barkod tanımlayıcısı VAR + shipment
-// yazdırılabilir/doğrulanmış + business-failure lifecycle DEĞİL + labelStatus
-// BLOCKED değil.
-
+// MERKEZİ BAŞARI KRİTERİ (SDP fiziksel kabul ayrı uygulamada):
+//   labelCreationOk = yazdırılabilir ZPL/etiket VAR + gerçek hard-failure
+//   lifecycle DEĞİL + labelStatus BLOCKED değil.
+// Sürat T.No / Code128 barkod parse edilemese BİLE geçerli ZPL varsa etiket
+// oluşturma BAŞARILIDIR; tracking/barkod kimliği yalnız bilgi/diagnostic'tir,
+// LABEL_READY geçişini engellemez. verifiedShipment/dispatchRegistrationConfirmed
+// ŞART DEĞİLDİR.
+//
+// FAILED set YALNIZ gerçek create hatalarını (dispatch reddi / barkod üretilemedi
+// / create belirsiz) içerir. "Takip/barkod alınamadı" (SURAT_TRACKING_MISSING,
+// SURAT_CREATED_NO_TRACKING) ve "kabul bekleniyor" (LABEL_READY_AWAITING_ACCEPTANCE,
+// LABEL_CREATED_NOT_REGISTERED) durumları — geçerli ZPL varsa — HATA DEĞİLDİR.
 const FAILED_LIFECYCLE_STATUSES = new Set([
   'SURAT_BARCODE_FAILED',
   'SURAT_DISPATCH_REJECTED',
   'SURAT_CREATE_UNCERTAIN',
-  'LABEL_CREATED_NOT_REGISTERED',
-  'SURAT_TRACKING_MISSING',
-  'SURAT_CREATED_NO_TRACKING',
 ])
 
 function firstNonEmpty(...values: unknown[]): string {
@@ -68,15 +73,24 @@ export function resolveSuratCreateBusinessResult(
     s.barcodeValue,
     s.finalSuratBarcode,
   )
+  // hasIdentifier YALNIZ diagnostic'tir; başarı kriteri DEĞİLDİR.
   const hasIdentifier = Boolean(trackingNumber || barcode)
   const failedLifecycle = FAILED_LIFECYCLE_STATUSES.has(
     String(s.lifecycleStatus ?? ''),
   )
   const blocked = String(s.labelStatus ?? '') === 'BLOCKED'
-  const printable = Boolean(s.printEnabled || s.verifiedShipment)
-  // Etiket oluşturma başarısı: geçerli kimlik + yazdırılabilir + başarısız
-  // lifecycle DEĞİL + BLOCKED değil. verifiedShipment ŞART DEĞİLDİR.
-  const labelCreationOk = hasIdentifier && printable && !failedLifecycle && !blocked
+  // Yazdırılabilir ZPL/etiket sinyali: ham ZPL, zplReady/technicalZplReceived,
+  // ya da sunucunun printEnabled/verifiedShipment kararı.
+  const printable = Boolean(
+    s.printEnabled ||
+      s.verifiedShipment ||
+      s.zplReady ||
+      s.technicalZplReceived ||
+      s.barcodeRaw,
+  )
+  // MERKEZİ KURAL: yazdırılabilir ZPL VAR + hard-failure lifecycle DEĞİL +
+  // BLOCKED değil → etiket oluşturma başarılı. Kimlik (T.No/barkod) ŞART DEĞİL.
+  const labelCreationOk = printable && !failedLifecycle && !blocked
   const carrierAcceptanceConfirmed = Boolean(
     s.verifiedShipment || s.dispatchRegistrationConfirmed,
   )
