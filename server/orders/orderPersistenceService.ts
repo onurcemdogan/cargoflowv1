@@ -56,9 +56,86 @@ export async function persistSyncResult(
   }
 }
 
+function firstStr(...values: unknown[]): string {
+  for (const value of values) {
+    const text = String(value ?? '').trim()
+    if (text) return text
+  }
+  return ''
+}
+
+// GERÇEK persistence shape'i: Sürat create idempotency payload'ı (shipment_
+// operations.response_payload) bir `shipment` NESNESİ TUTMAZ. Yazdırılabilir ZPL
+// artifact'i `technicalZpl` / `technicalZplSha256` / `technicalZplLength`
+// alanlarında; canonical kimlikler `candidate*`/`carrier*` alanlarında; kullanıcıya
+// gösterilecek 727 Trendyol referansı `ozelKargoTakipNo` alanında saklanır.
+// Bu helper, kalıcı payload'dan güvenli bir shipment görünümü + `hasPrintableLabel`
+// bayrağı üretir. (Eski/alternatif payload'lar bir `shipment` içeriyorsa o baz
+// alınır.) Böylece sayfa yenilemesinde (DB re-read) display no, buton yetkileri
+// ve yazdırılabilir ZPL geçici tarayıcı state'ine BAĞIMLI OLMADAN geri gelir.
+function buildShipmentViewFromPayload(
+  payload: Record<string, unknown>,
+  shipmentRow: Record<string, unknown>,
+): { shipment: Record<string, unknown>; hasPrintableLabel: boolean; ozelKargoTakipNo: string } {
+  const persisted =
+    payload.shipment && typeof payload.shipment === 'object'
+      ? (payload.shipment as Record<string, unknown>)
+      : null
+  const technicalZpl = firstStr(payload.technicalZpl, persisted?.barcodeRaw)
+  const hasPrintableLabel = Boolean(
+    technicalZpl ||
+      firstStr(payload.technicalZplSha256) ||
+      Number(payload.technicalZplLength ?? 0) > 0 ||
+      firstStr(persisted?.barcodeRaw) ||
+      persisted?.zplReady === true ||
+      persisted?.printEnabled === true,
+  )
+  const tNo = firstStr(
+    persisted?.tNo,
+    persisted?.trackingNumber,
+    payload.carrierTrackingNumber,
+    payload.candidateTrackingNumber,
+    shipmentRow.trackingNumber,
+  )
+  const barcode = firstStr(
+    persisted?.barkodNo,
+    persisted?.barcode,
+    payload.carrierBarcodeNumber,
+    payload.candidateBarcodeNumber,
+    shipmentRow.barcode,
+  )
+  const ozelKargoTakipNo = firstStr(persisted?.ozelKargoTakipNo, payload.ozelKargoTakipNo)
+  const shipment: Record<string, unknown> = {
+    ...(persisted ?? {}),
+    provider: 'surat-kargo',
+    trackingNumber: tNo,
+    tNo,
+    kargoTakipNo: firstStr(persisted?.kargoTakipNo, tNo),
+    barcode,
+    barkodNo: barcode,
+    barcodeValue: firstStr(persisted?.barcodeValue, barcode),
+    ozelKargoTakipNo,
+    // Yazdırılabilir ham ZPL orders akışı (ZPL indir / yazdır) için gerekir;
+    // Dashboard recentOperations projection'ına EKLENMEZ (yalnız hasPrintableLabel).
+    barcodeRaw: technicalZpl,
+    zplReady: hasPrintableLabel,
+    printEnabled: persisted?.printEnabled ?? hasPrintableLabel,
+    lifecycleStatus:
+      firstStr(persisted?.lifecycleStatus) ||
+      (hasPrintableLabel ? 'LABEL_READY_AWAITING_ACCEPTANCE' : ''),
+    candidateVerificationStatus:
+      firstStr(persisted?.candidateVerificationStatus) ||
+      (hasPrintableLabel ? 'PREASSIGNED_AWAITING_ACCEPTANCE' : ''),
+    candidateTNo: firstStr(persisted?.candidateTNo, tNo),
+    candidateBarkodNo: firstStr(persisted?.candidateBarkodNo, barcode),
+  }
+  return { shipment, hasPrintableLabel, ozelKargoTakipNo }
+}
+
 // Order view-model'ine shipment linkage ekler. Başka organization shipment'ı
-// ASLA bağlanmaz (findShipment org-scoped). local_create → tam lifecycle
-// (operation payload.shipment/label); marketplace_external → salt okunur.
+// ASLA bağlanmaz (findShipment org-scoped). local_create → kalıcı operation
+// payload'ından güvenli shipment görünümü + hasPrintableLabel; marketplace_external
+// → salt okunur.
 async function attachShipment(
   db: Db,
   organizationId: string,
@@ -70,17 +147,26 @@ async function attachShipment(
   if (!shipment) return order
   if (shipment.source === 'local_create') {
     const operation = await findLatestOperationByPackage(db, organizationId, packageId)
-    const payload = operation?.payload as Record<string, unknown> | undefined
+    const payload =
+      (operation?.payload as Record<string, unknown> | undefined) ??
+      (shipment.carrierPayload as Record<string, unknown> | undefined) ??
+      {}
+    const view = buildShipmentViewFromPayload(payload, shipment)
     return {
       ...order,
-      shipment: payload?.shipment ?? {
-        trackingNumber: shipment.trackingNumber,
-        barcode: shipment.barcode,
-      },
-      label: payload?.label,
-      labelStatus: payload?.labelStatus,
-      shipmentStatus: payload?.shipmentStatus,
-      suratVerificationStatus: payload?.suratVerificationStatus,
+      // 727 Trendyol referansı DB kolonunda boşsa payload'dan doldur. Canonical
+      // orderNumber (114...) DEĞİŞMEZ; yalnız görünüm/fallback zenginleşir.
+      cargoTrackingNumber: firstStr(order.cargoTrackingNumber, view.ozelKargoTakipNo),
+      // Backend güvenli capability bayrağı (raw ZPL değil): kalıcı persistence'tan.
+      hasPrintableLabel: view.hasPrintableLabel,
+      shipment: view.shipment,
+      label: payload.label,
+      labelStatus:
+        firstStr(payload.labelStatus) ||
+        (view.hasPrintableLabel ? 'READY' : firstStr(order.labelStatus)) ||
+        undefined,
+      shipmentStatus: payload.shipmentStatus,
+      suratVerificationStatus: payload.suratVerificationStatus,
     }
   }
   // marketplace_external: salt okunur shipment göstergesi.
