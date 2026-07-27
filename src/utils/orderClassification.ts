@@ -652,6 +652,11 @@ export function buildVisibleOrders({
       [
         order.orderNumber,
         order.externalOrderId,
+        // Kullanıcıya görünen Trendyol referansı (727...) ile de arama yapılabilsin;
+        // canonical orderNumber (114...) araması korunur.
+        order.cargoTrackingNumber,
+        order.shipment?.ozelKargoTakipNo,
+        order.shipment?.trendyolCargoTrackingNumber,
         order.customerName,
         order.customerPhone,
         order.customerEmail,
@@ -689,6 +694,9 @@ export function buildVisibleOrders({
   current = filterByWorkspaceQuery(current, orderNumberQuery, (order) => [
     order.orderNumber,
     order.externalOrderId,
+    order.cargoTrackingNumber,
+    order.shipment?.ozelKargoTakipNo,
+    order.shipment?.trendyolCargoTrackingNumber,
   ])
   current = filterByWorkspaceQuery(current, cargoSlipQuery, (order) => {
     const verification = verifySuratShipment(order)

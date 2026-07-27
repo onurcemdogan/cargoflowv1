@@ -30,6 +30,7 @@ import {
   mapMarketplaceStatus,
   mapOperationStatus,
 } from '../utils/statusPresentation'
+import { displayOrderNumber, sourceOrderNumber } from '../utils/orderDisplay'
 import { resolveOrderStatus } from '../utils/shipmentStatus'
 import { formatDesi, resolveNormalizedDesi } from '../utils/desi'
 import {
@@ -163,7 +164,7 @@ export function OrderDetailDrawer({
         <div className="drawer-header order-drawer-header">
           <div>
             <span className="eyebrow">Sipariş Detayı</span>
-            <h2>#{order.orderNumber}</h2>
+            <h2>#{displayOrderNumber(order)}</h2>
             <div className="order-drawer-subtitle">
               <span>Paket {order.packageId || order.shipmentPackageId || '-'}</span>
               <span>·</span>
@@ -263,7 +264,7 @@ export function OrderDetailDrawer({
             <section className="detail-section">
               <h3>Sipariş Bilgileri</h3>
               <div className="detail-grid">
-                <Detail label="Sipariş No" value={order.orderNumber} />
+                <Detail label="Sipariş No" value={displayOrderNumber(order)} />
                 <Detail
                   label="Paket ID"
                   value={order.packageId || order.shipmentPackageId}
@@ -290,7 +291,7 @@ export function OrderDetailDrawer({
                 <Detail label="Para Birimi" value="TRY" />
                 <Detail
                   label="Kaynak Sipariş No"
-                  value={order.externalOrderId}
+                  value={sourceOrderNumber(order) || order.externalOrderId}
                 />
                 <Detail
                   label="Trendyol Takip / QR No"

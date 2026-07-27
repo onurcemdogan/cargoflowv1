@@ -3,10 +3,8 @@ import {
   classifyOrderForTabs,
   orderMatchesDashboardAction,
 } from '../utils/orderClassification'
-import {
-  canDownloadZpl,
-  canMarkPrinted,
-} from '../utils/orderStatus'
+import { resolveOrderActionCapabilities } from '../utils/orderActionCapabilities'
+import { displayOrderNumber } from '../utils/orderDisplay'
 import { resolveProductImageCandidates } from '../utils/productImage'
 import type { OrdersActionFilter } from '../utils/ordersNavigation'
 import {
@@ -162,7 +160,10 @@ export interface DashboardRecentOperation {
   id: string
   packageId?: string
   shipmentPackageId?: string
+  // Canonical kaynak sipariş no (114...). API/eşleştirme için korunur.
   orderNumber: string
+  // Kullanıcıya gösterilen "Sipariş No" (varsa 727... Trendyol referansı).
+  displayOrderNumber: string
   marketplace: string
   customerName: string
   productName: string
@@ -172,6 +173,12 @@ export interface DashboardRecentOperation {
   status: string
   carrier: string
   orderDate: string
+  // Güvenli capability alanları (canonical operationStatus + persisted metadata'dan
+  // türetilir; geçici tarayıcı ZPL/shipment state'ine bağlı DEĞİLDİR). Raw ZPL yok.
+  operationStatus: string
+  labelStatus: string
+  hasPrintableLabel: boolean
+  canViewDetails: boolean
   canPrint: boolean
   canDownloadZpl: boolean
   printDisabledReason: string
@@ -1216,13 +1223,17 @@ function buildRecentOperations(
     .map((order) => {
       const firstItem = order.items[0]
       const state = classifyOrderForTabs(order)
-      const printable = canMarkPrinted(order)
-      const zplReady = canDownloadZpl(order)
+      // Yetki kalıcı (canonical operationStatus + persisted metadata) kaynaktan;
+      // geçici tarayıcı state'ine bağlı değil → sayfa yenilemesinde korunur.
+      const capabilities = resolveOrderActionCapabilities(order)
+      const printable = capabilities.canPrintLabel
+      const zplReady = capabilities.canDownloadLabel
       return {
         id: order.id,
         packageId: order.packageId,
         shipmentPackageId: order.shipmentPackageId,
         orderNumber: order.orderNumber,
+        displayOrderNumber: displayOrderNumber(order),
         marketplace: String(order.marketplace || 'Bilinmeyen'),
         customerName: order.customerName,
         productName: firstItem?.productName || 'Ürün bilgisi yok',
@@ -1236,11 +1247,15 @@ function buildRecentOperations(
         status: state.operationStatusLabel,
         carrier: order.cargoProviderName || order.shipment?.provider || 'Kargo bilgisi yok',
         orderDate: order.orderDate || order.createdAt,
+        operationStatus: capabilities.operationStatus,
+        labelStatus: capabilities.labelStatus,
+        hasPrintableLabel: capabilities.hasPrintableLabel,
+        canViewDetails: capabilities.canViewDetails,
         canPrint: printable,
         canDownloadZpl: zplReady,
         printDisabledReason: printable
           ? ''
-          : order.labelBlockedReason || 'Doğrulanmış ve yazdırılabilir etiket yok.',
+          : order.labelBlockedReason || 'Yazdırılabilir etiket yok.',
         zplDisabledReason: zplReady
           ? ''
           : order.zplDisabledReason || 'İndirilebilir ZPL verisi yok.',

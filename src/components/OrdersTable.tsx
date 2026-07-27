@@ -17,6 +17,7 @@ import {
   mapMarketplaceStatus,
   mapOperationStatus,
 } from '../utils/statusPresentation'
+import { displayOrderNumber } from '../utils/orderDisplay'
 import type {
   OrdersSortDirection,
   OrdersSortKey,
@@ -174,7 +175,7 @@ export function OrdersTable({
                       </div>
                     </td>
                     <td>
-                      <strong>{order.orderNumber}</strong>
+                      <strong>{displayOrderNumber(order)}</strong>
                       <span>{order.customerName || '-'}</span>
                       <span>
                         {order.city || '-'} / {order.district || '-'}

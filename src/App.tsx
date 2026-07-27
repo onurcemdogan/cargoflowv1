@@ -42,10 +42,6 @@ import type {
 import { downloadTextFile } from './utils/download'
 import { loadLabelPreviewDrafts } from './utils/labelPreviewDrafts'
 import { migrateAlternateLoopbackStorage } from './utils/localStorageMigration'
-import {
-  ACTIVE_MARKETPLACE_STATUSES,
-  ARCHIVE_MARKETPLACE_STATUSES,
-} from './utils/orderStatus'
 import { type QuickTab } from './utils/ordersTabs'
 import type { OrdersNavigationFilters } from './utils/ordersNavigation'
 
@@ -925,16 +921,7 @@ function App() {
           onTrackShipment={handleTrackShipmentForOrder}
           onDesiChange={handleOrderDesiChange}
           desiConfig={integrationConfig.desi}
-          onRefresh={() =>
-            handleFetchOrders(integrationConfig, {
-              statuses: [
-                ...ACTIVE_MARKETPLACE_STATUSES,
-                ...ARCHIVE_MARKETPLACE_STATUSES,
-              ],
-              ...marketplaceSyncRange(),
-              silent: true,
-            })
-          }
+          onRefresh={handleReloadOrders}
         />
       ) : null}
 
