@@ -15,7 +15,10 @@ import {
 } from './orderRepository.ts'
 import { rowToOrder } from './orderMapper.ts'
 import { findShipment } from '../shipments/shipmentRepository.ts'
-import { findLatestOperationByPackage } from '../shipments/shipmentOperationRepository.ts'
+import {
+  findLatestOperationByPackage,
+  findPrintableZplByPackage,
+} from '../shipments/shipmentOperationRepository.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -222,6 +225,73 @@ export async function getOrder(
   const lineRows = await findLinesForOrders(db, organizationId, [String(row.id)])
   const base = rowToOrder(row, lineRows)
   return attachShipment(db, organizationId, base)
+}
+
+export interface PersistedLabelResult {
+  found: boolean
+  eligible: boolean
+  hasPrintableLabel: boolean
+  operationStatus: string | null
+  zpl: string | null
+  source: string | null
+}
+
+// Reprint (tekrar yazdırma) için KAYITLI etiket artifact'ini çözer. Provider'a
+// ÇIKMAZ, yeni shipment/barkod/T.No OLUŞTURMAZ, desi doğrulaması YAPMAZ. Org
+// yalnız çağıran context'ten (req.auth) gelir; getOrder org-scoped olduğundan
+// başka tenant'ın siparişi/etiketi ASLA dönmez. ZPL önce full order shipment
+// görünümünden (en son operasyon), yoksa pakete ait TÜM operasyonlar taranarak
+// (daha eski create operasyonundaki technicalZpl) çözülür. `hasPrintableLabel`
+// true olsa bile ham ZPL gerçekten yoksa zpl=null döner (çağıran kontrollü hata
+// gösterir); "etiket yok" gibi fresh-create'e düşürülmez.
+export async function resolvePersistedLabel(
+  db: Db,
+  organizationId: string,
+  orderId: string,
+): Promise<PersistedLabelResult> {
+  const order = await getOrder(db, organizationId, orderId)
+  if (!order) {
+    return {
+      found: false,
+      eligible: false,
+      hasPrintableLabel: false,
+      operationStatus: null,
+      zpl: null,
+      source: null,
+    }
+  }
+  const operationStatus = firstStr(order.operationStatus) || null
+  const shipment = (order.shipment as Record<string, unknown> | undefined) ?? undefined
+  const hasPrintableLabel = Boolean(
+    order.hasPrintableLabel === true || firstStr(shipment?.barcodeRaw),
+  )
+  const eligible = Boolean(
+    hasPrintableLabel &&
+      ['LABEL_READY', 'LABEL_PRINTED'].includes(String(operationStatus ?? '')),
+  )
+  // 1) Full order görünümündeki (en son operasyon) ham ZPL.
+  let zpl = firstStr(shipment?.barcodeRaw)
+  let source: string | null = zpl ? 'order.shipment.barcodeRaw' : null
+  // 2) Yoksa pakete ait tüm operasyonları tara (daha eski create technicalZpl).
+  if (!zpl) {
+    const found = await findPrintableZplByPackage(
+      db,
+      organizationId,
+      firstStr(order.packageId),
+    )
+    if (found) {
+      zpl = found.zpl
+      source = found.source
+    }
+  }
+  return {
+    found: true,
+    eligible,
+    hasPrintableLabel,
+    operationStatus,
+    zpl: zpl || null,
+    source,
+  }
 }
 
 export interface LabelReadyResult {

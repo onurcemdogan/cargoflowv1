@@ -69,6 +69,52 @@ export async function findLatestOperationByPackage(
   return toRow(succeeded ?? rows[0] ?? null)
 }
 
+// Kayıtlı (persisted) yazdırılabilir ham ZPL'i pakete ait TÜM operasyonları
+// tarayarak çözer. `findLatestOperationByPackage` yalnız EN SON operasyonu
+// döndürür; ham ZPL daha ESKİ bir create operasyonunda (technicalZpl) olabilir
+// ve sonraki operasyon yalnız hash/length metadata taşıyabilir. Bu tarayıcı,
+// başarılıyı önceleyerek non-empty technicalZpl (veya persisted shipment.
+// barcodeRaw) taşıyan ilk operasyonun ZPL'ini getirir. Provider'a ÇIKMAZ,
+// yeni kayıt oluşturmaz; yalnız decrypt eder.
+export async function findPrintableZplByPackage(
+  db: OperationDb,
+  organizationId: string,
+  packageId: string,
+): Promise<{ zpl: string; source: string } | null> {
+  if (!packageId) return null
+  const rows = await db
+    .select()
+    .from(shipmentOperations)
+    .where(
+      and(
+        eq(shipmentOperations.organizationId, organizationId),
+        eq(shipmentOperations.packageId, packageId),
+      ),
+    )
+  // Başarılı operasyonları öncele; ardından diğerleri.
+  const ordered = [
+    ...rows.filter((row) => String(row.status) === 'succeeded'),
+    ...rows.filter((row) => String(row.status) !== 'succeeded'),
+  ]
+  for (const row of ordered) {
+    const payload = decryptShipmentPayload(
+      row.responsePayloadEncrypted as string | null,
+    ) as Record<string, unknown> | null
+    if (!payload) continue
+    const persisted =
+      payload.shipment && typeof payload.shipment === 'object'
+        ? (payload.shipment as Record<string, unknown>)
+        : null
+    const zpl = String(
+      payload.technicalZpl ?? persisted?.barcodeRaw ?? '',
+    ).trim()
+    if (zpl) {
+      return { zpl, source: 'operation.technicalZpl' }
+    }
+  }
+  return null
+}
+
 function toRow(record: Record<string, unknown> | null): Record<string, unknown> | null {
   if (!record) return null
   return {

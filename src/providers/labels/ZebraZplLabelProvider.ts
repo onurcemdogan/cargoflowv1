@@ -177,7 +177,18 @@ export class ZebraZplLabelProvider implements LabelProvider {
         : 'T.No veya barkod çözülemedi.'
       throw new Error(`Etiket yazdırılamadı: ${reason}`)
     }
-    if (normalizedDesi.desi == null) {
+    const apiBarcodeRaw = resolveSuratBarcodeRawZpl(
+      shipment.barcodeRaw,
+      shipment.suratCreateLog?.BarcodeRaw,
+      verification.barcodeRaw,
+    )
+    // KAYITLI taşıyıcı ZPL'i (reprint) varsa doğrudan o basılır: yeni ZPL
+    // ÜRETİLMEZ, bu yüzden desi GEREKMEZ. Desi doğrulaması YALNIZ ZPL'i
+    // CargoFlow'un üreteceği (kayıtlı ZPL yok — fresh create / legacy HTML)
+    // durumda çalışır. Böylece daha önce basılmış (LABEL_PRINTED) siparişte
+    // "Etiketi Yazdır" desi istemeden kayıtlı etiketi yeniden basar.
+    const hasPersistedZpl = Boolean(apiBarcodeRaw)
+    if (!hasPersistedZpl && normalizedDesi.desi == null) {
       throw new Error(
         'Desi bilgisi eksik. Etiket oluşturmadan önce sipariş desisini girin.',
       )
@@ -197,16 +208,16 @@ export class ZebraZplLabelProvider implements LabelProvider {
         : 'surat.create.preassignedTNo',
       mainBarcodeSource: officialSource,
     }
-    const apiBarcodeRaw = resolveSuratBarcodeRawZpl(
-      shipment.barcodeRaw,
-      shipment.suratCreateLog?.BarcodeRaw,
-      verification.barcodeRaw,
-    )
     const apiResponseDesi = extractZplDesi(apiBarcodeRaw)
     const desiMismatch = desiValuesDiffer(
       normalizedDesi.desi,
       apiResponseDesi,
     )
+    // Reprint: kayıtlı taşıyıcı ZPL'i olduğu gibi kullanılır. Fresh create:
+    // canonical alanlardan üretilir.
+    // Etiket içeriği HER ZAMAN canonical alanlardan yeniden üretilir (temiz
+    // CargoFlow ZPL). Reprint'te tek fark desi DOĞRULAMASININ atlanmasıdır;
+    // içerik üretimi/kaynağı değişmez (fresh-create ile aynı davranış korunur).
     const zplContent = buildZpl(liveLabelData)
     const zplSource = 'generated'
     const desiMismatchWarning = desiMismatch

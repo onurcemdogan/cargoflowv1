@@ -304,6 +304,36 @@ export class OrderWorkflowService {
     return orders
   }
 
+  // REPRINT için KAYITLI etiket artifact'ini (ham ZPL) tenant-scoped uçtan
+  // (GET /api/orders/:id/label) getirir. Org yalnız oturumdan (req.auth) çözülür;
+  // frontend org göndermez. Provider'a ÇIKMAZ, yeni shipment/barkod OLUŞTURMAZ,
+  // desi doğrulaması YAPMAZ. `hasPrintableLabel=true` fakat ham ZPL yoksa zpl=null
+  // döner (çağıran kontrollü hata gösterir). Legacy modda uç yoktur → null.
+  async fetchPersistedLabel(
+    orderId: string,
+  ): Promise<{ hasPrintableLabel: boolean; zpl: string | null; source: string | null } | null> {
+    if (!this.authMode) return null
+    const response = await fetch(
+      `/api/orders/${encodeURIComponent(orderId)}/label`,
+      { credentials: 'include' },
+    )
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean
+      hasPrintableLabel?: boolean
+      zpl?: string | null
+      source?: string | null
+      message?: string
+    }
+    if (!response.ok || payload?.ok === false) {
+      throw new Error(String(payload?.message ?? 'Kayıtlı etiket alınamadı.'))
+    }
+    return {
+      hasPrintableLabel: payload.hasPrintableLabel === true,
+      zpl: typeof payload.zpl === 'string' && payload.zpl.trim() ? payload.zpl : null,
+      source: payload.source ?? null,
+    }
+  }
+
   // Auth modda sunucudan (GET /api/products) org-scoped TÜM katalog varyantlarını
   // yükler (resolver/görsel eşleme tam katalog ister). Sayfa sayfa çekip birleştirir;
   // in-memory cache'i günceller. Organization req.auth'tan çözülür.
