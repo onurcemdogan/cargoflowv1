@@ -237,8 +237,11 @@ test('Sipariş detay paneli read-only sözleşmesi ve matris A-I', async (t) => 
   assert.match(htmlD2, /Ürünler \(1\)/)
 
   // E) Safe idempotency replay: create kapalı, hata yok, Etiket Hazır korunur.
+  // SDP (fiziksel Sürat kabulü) CargoFlow etiket başarısının kriteri DEĞİLDİR;
+  // "fiziksel kabul bekleniyor"/"Serendip" beklemesi artık kullanıcıya gösterilmez.
   assert.equal(canCreateShipment(legacyOrder), false)
-  assert.match(htmlC, /fiziksel Sürat kabulü bekleniyor/i)
+  assert.doesNotMatch(htmlC, /fiziksel Sürat kabulü bekleniyor/i)
+  assert.match(htmlC, /Etiket hazır ve yazdırılabilir\./)
 
   // F) Gerçek create hatası: timeline error, printable state oluşmaz.
   const failedOrder = buildOrderFixture({

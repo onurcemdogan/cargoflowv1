@@ -112,15 +112,15 @@ export function buildSuratShipmentTimeline(
     },
     {
       key: 'awaitingAcceptance',
-      label: 'Fiziksel Kabul Bekleniyor',
+      label: 'Etiket Hazır',
       status: trackingActive
         ? 'completed'
         : awaitingAcceptance
           ? 'active'
           : 'pending',
       description: trackingActive
-        ? 'Fiziksel Sürat kabulü tamamlandı.'
-        : 'Etiket hazır — fiziksel Sürat kabulü bekleniyor.',
+        ? 'Etiket hazır; kargo süreci ilerledi.'
+        : 'Etiket hazır ve yazdırılabilir.',
     },
     {
       key: 'trackingActive',

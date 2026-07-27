@@ -172,24 +172,19 @@ export function resolveSuratPrintEligibility(
       ? 'canonical_html'
       : 'unavailable'
   const eligible = carrierZplEligible || canonicalHtmlEligible
-  const statusLabel = verified
-    ? 'Etiket hazır — Sürat doğrulandı'
-    : awaitingAcceptance
-      ? 'Etiket hazır — fiziksel Sürat kabulü bekleniyor'
-      : ''
+  // Kullanıcı sunumu: SDP (fiziksel Sürat kabulü) CargoFlow etiket başarısının
+  // kriteri DEĞİLDİR; "kabul bekleniyor"/"Serendip" beklemesi gösterilmez.
+  const statusLabel =
+    verified || awaitingAcceptance ? 'Etiket hazır ve yazdırılabilir.' : ''
   const reason = eligible
     ? source === 'canonical_html'
       ? `${LEGACY_ZPL_MISSING_MESSAGE} Etiket, canonical T.No/barkod/QR alanlarından HTML olarak yazdırılır.`
-      : verified
-        ? 'Canonical T.No ve barkod Sürat tarafından doğrulandı.'
-        : 'Etiket yazdırılabilir; Serendip kaydı fiziksel tesellümden sonra doğrulanacaktır.'
+      : 'Etiket hazır ve yazdırılabilir.'
     : !shipment
       ? 'Önce Sürat gönderisi oluşturulmalı.'
       : !trackingNumber || !barcode
-        ? 'Ön-atanmış T.No/barkod eksik; aday kodlar doğrulanmadan yazdırılamaz.'
-        : !verified && !awaitingAcceptance
-          ? 'Bu kodlar Serendip kaydı doğrulanmadan yazdırılamaz.'
-          : `Etiket yazdırılamıyor: kritik alanlar eksik (${missingFields.join(', ') || 'ZPL'}).`
+        ? 'Etiket yazdırılamıyor: T.No/barkod eksik.'
+        : `Etiket yazdırılamıyor: kritik alanlar eksik (${missingFields.join(', ') || 'ZPL'}).`
 
   return {
     canPrint: eligible,

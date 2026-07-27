@@ -509,7 +509,7 @@ export function verifySuratShipment(
       ? 'GonderiyiKargoyaGonder kaydı başarılı; Trendyol/Sürat cargoTrackingNumber barkodu doğrulandı'
       : 'Sürat numeric ana barkodu ve T.No operasyonel olarak doğrulandı'
     : preassignedAwaitingAcceptance
-      ? 'Etiket hazır — fiziksel Sürat kabulü bekleniyor'
+      ? 'Etiket hazır ve yazdırılabilir.'
     : labelCreatedNotRegistered
       ? 'Etiket oluşturuldu ancak doğru WebSiparisKodu ile Serendip gönderi kaydı açılmadı.'
     : dispatchRejected

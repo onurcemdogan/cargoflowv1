@@ -649,7 +649,9 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
   assert.match(detailHtml, /41176176501029/)
   assert.match(detailHtml, /Aday Barkod/)
   assert.match(detailHtml, /01249710673/)
-  assert.match(detailHtml, /Serendip/)
+  // SDP/Serendip kaydı beklemesi artık kullanıcıya UI'da gösterilmez (aday
+  // T.No/barkod verisi bilgi olarak kalır, "Serendip" uyarısı kaldırıldı).
+  assert.doesNotMatch(detailHtml, /Serendip/)
   assert.match(detailHtml, /Pazaryeri: Sipariş Oluştu/)
 
   const activeOrders = Array.from({ length: 11 }, (_, index) => ({
