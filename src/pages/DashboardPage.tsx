@@ -739,7 +739,7 @@ export function DashboardPage({
                 <tbody>
                   {viewModel.recentOperations.map((operation) => (
                     <tr key={operation.id}>
-                      <td><strong>{operation.orderNumber}</strong></td>
+                      <td><strong>{operation.displayOrderNumber}</strong></td>
                       <td>{operation.marketplace}</td>
                       <td>{operation.customerName}</td>
                       <td>
@@ -769,14 +769,14 @@ export function DashboardPage({
                             type="button"
                             aria-label="Sipariş detayını görüntüle"
                             title="Detayı Gör"
-                            data-order-number={operation.orderNumber}
+                            data-order-number={operation.displayOrderNumber}
                             onClick={() => openDashboardOrderDetail(operation.id)}
                           >
                             <Eye size={15} />
                           </button>
                           <button
                             type="button"
-                            aria-label={`${operation.orderNumber} etiketi yazdır`}
+                            aria-label={`${operation.displayOrderNumber} etiketi yazdır`}
                             title={operation.canPrint ? 'Etiketi yazdır' : operation.printDisabledReason}
                             disabled={!operation.canPrint}
                             onClick={() => onPrintOrder(operation.id)}
@@ -785,7 +785,7 @@ export function DashboardPage({
                           </button>
                           <button
                             type="button"
-                            aria-label={`${operation.orderNumber} ZPL indir`}
+                            aria-label={`${operation.displayOrderNumber} ZPL indir`}
                             title={operation.canDownloadZpl ? 'ZPL indir' : operation.zplDisabledReason}
                             disabled={!operation.canDownloadZpl}
                             onClick={() => onDownloadOrder(operation.id)}
