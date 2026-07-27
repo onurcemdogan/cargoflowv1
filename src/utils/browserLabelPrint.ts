@@ -362,6 +362,14 @@ export function suratPrintTrace(
   details: Record<string, unknown> = {},
 ): void {
   try {
+    // Ayrıntılı baskı izleri (PRINT_BUTTON_CLICK / PRINT_ELIGIBILITY_RESULT vb.)
+    // YALNIZ non-production'da konsola yazılır. Bu izler yalnız güvenli status/
+    // boolean/tanımlayıcı metadata taşır; ham ZPL, müşteri adı/adres/telefon/
+    // e-posta veya secret HİÇBİR ortamda loglanmaz.
+    const isProduction =
+      typeof import.meta !== 'undefined' &&
+      (import.meta as { env?: { PROD?: boolean } }).env?.PROD === true
+    if (isProduction) return
     console.info(`[surat-print] ${new Date().toISOString()} ${event}`, details)
   } catch {
     // console erişilemiyorsa akışı bozma

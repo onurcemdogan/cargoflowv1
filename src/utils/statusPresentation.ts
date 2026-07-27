@@ -130,7 +130,7 @@ export function mapOperationStatus(order: CargoOrder): StatusPresentation {
   if (operationStatus === 'LABEL_PRINTED') {
     return {
       label: 'Etiket Basıldı',
-      description: 'Etiket yazdırıldı.',
+      description: 'Etiket basıldı. Gerektiğinde tekrar yazdırabilirsiniz.',
       color: 'green',
       source: 'localOperation',
       sourceLabel: 'CargoFlow',
@@ -139,7 +139,7 @@ export function mapOperationStatus(order: CargoOrder): StatusPresentation {
   if (operationStatus === 'LABEL_READY') {
     return {
       label: 'Etiket Hazır',
-      description: 'Sürat etiketi oluşturuldu ve yazdırmaya hazır.',
+      description: 'Etiket hazır ve yazdırılabilir.',
       color: 'teal',
       source: 'localOperation',
       sourceLabel: 'CargoFlow',
@@ -185,7 +185,7 @@ export function mapOperationStatus(order: CargoOrder): StatusPresentation {
   ) {
     return {
       label: 'Etiket Basıldı',
-      description: 'Etiket başarıyla yazdırıldı.',
+      description: 'Etiket basıldı. Gerektiğinde tekrar yazdırabilirsiniz.',
       color: 'green',
       source: 'localOperation',
       sourceLabel: 'CargoFlow',
@@ -211,9 +211,8 @@ export function mapOperationStatus(order: CargoOrder): StatusPresentation {
   ) {
     return {
       label: 'Etiket Hazır',
-      description:
-        'Etiket hazır — fiziksel Sürat kabulü bekleniyor. Serendip kaydı tesellümden sonra doğrulanacaktır.',
-      color: 'yellow',
+      description: 'Etiket hazır ve yazdırılabilir.',
+      color: 'teal',
       source: 'localOperation',
       sourceLabel: 'CargoFlow',
     }

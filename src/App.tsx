@@ -24,6 +24,11 @@ import {
   suratPrintTrace,
 } from './utils/browserLabelPrint'
 import { resolveSuratPrintEligibility } from './utils/suratPrintEligibility'
+import {
+  injectPersistedZpl,
+  isReprintEligible,
+  resolvePersistedLabelArtifact,
+} from './utils/persistedLabel'
 import type {
   AuditLog,
   ApiDebugLog,
@@ -618,12 +623,15 @@ function App() {
     mappingConfig = labelMappingConfig,
   ) {
     setLabelMappingConfig(mappingConfig)
-    handleDownloadZplForIds([orderId])
+    void handleDownloadZplForIds([orderId])
   }
 
   // ZPL İndir: shipment.barcodeRaw içeriğini doğrudan .zpl dosyası olarak
-  // indirir. Modal/print/create akışı çağrılmaz.
-  function handleDownloadZplForIds(ids: string[]) {
+  // indirir. Modal/print/create akışı çağrılmaz. Kayıtlı etiketi olan ama ham
+  // ZPL'i bellekte olmayan siparişler için "Etiketi Yazdır" ile AYNI merkezî
+  // fetch yolu (hydratePersistedLabels) kullanılır; iki buton aynı artifact'i
+  // çözer.
+  async function handleDownloadZplForIds(ids: string[]) {
     if (ids.length === 0) {
       setOrdersState((current) => ({
         ...current,
@@ -634,7 +642,8 @@ function App() {
       }))
       return
     }
-    const selectedDownloadOrders = orders.filter((order) =>
+    const { effectiveOrders } = await hydratePersistedLabels(ids)
+    const selectedDownloadOrders = effectiveOrders.filter((order) =>
       ids.includes(order.id),
     )
     const download = buildSuratZplDownload(selectedDownloadOrders)
@@ -662,6 +671,47 @@ function App() {
       },
     }))
     refreshLogs()
+  }
+
+  // REPRINT artifact çözümü: seçili siparişlerden kayıtlı etiketi olan ama ham
+  // ZPL'i bellekte bulunmayanlar için tenant-scoped uçtan (GET /api/orders/:id/
+  // label) ham ZPL getirilir ve order.shipment.barcodeRaw'a enjekte edilir.
+  // Provider create ÇAĞRILMAZ, desi İSTENMEZ, yeni shipment/barkod OLUŞTURULMAZ.
+  // "ZPL İndir" ve "Etiketi Yazdır" bu ortak yolu kullanır. ZPL gerçekten
+  // getirilemezse sipariş `unresolved` olarak işaretlenir (kontrollü mesaj).
+  async function hydratePersistedLabels(
+    orderIds: string[],
+  ): Promise<{ effectiveOrders: CargoOrder[]; unresolved: string[] }> {
+    const idSet = new Set(orderIds)
+    const zplById = new Map<string, string>()
+    const unresolved: string[] = []
+    await Promise.all(
+      orders
+        .filter((order) => idSet.has(order.id) && isReprintEligible(order))
+        .map(async (order) => {
+          const artifact = resolvePersistedLabelArtifact(order)
+          if (artifact.zpl) return
+          try {
+            const fetched = await workflowService.fetchPersistedLabel(order.id)
+            if (fetched?.zpl) {
+              zplById.set(order.id, fetched.zpl)
+            } else if (artifact.hasPrintableLabel) {
+              unresolved.push(order.orderNumber)
+            }
+          } catch {
+            if (artifact.hasPrintableLabel) unresolved.push(order.orderNumber)
+          }
+        }),
+    )
+    const effectiveOrders =
+      zplById.size === 0
+        ? orders
+        : orders.map((order) =>
+            zplById.has(order.id)
+              ? injectPersistedZpl(order, zplById.get(order.id) as string)
+              : order,
+          )
+    return { effectiveOrders, unresolved }
   }
 
   function handleMarkPrinted() {
@@ -734,8 +784,13 @@ function App() {
     }))
     const confirmedAt = new Date().toISOString()
     try {
+      // Kayıtlı etiketi olan (LABEL_READY/LABEL_PRINTED) ama ham ZPL'i bellekte
+      // olmayan siparişler için ZPL uçtan getirilip enjekte edilir; böylece
+      // reprint desi İSTEMEDEN kayıtlı etiketi basar.
+      const { effectiveOrders, unresolved } =
+        await hydratePersistedLabels(orderIds)
       const response = await workflowService.printLabels(
-        orders,
+        effectiveOrders,
         orderIds,
         effectivePrinterSettings,
         labelTemplate,
@@ -746,10 +801,17 @@ function App() {
           includePreviouslyPrinted: allPreviouslyPrinted,
         },
       )
+      const unresolvedNote =
+        unresolved.length > 0
+          ? ` Kayıtlı etiket alınamayan sipariş(ler): ${unresolved.join(', ')}.`
+          : ''
       setOrdersState((current) => ({
         ...current,
         orders: response.orders,
-        ordersMessage: response.result,
+        ordersMessage: {
+          ...response.result,
+          message: `${response.result.message}${unresolvedNote}`,
+        },
       }))
     } catch (error) {
       suratPrintTrace('PRINT_ERROR', {
@@ -796,8 +858,10 @@ function App() {
     }))
     const confirmedAt = new Date().toISOString()
     try {
+      const { effectiveOrders, unresolved } =
+        await hydratePersistedLabels(orderIds)
       const response = await workflowService.printLabels(
-        orders,
+        effectiveOrders,
         orderIds,
         effectivePrinterSettings,
         labelTemplate,
@@ -808,10 +872,17 @@ function App() {
           includePreviouslyPrinted,
         },
       )
+      const unresolvedNote =
+        unresolved.length > 0
+          ? ` Kayıtlı etiket alınamayan sipariş(ler): ${unresolved.join(', ')}.`
+          : ''
       setOrdersState((current) => ({
         ...current,
         orders: response.orders,
-        ordersMessage: response.result,
+        ordersMessage: {
+          ...response.result,
+          message: `${response.result.message}${unresolvedNote}`,
+        },
       }))
       if (response.result.level !== 'error') {
         setPrintPreview(undefined)

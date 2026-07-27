@@ -97,14 +97,12 @@ export function OrderDetailDrawer({
       : printEligibility.canPrint
         ? 'Etiket Hazır'
         : 'Etiket Bekliyor'
+  // Kargo durumu alanında fiziksel Sürat kabulü (SDP) bekleme metni GÖSTERİLMEZ;
+  // etiket hazır/basılıyken SDP kabulü CargoFlow kriteri değildir.
   const cargoStatusLabel = resolvedStatus.delivered
     ? 'Teslim Edildi'
     : order.shipment?.carrierStatusLabel ||
-      (printEligibility.awaitingAcceptance
-        ? 'Kabul Bekleniyor'
-        : order.shipment
-          ? 'Takip Bekleniyor'
-          : 'Bekliyor')
+      (order.shipment ? 'Takip Bekleniyor' : 'Bekliyor')
   const printSourceLabel =
     printSource.source === 'carrier_zpl'
       ? 'Taşıyıcı ZPL etiketi'
@@ -249,12 +247,6 @@ export function OrderDetailDrawer({
                   tone="info"
                 />
               </div>
-              {printEligibility.awaitingAcceptance ? (
-                <div className="detail-warning" role="status">
-                  Etiket hazır — fiziksel Sürat kabulü bekleniyor. Serendip
-                  kaydı tesellümden sonra doğrulanacaktır.
-                </div>
-              ) : null}
               {order.errorMessage ? (
                 <p className="drawer-error">{order.errorMessage}</p>
               ) : null}
@@ -450,20 +442,6 @@ export function OrderDetailDrawer({
               {printSource.source === 'unavailable' && order.shipment ? (
                 <div className="detail-warning" role="status">
                   {printSource.reason}
-                </div>
-              ) : null}
-              {!printEligibility.awaitingAcceptance &&
-              order.shipment?.candidateVerificationStatus ===
-                'PENDING_VERIFICATION' ? (
-                <div className="detail-warning" role="status">
-                  Bu kodlar Serendip kaydı doğrulanmadan yazdırılamaz.
-                </div>
-              ) : null}
-              {order.shipment?.candidateVerificationStatus ===
-              'LABEL_CREATED_NOT_REGISTERED' ? (
-                <div className="detail-warning" role="alert">
-                  Etiket oluşturuldu ancak Serendip gönderi kaydı açılmadı.
-                  Aday T.No ve barkod yazdırılamaz.
                 </div>
               ) : null}
               <div className="drawer-desi-editor">

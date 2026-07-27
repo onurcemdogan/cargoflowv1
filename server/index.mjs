@@ -659,6 +659,48 @@ app.get('/api/orders/:id', async (request, response) => {
   }
 })
 
+// GET /api/orders/:id/label — REPRINT (tekrar yazdırma) için KAYITLI etiket
+// artifact'ini (ham ZPL) getirir. Org yalnız req.auth'tan; başka tenant erişemez
+// (resolvePersistedLabel → getOrder org-scoped). Yalnız LABEL_READY/LABEL_PRINTED
+// + yazdırılabilir etiket için ZPL döner. Provider'a ÇIKMAZ, yeni shipment/barkod
+// OLUŞTURMAZ, desi doğrulaması YAPMAZ. Ham ZPL Dashboard/list response'una
+// EKLENMEZ; yalnız bu özel uçtan private/no-store olarak döner. Ham ZPL LOGLANMAZ.
+app.get('/api/orders/:id/label', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const result = await context.service.resolvePersistedLabel(
+      context.db,
+      context.organizationId,
+      String(request.params.id),
+    )
+    if (!result.found) {
+      response.status(404).json({ ok: false, message: 'Sipariş bulunamadı.' })
+      return
+    }
+    if (!result.eligible) {
+      response.status(409).json({
+        ok: false,
+        code: 'label_not_ready',
+        message:
+          'Bu sipariş için yazdırılabilir kayıtlı etiket bulunmuyor.',
+        operationStatus: result.operationStatus,
+      })
+      return
+    }
+    // Ham ZPL hassastır: önbelleğe alınmaz, ara katmanlarda saklanmaz.
+    response.set('Cache-Control', 'private, no-store')
+    response.json({
+      ok: true,
+      hasPrintableLabel: result.hasPrintableLabel,
+      zpl: result.zpl,
+      source: result.source,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Kayıtlı etiket alınamadı.' })
+  }
+})
+
 // POST /api/orders/:id/label-ready — etiket başarıyla oluşturulduğunda siparişi
 // canonical LABEL_READY durumuna KALICI geçirir (org yalnız req.auth'tan).
 // Backend-doğrulamalı: gerçek Sürat gönderisi yoksa geçiş yapılmaz (409). Atomik +
