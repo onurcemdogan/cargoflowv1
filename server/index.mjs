@@ -94,8 +94,10 @@ const SURAT_LABEL_REGISTRATION_GRACE_MS = 30 * 60 * 1000
 const SURAT_BARCODE_FAILED_MESSAGE =
   'OrtakBarkodOlustur çağrıldı ancak Sürat KargoTakipNo/Barcode döndürmedi. Sürat ortak barkod yetkisi, SOAP parametreleri veya hesap ayarları kontrol edilmeli.'
 
+// NOT: Başarı kriteri artık yazdırılabilir ZPL'dir (T.No/barkod değil). Bu mesaj
+// YALNIZ ZPL üretilemediğinde (gerçek create başarısızlığı) gösterilir.
 const SURAT_INVALID_CODES_MESSAGE =
-  'Sürat gönderisi oluşturuldu gibi döndü ancak geçerli takip/barkod kodu alınamadı. Etiket basılamaz.'
+  'Sürat gönderisi oluşturuldu gibi döndü ancak yazdırılabilir ZPL etiketi alınamadı. Etiket basılamaz.'
 
 const TRENDYOL_1002_POSSIBLE_REASONS = [
   'Trendyol paketi kargoya verilebilir statüde değil.',
@@ -668,7 +670,7 @@ app.post('/api/orders/:id/label-ready', async (request, response) => {
         ok: false,
         code: 'shipment_required',
         message:
-          'Etiket-hazır için önce doğrulanmış Sürat gönderisi oluşturulmalıdır.',
+          'Etiket-hazır için önce yazdırılabilir Sürat etiketi oluşturulmalıdır.',
         operationStatus: result.operationStatus,
       })
       return
@@ -6480,6 +6482,65 @@ async function verifySuratCreateResultWithTracking({
             zplDisabledReason: '',
             suratTrackingLog: trackingVerification?.suratTrackingLog,
             trackingVerification: operationalVerificationDebug,
+          }
+        : createResult.shipment,
+    }
+  }
+
+  // MERKEZİ BAŞARI KRİTERİ: Sürat'ın fiziksel gönderi kabulü ayrı SDP mobil
+  // uygulaması üzerinden yapılır. CargoFlow fiziksel kabulü KONTROL ETMEZ ve
+  // etiket oluşturma başarı kriteri olarak KULLANMAZ. Yazdırılabilir ZPL
+  // üretildiyse (labelCreated) etiket oluşturma BAŞARILIDIR:
+  //   labelCreationOk = HTTP ok && isError=false && geçerli boş-olmayan ZPL
+  // tracking/Serendip/operasyonel barkod doğrulaması ve fiziksel kabul YALNIZ
+  // diagnostic'tir; LABEL_READY geçişini engellemez. T.No/barkod parse
+  // edildiyse kaydedilir; edilemediyse yalnız diagnostic uyarı verilir, etiket
+  // yine yazdırılabilir kalır. Tam VERIFIED / tracking-confirmed yolları (zengin
+  // serdendip_verified yanıtı) trackingConfirmed=true iken KENDİ dallarında döner;
+  // bu guard YALNIZ tracking doğrulanmamış (kabul-öncesi) create'i kurtarır.
+  if (labelCreated && !trackingConfirmed) {
+    const printableTNo = firstNonEmpty(expectedTrackingNumber, trackingNumber)
+    const printableBarcode = firstNonEmpty(expectedBarcode, barcode)
+    const identifiersParsed = Boolean(printableTNo && printableBarcode)
+    return {
+      ...createResult,
+      ok: true,
+      message: 'Etiket başarıyla oluşturuldu ve yazdırmaya hazır.',
+      trackingVerification: verificationDebug,
+      suratCreateLog: {
+        ...createResult.suratCreateLog,
+        verifiedShipment: false,
+        dispatchRegistrationConfirmed: shipmentRegistered,
+        trackingConfirmationPending: !trackingConfirmed,
+        trackingVerification: verificationDebug,
+      },
+      createDiagnostics: {
+        ...createResult.createDiagnostics,
+        marketplaceRegistration,
+        trackingVerification: verificationDebug,
+        operationalBarcodeResolution,
+        identifiersParsed,
+      },
+      shipment: createResult.shipment
+        ? {
+            ...createResult.shipment,
+            ...buildSuratPreassignedShipmentPatch(printableTNo, printableBarcode),
+            dispatchRegistrationConfirmed: shipmentRegistered,
+            trackingConfirmationPending: !trackingConfirmed,
+            lifecycleStage: lifecycle.state,
+            lifecycleMilestones: lifecycle.milestones,
+            lifecycleEvidence: lifecycle,
+            zplReady: Boolean(createResult.shipment.barcodeRaw),
+            suratOperationalBarcodeLog: operationalBarcodeResolution,
+            suratTrackingLog: trackingVerification?.suratTrackingLog,
+            trackingVerification: verificationDebug,
+            // T.No/barkod parse durumu YALNIZ diagnostic; hata değildir.
+            noTrackingReason: '',
+            labelBlockedReason: '',
+            zplDisabledReason: '',
+            diagnosticMessage: identifiersParsed
+              ? 'Etiket yazdırılabilir. Fiziksel Sürat kabulü SDP uygulamasıyla ayrıca yapılır.'
+              : 'Etiket ZPL ile yazdırılabilir. T.No/barkod otomatik ayrıştırılamadı (yalnız bilgi amaçlı); fiziksel kabul SDP ile yapılır.',
           }
         : createResult.shipment,
     }

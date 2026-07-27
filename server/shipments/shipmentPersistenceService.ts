@@ -80,33 +80,36 @@ export async function readOperationRecord(
   return payload ?? undefined
 }
 
-// Ön-atanmış (preassigned) etiket başarısı: fiziksel Sürat kabulü doğrulanmamış
-// (verifiedShipment=false) OLSA BİLE geçerli T.No + barkod + ZPL üretilmiş, etiket
-// yazdırılabilir bir LABEL OLUŞTURMA başarısıdır. Bu kayıt için de canonical
-// shipment satırı yazılmalı ki markLabelReady (findShipment) çalışsın ve sipariş
-// "Etiket Hazır" olarak kalıcı işaretlenebilsin. Gerçek business failure
-// (FAILED_SAFE) veya kimlik/ZPL yoksa shipment YAZILMAZ.
+const SURAT_HARD_FAILURE_LIFECYCLES = new Set([
+  'SURAT_BARCODE_FAILED',
+  'SURAT_DISPATCH_REJECTED',
+  'SURAT_CREATE_UNCERTAIN',
+])
+
+// MERKEZİ BAŞARI KRİTERİ (SDP fiziksel kabul ayrı uygulamada): fiziksel Sürat
+// kabulü doğrulanmamış (verifiedShipment=false) OLSA BİLE, YAZDIRILABİLİR ZPL
+// üretilmişse bu bir LABEL OLUŞTURMA başarısıdır ve canonical shipment satırı
+// yazılmalıdır ki markLabelReady (findShipment) çalışsın ve sipariş kalıcı
+// "Etiket Hazır" olsun. T.No/barkod parse edilemese BİLE geçerli ZPL varsa
+// yeterlidir (kimlik yalnız varsa canonical alanlara yazılır). Yalnız gerçek
+// hard-failure (FAILED_SAFE veya dispatch reddi / barkod üretilemedi / belirsiz)
+// ya da ZPL yokluğu durumunda shipment YAZILMAZ.
 export function isSuratRecordPreassignedReady(
   record: Record<string, unknown>,
 ): boolean {
   if (String(record.status ?? '') === 'FAILED_SAFE') return false
   const shipment = (record.shipment ?? {}) as Record<string, unknown>
-  const tracking = first(
-    record.carrierTrackingNumber,
-    record.candidateTrackingNumber,
-    shipment.tNo,
-    shipment.trackingNumber,
-  )
-  const barcode = first(
-    record.carrierBarcodeNumber,
-    record.candidateBarcodeNumber,
-    shipment.barkodNo,
-    shipment.barcode,
-  )
+  if (SURAT_HARD_FAILURE_LIFECYCLES.has(String(shipment.lifecycleStatus ?? ''))) {
+    return false
+  }
   const hasZpl = Boolean(
-    record.technicalZpl || record.technicalZplSha256 || shipment.barcodeRaw,
+    record.technicalZpl ||
+      record.technicalZplSha256 ||
+      shipment.barcodeRaw ||
+      shipment.zplReady ||
+      shipment.technicalZplReceived,
   )
-  return Boolean(tracking && barcode && hasZpl)
+  return hasZpl
 }
 
 // Başarılı create'te shipment + operation TEK transaction'da yazılır (M:

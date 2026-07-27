@@ -1128,11 +1128,16 @@ export class OrderWorkflowService {
           order: normalizedOrder,
           config,
         })
+        // MERKEZİ KURAL: yazdırılabilir ZPL/etiket varsa (printEnabled/zplReady)
+        // etiket hazırdır — Sürat T.No/barkod parse edilmese bile. Fiziksel Sürat
+        // kabulü (SDP) CargoFlow tarafından beklenmez, LABEL_READY'i engellemez.
         const preassignedAwaiting = Boolean(
           shipment.printEnabled === true &&
             (shipment.lifecycleStatus === 'LABEL_READY_AWAITING_ACCEPTANCE' ||
               shipment.candidateVerificationStatus ===
-                'PREASSIGNED_AWAITING_ACCEPTANCE'),
+                'PREASSIGNED_AWAITING_ACCEPTANCE' ||
+              shipment.zplReady === true ||
+              Boolean(shipment.barcodeRaw)),
         )
         // Idempotency-blocked cevapta yeni create yapılmaz; mevcut hazır
         // etiketin ZPL'i ve create logu korunur.
@@ -1198,7 +1203,7 @@ export class OrderWorkflowService {
             : 'SHIPMENT_CREATED'
         const labelReadyState = liveBarcodeReady || preassignedAwaiting
         const preassignedDiagnostic =
-          'Etiket yazdırılabilir; Serendip kaydı fiziksel tesellümden sonra doğrulanacaktır.'
+          'Etiket başarıyla oluşturuldu ve yazdırmaya hazır.'
         const responseOrder: CargoOrder = {
           ...normalizedOrder,
           shipment: {
@@ -1361,7 +1366,7 @@ export class OrderWorkflowService {
         )
         this.auditLogService.append({
           action: 'Gönderi oluşturuldu',
-          level: liveBarcodeReady
+          level: liveBarcodeReady || preassignedAwaiting
             ? 'success'
             : legacyPreRegistration ||
                 createUncertain ||
@@ -1371,7 +1376,15 @@ export class OrderWorkflowService {
               ? 'warning'
               : 'success',
           details: preassignedAwaiting
-            ? `Etiket hazır — fiziksel Sürat kabulü bekleniyor. T.No ${shipment.tNo || shipment.trackingNumber}, Barkod ${shipment.barkodNo || shipment.barcode}.`
+            ? `Etiket başarıyla oluşturuldu ve yazdırmaya hazır.${
+                shipment.tNo || shipment.trackingNumber
+                  ? ` T.No ${shipment.tNo || shipment.trackingNumber}`
+                  : ''
+              }${
+                shipment.barkodNo || shipment.barcode
+                  ? `, Barkod ${shipment.barkodNo || shipment.barcode}`
+                  : ''
+              }.`
             : dispatchRejected
             ? shipment.diagnosticMessage ||
               'Trendyol/Sürat paket statüsünü reddetti.'
@@ -1536,7 +1549,7 @@ export class OrderWorkflowService {
               : 'warning',
         message:
           failedBarcodeCount > 0
-            ? `${failedBarcodeCount} siparişte Sürat gönderisi oluşturuldu gibi döndü ancak geçerli takip/barkod kodu alınamadı. Etiket basılamaz.`
+            ? `${failedBarcodeCount} siparişte Sürat etiketi oluşturulamadı (yazdırılabilir ZPL alınamadı veya gönderi reddedildi). Etiket basılamaz.`
             : buildShipmentCreationResultMessage({
                 successCount,
                 skippedCount,
