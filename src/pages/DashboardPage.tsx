@@ -279,8 +279,12 @@ export function DashboardPage({
   const hasConfiguredMarketplace = providerHealth.marketplaceIntegrations.some(
     (provider) => provider.configured,
   )
-  const hasConnectedMarketplace = providerHealth.marketplaceIntegrations.some(
-    (provider) => provider.connected,
+  // UYARI YALNIZ gerçek başarısızlıkta (UNHEALTHY = persisted/son test hatası).
+  // İlk yükleme CONFIGURED_UNTESTED (needs_check) durumu YANLIŞ NEGATİF uyarı
+  // ÜRETMEZ: kayıtlı+aktif entegrasyon, henüz test/sync yapılmamışsa nötr kabul
+  // edilir (login/dashboard açılışı provider API'ye çıkmaz).
+  const hasUnhealthyMarketplace = providerHealth.marketplaceIntegrations.some(
+    (provider) => provider.status === 'error',
   )
   const periodFilters = useMemo(
     () => navigationFiltersForPeriod(viewModel.period),
@@ -484,12 +488,12 @@ export function DashboardPage({
             Ayarlara git
           </button>
         </section>
-      ) : !hasConnectedMarketplace ? (
+      ) : hasUnhealthyMarketplace ? (
         <section className="dashboard-alert warning">
           <AlertTriangle size={20} />
           <div>
             <strong>Pazaryeri bağlantısı kontrol edilmeli</strong>
-            <span>Entegrasyon kayıtlı; son bağlantı testi doğrulanamadı. Ayarlardan bağlantıyı test edin.</span>
+            <span>Son bağlantı testi/senkron hata verdi. Ayarlardan bağlantıyı test edin.</span>
           </div>
           <button type="button" onClick={() => onNavigatePage('integrations')}>
             Ayarlara git

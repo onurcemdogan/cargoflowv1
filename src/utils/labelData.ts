@@ -316,7 +316,16 @@ export function validateLabelData(
       'Canlı ZPL için OrtakBarkodOlustur response içinde KargoTakipNo + Barcode birlikte bulunmalıdır.',
     )
   }
-  if (order && labelData.desi == null) {
+  // Persist edilmiş yazdırılabilir etiket (carrier ZPL barcodeRaw / backend
+  // hasPrintableLabel) VARSA desi tekrar İSTENMEZ: etiket zaten üretildi, tekrar
+  // yazdırma mevcut kayıtlı etiketi kullanır (provider create çağrılmaz). Desi
+  // yalnız persist etiket YOKKEN (ilk oluşturma) zorunludur.
+  const hasPersistedLabel = Boolean(
+    (shipment ?? order?.shipment)?.barcodeRaw ||
+      (order as CargoOrder & { hasPrintableLabel?: boolean })?.hasPrintableLabel ===
+        true,
+  )
+  if (order && labelData.desi == null && !hasPersistedLabel) {
     errors.push(
       'Desi bilgisi eksik. Etiket veya Sürat gönderisi oluşturmadan önce desi girin.',
     )
@@ -447,22 +456,32 @@ function selectLeftVerticalReference(
   fields: ReturnType<typeof extractSuratFields>,
 ): BarcodeSelection {
   if (shipment) {
+    // Etiketteki kullanıcıya görünen "Siparis No": önce 727... Trendyol kargo/
+    // sipariş referansı (order.cargoTrackingNumber / OzelKargoTakipNo). packageId
+    // (403...) yalnız fallback'tir. Bu YALNIZ etiket GÖRÜNÜMÜDÜR — Sürat T.No/
+    // barkodu, packageId, canonical orderNumber ve idempotency DEĞİŞMEZ; yeni SOAP
+    // alanı üretilmez, mevcut 727 değeri kullanılır.
+    const trendyolReference = firstNonEmpty(
+      order?.cargoTrackingNumber,
+      shipment.ozelKargoTakipNo,
+      fields.OzelKargoTakipNo,
+    )
     const value = firstNonEmpty(
+      trendyolReference,
       order?.packageId,
       fields.WebSiparisKodu,
-      fields.OzelKargoTakipNo,
       fields.SatisKodu,
       shipment.shipmentCode,
       order?.orderNumber,
     )
     return {
       value,
-      source: order?.packageId
-        ? 'trendyol.packageId'
-        : fields.WebSiparisKodu
-          ? 'surat.WebSiparisKodu'
-          : fields.OzelKargoTakipNo
-            ? 'surat.OzelKargoTakipNo'
+      source: trendyolReference
+        ? 'trendyol.cargoTrackingNumber'
+        : order?.packageId
+          ? 'trendyol.packageId'
+          : fields.WebSiparisKodu
+            ? 'surat.WebSiparisKodu'
             : fields.SatisKodu
               ? 'surat.SatisKodu'
               : shipment.shipmentCode

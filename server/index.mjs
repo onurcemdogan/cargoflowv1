@@ -388,11 +388,24 @@ app.get('/api/local-config/integration', async (request, response) => {
         getDb(),
         request.auth.organizationId,
       )
+      // Login/hydrate'te KALICI sync sağlığı da güvenli metadata olarak döner
+      // (integration_sync_state; secret DEĞİL, provider API'ye çıkılmaz). Dashboard
+      // health bunu kullanır: kayıtlı+başarılı-sync → connected; kayıtlı ama test
+      // yok → nötr (yanlış uyarı yok); son sync 'failed' → gerçek uyarı.
+      const ordersSyncState = await readOrgSyncState(
+        getDb(),
+        request.auth.organizationId,
+        'orders',
+      )
       response.json({
         ok: true,
         mode: 'auth',
         configured: status.trendyol.configured || status.surat.configured,
-        trendyol: status.trendyol,
+        trendyol: {
+          ...status.trendyol,
+          lastSuccessfulSyncAt: ordersSyncState?.lastSuccessfulSyncAt ?? null,
+          lastSyncStatus: ordersSyncState?.lastSyncStatus ?? null,
+        },
         surat: status.surat,
       })
     } catch {

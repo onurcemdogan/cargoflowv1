@@ -31,6 +31,10 @@ export interface MaskedIntegrationStatus {
     hasApiKey?: boolean
     hasApiSecret?: boolean
     apiKeyMasked: string
+    // Login/hydrate'te backend'den gelen KALICI sync sağlığı (güvenli metadata):
+    // son başarılı sync zamanı ve son sync statüsü. Secret DEĞİL.
+    lastSuccessfulSyncAt?: string | null
+    lastSyncStatus?: string | null
   }
   surat: {
     configured: boolean

@@ -66,7 +66,11 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
   assert.equal(labelData.trackingNumber, '25220148446193')
   assert.equal(labelData.barcodeValue, '01231201025')
   assert.equal(labelData.mainBarcodeValue, '01231201025')
-  assert.equal(labelData.leftVerticalReference, 'PKG123')
+  // Etiketteki kullanıcıya görünen "Siparis No" (leftVerticalReference) artık
+  // 727... Trendyol kargo referansını gösterir (packageId PKG123 DEĞİL). Canonical
+  // orderNumber/T.No/barkod DEĞİŞMEZ.
+  assert.equal(labelData.leftVerticalReference, '7270033563324593')
+  assert.equal(labelData.leftVerticalReferenceSource, 'trendyol.cargoTrackingNumber')
   assert.equal(labelData.verifiedShipment, true)
   assert.equal(labelData.serviceMode, 'ORTAK_BARKOD_SOAP')
   assert.equal(labelData.operationName, 'OrtakBarkodOlustur')
@@ -81,7 +85,7 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
   assert.equal(label.barcodeValue, '01231201025')
   assert.match(label.zplContent, /FDT\.No: 25220148446193/)
   assert.match(label.zplContent, /\^FD01231201025\^FS/)
-  assert.match(label.zplContent, /Ref No: PKG123/)
+  assert.match(label.zplContent, /Ref No: 7270033563324593/)
   assert.equal(label.zplSource, 'generated')
 
   const suratRawZpl =
