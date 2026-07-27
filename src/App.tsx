@@ -69,6 +69,10 @@ function App() {
   // bir sync sürerken ikinci çağrı NO-OP olur (frontend kilidi; backend org
   // kilidi ayrıca vardır). state yerine ref: anında ve render-bağımsız.
   const ordersSyncInFlight = useRef(false)
+  // Dashboard "Yenile" (yerel DB reload) için eşzamanlılık kilidi: çift tıklama
+  // ikinci bir GET /api/orders başlatmaz (paralel istek yok). Trendyol sync'ten
+  // ayrıdır; bu yalnız yerel yeniden okumayı korur.
+  const ordersReloadInFlight = useRef(false)
   const productsSyncInFlight = useRef(false)
   const [activePage, setActivePage] = useState<PageKey>('dashboard')
   const [integrationConfig, setIntegrationConfig] = useState<IntegrationConfig>(
@@ -188,32 +192,54 @@ function App() {
   // İSTEK ATMAZ. Route/tab/mount/dashboard geçişleri bunu kullanır. Trendyol
   // sync YALNIZ açık "Şimdi Yenile / Senkronize Et" butonuyla (handleFetchOrders).
   async function handleReloadOrders() {
-    const authMode = integrationConfigService.isAuthMode()
-    if (!authMode) {
-      // Legacy: siparişler zaten localStorage'tan yüklü; yeniden oku.
+    // Yalnız yerel DB okur (auth: GET /api/orders, legacy: localStorage);
+    // sync/etiket/desi/create akışına GİRMEZ. ordersError yalnız yükleme hatası.
+    if (ordersReloadInFlight.current) return
+    ordersReloadInFlight.current = true
+    if (integrationConfigService.isAuthMode()) {
+      // Yeni yükleme: önceki (bayat) yükleme hatası TEMİZLENİR.
+      setOrdersState((current) => ({
+        ...current,
+        ordersLoading: true,
+        ordersError: undefined,
+      }))
+      try {
+        const baseOrders = await workflowService.loadOrdersFromServer()
+        setOrdersState((current) => ({
+          ...current,
+          orders: workflowService.enrichOrderImages(
+            baseOrders,
+            productsState.products,
+          ),
+          ordersLoading: false,
+          ordersError: undefined,
+        }))
+      } catch {
+        // Ağ/yükleme hatasında mevcut liste KORUNUR (silinmez). Banner'da yalnız
+        // güvenli, yükleme kapsamlı mesaj gösterilir (etiket/desi metni değil).
+        setOrdersState((current) => ({
+          ...current,
+          ordersLoading: false,
+          ordersError:
+            'Sipariş verileri yüklenemedi. Bağlantıyı kontrol edip tekrar deneyin.',
+        }))
+      } finally {
+        ordersReloadInFlight.current = false
+      }
+      return
+    }
+    // Legacy: siparişler zaten localStorage'tan yüklü; yeniden oku.
+    try {
       setOrdersState((current) => ({
         ...current,
         orders: workflowService.enrichOrderImages(
           workflowService.loadOrders(),
           productsState.products,
         ),
+        ordersError: undefined,
       }))
-      return
-    }
-    setOrdersState((current) => ({ ...current, ordersLoading: true }))
-    try {
-      const baseOrders = await workflowService.loadOrdersFromServer()
-      setOrdersState((current) => ({
-        ...current,
-        orders: workflowService.enrichOrderImages(
-          baseOrders,
-          productsState.products,
-        ),
-        ordersLoading: false,
-      }))
-    } catch {
-      // Ağ hatasında mevcut liste KORUNUR (silinmez); yalnız yükleme biter.
-      setOrdersState((current) => ({ ...current, ordersLoading: false }))
+    } finally {
+      ordersReloadInFlight.current = false
     }
   }
 
@@ -278,10 +304,12 @@ function App() {
   async function runOrderWorkflow(
     action: () => Promise<{ orders: CargoOrder[]; result: WorkflowResult }>,
   ) {
+    // Operasyonel iş akışı (create/track). Hata/başarı YALNIZ ordersMessage'a
+    // yazılır (OrdersPage banner'ı). Dashboard yükleme banner'ının okuduğu
+    // ordersError'a DOKUNULMAZ: etiket/desi/create hataları dashboard'a sızmaz.
     setOrdersState((current) => ({
       ...current,
       ordersLoading: true,
-      ordersError: undefined,
     }))
     try {
       const response = await action()
@@ -290,8 +318,6 @@ function App() {
         orders: response.orders,
         ordersLoading: false,
         ordersMessage: response.result,
-        ordersError:
-          response.result.level === 'error' ? response.result.message : undefined,
         ordersDebug: response.result.debug,
       }))
     } finally {
@@ -700,10 +726,11 @@ function App() {
         reason: eligibility.reason,
       })
     }
+    // Etiket yazdırma: sonuç YALNIZ ordersMessage'a yazılır (OrdersPage banner).
+    // Desi/label hataları dashboard yükleme banner'ına (ordersError) SIZMAZ.
     setOrdersState((current) => ({
       ...current,
       ordersLoading: true,
-      ordersError: undefined,
     }))
     const confirmedAt = new Date().toISOString()
     try {
@@ -723,10 +750,6 @@ function App() {
         ...current,
         orders: response.orders,
         ordersMessage: response.result,
-        ordersError:
-          response.result.level === 'error'
-            ? response.result.message
-            : undefined,
       }))
     } catch (error) {
       suratPrintTrace('PRINT_ERROR', {
@@ -742,10 +765,6 @@ function App() {
               ? error.message
               : 'Etiket yazdırma başarısız oldu.',
         },
-        ordersError:
-          error instanceof Error
-            ? error.message
-            : 'Etiket yazdırma başarısız oldu.',
       }))
     } finally {
       refreshLogs()
@@ -769,10 +788,11 @@ function App() {
       ...printerSettings,
       mode: 'browser-print' as const,
     }
+    // Önizleme onayı ile yazdırma: sonuç YALNIZ ordersMessage'a yazılır.
+    // Desi/label hataları dashboard yükleme banner'ına (ordersError) SIZMAZ.
     setOrdersState((current) => ({
       ...current,
       ordersLoading: true,
-      ordersError: undefined,
     }))
     const confirmedAt = new Date().toISOString()
     try {
@@ -792,10 +812,6 @@ function App() {
         ...current,
         orders: response.orders,
         ordersMessage: response.result,
-        ordersError:
-          response.result.level === 'error'
-            ? response.result.message
-            : undefined,
       }))
       if (response.result.level !== 'error') {
         setPrintPreview(undefined)
@@ -814,13 +830,13 @@ function App() {
   }
 
   function handleMarkHandedToCargo() {
+    // Operasyonel aksiyon: sonuç YALNIZ ordersMessage'a (OrdersPage). Dashboard
+    // yükleme banner'ının okuduğu ordersError'a dokunulmaz.
     const response = workflowService.markSelectedHandedToCargo(orders, selectedIds)
     setOrdersState((current) => ({
       ...current,
       orders: response.orders,
       ordersMessage: response.result,
-      ordersError:
-        response.result.level === 'error' ? response.result.message : undefined,
       ordersDebug: response.result.debug,
     }))
     refreshLogs()
