@@ -44,12 +44,14 @@ import {
   fetchDashboardAnalyticsClaims,
   fetchDashboardAnalyticsOrders,
 } from '../services/dashboardAnalyticsService'
+import type { MaskedIntegrationStatus } from '../services/integrationConfigService'
 import type { AnalyticsClaim } from '../dashboard/analyticsClaims'
 
 interface DashboardPageProps {
   orders: CargoOrder[]
   products?: CargoProduct[]
   integrationConfig: IntegrationConfig
+  maskedIntegrationStatus?: MaskedIntegrationStatus | null
   printerSettings: PrinterSettings
   apiDebugLogs: ApiDebugLog[]
   loading: boolean
@@ -89,6 +91,7 @@ export function DashboardPage({
   orders,
   products = [],
   integrationConfig,
+  maskedIntegrationStatus,
   printerSettings,
   apiDebugLogs,
   loading,
@@ -263,14 +266,21 @@ export function DashboardPage({
     () =>
       buildDashboardProviderHealth({
         config: integrationConfig,
+        maskedStatus: maskedIntegrationStatus,
         apiDebugLogs,
         orders,
         lastSyncedAt,
       }),
-    [apiDebugLogs, integrationConfig, lastSyncedAt, orders],
+    [apiDebugLogs, integrationConfig, maskedIntegrationStatus, lastSyncedAt, orders],
   )
+  // configured: kayıtlı (maskeli metadata). connected: son gerçek test/sync başarılı.
+  // "bağlantı bulunamadı" YALNIZ hiç configured pazaryeri yoksa gösterilir; kayıtlı
+  // ama doğrulanmamışsa "kontrol edilmeli" gösterilir (kayıt kaybı DEĞİL).
   const hasConfiguredMarketplace = providerHealth.marketplaceIntegrations.some(
-    (provider) => provider.status !== 'not_configured',
+    (provider) => provider.configured,
+  )
+  const hasConnectedMarketplace = providerHealth.marketplaceIntegrations.some(
+    (provider) => provider.connected,
   )
   const periodFilters = useMemo(
     () => navigationFiltersForPeriod(viewModel.period),
@@ -469,6 +479,17 @@ export function DashboardPage({
           <div>
             <strong>Pazaryeri bağlantısı bulunamadı</strong>
             <span>Gerçek satış verisini görmek için entegrasyon ayarlarını tamamlayın.</span>
+          </div>
+          <button type="button" onClick={() => onNavigatePage('integrations')}>
+            Ayarlara git
+          </button>
+        </section>
+      ) : !hasConnectedMarketplace ? (
+        <section className="dashboard-alert warning">
+          <AlertTriangle size={20} />
+          <div>
+            <strong>Pazaryeri bağlantısı kontrol edilmeli</strong>
+            <span>Entegrasyon kayıtlı; son bağlantı testi doğrulanamadı. Ayarlardan bağlantıyı test edin.</span>
           </div>
           <button type="button" onClick={() => onNavigatePage('integrations')}>
             Ayarlara git
