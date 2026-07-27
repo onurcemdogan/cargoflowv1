@@ -85,6 +85,13 @@ export function getOrderOperationStatus(order: CargoOrder): OperationStatus {
   ) {
     return 'LABEL_PRINTED'
   }
+  // ÖNCELİK 1: canonical (DB'de kalıcı) etiket durumu shipment/label TÜRETMESİNDEN
+  // ÖNCE gelir. Aksi hâlde ön-atanmış shipment türetmesi (isPreassignedAwaiting)
+  // LABEL_PRINTED'i yanlışlıkla LABEL_READY'ye DÜŞÜRÜRDÜ ve sayfa yenilemesinde
+  // "Etiket Basıldı" kaybolurdu. Pazaryeri gerçek forward statüsü (Shipped/
+  // Delivered) yukarıda zaten daha önceliklidir; bu yüzden burada güvenli.
+  if (order.operationStatus === 'LABEL_PRINTED') return 'LABEL_PRINTED'
+  if (order.operationStatus === 'LABEL_READY') return 'LABEL_READY'
   if (hasLiveOrtakBarkodShipment(order)) return 'LABEL_READY'
   if (isPreassignedAwaitingAcceptance(order.shipment)) return 'LABEL_READY'
   if (order.operationStatus) return order.operationStatus
@@ -151,8 +158,11 @@ export function normalizeVerifiedOrtakBarkodState(
   )
   if (!shipment || !isVerifiedCommonBarcode) return order
 
+  // Canonical LABEL_PRINTED (DB'de kalıcı) sayfa yenilemesinde korunur: client-only
+  // label.printedAt kaybolsa bile basılı durum LABEL_READY'ye düşürülmez.
   const printed = Boolean(
-    order.labelStatus === 'PRINTED' && order.label?.printedAt,
+    (order.labelStatus === 'PRINTED' && order.label?.printedAt) ||
+      order.operationStatus === 'LABEL_PRINTED',
   )
   const previousErrorCleared = Boolean(
     shipment.previousErrorCleared ||

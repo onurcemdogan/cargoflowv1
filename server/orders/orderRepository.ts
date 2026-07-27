@@ -362,3 +362,76 @@ export async function markOrderLabelReady(
     operationStatus: existing[0].operationStatus ?? null,
   }
 }
+
+// Canonical "Etiket Basıldı" operasyon durumu. NOT: Tarayıcı, fiziksel yazıcının
+// gerçekten kağıt bastığını kesin doğrulayamaz; LABEL_PRINTED, kullanıcının
+// yazdırma aksiyonunu başarıyla BAŞLATTIĞINI ifade eder (mevcut sistemdeki anlam).
+export const LABEL_PRINTED_OPERATION_STATUS = 'LABEL_PRINTED'
+
+// LABEL_PRINTED'e YALNIZ LABEL_READY'den geçilir (yazdırılabilir persist edilmiş
+// etiket şartı). Zaten LABEL_PRINTED veya daha ileri (kargoda/teslim) statüler
+// idempotent kabul edilir; bunlardan GERİ dönülmez (no-regress).
+const LABEL_PRINTED_FORWARD_STATES = [
+  'LABEL_PRINTED',
+  'SHIPPED',
+  'HANDED_TO_CARGO',
+  'DELIVERED',
+  'DELIVERED_SPECIAL',
+  'RETURNING',
+]
+
+// Sipariş operasyon durumunu ATOMİK olarak LABEL_READY → LABEL_PRINTED geçirir.
+// Tenant-scoped. Tek koşullu UPDATE: yalnız operationStatus=LABEL_READY iken yazar.
+// - Zaten LABEL_PRINTED / ileri statü → idempotent (updated=false, ok, regress yok).
+// - Henüz yazdırılabilir etiket yok (LABEL_READY değil) → reason='label_required'.
+// marketplaceStatus'e DOKUNMAZ; yeni shipment/barkod OLUŞTURMAZ.
+export async function markOrderLabelPrinted(
+  db: Db,
+  organizationId: string,
+  orderId: string,
+): Promise<{
+  found: boolean
+  updated: boolean
+  operationStatus: string | null
+  reason?: 'label_required'
+}> {
+  const updated = await db
+    .update(orders)
+    .set({ operationStatus: LABEL_PRINTED_OPERATION_STATUS, updatedAt: new Date() })
+    .where(
+      and(
+        eq(orders.organizationId, organizationId),
+        eq(orders.id, orderId),
+        eq(orders.operationStatus, LABEL_READY_OPERATION_STATUS),
+      ),
+    )
+    .returning({ id: orders.id })
+  if (updated.length > 0) {
+    return {
+      found: true,
+      updated: true,
+      operationStatus: LABEL_PRINTED_OPERATION_STATUS,
+    }
+  }
+  // UPDATE eşleşmedi: kayıt yok / zaten printed-ileri / henüz label-öncesi.
+  const existing = await db
+    .select({ operationStatus: orders.operationStatus })
+    .from(orders)
+    .where(and(eq(orders.organizationId, organizationId), eq(orders.id, orderId)))
+    .limit(1)
+  if (existing.length === 0) {
+    return { found: false, updated: false, operationStatus: null }
+  }
+  const current = existing[0].operationStatus ?? null
+  // Zaten basılmış veya ileri statü → idempotent başarı (no-regress).
+  if (LABEL_PRINTED_FORWARD_STATES.includes(String(current))) {
+    return { found: true, updated: false, operationStatus: current }
+  }
+  // Yazdırılabilir persist edilmiş etiket (LABEL_READY) yok.
+  return {
+    found: true,
+    updated: false,
+    operationStatus: current,
+    reason: 'label_required',
+  }
+}

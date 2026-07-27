@@ -992,6 +992,35 @@ export class OrderWorkflowService {
     }
   }
 
+  // Kullanıcı Yazdır/Tekrar Yazdır aksiyonunu başarıyla başlattığında canonical
+  // LABEL_PRINTED durumunu DB'ye KALICI yazar (idempotent + no-regress). Yeni
+  // shipment/barkod OLUŞTURMAZ; Sürat create servisini ÇAĞIRMAZ. Legacy modda
+  // no-op (localStorage zaten persistOrders ile yazılır). Backend LABEL_READY
+  // değilse 409 döner; bu durumda sessiz geçilir (yazdırma zaten yapılmıştır,
+  // durum eski akıştaki gibi optimistic in-memory korunur).
+  async persistLabelPrinted(orderId: string): Promise<void> {
+    if (!this.authMode) return
+    const id = String(orderId ?? '').trim()
+    if (!id) return
+    const response = await fetch(
+      `/api/orders/${encodeURIComponent(id)}/label-printed`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+      },
+    )
+    const payload = (await response.json().catch(() => ({}))) as {
+      ok?: boolean
+      message?: string
+    }
+    if (!response.ok || payload?.ok !== true) {
+      throw new Error(
+        String(payload?.message ?? 'Etiket baskı durumu sunucuya kaydedilemedi.'),
+      )
+    }
+  }
+
   async createShipments(
     orders: CargoOrder[],
     selectedIds: string[],
@@ -2077,6 +2106,19 @@ export class OrderWorkflowService {
       })
     }
     this.persistOrders(nextOrders)
+    // Auth modda canonical LABEL_PRINTED durumunu DB'ye KALICI yaz (idempotent +
+    // no-regress; yeni shipment/barkod OLUŞMAZ, provider ÇAĞRILMAZ). Sayfa
+    // yenilemesinde "Etiket Basıldı" korunur. Persistence hatası baskıyı geçersiz
+    // KILMAZ (baskı zaten yapıldı); optimistic in-memory durum korunur.
+    if (this.authMode) {
+      for (const printedOrder of successfulPrintableOrders) {
+        try {
+          await this.persistLabelPrinted(printedOrder.id)
+        } catch {
+          // yut: baskı başarılı; DB persistence en fazla bir sonraki senkronda düzelir.
+        }
+      }
+    }
     return {
       orders: nextOrders,
       result: {

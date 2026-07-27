@@ -123,6 +123,28 @@ export function mapOperationStatus(order: CargoOrder): StatusPresentation {
       sourceLabel: resolvedStatus.sourceLabel,
     }
   }
+  // ÖNCELİK 1: canonical operationStatus rozeti DOĞRUDAN belirler. Etiket
+  // başarıyla oluşturulunca LABEL_READY, kullanıcı yazdırınca LABEL_PRINTED
+  // yazılır; shipment/verification türetmesi bunun üzerine yazıp "Barkod Bekliyor"
+  // GÖSTEREMEZ. (Pazaryeri gerçek forward statüsü yukarıda zaten önceliklidir.)
+  if (operationStatus === 'LABEL_PRINTED') {
+    return {
+      label: 'Etiket Basıldı',
+      description: 'Etiket yazdırıldı.',
+      color: 'green',
+      source: 'localOperation',
+      sourceLabel: 'CargoFlow',
+    }
+  }
+  if (operationStatus === 'LABEL_READY') {
+    return {
+      label: 'Etiket Hazır',
+      description: 'Sürat etiketi oluşturuldu ve yazdırmaya hazır.',
+      color: 'teal',
+      source: 'localOperation',
+      sourceLabel: 'CargoFlow',
+    }
+  }
   if (operationStatus === 'SURAT_TRACKING_MISSING') {
     return {
       label: 'Takip no/T.No Alınamadı',

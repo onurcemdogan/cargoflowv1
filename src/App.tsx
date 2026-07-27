@@ -803,6 +803,11 @@ function App() {
       }))
       if (response.result.level !== 'error') {
         setPrintPreview(undefined)
+        // Başarılı baskı sonrası listeyi DB'den yeniden oku: canonical
+        // LABEL_PRINTED, Etiket Hazır sayaçları ve rozet güncellenir; eski
+        // optimistic/hata state'i temizlenir. (Baskı hatasında buraya girilmez,
+        // durum DEĞİŞTİRİLMEZ.)
+        await handleReloadOrders()
       }
     } finally {
       refreshLogs()

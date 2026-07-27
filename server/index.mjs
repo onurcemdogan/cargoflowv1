@@ -688,6 +688,49 @@ app.post('/api/orders/:id/label-ready', async (request, response) => {
   }
 })
 
+// POST /api/orders/:id/label-printed — kullanıcı Yazdır/Tekrar Yazdır aksiyonunu
+// başarıyla başlattığında siparişi canonical LABEL_PRINTED durumuna KALICI geçirir
+// (org yalnız req.auth'tan). LABEL_READY → LABEL_PRINTED; zaten basılmış/ileri
+// statü idempotent (200); yazdırılabilir etiket yoksa 409. Atomik + no-regress.
+// marketplaceStatus dokunulmaz; yeni shipment/barkod OLUŞTURULMAZ. NOT: tarayıcı
+// fiziksel baskıyı kesin doğrulayamaz; bu durum yazdırma aksiyonunu ifade eder.
+app.post('/api/orders/:id/label-printed', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const orderId = String(request.params.id)
+  try {
+    const result = await context.service.markLabelPrinted(
+      context.db,
+      context.organizationId,
+      orderId,
+    )
+    if (!result.found) {
+      response.status(404).json({ ok: false, message: 'Sipariş bulunamadı.' })
+      return
+    }
+    if (result.reason === 'label_required') {
+      response.status(409).json({
+        ok: false,
+        code: 'label_required',
+        message:
+          'Etiket-basıldı için önce yazdırılabilir Sürat etiketi (LABEL_READY) oluşturulmalıdır.',
+        operationStatus: result.operationStatus,
+      })
+      return
+    }
+    // Operasyon durumu değişti → bu tenant'ın satış analitiği cache'i geçersizleşir.
+    await invalidateTenantAnalyticsCache(context.organizationId)
+    response.json({
+      ok: true,
+      updated: result.updated,
+      operationStatus: result.operationStatus,
+      order: result.order,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Etiket baskı durumu kaydedilemedi.' })
+  }
+})
+
 // POST /api/orders/sync — mevcut Trendyol sync ile (org credential DB'den
 // enjekte edilir) çeker, normalize eder ve org bazında upsert eder. KISMİ/
 // başarısız sync sipariş SİLMEZ/ARŞİVLEMEZ; arşivleme yalnız kanıtlı TAM

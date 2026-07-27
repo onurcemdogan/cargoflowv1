@@ -8,6 +8,7 @@ import {
   findLinesForOrders,
   findOrderById,
   findOrders,
+  markOrderLabelPrinted,
   markOrderLabelReady,
   upsertMarketplaceOrders,
   type OrderFilters,
@@ -180,6 +181,48 @@ export async function markLabelReady(
   const result = await markOrderLabelReady(db, organizationId, orderId)
   const order = await getOrder(db, organizationId, orderId)
   return { ...result, order }
+}
+
+export interface LabelPrintedResult {
+  found: boolean
+  updated: boolean
+  reason?: 'label_required'
+  operationStatus: string | null
+  order: Record<string, unknown> | null
+}
+
+// Kullanıcı Yazdır / Tekrar Yazdır aksiyonunu başarıyla başlattığında siparişi
+// canonical LABEL_PRINTED durumuna KALICI geçirir. Geçiş atomik + idempotent +
+// no-regress (markOrderLabelPrinted): yalnız LABEL_READY'den yazılır; zaten
+// basılmış/ileri statüler idempotent kabul edilir; yazdırılabilir etiket yoksa
+// reason='label_required'. Yeni shipment/barkod OLUŞTURMAZ; marketplaceStatus
+// AYRI alandır, dokunulmaz. NOT: tarayıcı fiziksel baskıyı kesin doğrulayamaz;
+// LABEL_PRINTED kullanıcının yazdırma aksiyonunu başlattığını ifade eder.
+export async function markLabelPrinted(
+  db: Db,
+  organizationId: string,
+  orderId: string,
+): Promise<LabelPrintedResult> {
+  const result = await markOrderLabelPrinted(db, organizationId, orderId)
+  if (!result.found) {
+    return { found: false, updated: false, operationStatus: null, order: null }
+  }
+  if (result.reason === 'label_required') {
+    return {
+      found: true,
+      updated: false,
+      reason: 'label_required',
+      operationStatus: result.operationStatus,
+      order: null,
+    }
+  }
+  const order = await getOrder(db, organizationId, orderId)
+  return {
+    found: true,
+    updated: result.updated,
+    operationStatus: result.operationStatus,
+    order,
+  }
 }
 
 export { countOrdersByOrganization }
