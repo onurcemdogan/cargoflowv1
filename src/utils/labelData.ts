@@ -316,7 +316,16 @@ export function validateLabelData(
       'Canlı ZPL için OrtakBarkodOlustur response içinde KargoTakipNo + Barcode birlikte bulunmalıdır.',
     )
   }
-  if (order && labelData.desi == null) {
+  // Persist edilmiş yazdırılabilir etiket (carrier ZPL barcodeRaw / backend
+  // hasPrintableLabel) VARSA desi tekrar İSTENMEZ: etiket zaten üretildi, tekrar
+  // yazdırma mevcut kayıtlı etiketi kullanır (provider create çağrılmaz). Desi
+  // yalnız persist etiket YOKKEN (ilk oluşturma) zorunludur.
+  const hasPersistedLabel = Boolean(
+    (shipment ?? order?.shipment)?.barcodeRaw ||
+      (order as CargoOrder & { hasPrintableLabel?: boolean })?.hasPrintableLabel ===
+        true,
+  )
+  if (order && labelData.desi == null && !hasPersistedLabel) {
     errors.push(
       'Desi bilgisi eksik. Etiket veya Sürat gönderisi oluşturmadan önce desi girin.',
     )

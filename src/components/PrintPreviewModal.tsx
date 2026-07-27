@@ -71,14 +71,23 @@ export function PrintPreviewModal({
           resolution.labelStatus === 'PRINTED' && resolution.printedAt,
         )
         const normalizedDesi = resolveNormalizedDesi(resolution.order)
+        // Persist edilmiş yazdırılabilir etiket (carrier ZPL barcodeRaw veya backend
+        // hasPrintableLabel) VARSA tekrar yazdırmada desi TEKRAR İSTENMEZ: etiket
+        // zaten üretildi, provider create çağrılmaz, mevcut kayıtlı etiket kullanılır.
+        // Desi yalnız persist etiket YOKKEN (ilk oluşturma / canonical HTML) gerekir.
+        const hasPersistedLabel = Boolean(
+          resolution.barcodeRaw || resolution.order.hasPrintableLabel === true,
+        )
         return {
           order: resolution.order,
           resolution,
           previouslyPrinted,
           ready:
-            resolution.canPreview && normalizedDesi.desi != null,
-          warningReason:
-            normalizedDesi.desi == null
+            resolution.canPreview &&
+            (hasPersistedLabel || normalizedDesi.desi != null),
+          warningReason: hasPersistedLabel
+            ? resolution.warningReason
+            : normalizedDesi.desi == null
               ? 'Desi bilgisi eksik.'
               : resolution.warningReason,
         }
