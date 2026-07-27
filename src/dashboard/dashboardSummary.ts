@@ -375,12 +375,25 @@ export function buildDashboardProviderHealth({
         provider.providerKey,
     )
     const last = logs[0]
+    // KALICI (login/hydrate) sync sağlığı: son başarılı sync connected üretir,
+    // son 'failed' sync gerçek hata üretir. Böylece ilk yüklemede (client debug
+    // log yokken) kayıtlı+başarılı-sync hesap YANLIŞ "kontrol edilmeli" uyarısı
+    // ALMAZ; kayıtlı ama hiç test/sync yoksa nötr (needs_check) kalır.
+    const trendyolMasked =
+      provider.providerKey === 'trendyol' ? maskedStatus?.trendyol : undefined
+    const persistedSyncSuccess = Boolean(trendyolMasked?.lastSuccessfulSyncAt)
+    const persistedSyncFailed = trendyolMasked?.lastSyncStatus === 'failed'
     const hasSuccessSignal =
       Boolean(last && last.status !== 'ERROR') ||
-      (provider.providerKey === 'trendyol' && Boolean(lastSyncedAt))
+      (provider.providerKey === 'trendyol' && Boolean(lastSyncedAt)) ||
+      persistedSyncSuccess
+    // Client debug log statüsü en güncel kanıttır; yoksa kalıcı 'failed' sync
+    // gerçek hata sinyali olarak kullanılır.
+    const effectiveLastLogStatus =
+      last?.status ?? (persistedSyncFailed ? 'ERROR' : undefined)
     const status = resolveProviderHealthStatus(
       configured,
-      last?.status,
+      effectiveLastLogStatus,
       hasSuccessSignal,
     )
     return {
