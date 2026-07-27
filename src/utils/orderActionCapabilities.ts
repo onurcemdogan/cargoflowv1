@@ -42,16 +42,19 @@ export function resolveOrderActionCapabilities(
   // etiket ürettiğinde yazılır ve forward pazaryeri statüsüne (Shipped/Delivered)
   // dönüşmediği sürece korunur (getOrderOperationStatus forward statüyü önceler).
   const canonicalLabelState = CANONICAL_LABEL_STATES.has(operationStatus)
-  // (2) persisted yazdırılabilir etiket kanıtı (kalıcı payload'dan gelir).
+  // (2) persisted yazdırılabilir etiket kanıtı. ÖNCELİK backend `hasPrintableLabel`
+  // bayrağıdır (attachShipment operation payload'ından hesaplar; sayfa yenilemesinde
+  // DB'den gelir). Geçici post-create state için shipment ZPL alanları fallback'tir.
   const persistedPrintable = Boolean(
-    shipment?.barcodeRaw ||
+    order.hasPrintableLabel === true ||
+      shipment?.barcodeRaw ||
       shipment?.zplReady ||
       shipment?.printEnabled ||
       order.zplReady ||
       order.printEnabled,
   )
-  // Gerçek indirilebilir ZPL yalnız taşıyıcı ham ZPL'i (barcodeRaw) varsa.
-  const persistedCarrierZpl = Boolean(shipment?.barcodeRaw)
+  // Gerçek indirilebilir ZPL: backend hasPrintableLabel VEYA taşıyıcı ham ZPL'i.
+  const persistedCarrierZpl = Boolean(order.hasPrintableLabel === true || shipment?.barcodeRaw)
 
   // (3) legacy eligibility yalnız operasyonel-aktif siparişte fallback olur
   // (Shipped/Delivered/arşiv siparişte baskı açılmaz — mevcut davranış korunur).

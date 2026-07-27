@@ -777,6 +777,10 @@ export interface CargoOrder {
   suratVerificationStatus?: 'VERIFIED' | 'PENDING' | 'FAILED'
   zplReady?: boolean
   printEnabled?: boolean
+  // Backend güvenli capability bayrağı: kalıcı yazdırılabilir etiket (persisted
+  // ZPL artifact) var mı? attachShipment tarafından operation payload'ından
+  // hesaplanır; geçici tarayıcı state'ine bağlı DEĞİLDİR (sayfa yenilemesinde korunur).
+  hasPrintableLabel?: boolean
   matchStatus?: boolean
   matchReason?: string
   error?: string
