@@ -906,6 +906,7 @@ function App() {
           orders={orders}
           products={products}
           integrationConfig={integrationConfig}
+          maskedIntegrationStatus={maskedIntegrationStatus}
           printerSettings={printerSettings}
           apiDebugLogs={apiDebugLogs}
           loading={ordersState.ordersLoading || !integrationHydrated}

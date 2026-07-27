@@ -7,6 +7,12 @@ import type {
 import { apiDebugService } from '../../services/apiDebugService'
 import { createId } from '../../utils/ids'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
+import { resolveSuratCreateBusinessResult } from '../../utils/suratCreateResult'
+import {
+  buildSuratSafeRequestBody,
+  stripSuratSensitiveFields,
+  summarizeSuratRawResponse,
+} from '../../utils/suratDebugSafe'
 import { ZebraZplLabelProvider } from '../labels/ZebraZplLabelProvider'
 import type {
   CreateShipmentInput,
@@ -55,11 +61,15 @@ export class SuratKargoProvider implements ShippingProvider {
       const createResponseStatus = Number(
         createLog?.responseStatus ?? response.status,
       )
+      // İş sonucu (business result): HTTP 200 tek başına SUCCESS DEĞİLDİR. Debug
+      // ve UI'nin aynı sonucu göstermesi için lifecycleStatus + geçerli tracking/
+      // barkod varlığı baz alınır (tek karar noktası).
+      const createBusiness = resolveSuratCreateBusinessResult(data.shipment)
       const createLogFailed = Boolean(
         !response.ok ||
           data?.ok === false ||
           (createResponseStatus >= 400 && !verifiedPrintReady) ||
-          data.shipment?.labelStatus === 'BLOCKED',
+          !createBusiness.businessOk,
       )
       if (data.dispatchRegistration) {
         apiDebugService.append({
@@ -73,12 +83,28 @@ export class SuratKargoProvider implements ShippingProvider {
             '/api/GonderiyiKargoyaGonder',
           requestUrl: '/api/shipments/surat/create',
           requestHeaders: { 'Content-Type': 'application/json' },
-          requestBody: data.dispatchRegistration.rawRequest,
+          // GÜVENLİK: ham SOAP istek/yanıtı yerine güvenli özet (PII yok).
+          requestBody: buildSuratSafeRequestBody({
+            orderNumber: input.order.orderNumber,
+            packageId: input.order.packageId,
+            marketplaceIntegrationCode,
+            serviceType: data.dispatchRegistration.serviceType,
+          }),
           responseStatus: Number(
             data.dispatchRegistration.responseStatus ?? response.status,
           ),
-          responseBody: data.dispatchRegistration.rawResponse,
-          rawResponse: data.dispatchRegistration.rawResponse,
+          responseBody: summarizeSuratRawResponse(
+            data.dispatchRegistration.rawResponse,
+            {
+              responseStatus: Number(
+                data.dispatchRegistration.responseStatus ?? response.status,
+              ),
+              isError: !data.dispatchRegistration.ok,
+              businessResult: data.dispatchRegistration.ok
+                ? 'DISPATCH_REGISTERED'
+                : 'DISPATCH_FAILED',
+            },
+          ),
           status: data.dispatchRegistration.ok ? 'SUCCESS' : 'ERROR',
           durationMs: Math.round(performance.now() - startedAt),
           orderNumber: input.order.orderNumber,
@@ -112,23 +138,49 @@ export class SuratKargoProvider implements ShippingProvider {
           input.config.surat.createShipmentPath,
         requestUrl: '/api/shipments/surat/create',
         requestHeaders: { 'Content-Type': 'application/json' },
-        requestBody: createLog?.rawRequest ?? {
+        // GÜVENLİK: ham SOAP isteği (müşteri adı/adres/tel/e-posta) debug'a
+        // yazılmaz; yalnız PII olmayan sipariş/entegrasyon referansları.
+        requestBody: buildSuratSafeRequestBody({
           orderNumber: input.order.orderNumber,
           packageId: input.order.packageId,
-          SatisKodu: marketplaceOrderNumber,
-          WebSiparisKodu: marketplaceOrderNumber,
-          OzelKargoTakipNo: marketplaceIntegrationCode,
-          ReferansNo: marketplaceIntegrationCode || reference,
-          MarketplaceIntegrationCode: marketplaceIntegrationCode,
-        },
+          satisKodu: marketplaceOrderNumber,
+          webSiparisKodu: marketplaceOrderNumber,
+          ozelKargoTakipNo: marketplaceIntegrationCode,
+          marketplaceIntegrationCode,
+          referansNo: marketplaceIntegrationCode || reference,
+          serviceType: data.serviceType ?? input.config.surat.serviceType,
+        }),
         responseStatus: createResponseStatus,
-        responseBody: createLog?.rawResponse ?? data,
-        rawResponse: createLog?.rawResponse ?? data,
+        // GÜVENLİK: ham SOAP yanıtı + tam ZPL debug'a yazılmaz; yalnız güvenli özet.
+        responseBody: summarizeSuratRawResponse(createLog?.rawResponse ?? data, {
+          responseStatus: createResponseStatus,
+          isError: createLogFailed,
+          labelCreationOk: createBusiness.labelCreationOk,
+          carrierAcceptanceConfirmed: createBusiness.carrierAcceptanceConfirmed,
+          businessResult: createBusiness.businessResult,
+          trackingPresent: createBusiness.hasIdentifier,
+          barcodePresent: Boolean(createBusiness.barcode),
+          zpl: barcodeRaw,
+          lifecycleStatus: data.shipment?.lifecycleStatus,
+          verificationStage:
+            data.shipment?.verificationStage ?? createLog?.verificationStage,
+        }),
         status: createLogFailed ? 'ERROR' : 'SUCCESS',
         durationMs: Math.round(performance.now() - startedAt),
         orderNumber: input.order.orderNumber,
         shipmentId,
         fields: {
+          // Transport ve business AYRI güvenli metadata (secret/PII yok). İki farklı
+          // başarı seviyesi: etiket oluşturma (labelCreationOk) vs fiziksel taşıyıcı
+          // kabulü (carrierAcceptanceConfirmed). Ön-atanmış etiket business SUCCESS'tir.
+          transportOk: response.ok,
+          responseStatus: createResponseStatus,
+          labelCreationOk: createBusiness.labelCreationOk,
+          carrierAcceptanceConfirmed: createBusiness.carrierAcceptanceConfirmed,
+          businessOk: createBusiness.businessOk,
+          normalizedTrackingPresent: createBusiness.hasIdentifier,
+          barcodePresent: Boolean(createBusiness.barcode),
+          businessResult: createBusiness.businessResult,
           CariKod: input.config.surat.kullaniciAdi,
           FirmaId: input.config.surat.firmaId,
           SatisKodu:
@@ -207,7 +259,9 @@ export class SuratKargoProvider implements ShippingProvider {
           Barcode:
             createLog?.parsedResponse?.Barcode ??
             createLog?.Barcode,
-          BarcodeRaw: barcodeRaw,
+          // GÜVENLİK: tam ZPL debug'a yazılmaz; yalnız varlık/uzunluk.
+          zplPresent: Boolean(barcodeRaw),
+          zplLength: barcodeRaw ? String(barcodeRaw).length : 0,
           zplSource: barcodeRaw
             ? 'surat.ortakBarkod.BarcodeRaw'
             : 'generated',
@@ -232,10 +286,12 @@ export class SuratKargoProvider implements ShippingProvider {
           dispatchRegistrationConfirmed:
             data.shipment?.dispatchRegistrationConfirmed ??
             data.dispatchRegistration?.ok,
-          dispatchRegistration: data.dispatchRegistration,
-          barcodeCreation: data.barcodeCreation,
+          dispatchRegistration: stripSuratSensitiveFields(
+            data.dispatchRegistration,
+          ),
+          barcodeCreation: stripSuratSensitiveFields(data.barcodeCreation),
           TakipUrl: data.shipment?.trackingUrl,
-          parsedResponse: createLog?.parsedResponse,
+          parsedResponse: stripSuratSensitiveFields(createLog?.parsedResponse),
         },
         errorMessage: createLogFailed ? data.message : undefined,
         errorSource:
@@ -527,16 +583,25 @@ export class SuratKargoProvider implements ShippingProvider {
         endpoint: data.endpoint ?? 'KargoTakipHareketDetayi',
         requestUrl: '/api/shipments/surat/track',
         requestHeaders: { 'Content-Type': 'application/json' },
-        requestBody: trackingLog?.rawRequest ??
-          data.rawRequest ?? {
-            CariKodu: config.surat.kullaniciAdi,
-            WebSiparisKodu: trackingReference,
-          },
+        // GÜVENLİK: ham SOAP istek/yanıtı yerine güvenli özet (PII/kredensiyal yok).
+        requestBody: buildSuratSafeRequestBody({
+          orderNumber: order.orderNumber,
+          webSiparisKodu: trackingReference,
+          serviceType: data.serviceType ?? config.surat.trackingServiceType,
+        }),
         responseStatus: Number(
           trackingLog?.responseStatus ?? data.statusCode ?? response.status,
         ),
-        responseBody: trackingLog?.rawResponse ?? data.rawResponse ?? data,
-        rawResponse: trackingLog?.rawResponse ?? data.rawResponse ?? data,
+        responseBody: summarizeSuratRawResponse(
+          trackingLog?.rawResponse ?? data.rawResponse ?? data,
+          {
+            responseStatus: Number(
+              trackingLog?.responseStatus ?? data.statusCode ?? response.status,
+            ),
+            isError: !response.ok || data.ok === false,
+            trackingPresent: Boolean(trackingLog?.KargoTakipNo),
+          },
+        ),
         status:
           !response.ok || (data.ok === false && !carrierAcceptancePending)
             ? 'ERROR'

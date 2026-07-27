@@ -30,6 +30,10 @@ import type {
 } from '../types/cargoflow'
 import { formatDisplayDate, maskSecret } from '../utils/formatters'
 import {
+  resolveSuratConfigured,
+  resolveTrendyolConfigured,
+} from '../utils/integrationConfigured'
+import {
   integrationCategoryTabs,
   suratDetailTabs,
   trendyolDetailTabs,
@@ -113,19 +117,11 @@ export function IntegrationsPage({
   const [activeSuratTab, setActiveSuratTab] =
     useState<SuratDetailTab>('general')
 
-  const trendyolConfigured =
-    maskedStatus?.trendyol.configured ??
-    Boolean(
-      form.trendyol.sellerId &&
-        form.trendyol.apiKey &&
-        form.trendyol.apiSecret,
-    )
-  const suratConfigured =
-    maskedStatus?.surat.configured ??
-    Boolean(
-      form.surat.kullaniciAdi &&
-        (form.surat.sifre || form.surat.webPassword),
-    )
+  // Merkezî helper (Dashboard health ile AYNI mantık; kopya yok). Maskeli metadata
+  // öncelikli; sayfa yenilemesinden sonra boş secret'lar "yapılandırılmadı" ANLAMINA
+  // GELMEZ. Sürat için FirmaId zorunlu değildir.
+  const trendyolConfigured = resolveTrendyolConfigured(maskedStatus, form)
+  const suratConfigured = resolveSuratConfigured(maskedStatus, form)
 
   function selectCategory(category: IntegrationCategory) {
     setActiveCategory(category)

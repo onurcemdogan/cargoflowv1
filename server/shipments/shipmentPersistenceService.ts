@@ -80,15 +80,49 @@ export async function readOperationRecord(
   return payload ?? undefined
 }
 
+// Ön-atanmış (preassigned) etiket başarısı: fiziksel Sürat kabulü doğrulanmamış
+// (verifiedShipment=false) OLSA BİLE geçerli T.No + barkod + ZPL üretilmiş, etiket
+// yazdırılabilir bir LABEL OLUŞTURMA başarısıdır. Bu kayıt için de canonical
+// shipment satırı yazılmalı ki markLabelReady (findShipment) çalışsın ve sipariş
+// "Etiket Hazır" olarak kalıcı işaretlenebilsin. Gerçek business failure
+// (FAILED_SAFE) veya kimlik/ZPL yoksa shipment YAZILMAZ.
+export function isSuratRecordPreassignedReady(
+  record: Record<string, unknown>,
+): boolean {
+  if (String(record.status ?? '') === 'FAILED_SAFE') return false
+  const shipment = (record.shipment ?? {}) as Record<string, unknown>
+  const tracking = first(
+    record.carrierTrackingNumber,
+    record.candidateTrackingNumber,
+    shipment.tNo,
+    shipment.trackingNumber,
+  )
+  const barcode = first(
+    record.carrierBarcodeNumber,
+    record.candidateBarcodeNumber,
+    shipment.barkodNo,
+    shipment.barcode,
+  )
+  const hasZpl = Boolean(
+    record.technicalZpl || record.technicalZplSha256 || shipment.barcodeRaw,
+  )
+  return Boolean(tracking && barcode && hasZpl)
+}
+
 // Başarılı create'te shipment + operation TEK transaction'da yazılır (M:
-// yarıda hata → sahte shipment oluşmaz). Diğer durumlarda yalnız operation.
+// yarıda hata → sahte shipment oluşmaz). Doğrulanmış SUCCESS ve ön-atanmış hazır
+// (preassigned) create'lerde canonical shipment yazılır; belirsiz/başarısız
+// (kimliksiz/ZPL'siz) durumlarda YALNIZ operation kaydı yazılır (sahte shipment yok).
 export async function writeOperationRecord(
   db: ServiceDb,
   organizationId: string,
   record: Record<string, unknown>,
 ): Promise<void> {
   const columns = recordToColumns(organizationId, record)
-  if (columns.status === 'succeeded') {
+  const shouldPersistShipment =
+    columns.status === 'succeeded' || isSuratRecordPreassignedReady(record)
+  if (shouldPersistShipment) {
+    const shipment = (record.shipment ?? {}) as Record<string, unknown>
     await db.transaction(async (tx) => {
       await upsertCreateOperation(tx, columns)
       await upsertShipment(tx, {
@@ -99,17 +133,18 @@ export async function writeOperationRecord(
         provider: columns.provider,
         source: 'local_create',
         status: 'created',
+        // columns.trackingNumber = carrierTrackingNumber || candidateTrackingNumber
+        // (preassigned'da aday T.No canonical tracking olarak yazılır).
         trackingNumber: columns.trackingNumber,
         senderNumber: columns.senderNumber,
         barcode:
           first(
-            (record.shipment as Record<string, unknown> | undefined)?.barkodNo,
-            (record.shipment as Record<string, unknown> | undefined)?.barcode,
+            shipment.barkodNo,
+            shipment.barcode,
             record.carrierBarcodeNumber,
+            record.candidateBarcodeNumber,
           ) || null,
-        trackingLink:
-          first((record.shipment as Record<string, unknown> | undefined)?.trackingLink) ||
-          null,
+        trackingLink: first(shipment.trackingLink) || null,
         carrierPayload: record,
       })
     })

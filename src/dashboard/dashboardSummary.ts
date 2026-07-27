@@ -23,14 +23,30 @@ import {
   resolveCarrierProvider,
   resolveMarketplaceProvider,
 } from './providerRegistry'
+import {
+  resolveSuratConfigured,
+  resolveTrendyolConfigured,
+} from '../utils/integrationConfigured'
+import type { MaskedIntegrationStatus } from '../services/integrationConfigService'
 
-export type ProviderHealthStatus = 'connected' | 'error' | 'not_configured'
+// 'needs_check': credential kayıtlı (configured) ama son gerçek bağlantı testi
+// başarılı değil/yok → "bağlantı kontrol edilmeli" (kayıt kaybı DEĞİL).
+export type ProviderHealthStatus =
+  | 'connected'
+  | 'needs_check'
+  | 'error'
+  | 'not_configured'
 export type DashboardPeriod = 'today' | 'last7' | 'month' | 'all'
 
 export interface DashboardProviderHealth {
   providerKey: string
   providerName: string
   status: ProviderHealthStatus
+  // configured: gerekli credential'lar güvenli şekilde kayıtlı (maskeli metadata).
+  // connected: son gerçek bağlantı testi/sync başarılı. İkisi AYRI semantiktir;
+  // kayıtlı credential otomatik connected üretmez.
+  configured: boolean
+  connected: boolean
   lastSyncAt?: string
   errorCount: number
   detail: string
@@ -317,13 +333,29 @@ export function buildDashboardSummary({
   }
 }
 
+// configured (kayıtlı) + son test/sync kanıtından status türetir. Kayıtlı
+// credential OTOMATİK connected üretmez: connected için son gerçek bir başarılı
+// test/sync kanıtı (hata olmayan debug log veya Trendyol için lastSyncedAt) gerekir.
+function resolveProviderHealthStatus(
+  configured: boolean,
+  lastLogStatus: string | undefined,
+  hasSuccessSignal: boolean,
+): ProviderHealthStatus {
+  if (!configured) return 'not_configured'
+  if (lastLogStatus === 'ERROR') return 'error'
+  if (hasSuccessSignal) return 'connected'
+  return 'needs_check'
+}
+
 export function buildDashboardProviderHealth({
   config,
+  maskedStatus,
   apiDebugLogs,
   orders,
   lastSyncedAt,
 }: {
   config: IntegrationConfig
+  maskedStatus?: MaskedIntegrationStatus | null
   apiDebugLogs: ApiDebugLog[]
   orders: CargoOrder[]
   lastSyncedAt?: string
@@ -332,13 +364,10 @@ export function buildDashboardProviderHealth({
   carrierIntegrations: DashboardProviderHealth[]
 } {
   const marketplace = Object.values(marketplaceProviderRegistry).map((provider) => {
+    // configured: MERKEZİ helper (maskeli metadata öncelikli; ham secret'a bakmaz).
     const configured =
       provider.providerKey === 'trendyol'
-        ? Boolean(
-            config.trendyol.sellerId &&
-              config.trendyol.apiKey &&
-              config.trendyol.apiSecret,
-          )
+        ? resolveTrendyolConfigured(maskedStatus, config)
         : false
     const logs = apiDebugLogs.filter(
       (log) =>
@@ -346,14 +375,20 @@ export function buildDashboardProviderHealth({
         provider.providerKey,
     )
     const last = logs[0]
+    const hasSuccessSignal =
+      Boolean(last && last.status !== 'ERROR') ||
+      (provider.providerKey === 'trendyol' && Boolean(lastSyncedAt))
+    const status = resolveProviderHealthStatus(
+      configured,
+      last?.status,
+      hasSuccessSignal,
+    )
     return {
       providerKey: provider.providerKey,
       providerName: provider.providerName,
-      status: !configured
-        ? ('not_configured' as const)
-        : last?.status === 'ERROR'
-          ? ('error' as const)
-          : ('connected' as const),
+      status,
+      configured,
+      connected: status === 'connected',
       lastSyncAt:
         provider.providerKey === 'trendyol'
           ? lastSyncedAt || last?.timestamp
@@ -370,13 +405,11 @@ export function buildDashboardProviderHealth({
   })
 
   const carrier = Object.values(carrierProviderRegistry).map((provider) => {
+    // Sürat configured: KullanıcıAdı/CariKod + (Şifre veya WebPassword). FirmaId
+    // ZORUNLU DEĞİL. Merkezî helper (maskeli metadata öncelikli).
     const configured =
       provider.providerKey === 'surat'
-        ? Boolean(
-            config.surat.kullaniciAdi &&
-              config.surat.sifre &&
-              config.surat.firmaId,
-          )
+        ? resolveSuratConfigured(maskedStatus, config)
         : false
     const logs = apiDebugLogs.filter(
       (log) =>
@@ -391,14 +424,19 @@ export function buildDashboardProviderHealth({
           order.shipment?.provider || order.cargoProviderName,
         ).providerKey === provider.providerKey,
     ).length
+    const hasSuccessSignal =
+      Boolean(last && last.status !== 'ERROR') || shipmentCount > 0
+    const status = resolveProviderHealthStatus(
+      configured,
+      last?.status,
+      hasSuccessSignal,
+    )
     return {
       providerKey: provider.providerKey,
       providerName: provider.providerName,
-      status: !configured
-        ? ('not_configured' as const)
-        : last?.status === 'ERROR'
-          ? ('error' as const)
-          : ('connected' as const),
+      status,
+      configured,
+      connected: status === 'connected',
       lastSyncAt: last?.timestamp,
       errorCount: logs.filter((log) => log.status === 'ERROR').length,
       detail: configured
