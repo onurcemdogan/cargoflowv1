@@ -2379,6 +2379,11 @@ async function executeIdempotentSuratCreate(request, operation) {
   if (existing?.status === 'SUCCESS') {
     return buildPersistedSuratCreateResponse(existing, operation)
   }
+  // Ön-atanmış-hazır (preassigned) kayıt: sağlayıcı ÇAĞRILMADAN mevcut etiketle
+  // ok:true dön (etiket oluşturma başarısı; fiziksel kabul ayrı seviyedir).
+  if (isSuratRecordPreassignedReplayReady(existing)) {
+    return buildSuratPreassignedReplayResponse(existing, operation)
+  }
   if (existing && ['IN_PROGRESS', 'UNKNOWN'].includes(existing.status)) {
     return buildSuratIdempotencyBlockedResponse(
       existing,
@@ -2731,6 +2736,116 @@ function buildSuratPreassignedShipmentPatch(tNo, barkod) {
     labelBlockedReason: '',
     zplDisabledReason: '',
   }
+}
+
+// Ön-atanmış (preassigned) etiket = LABEL OLUŞTURMA başarısı: geçerli T.No +
+// barkod + saklı ZPL üretilmiş, yazdırılabilir bir kayıt. Fiziksel Sürat kabulü
+// (verifiedShipment) HENÜZ doğrulanmamış olsa da bu kayıt için create TEKRARI
+// yeni sağlayıcı çağrısı yapmadan mevcut etiketle ok:true dönmelidir (üretim
+// kanıtı 17.07.2026 sonrası: aynı T.No/barkod/ZPL replay ile korunur).
+//
+// GÜVENLİK/BÜTÜNLÜK: yalnız status='UNKNOWN' (belirsiz-ama-etiketli) VE geçerli
+// aday kod + saklı ZPL VE yazdırılabilir doğrulama durumu için geçerlidir.
+// status='FAILED_SAFE' (ör. LABEL_CREATED_NOT_REGISTERED — tesellümde kayıt
+// açılmadığı kanıtlanmış) ve IN_PROGRESS (uçuşta) HÂLÂ blocked kalır.
+function isSuratRecordPreassignedReplayReady(record) {
+  if (!record || record.status !== 'UNKNOWN') return false
+  const tNo = firstNonEmpty(record.candidateTrackingNumber)
+  const barkod = firstNonEmpty(record.candidateBarcodeNumber)
+  const zpl = normalizeSuratRawZpl(record.technicalZpl)
+  const printableStatus = [
+    'LABEL_CREATED_UNVERIFIED',
+    'LABEL_CREATED_PENDING_VERIFICATION',
+  ].includes(String(record.verificationStatus ?? ''))
+  return Boolean(tNo && barkod && zpl && printableStatus)
+}
+
+// Preassigned-ready replay yanıtı: sağlayıcı ÇAĞRILMAZ, mevcut etiket kullanılır.
+function buildSuratPreassignedReplayResponse(record, operation) {
+  const tNo = firstNonEmpty(record?.candidateTrackingNumber)
+  const barkod = firstNonEmpty(record?.candidateBarcodeNumber)
+  const operationName = firstNonEmpty(
+    record?.operation,
+    operation?.operation,
+    'KargoBarkoduSiparis',
+  )
+  const serviceMode = [
+    'OrtakBarkodOlustur',
+    'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+  ].includes(operationName)
+    ? 'ORTAK_BARKOD_SOAP'
+    : operationName === 'GonderiyiKargoyaGonder'
+      ? 'PRE_REGISTRATION_REST'
+      : operationName === 'GonderiyiKargoyaGonderYeni'
+        ? 'GONDERI_YENI_SOAP'
+        : 'KARGO_BARKODU_SIPARIS_SOAP'
+  const serviceType =
+    operationName === 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur'
+      ? 'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap'
+      : operationName === 'OrtakBarkodOlustur'
+        ? 'OrtakBarkodOlusturSoap'
+        : operationName === 'GonderiyiKargoyaGonder'
+          ? 'GonderiyiKargoyaGonderRestJson'
+          : operationName === 'GonderiyiKargoyaGonderYeni'
+            ? 'GonderiyiKargoyaGonderYeniSoap'
+            : 'KargoBarkoduSiparisSoap'
+  const preassignedPatch = buildSuratPreassignedShipmentPatch(tNo, barkod)
+  const storedZpl = normalizeSuratRawZpl(record?.technicalZpl)
+  const technicalZplPatch = storedZpl
+    ? {
+        barcodeRaw: storedZpl,
+        zplAnalysis: analyzeSuratZpl(storedZpl),
+        technicalZplReceived: true,
+        zplReady: true,
+        zplSource: 'surat.create.replayStoredZpl',
+      }
+    : {}
+  return withSuratIdempotencyDebug(
+    {
+      ok: true,
+      source: 'real',
+      reusedExistingShipment: true,
+      businessResult: 'LABEL_READY_AWAITING_ACCEPTANCE',
+      message:
+        'Mevcut Sürat etiketi kullanıldı; yeni gönderi oluşturulmadı. Fiziksel Sürat kabulü bekleniyor.',
+      serviceMode,
+      serviceType,
+      operationName,
+      shipment: {
+        serviceMode,
+        operationName,
+        labelStatus: 'READY',
+        printEnabled: true,
+        lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+        candidateVerificationStatus: 'PREASSIGNED_AWAITING_ACCEPTANCE',
+        verificationStage: 'preassigned_awaiting_acceptance',
+        errorCategory: '',
+        ...preassignedPatch,
+        ...technicalZplPatch,
+        suratCreateLog: {
+          serviceMode,
+          serviceType,
+          operationName,
+          verifiedShipment: false,
+          zplSource: technicalZplPatch.zplSource ?? 'generated',
+        },
+      },
+      trackingVerification: {
+        gonderilerLength: 0,
+        KargoTakipNo: tNo,
+        serdendipVerified: false,
+        restoredFromIdempotencyStore: true,
+      },
+    },
+    operation,
+    {
+      carrierCreateCalled: false,
+      reusedExistingShipment: true,
+      persistentStatus: record?.status ?? 'UNKNOWN',
+      createCallCount: Number(record?.createCallCount ?? 0),
+      restoredFromStore: true,
+    },
+  )
 }
 
 function buildSuratIdempotencyBlockedResponse(record, operation, message) {

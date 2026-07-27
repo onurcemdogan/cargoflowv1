@@ -29,8 +29,22 @@ function firstNonEmpty(...values: unknown[]): string {
   return ''
 }
 
+// Zorunlu durum modeli sonucu:
+//  - LABEL_READY_AWAITING_ACCEPTANCE: etiket oluşturuldu, yazdırılabilir, T.No+
+//    barkod var; fiziksel Sürat kabulü henüz doğrulanmadı (business SUCCESS).
+//  - VERIFIED: operasyonel kabul doğrulandı (verified/dispatch confirmed).
+//  - CREATE_FAILED: kullanılabilir ZPL/kimlik yok veya açık business hata.
+export type SuratCreateBusinessResultCode =
+  | 'LABEL_READY_AWAITING_ACCEPTANCE'
+  | 'VERIFIED'
+  | 'CREATE_FAILED'
+
 export interface SuratCreateBusinessResult {
+  // İki AYRI başarı seviyesi: etiket oluşturma vs fiziksel taşıyıcı kabulü.
+  labelCreationOk: boolean
+  carrierAcceptanceConfirmed: boolean
   businessOk: boolean
+  businessResult: SuratCreateBusinessResultCode
   hasIdentifier: boolean
   trackingNumber: string
   barcode: string
@@ -45,6 +59,8 @@ export function resolveSuratCreateBusinessResult(
   const s = (shipment && typeof shipment === 'object'
     ? shipment
     : {}) as Record<string, unknown>
+  // Canonical eşleme: trackingNumber = Sürat T.No; barcode = Sürat Code128 barkodu.
+  // OzelKargoTakipNo (Trendyol entegrasyon referansı) canonical tracking DEĞİLDİR.
   const trackingNumber = firstNonEmpty(s.trackingNumber, s.tNo, s.kargoTakipNo)
   const barcode = firstNonEmpty(
     s.barcode,
@@ -58,9 +74,23 @@ export function resolveSuratCreateBusinessResult(
   )
   const blocked = String(s.labelStatus ?? '') === 'BLOCKED'
   const printable = Boolean(s.printEnabled || s.verifiedShipment)
-  const businessOk = hasIdentifier && printable && !failedLifecycle && !blocked
+  // Etiket oluşturma başarısı: geçerli kimlik + yazdırılabilir + başarısız
+  // lifecycle DEĞİL + BLOCKED değil. verifiedShipment ŞART DEĞİLDİR.
+  const labelCreationOk = hasIdentifier && printable && !failedLifecycle && !blocked
+  const carrierAcceptanceConfirmed = Boolean(
+    s.verifiedShipment || s.dispatchRegistrationConfirmed,
+  )
+  const businessResult: SuratCreateBusinessResultCode = !labelCreationOk
+    ? 'CREATE_FAILED'
+    : carrierAcceptanceConfirmed
+      ? 'VERIFIED'
+      : 'LABEL_READY_AWAITING_ACCEPTANCE'
   return {
-    businessOk,
+    labelCreationOk,
+    carrierAcceptanceConfirmed,
+    // businessOk = etiket oluşturma başarısı (kullanıcı açısından create başarılı).
+    businessOk: labelCreationOk,
+    businessResult,
     hasIdentifier,
     trackingNumber,
     barcode,

@@ -1613,6 +1613,57 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     false,
   )
   assert.equal(unverifiedCodesFirst.idempotency.createCallCount, 1)
+  // GERÇEK ÜRETİM KANITI: ilk create ön-atanmış yazdırılabilir etiket (UNKNOWN +
+  // geçerli T.No/barkod + saklı ZPL) ürettiyse, TEKRAR create çağrısı SAĞLAYICIYI
+  // YENİDEN ÇAĞIRMADAN mevcut etiketle ok:true dönmelidir (aynı kodlar, kopya yok).
+  // Bu, "carrierCreateCalled:false ama ok:false IDEMPOTENCY_BLOCKED" yanlış
+  // sınıflandırmasını düzeltir. (Fiziksel kabul doğrulanmadan tracking yapılmadığı
+  // için kayıt hâlâ UNKNOWN'dır; FAILED_SAFE değildir.)
+  const requestsBeforePreassignedReplay = requests.length
+  const unverifiedCodesReplayReady = await postJson(
+    apiPort,
+    '/api/shipments/surat/create',
+    unverifiedCodesBody,
+  )
+  assert.equal(unverifiedCodesReplayReady.ok, true)
+  assert.equal(unverifiedCodesReplayReady.errorCode, undefined)
+  assert.equal(unverifiedCodesReplayReady.reusedExistingShipment, true)
+  assert.equal(
+    unverifiedCodesReplayReady.businessResult,
+    'LABEL_READY_AWAITING_ACCEPTANCE',
+  )
+  assert.equal(
+    unverifiedCodesReplayReady.idempotency.carrierCreateCalled,
+    false,
+  )
+  assert.equal(
+    unverifiedCodesReplayReady.idempotency.reusedExistingShipment,
+    true,
+  )
+  assert.equal(
+    unverifiedCodesReplayReady.shipment.lifecycleStatus,
+    'LABEL_READY_AWAITING_ACCEPTANCE',
+  )
+  assert.equal(unverifiedCodesReplayReady.shipment.printEnabled, true)
+  assert.equal(unverifiedCodesReplayReady.shipment.tNo, '24510610424923')
+  assert.equal(unverifiedCodesReplayReady.shipment.barkodNo, '01249492893')
+  assert.equal(unverifiedCodesReplayReady.shipment.verifiedShipment, false)
+  assert.ok(
+    unverifiedCodesReplayReady.shipment.barcodeRaw,
+    'replay saklı ZPL ile yazdırılabilir durumu korur',
+  )
+  // Sağlayıcıya YENİ create SOAP çağrısı gitmedi (kopya gönderi yok).
+  assert.equal(
+    requests
+      .slice(requestsBeforePreassignedReplay)
+      .filter((item) =>
+        String(item.soapAction ?? '').includes(
+          'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+        ),
+      ).length,
+    0,
+    'preassigned replay sağlayıcıyı yeniden çağırmaz',
+  )
   const unverifiedTrackingAfterGrace = await postJson(
     apiPort,
     '/api/shipments/surat/track',
