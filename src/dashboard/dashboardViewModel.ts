@@ -2,6 +2,8 @@ import type { CargoOrder, CargoProduct, OrderItem } from '../types/cargoflow'
 import {
   classifyOrderForTabs,
   orderMatchesDashboardAction,
+  resolveDashboardOperationStage,
+  type DashboardOperationStage,
 } from '../utils/orderClassification'
 import { resolveOrderActionCapabilities } from '../utils/orderActionCapabilities'
 import { displayOrderNumber } from '../utils/orderDisplay'
@@ -341,38 +343,48 @@ export function buildDashboardViewModel({
     order,
     state: classifyOrderForTabs(order),
   }))
-  // Operasyonel dönem sayaçları YEREL güne göre sayılmaya devam eder.
-  const operationalPeriodOrders = uniqueOrders.filter((order) =>
-    orderIsInRange(order, localPeriod),
-  )
-  const periodClassified = operationalPeriodOrders.map((order) => ({
-    order,
-    state: classifyOrderForTabs(order),
-  }))
+  // Operation Flow "Anlık operasyon durumu" SNAPSHOT'ıdır: TÜM tenant siparişleri
+  // üzerinde (recentOperations ile AYNI veri kümesi), döneme/güne göre daraltılmaz.
+  // Her sipariş TEK canonical aşamaya (resolveDashboardOperationStage) düşer;
+  // sayaçlar bu tek helper'dan türetilir → recentOperations statüsü ile daima
+  // tutarlı. Sayım canonical operationStatus'e dayanır; printedAt gibi geçici
+  // tarayıcı metadata'sına BAĞLI DEĞİLDİR → DB reload sonrası korunur.
+  const stageCounts: Record<DashboardOperationStage, number> = {
+    open: 0,
+    barcodeWaiting: 0,
+    labelReady: 0,
+    labelPrinted: 0,
+    handedToCargo: 0,
+    delivered: 0,
+    canceledOrReturned: 0,
+    archived: 0,
+    error: 0,
+    unknown: 0,
+  }
+  for (const { state } of classified) {
+    stageCounts[resolveDashboardOperationStage(state)] += 1
+  }
+  // "Açık Operasyon" = etiket öncesi AKTİF operasyonların toplamıdır (huni tepesi):
+  // barkod bekleyen + doğrulama bekleyen/diğer açık + kontrol gerekli (aktif hata).
+  // LABEL_READY, LABEL_PRINTED, kargoya verilen, teslim, iptal/iade, arşiv bu
+  // toplama GİRMEZ (canonical kural: LABEL_PRINTED asla Açık Operasyon, LABEL_READY
+  // asla Açık Operasyon/Barkod Bekliyor sayılmaz). "Barkod Bekliyor" bu toplamın
+  // alt kümesidir (huni içi), ayrıca gösterilir.
+  const openOperations =
+    stageCounts.open + stageCounts.barcodeWaiting + stageCounts.error
+  // Toplama listesi (picking) kapsamı DEĞİŞMEZ: mevcut açık-operasyon tanımı
+  // (isOpenOperation) korunur; yalnız sayaçlar canonical aşamadan türetilir.
   const openOrders = classified
     .filter(({ state }) => state.isOpenOperation)
     .map(({ order }) => order)
-  const labelPrinted = uniqueOrders.filter(
-    (order) =>
-      classifyOrderForTabs(order).isLabelPrinted &&
-      Boolean(order.label?.printedAt) &&
-      timestampInRange(order.label?.printedAt, localPeriod),
-  ).length
-  const handedToCargo = periodClassified.filter(
-    ({ state }) => state.isHandedToCargo,
-  ).length
-  const delivered = periodClassified.filter(
-    ({ state }) => state.isDelivered,
-  ).length
   const operationalSummary = {
-    openOperations: openOrders.length,
-    barcodeWaiting: classified.filter(({ state }) => state.isBarcodeWaiting)
-      .length,
-    labelReady: classified.filter(({ state }) => state.isLabelReady).length,
-    labelPrinted,
-    handedToCargo,
-    delivered,
-    errors: classified.filter(({ state }) => state.hasError).length,
+    openOperations,
+    barcodeWaiting: stageCounts.barcodeWaiting,
+    labelReady: stageCounts.labelReady,
+    labelPrinted: stageCounts.labelPrinted,
+    handedToCargo: stageCounts.handedToCargo,
+    delivered: stageCounts.delivered,
+    errors: stageCounts.error,
     snapshotLabel: 'Anlık operasyon durumu',
   }
   const granularity = resolveChartGranularity(period)

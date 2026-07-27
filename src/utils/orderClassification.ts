@@ -283,17 +283,21 @@ export function classifyOrderForTabs(
     isCanceledOrReturned,
     isArchived,
     hasError,
-    operationStatusLabel: resolveOperationStatusLabel({
-      isOpenOperation,
-      isBarcodeWaiting,
-      isLabelReady,
-      isLabelPrinted,
-      isHandedToCargo,
-      isDelivered,
-      isCanceledOrReturned,
-      isArchived,
-      hasError,
-    }),
+    // Statü etiketi de TEK canonical aşama helper'ından türetilir; böylece
+    // recentOperations statüsü ile Operation Flow sayaçları aynı kaynaktan gelir.
+    operationStatusLabel: dashboardOperationStageLabel(
+      resolveDashboardOperationStage({
+        isOpenOperation,
+        isBarcodeWaiting,
+        isLabelReady,
+        isLabelPrinted,
+        isHandedToCargo,
+        isDelivered,
+        isCanceledOrReturned,
+        isArchived,
+        hasError,
+      }),
+    ),
   }
 }
 
@@ -810,7 +814,45 @@ function normalizedSearch(value: unknown): string {
     .toLowerCase()
 }
 
-function resolveOperationStatusLabel(
+// Dashboard operasyon aşaması: TEK, karşılıklı-dışlayan kova. Hem Operation Flow
+// sayaçları, hem "Son Operasyonlar" statüsü, hem dashboard özeti BU tek helper'dan
+// beslenir (ayrı status türetmesi YOK). Böylece bir sipariş yalnız bir kovada
+// sayılır (Açık Operasyon + Etiket Basıldı çift sayımı olmaz) ve recentOperations
+// ile sayaçlar her zaman tutarlıdır.
+export type DashboardOperationStage =
+  | 'open'
+  | 'barcodeWaiting'
+  | 'labelReady'
+  | 'labelPrinted'
+  | 'handedToCargo'
+  | 'delivered'
+  | 'canceledOrReturned'
+  | 'archived'
+  | 'error'
+  | 'unknown'
+
+const DASHBOARD_OPERATION_STAGE_LABELS: Record<
+  DashboardOperationStage,
+  string
+> = {
+  canceledOrReturned: 'İptal / İade',
+  delivered: 'Teslim Edildi',
+  handedToCargo: 'Kargoya Verildi',
+  labelPrinted: 'Etiket Basıldı',
+  labelReady: 'Etiket Hazır',
+  archived: 'Arşiv',
+  error: 'Kontrol Gerekli',
+  barcodeWaiting: 'Barkod Bekliyor',
+  open: 'Açık Operasyon',
+  unknown: 'Bilinmiyor',
+}
+
+// Öncelik CANONICAL: gerçek terminal lifecycle (iptal/iade, teslim, kargoya
+// verildi) en üstte; ardından canonical etiket durumu (LABEL_PRINTED/LABEL_READY).
+// Canonical etiket durumu "Arşiv" UI SUNUMUNU ve pazaryeri ara durumlarını
+// ("Hazırlanıyor") EZMEZ: yani LABEL_PRINTED asla Açık Operasyon/Arşiv sayılmaz,
+// LABEL_READY asla Açık Operasyon/Barkod Bekliyor sayılmaz.
+export function resolveDashboardOperationStage(
   state: Pick<
     OrderTabClassification,
     | 'isOpenOperation'
@@ -823,17 +865,33 @@ function resolveOperationStatusLabel(
     | 'isArchived'
     | 'hasError'
   >,
+): DashboardOperationStage {
+  if (state.isCanceledOrReturned) return 'canceledOrReturned'
+  if (state.isDelivered) return 'delivered'
+  if (state.isHandedToCargo) return 'handedToCargo'
+  if (state.isLabelPrinted) return 'labelPrinted'
+  if (state.isLabelReady) return 'labelReady'
+  if (state.isArchived) return 'archived'
+  if (state.hasError) return 'error'
+  if (state.isBarcodeWaiting) return 'barcodeWaiting'
+  if (state.isOpenOperation) return 'open'
+  return 'unknown'
+}
+
+export function dashboardOperationStageLabel(
+  stage: DashboardOperationStage,
 ): string {
-  if (state.isArchived) return 'Arşiv'
-  if (state.isCanceledOrReturned) return 'İptal / İade'
-  if (state.isDelivered) return 'Teslim Edildi'
-  if (state.isHandedToCargo) return 'Kargoya Verildi'
-  if (state.hasError) return 'Kontrol Gerekli'
-  if (state.isLabelPrinted) return 'Etiket Basıldı'
-  if (state.isLabelReady) return 'Etiket Hazır'
-  if (state.isBarcodeWaiting) return 'Barkod Bekliyor'
-  if (state.isOpenOperation) return 'Açık Operasyon'
-  return 'Bilinmiyor'
+  return DASHBOARD_OPERATION_STAGE_LABELS[stage]
+}
+
+// Sipariş → tek canonical operasyon aşaması (+ Türkçe etiket). Dashboard'daki
+// tüm operasyon sayımları ve statü gösterimleri buradan geçmelidir.
+export function classifyDashboardOperationStage(order: CargoOrder): {
+  stage: DashboardOperationStage
+  label: string
+} {
+  const stage = resolveDashboardOperationStage(classifyOrderForTabs(order))
+  return { stage, label: DASHBOARD_OPERATION_STAGE_LABELS[stage] }
 }
 
 function isAllFilter(value?: string): boolean {
