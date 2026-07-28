@@ -72,6 +72,7 @@ export async function listProducts(
   db: Db,
   organizationId: string,
   filters: ProductFilters = {},
+  marketplaceAccountId?: string | null,
 ): Promise<{
   products: Record<string, unknown>[]
   total: number
@@ -82,6 +83,7 @@ export async function listProducts(
     db,
     organizationId,
     filters,
+    marketplaceAccountId,
   )
   return {
     products: rows.map((row) => rowToProduct(row.product, row.variant)),
@@ -95,8 +97,9 @@ export async function getProduct(
   db: Db,
   organizationId: string,
   variantId: string,
+  marketplaceAccountId?: string | null,
 ): Promise<Record<string, unknown> | null> {
-  const found = await findProductById(db, organizationId, variantId)
+  const found = await findProductById(db, organizationId, variantId, marketplaceAccountId)
   if (!found) return null
   return rowToProduct(found.product, found.variant)
 }

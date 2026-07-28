@@ -47,8 +47,24 @@ export function resolvePageSize(value: unknown): number {
   return Math.min(parsed, MAX_PAGE_SIZE)
 }
 
-function buildWhere(organizationId: string, filters: OrderFilters) {
+// Pazaryeri hesabı kapsamı. `undefined` → filtre YOK (legacy servis çağrıları);
+// `null` → yalnız hesapsız (legacy) kayıtlar; `string` → yalnız o hesabın
+// kayıtları. Endpoint her zaman aktif hesabı (string|null) açıkça geçer.
+function accountClause(marketplaceAccountId: string | null | undefined) {
+  if (marketplaceAccountId === undefined) return null
+  return marketplaceAccountId === null
+    ? isNull(orders.marketplaceAccountId)
+    : eq(orders.marketplaceAccountId, marketplaceAccountId)
+}
+
+function buildWhere(
+  organizationId: string,
+  filters: OrderFilters,
+  marketplaceAccountId?: string | null,
+) {
   const clauses = [eq(orders.organizationId, organizationId)]
+  const scope = accountClause(marketplaceAccountId)
+  if (scope) clauses.push(scope)
   if (filters.status) clauses.push(eq(orders.marketplaceStatus, filters.status))
   if (filters.operationStatus) {
     clauses.push(eq(orders.operationStatus, filters.operationStatus))
@@ -80,6 +96,7 @@ export async function findOrders(
   db: Db,
   organizationId: string,
   filters: OrderFilters = {},
+  marketplaceAccountId?: string | null,
 ): Promise<{
   orderRows: Record<string, unknown>[]
   total: number
@@ -88,7 +105,7 @@ export async function findOrders(
 }> {
   const pageSize = resolvePageSize(filters.pageSize)
   const page = Math.max(1, Math.trunc(Number(filters.page ?? 1)) || 1)
-  const where = buildWhere(organizationId, filters)
+  const where = buildWhere(organizationId, filters, marketplaceAccountId)
   const orderBy =
     filters.sort === 'orderDateAsc' ? asc(orders.orderDate) : desc(orders.orderDate)
   const rows = await db
@@ -131,11 +148,19 @@ export async function findOrderById(
   db: Db,
   organizationId: string,
   orderId: string,
+  marketplaceAccountId?: string | null,
 ): Promise<Record<string, unknown> | null> {
+  const scope = accountClause(marketplaceAccountId)
   const rows = await db
     .select()
     .from(orders)
-    .where(and(eq(orders.organizationId, organizationId), eq(orders.id, orderId)))
+    .where(
+      and(
+        eq(orders.organizationId, organizationId),
+        eq(orders.id, orderId),
+        ...(scope ? [scope] : []),
+      ),
+    )
     .limit(1)
   return rows[0] ?? null
 }

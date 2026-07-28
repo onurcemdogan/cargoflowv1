@@ -628,12 +628,32 @@ async function requireOrderPersistenceContext(request, response) {
       import('./db/client.ts'),
       import('./orders/orderPersistenceService.ts'),
     ])
-    return { db: getDb(), service, organizationId: request.auth.organizationId }
+    const db = getDb()
+    const organizationId = request.auth.organizationId
+    // AKTİF pazaryeri hesabı backend'de deterministik çözülür (istemciden gelen
+    // marketplaceAccountId ASLA kabul edilmez). Aktif hesap yoksa null → legacy
+    // (hesapsız) kapsam. Reads/writes bu kapsama göre izole olur.
+    const marketplaceAccountId = await resolveActiveMarketplaceAccountId(db, organizationId)
+    return { db, service, organizationId, marketplaceAccountId }
   } catch {
     response.status(503).json({
       ok: false,
       message: 'Sipariş persistence katmanı yüklenemedi; PostgreSQL yapılandırmasını kontrol edin.',
     })
+    return null
+  }
+}
+
+// Auth-mode org'unun AKTİF Trendyol pazaryeri hesabının id'sini çözer (yoksa
+// null). İstemci girdisine GÜVENMEZ; yalnız DB'deki aktif hesap satırını okur.
+async function resolveActiveMarketplaceAccountId(db, organizationId) {
+  try {
+    const { getActiveAccount } = await import(
+      './integrations/marketplaceAccountRepository.ts'
+    )
+    const account = await getActiveAccount(db, organizationId, 'Trendyol')
+    return account ? account.id : null
+  } catch {
     return null
   }
 }
@@ -645,18 +665,24 @@ app.get('/api/orders', async (request, response) => {
   if (!context) return
   try {
     const query = request.query ?? {}
-    const result = await context.service.listOrders(context.db, context.organizationId, {
-      status: strOrUndef(query.status),
-      operationStatus: strOrUndef(query.operationStatus),
-      search: strOrUndef(query.search),
-      startDate: strOrUndef(query.startDate),
-      endDate: strOrUndef(query.endDate),
-      city: strOrUndef(query.city),
-      district: strOrUndef(query.district),
-      page: query.page,
-      pageSize: query.pageSize,
-      sort: query.sort === 'orderDateAsc' ? 'orderDateAsc' : 'orderDateDesc',
-    })
+    const result = await context.service.listOrders(
+      context.db,
+      context.organizationId,
+      {
+        status: strOrUndef(query.status),
+        operationStatus: strOrUndef(query.operationStatus),
+        search: strOrUndef(query.search),
+        startDate: strOrUndef(query.startDate),
+        endDate: strOrUndef(query.endDate),
+        city: strOrUndef(query.city),
+        district: strOrUndef(query.district),
+        page: query.page,
+        pageSize: query.pageSize,
+        sort: query.sort === 'orderDateAsc' ? 'orderDateAsc' : 'orderDateDesc',
+      },
+      // Yalnız aktif pazaryeri hesabının siparişleri (başka hesap/legacy gizli).
+      context.marketplaceAccountId,
+    )
     response.json({
       ok: true,
       orders: result.orders,
@@ -679,6 +705,8 @@ app.get('/api/orders/:id', async (request, response) => {
       context.db,
       context.organizationId,
       String(request.params.id),
+      // Başka hesabın (veya legacy) siparişi bu aktif hesap için 404 döner.
+      context.marketplaceAccountId,
     )
     if (!order) {
       response.status(404).json({ ok: false, message: 'Sipariş bulunamadı.' })
@@ -704,6 +732,8 @@ app.get('/api/orders/:id/label', async (request, response) => {
       context.db,
       context.organizationId,
       String(request.params.id),
+      // Başka hesabın etiketi/ZPL'i bu aktif hesaptan ASLA çözülemez (404).
+      context.marketplaceAccountId,
     )
     if (!result.found) {
       response.status(404).json({ ok: false, message: 'Sipariş bulunamadı.' })
@@ -748,6 +778,7 @@ app.post('/api/orders/:id/label-ready', async (request, response) => {
       context.db,
       context.organizationId,
       orderId,
+      context.marketplaceAccountId,
     )
     if (!result.found) {
       response.status(404).json({ ok: false, message: 'Sipariş bulunamadı.' })
@@ -791,6 +822,7 @@ app.post('/api/orders/:id/label-printed', async (request, response) => {
       context.db,
       context.organizationId,
       orderId,
+      context.marketplaceAccountId,
     )
     if (!result.found) {
       response.status(404).json({ ok: false, message: 'Sipariş bulunamadı.' })
@@ -1351,7 +1383,10 @@ async function requireProductPersistenceContext(request, response) {
       import('./db/client.ts'),
       import('./products/productPersistenceService.ts'),
     ])
-    return { db: getDb(), service, organizationId: request.auth.organizationId }
+    const db = getDb()
+    const organizationId = request.auth.organizationId
+    const marketplaceAccountId = await resolveActiveMarketplaceAccountId(db, organizationId)
+    return { db, service, organizationId, marketplaceAccountId }
   } catch {
     response.status(503).json({
       ok: false,
@@ -1368,21 +1403,27 @@ app.get('/api/products', async (request, response) => {
   try {
     const query = request.query ?? {}
     const archivedParam = strOrUndef(query.archived)
-    const result = await context.service.listProducts(context.db, context.organizationId, {
-      search: strOrUndef(query.search),
-      barcode: strOrUndef(query.barcode),
-      merchantSku: strOrUndef(query.merchantSku),
-      archived:
-        archivedParam === undefined
-          ? undefined
-          : archivedParam === 'true' || archivedParam === '1',
-      page: query.page,
-      pageSize: query.pageSize,
-      sort:
-        query.sort === 'titleDesc' || query.sort === 'recent'
-          ? query.sort
-          : 'titleAsc',
-    })
+    const result = await context.service.listProducts(
+      context.db,
+      context.organizationId,
+      {
+        search: strOrUndef(query.search),
+        barcode: strOrUndef(query.barcode),
+        merchantSku: strOrUndef(query.merchantSku),
+        archived:
+          archivedParam === undefined
+            ? undefined
+            : archivedParam === 'true' || archivedParam === '1',
+        page: query.page,
+        pageSize: query.pageSize,
+        sort:
+          query.sort === 'titleDesc' || query.sort === 'recent'
+            ? query.sort
+            : 'titleAsc',
+      },
+      // Yalnız aktif pazaryeri hesabının ürünleri.
+      context.marketplaceAccountId,
+    )
     response.json({
       ok: true,
       products: result.products,
@@ -1405,6 +1446,7 @@ app.get('/api/products/:id', async (request, response) => {
       context.db,
       context.organizationId,
       String(request.params.id),
+      context.marketplaceAccountId,
     )
     if (!product) {
       response.status(404).json({ ok: false, message: 'Ürün bulunamadı.' })

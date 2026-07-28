@@ -35,8 +35,24 @@ export function resolvePageSize(value: unknown): number {
   return Math.min(parsed, MAX_PAGE_SIZE)
 }
 
-function buildWhere(organizationId: string, filters: ProductFilters) {
+// Pazaryeri hesabı kapsamı ana ürün (products) üzerinde tutulur; varyant kapsamı
+// parent üzerinden türetilir. `undefined` → filtre yok; `null` → legacy/hesapsız;
+// `string` → o hesap.
+function productAccountClause(marketplaceAccountId: string | null | undefined) {
+  if (marketplaceAccountId === undefined) return null
+  return marketplaceAccountId === null
+    ? isNull(products.marketplaceAccountId)
+    : eq(products.marketplaceAccountId, marketplaceAccountId)
+}
+
+function buildWhere(
+  organizationId: string,
+  filters: ProductFilters,
+  marketplaceAccountId?: string | null,
+) {
   const clauses = [eq(productVariants.organizationId, organizationId)]
+  const scope = productAccountClause(marketplaceAccountId)
+  if (scope) clauses.push(scope)
   if (typeof filters.archived === 'boolean') {
     clauses.push(eq(productVariants.archived, filters.archived))
   }
@@ -61,6 +77,7 @@ export async function findProducts(
   db: Db,
   organizationId: string,
   filters: ProductFilters = {},
+  marketplaceAccountId?: string | null,
 ): Promise<{
   rows: { product: Record<string, unknown>; variant: Record<string, unknown> }[]
   total: number
@@ -69,7 +86,7 @@ export async function findProducts(
 }> {
   const pageSize = resolvePageSize(filters.pageSize)
   const page = Math.max(1, Math.trunc(Number(filters.page ?? 1)) || 1)
-  const where = buildWhere(organizationId, filters)
+  const where = buildWhere(organizationId, filters, marketplaceAccountId)
   const orderBy =
     filters.sort === 'titleDesc'
       ? desc(products.title)
@@ -118,7 +135,9 @@ export async function findProductById(
   db: Db,
   organizationId: string,
   variantId: string,
+  marketplaceAccountId?: string | null,
 ): Promise<{ product: Record<string, unknown>; variant: Record<string, unknown> } | null> {
+  const scope = productAccountClause(marketplaceAccountId)
   const rows = await db
     .select({ variant: productVariants, product: products })
     .from(productVariants)
@@ -133,6 +152,7 @@ export async function findProductById(
       and(
         eq(productVariants.organizationId, organizationId),
         eq(productVariants.id, variantId),
+        ...(scope ? [scope] : []),
       ),
     )
     .limit(1)
