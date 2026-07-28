@@ -1343,12 +1343,16 @@ app.get('/api/analytics/claims', async (request, response) => {
         ok: true,
         startDate: new Date(startDate).toISOString(),
         endDate: new Date(endDate).toISOString(),
-        source: 'local-db',
+        // Kesin claim muhasebesi yerel DB'de YOK → source "unavailable". Boş
+        // sonuç "kesinlikle 0 iade" DEĞİLDİR; iade Dashboard'da Returned sipariş
+        // statüsünden türetilir. Provider ÇAĞRILMAZ. Raw claim/PII/credential yok.
+        source: 'unavailable',
         localClaimsUnavailable: true,
         fetchedCount: 0,
         uniqueClaimCount: 0,
         affectedPackageCount: 0,
         amountBasis: 'local-order-status',
+        items: [],
         claims: [],
         cached: false,
         generatedAt: new Date().toISOString(),

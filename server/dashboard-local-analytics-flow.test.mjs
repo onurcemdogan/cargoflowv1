@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto'
 import test from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
+import { createServer } from 'vite'
 
 // Dashboard SATIŞ analitiği (auth modu) YALNIZ yerel PostgreSQL'den, aktif
 // pazaryeri hesabı kapsamında hesaplanır. Provider (Trendyol) API ÇAĞRILMAZ,
@@ -177,4 +178,76 @@ test('DLA-8: yeni hesap yerel veri yoksa empty-state gosterir (mount otomatik sy
   assert.match(page, /analyticsOrders && analyticsOrders\.length === 0 && orders\.length === 0/)
   // Dashboard mount provider sync tetiklemez (yalniz local analytics effect'leri).
   assert.doesNotMatch(page, /\/api\/orders\/sync/)
+})
+
+// ── 9: claims endpoint auth branch source="unavailable" + items:[] (provider yok) ─
+test('DLA-9: /api/analytics/claims auth branch source=unavailable, items:[] (provider yok)', () => {
+  const server = readSrc('server/index.mjs')
+  const block = sliceBlock(server, "source: 'unavailable',", 400)
+  assert.match(block, /source: 'unavailable'/)
+  assert.match(block, /items: \[\]/)
+  assert.match(block, /claims: \[\]/)
+  assert.doesNotMatch(block, /fetchTrendyolClaimsWindow/)
+})
+
+// ── viewModel refundDataSource (davranissal, vite ssrLoadModule) ────────────
+function salesOrder(over = {}) {
+  return {
+    id: over.id ?? `o-${Math.random()}`,
+    marketplace: 'Trendyol',
+    orderNumber: over.orderNumber ?? 'A-1',
+    packageId: over.packageId ?? 'PKG-1',
+    customerName: 'X', customerPhone: '', customerEmail: '', address: 'x',
+    city: 'İstanbul', district: 'Fatih',
+    marketplaceStatus: over.marketplaceStatus ?? 'Delivered',
+    operationStatus: over.operationStatus ?? 'DELIVERED',
+    source: 'real', status: over.status ?? 'Teslim Edildi',
+    totalAmount: over.totalAmount ?? 100,
+    createdAt: '2026-07-05T10:00:00.000Z', orderDate: '2026-07-05T10:00:00.000Z',
+    items: [{ id: 'L-1', productName: 'Ü', sku: 's', barcode: 'b1', quantity: 1, price: 100 }],
+    ...over,
+  }
+}
+
+test('RDS-1/2/3: refundDataSource order_status / unavailable / persisted_claims', async (t) => {
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  t.after(() => vite.close())
+  const { buildDashboardViewModel } = await vite.ssrLoadModule('/src/dashboard/dashboardViewModel.ts')
+  const now = new Date('2026-07-19T12:00:00.000Z')
+
+  // 1) Returned sipariş var + claimsAvailable=false → order_status (statuden turetilir).
+  const withReturn = buildDashboardViewModel({
+    orders: [],
+    analyticsOrders: [
+      salesOrder({ id: 'ok', packageId: 'P-OK', marketplaceStatus: 'Delivered' }),
+      salesOrder({ id: 'ret', packageId: 'P-RET', marketplaceStatus: 'Returned', status: 'İade Edildi' }),
+    ],
+    claimsAvailable: false,
+    selectedPeriod: { key: 'month' },
+    now,
+  })
+  assert.equal(withReturn.salesSummary.refundDataSource, 'order_status')
+
+  // 2) Hic yerel satis verisi yok + claimsAvailable=false → unavailable; iade tutari
+  //    KESIN gosterilmez (available=false → UI "—", "0 iade" izlenimi yok).
+  const noData = buildDashboardViewModel({
+    orders: [],
+    analyticsOrders: [],
+    claimsAvailable: false,
+    selectedPeriod: { key: 'month' },
+    now,
+  })
+  assert.equal(noData.salesSummary.refundDataSource, 'unavailable')
+  assert.equal(noData.salesSummary.returnAmount.available, false, 'unavailable → tutar kesin degil')
+
+  // 3) claimsAvailable=true → persisted_claims (gercek claim muhasebesi).
+  const withClaims = buildDashboardViewModel({
+    orders: [],
+    analyticsOrders: [salesOrder({ id: 'ok2', packageId: 'P-OK2' })],
+    analyticsClaims: [],
+    claimsAvailable: true,
+    selectedPeriod: { key: 'month' },
+    now,
+  })
+  assert.equal(withClaims.salesSummary.refundDataSource, 'persisted_claims')
 })

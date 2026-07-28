@@ -144,15 +144,23 @@ export function DashboardPage({
   const [claimsResult, setClaimsResult] = useState<{
     key: string
     claims?: AnalyticsClaim[]
+    source?: string
     error?: string
   }>()
   const analyticsClaims = claimsResult?.claims ?? null
+  // İade veri kaynağı: source "unavailable" ise (auth: provider çağrılmadı,
+  // kesin claim muhasebesi yok) iade Returned sipariş statüsünden türetilir
+  // (claimsAvailable=false). Kaynak henüz yüklenmediyse undefined → viewModel
+  // geriye dönük davranışa düşer.
+  const claimsAvailable =
+    claimsResult?.source != null ? claimsResult.source !== 'unavailable' : undefined
   const viewModel = useMemo(
     () =>
       buildDashboardViewModel({
         orders,
         analyticsOrders: analyticsOrders ?? undefined,
         analyticsClaims: analyticsClaims ?? undefined,
+        claimsAvailable,
         products,
         selectedPeriod,
         latestSyncAt: lastSyncedAt,
@@ -160,6 +168,7 @@ export function DashboardPage({
     [
       analyticsOrders,
       analyticsClaims,
+      claimsAvailable,
       lastSyncedAt,
       orders,
       products,
@@ -225,7 +234,11 @@ export function DashboardPage({
     fetchDashboardAnalyticsClaims(new Date(startMs), new Date(endMs), { refresh })
       .then((result) => {
         if (active) {
-          setClaimsResult({ key: analyticsRequestKey, claims: result.claims })
+          setClaimsResult({
+            key: analyticsRequestKey,
+            claims: result.claims,
+            source: result.source,
+          })
         }
       })
       .catch((error) => {
@@ -556,6 +569,11 @@ export function DashboardPage({
           <AlertTriangle size={16} />
           <span>İade verisi yüklenemedi; satış net değerleri eksik olabilir.</span>
         </section>
+      ) : null}
+      {viewModel.salesSummary.refundDataSource === 'order_status' ? (
+        <p className="dashboard-reporting-note" role="status">
+          İade verileri yerel sipariş statülerinden hesaplanmıştır.
+        </p>
       ) : null}
       <section className="dashboard-sales-period-cards" aria-label="Dönemsel satış kartları">
         {viewModel.salesPeriodCards.map((card) => (
