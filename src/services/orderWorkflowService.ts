@@ -226,6 +226,21 @@ export class OrderWorkflowService {
     string,
     ProductCatalogCacheEnvelope
   >()
+  // Hesap nesli (generation): her aktif hesap değişiminde artar. Geç gelen
+  // (stale) bir hesap isteğinin sonucunun yanlış hesabın UI state'ine yazılmasını
+  // önlemek için çağıran, isteği başlatmadan önce bu değeri okur ve sonuç
+  // geldiğinde hâlâ eşit mi diye kontrol eder (race-condition koruması).
+  private marketplaceAccountGeneration = 0
+  // Account-scoped KISA ÖMÜRLÜ (SWR) in-memory önbellek: yalnız AKTİF hesap için;
+  // hesap değişince tamamen atılır. Raw order/ZPL/PII localStorage'a YAZILMAZ —
+  // yalnız oturum-içi bellek. Bounded (LRU) + TTL. Yeniden mount/navigasyonda
+  // önce taze cache gösterilir, arkada DB'den revalidate edilir.
+  private readonly accountScopedOrdersCache = new Map<
+    string,
+    { at: number; generation: number; orders: CargoOrder[] }
+  >()
+  private static readonly ORDERS_CACHE_TTL_MS = 30_000
+  private static readonly ORDERS_CACHE_MAX_ENTRIES = 8
 
   constructor(
     marketplaceProvider: MarketplaceProvider,
@@ -279,6 +294,8 @@ export class OrderWorkflowService {
       }
     }
     const query = params.toString()
+    const startedAt =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
     const response = await fetch(
       `/api/orders${query ? `?${query}` : ''}`,
       { credentials: 'include' },
@@ -300,6 +317,23 @@ export class OrderWorkflowService {
       total: Number(payload.total ?? orders.length),
       page: Number(payload.page ?? 1),
       pageSize: Number(payload.pageSize ?? orders.length),
+    }
+    // Yalnız filtresiz (varsayılan) liste SWR cache'ine yazılır; filtreli
+    // sorgular önbelleklenmez (kombinasyon patlamasını önler).
+    if (query === '') this.writeOrdersCache('default', orders)
+    // Güvenli timing metadata (yalnız DEV): ham org/account id, PII, raw order,
+    // ZPL, credential veya secret LOGLANMAZ — yalnız süre/sayı/varlık bayrağı.
+    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+      const now =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
+      console.debug('PERF_ORDERS_LOAD', {
+        route: 'orders',
+        marketplaceAccountScopePresent: this.marketplaceAccountScope !== '',
+        totalDurationMs: Math.round(now - startedAt),
+        cacheHit: false,
+        itemCount: orders.length,
+        filtered: query !== '',
+      })
     }
     return orders
   }
@@ -386,9 +420,52 @@ export class OrderWorkflowService {
       // önlenir).
       this.authOrdersCache = []
       this.authProductsCache = []
+      // Nesli artır: bu andan önce başlamış (eski hesap) istekler geç gelirse
+      // çağıran tarafından DISCARD edilir. Account-scoped SWR cache tamamen atılır
+      // (eski hesap cache'i yeni hesapta ASLA kullanılmaz).
+      this.marketplaceAccountGeneration += 1
+      this.accountScopedOrdersCache.clear()
       if (nextScope) prepareMarketplaceAccountCaches(nextScope)
     }
     return changed
+  }
+
+  // Race-condition koruması: çağıran, bir hesaba özgü isteği başlatmadan önce bu
+  // değeri okur; sonuç geldiğinde hâlâ eşitse uygular, değilse (hesap değişmiş)
+  // sonucu atar.
+  getMarketplaceAccountGeneration(): number {
+    return this.marketplaceAccountGeneration
+  }
+
+  // Account-scoped SWR: taze (< TTL) cache varsa döner (stale-while-revalidate
+  // için anında gösterim), yoksa null. Yalnız aktif hesap nesli için geçerlidir.
+  peekCachedOrders(cacheKey = 'default'): CargoOrder[] | null {
+    const entry = this.accountScopedOrdersCache.get(cacheKey)
+    if (!entry) return null
+    if (entry.generation !== this.marketplaceAccountGeneration) return null
+    if (Date.now() - entry.at > OrderWorkflowService.ORDERS_CACHE_TTL_MS) return null
+    return entry.orders
+  }
+
+  private writeOrdersCache(cacheKey: string, orders: CargoOrder[]): void {
+    // Bounded LRU: en eski girdiyi düşür.
+    if (
+      this.accountScopedOrdersCache.size >= OrderWorkflowService.ORDERS_CACHE_MAX_ENTRIES &&
+      !this.accountScopedOrdersCache.has(cacheKey)
+    ) {
+      const oldest = this.accountScopedOrdersCache.keys().next().value
+      if (oldest !== undefined) this.accountScopedOrdersCache.delete(oldest)
+    }
+    this.accountScopedOrdersCache.set(cacheKey, {
+      at: Date.now(),
+      generation: this.marketplaceAccountGeneration,
+      orders,
+    })
+  }
+
+  // Aktif hesap orders cache'ini geçersizleştir (COMPLETE sync sonrası çağrılır).
+  invalidateOrdersCache(): void {
+    this.accountScopedOrdersCache.clear()
   }
 
   private ordersStorageKey(): string {
