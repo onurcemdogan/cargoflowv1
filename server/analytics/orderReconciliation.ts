@@ -10,11 +10,20 @@ import { orderLines, orders } from '../db/schema.ts'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
 
+// Tarih EKSENİ: mutabakat penceresi hangi sütuna göre uygulanır?
+//   'order_date'                   → sipariş KOHORTU (Dashboard satış dönemi).
+//   'marketplace_last_modified_at' → AKTİVİTE penceresi (provider historical
+//                                     fetch/backfill'in fiili ekseni).
+// İkisi FARKLI eksendir; aynı ay için farklı sonuç verir (bkz. canonical tanım).
+export type ReconcileDateBasis = 'order_date' | 'marketplace_last_modified_at'
+
 export interface ReconcileScope {
   organizationId: string
   marketplaceAccountId: string | null
   startMs: number
   endMs: number
+  // Varsayılan 'order_date' (mevcut davranış korunur).
+  dateBasis?: ReconcileDateBasis
 }
 
 export interface BucketRow {
@@ -31,6 +40,8 @@ export interface DayBucketRow {
 export interface OrderReconciliationReport {
   organizationId: string
   marketplaceAccountId: string | null
+  // Bu raporun hangi tarih EKSENİNDE hesaplandığı (order_date | modified).
+  dateBasis: ReconcileDateBasis
   startDate: string
   endDate: string
   orderCount: number
@@ -75,13 +86,21 @@ export async function reconcileLocalOrders(
   db: Db,
   scope: ReconcileScope,
 ): Promise<OrderReconciliationReport> {
+  const dateBasis: ReconcileDateBasis = scope.dateBasis ?? 'order_date'
+  // Pencere çapası seçilen eksene göre: orderDate kohortu VEYA
+  // marketplaceLastModifiedAt aktivitesi. Aynı hesap/dönem için ikisi farklı
+  // küme döndürür; diagnostic her iki modeli AYRI raporlar (karıştırılmaz).
+  const anchorColumn =
+    dateBasis === 'marketplace_last_modified_at'
+      ? orders.marketplaceLastModifiedAt
+      : orders.orderDate
   const start = new Date(scope.startMs)
   const end = new Date(scope.endMs)
   const where = and(
     eq(orders.organizationId, scope.organizationId),
     accountScope(scope.marketplaceAccountId),
-    gte(orders.orderDate, start),
-    lte(orders.orderDate, end),
+    gte(anchorColumn, start),
+    lte(anchorColumn, end),
   )
 
   const [summary] = await db
@@ -141,16 +160,17 @@ export async function reconcileLocalOrders(
     .where(where)
     .groupBy(orders.operationStatus)
 
+  // Gün bucket'ları SEÇİLEN eksen sütununa göre (order_date VEYA modified).
   const dayRows = await db
     .select({
-      day: sql<string>`to_char(${orders.orderDate} at time zone 'UTC', 'YYYY-MM-DD')`,
+      day: sql<string>`to_char(${anchorColumn} at time zone 'UTC', 'YYYY-MM-DD')`,
       count: sql<number>`count(*)::int`,
       amount: sql<number>`coalesce(sum(${orders.totalAmount}), 0)::float8`,
     })
     .from(orders)
     .where(where)
-    .groupBy(sql`to_char(${orders.orderDate} at time zone 'UTC', 'YYYY-MM-DD')`)
-    .orderBy(sql`to_char(${orders.orderDate} at time zone 'UTC', 'YYYY-MM-DD')`)
+    .groupBy(sql`to_char(${anchorColumn} at time zone 'UTC', 'YYYY-MM-DD')`)
+    .orderBy(sql`to_char(${anchorColumn} at time zone 'UTC', 'YYYY-MM-DD')`)
 
   // Aynı hesap kapsamında AYNI packageId'ye sahip >1 kayıt (duplicate göstergesi).
   const dupRows = await db
@@ -174,6 +194,7 @@ export async function reconcileLocalOrders(
   return {
     organizationId: scope.organizationId,
     marketplaceAccountId: scope.marketplaceAccountId,
+    dateBasis,
     startDate: start.toISOString(),
     endDate: end.toISOString(),
     orderCount: num(summary?.orderCount),

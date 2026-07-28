@@ -31,6 +31,7 @@
     "marketplace-account:backfill": "node server/integrations/backfillMarketplaceAccountCli.ts",
     "orders:reconcile:diagnose": "node server/analytics/reconcileOrdersCli.ts",
     "orders:reconcile": "node server/orders/reconcileOrdersCli.ts",
+    "dashboard:reconcile": "node server/analytics/dashboardReconcileCli.ts",
     "platform-admin:create": "node server/admin/createPlatformAdminCli.ts",
     "platform-admin:reset-password": "node server/admin/resetPlatformAdminPasswordCli.ts",
     "org-user:reset-password": "node server/admin/resetOrgUserPasswordCli.ts",
