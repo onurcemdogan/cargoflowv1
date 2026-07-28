@@ -18,6 +18,9 @@ dist-ssr
 tmp/
 outputs/
 
+# Marketplace-account backfill manifest'leri (audit/rollback; git'e girmez)
+marketplace-account-backfill-*.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

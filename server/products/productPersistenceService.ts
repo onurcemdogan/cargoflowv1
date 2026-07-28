@@ -36,12 +36,23 @@ export async function persistProductSyncResult(
   db: Db,
   organizationId: string,
   flatProducts: Record<string, unknown>[],
-  options: { complete: boolean },
+  options: { complete: boolean; marketplaceAccountId?: string | null },
 ): Promise<ProductSyncPersistResult> {
-  const result = await upsertMarketplaceProducts(db, organizationId, flatProducts)
+  const marketplaceAccountId = options.marketplaceAccountId ?? null
+  const result = await upsertMarketplaceProducts(
+    db,
+    organizationId,
+    flatProducts,
+    marketplaceAccountId,
+  )
   let archivedCount = 0
   if (options.complete) {
-    archivedCount = await archiveMissingProducts(db, organizationId, result.productKeys)
+    archivedCount = await archiveMissingProducts(
+      db,
+      organizationId,
+      result.productKeys,
+      marketplaceAccountId,
+    )
   }
   return {
     complete: options.complete,
@@ -61,6 +72,7 @@ export async function listProducts(
   db: Db,
   organizationId: string,
   filters: ProductFilters = {},
+  marketplaceAccountId?: string | null,
 ): Promise<{
   products: Record<string, unknown>[]
   total: number
@@ -71,6 +83,7 @@ export async function listProducts(
     db,
     organizationId,
     filters,
+    marketplaceAccountId,
   )
   return {
     products: rows.map((row) => rowToProduct(row.product, row.variant)),
@@ -84,8 +97,9 @@ export async function getProduct(
   db: Db,
   organizationId: string,
   variantId: string,
+  marketplaceAccountId?: string | null,
 ): Promise<Record<string, unknown> | null> {
-  const found = await findProductById(db, organizationId, variantId)
+  const found = await findProductById(db, organizationId, variantId, marketplaceAccountId)
   if (!found) return null
   return rowToProduct(found.product, found.variant)
 }

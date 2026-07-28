@@ -55,6 +55,7 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
     [
       'integration_credentials',
       'integration_sync_state',
+      'marketplace_accounts',
       'order_lines',
       'orders',
       'organization_settings',

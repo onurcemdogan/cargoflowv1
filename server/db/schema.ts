@@ -12,6 +12,7 @@ import {
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
@@ -100,6 +101,54 @@ export const integrationCredentials = pgTable(
     check(
       'integration_credentials_provider_check',
       sql`${table.provider} in ('trendyol', 'surat')`,
+    ),
+  ],
+)
+
+// Pazaryeri hesapları (organization bazlı). Bir organization aynı marketplace'te
+// (ör. Trendyol) BİRDEN FAZLA satıcı hesabı bağlayabilir; her hesap ayrı veri
+// kapsamıdır. providerAccountId = provider'ın kalıcı, GİZLİ OLMAYAN hesap
+// kimliği (Trendyol için sellerId; API key/secret DEĞİL, hash DEĞİL). Aynı
+// (org, marketplace, providerAccountId) tekrar kaydedilirse yeni hesap
+// OLUŞMAZ. Bir (org, marketplace) için EN FAZLA bir aktif hesap (partial unique).
+// Hesap değişince eski hesap SİLİNMEZ; yalnız isActive=false yapılır (veriler
+// korunur, kullanıcı geri bağlarsa yeniden görünür).
+export const marketplaceAccounts = pgTable(
+  'marketplace_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    marketplace: text('marketplace').notNull(),
+    providerAccountId: text('provider_account_id').notNull(),
+    displayName: text('display_name'),
+    isActive: boolean('is_active').notNull().default(false),
+    lastSuccessfulSyncAt: timestamp('last_successful_sync_at', {
+      withTimezone: true,
+    }),
+    lastSyncStatus: text('last_sync_status'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // Aynı provider hesap kimliği tekrar kaydedilemez (yeni hesap oluşmaz).
+    uniqueIndex('marketplace_accounts_org_marketplace_provider_unique').on(
+      table.organizationId,
+      table.marketplace,
+      table.providerAccountId,
+    ),
+    // Bir (org, marketplace) için tek aktif hesap: partial unique (is_active).
+    uniqueIndex('marketplace_accounts_single_active_unique')
+      .on(table.organizationId, table.marketplace)
+      .where(sql`${table.isActive}`),
+    index('marketplace_accounts_org_marketplace_idx').on(
+      table.organizationId,
+      table.marketplace,
     ),
   ],
 )
@@ -216,6 +265,13 @@ export const orders = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
+    // Pazaryeri hesabı kapsamı. Yeni sync HER kaydı aktif hesapla damgalar.
+    // Legacy (izolasyon öncesi) kayıtlarda NULL olabilir → quarantined (aktif
+    // UI'da görünmez). Hesap silinmez; hesap satırı düşerse set null.
+    marketplaceAccountId: uuid('marketplace_account_id').references(
+      () => marketplaceAccounts.id,
+      { onDelete: 'set null' },
+    ),
     marketplace: text('marketplace').notNull(),
     packageId: text('package_id').notNull(),
     orderNumber: text('order_number').notNull(),
@@ -255,10 +311,21 @@ export const orders = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex('orders_org_marketplace_package_unique').on(
+    // Kapsam: (org, marketplace, marketplaceAccountId, packageId). NULLS NOT
+    // DISTINCT → legacy NULL-hesap kayıtları eskisi gibi (org, marketplace,
+    // packageId) ile tekilleşir; İKİ FARKLI hesap AYNI packageId'yi taşıyabilir
+    // (çakışma yok, iki ayrı kayıt). Aynı hesapta duplicate packageId engellenir.
+    unique('orders_org_marketplace_account_package_unique')
+      .on(
+        table.organizationId,
+        table.marketplace,
+        table.marketplaceAccountId,
+        table.packageId,
+      )
+      .nullsNotDistinct(),
+    index('orders_org_account_idx').on(
       table.organizationId,
-      table.marketplace,
-      table.packageId,
+      table.marketplaceAccountId,
     ),
     index('orders_org_order_date_idx').on(table.organizationId, table.orderDate),
     index('orders_org_marketplace_status_idx').on(
@@ -339,6 +406,11 @@ export const products = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
+    // Pazaryeri hesabı kapsamı (bkz. orders.marketplaceAccountId). Legacy NULL.
+    marketplaceAccountId: uuid('marketplace_account_id').references(
+      () => marketplaceAccounts.id,
+      { onDelete: 'set null' },
+    ),
     marketplace: text('marketplace').notNull(),
     externalProductId: text('external_product_id').notNull(),
     title: text('title').notNull(),
@@ -368,10 +440,20 @@ export const products = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex('products_org_marketplace_external_unique').on(
+    // Kapsam: (org, marketplace, marketplaceAccountId, externalProductId).
+    // NULLS NOT DISTINCT → legacy NULL-hesap ürünleri eskisi gibi tekilleşir;
+    // iki hesap aynı externalProductId'yi ayrı kayıt olarak taşıyabilir.
+    unique('products_org_marketplace_account_external_unique')
+      .on(
+        table.organizationId,
+        table.marketplace,
+        table.marketplaceAccountId,
+        table.externalProductId,
+      )
+      .nullsNotDistinct(),
+    index('products_org_account_idx').on(
       table.organizationId,
-      table.marketplace,
-      table.externalProductId,
+      table.marketplaceAccountId,
     ),
     index('products_org_title_idx').on(table.organizationId, table.title),
     index('products_org_product_main_id_idx').on(
@@ -479,6 +561,13 @@ export const integrationSyncState = pgTable(
     organizationId: uuid('organization_id')
       .notNull()
       .references(() => organizations.id, { onDelete: 'cascade' }),
+    // Sync metadata + single-flight lock kapsamı: pazaryeri hesabı da dahil.
+    // Legacy/hesapsız akışta NULL (nullsNotDistinct → eski (org, provider,
+    // resource) davranışı). Farklı hesaplar birbirinin lock'unu paylaşmaz.
+    marketplaceAccountId: uuid('marketplace_account_id').references(
+      () => marketplaceAccounts.id,
+      { onDelete: 'set null' },
+    ),
     provider: text('provider').notNull(),
     resource: text('resource').notNull(),
     lastSuccessfulSyncAt: timestamp('last_successful_sync_at', {
@@ -495,11 +584,14 @@ export const integrationSyncState = pgTable(
       .defaultNow(),
   },
   (table) => [
-    uniqueIndex('integration_sync_state_org_provider_resource_unique').on(
-      table.organizationId,
-      table.provider,
-      table.resource,
-    ),
+    unique('integration_sync_state_org_provider_resource_account_unique')
+      .on(
+        table.organizationId,
+        table.provider,
+        table.resource,
+        table.marketplaceAccountId,
+      )
+      .nullsNotDistinct(),
     index('integration_sync_state_org_resource_idx').on(
       table.organizationId,
       table.resource,

@@ -24,10 +24,13 @@ function optionalDate(value: unknown): Date | null {
 export function toOrderInsertValues(
   organizationId: string,
   order: Record<string, unknown>,
+  marketplaceAccountId: string | null = null,
 ): Record<string, unknown> {
   const address = (order.shipmentAddress ?? order.address ?? null) as unknown
   return {
     organizationId,
+    // Aktif pazaryeri hesabı kapsamı (null → legacy/hesapsız).
+    marketplaceAccountId: marketplaceAccountId ?? null,
     marketplace: str(order.marketplace) || 'Trendyol',
     packageId: str(order.packageId ?? order.shipmentPackageId),
     orderNumber: str(order.orderNumber) || str(order.packageId),

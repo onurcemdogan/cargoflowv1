@@ -47,9 +47,19 @@ export async function persistSyncResult(
     // bu pencereye giren kayıtlar reconcile edilir; pencere dışı kayıtlar
     // current-active set'te yok diye arşivlenmez.
     window?: { startMs: number; endMs: number }
+    // Pazaryeri hesabı kapsamı: upsert edilen kayıtlar bu hesapla damgalanır ve
+    // reconcile YALNIZ bu hesabı değerlendirir (başka hesaba dokunmaz). null →
+    // legacy/hesapsız kapsam.
+    marketplaceAccountId?: string | null
   },
 ): Promise<SyncPersistResult> {
-  const result = await upsertMarketplaceOrders(db, organizationId, normalizedOrders)
+  const marketplaceAccountId = options.marketplaceAccountId ?? null
+  const result = await upsertMarketplaceOrders(
+    db,
+    organizationId,
+    normalizedOrders,
+    marketplaceAccountId,
+  )
   let archivedCount = 0
   if (options.complete) {
     archivedCount = await archiveMissingOrders(
@@ -57,6 +67,7 @@ export async function persistSyncResult(
       organizationId,
       result.packageIds,
       options.window,
+      marketplaceAccountId,
     )
   }
   return {
@@ -255,6 +266,7 @@ export async function listOrders(
   db: Db,
   organizationId: string,
   filters: OrderFilters = {},
+  marketplaceAccountId?: string | null,
 ): Promise<{
   orders: Record<string, unknown>[]
   total: number
@@ -265,6 +277,7 @@ export async function listOrders(
     db,
     organizationId,
     filters,
+    marketplaceAccountId,
   )
   const orderIds = orderRows.map((row) => String(row.id))
   const lineRows = await findLinesForOrders(db, organizationId, orderIds)
@@ -286,8 +299,9 @@ export async function getOrder(
   db: Db,
   organizationId: string,
   orderId: string,
+  marketplaceAccountId?: string | null,
 ): Promise<Record<string, unknown> | null> {
-  const row = await findOrderById(db, organizationId, orderId)
+  const row = await findOrderById(db, organizationId, orderId, marketplaceAccountId)
   if (!row) return null
   const lineRows = await findLinesForOrders(db, organizationId, [String(row.id)])
   const base = rowToOrder(row, lineRows)
@@ -318,8 +332,9 @@ export async function resolvePersistedLabel(
   db: Db,
   organizationId: string,
   orderId: string,
+  marketplaceAccountId?: string | null,
 ): Promise<PersistedLabelResult> {
-  const order = await getOrder(db, organizationId, orderId)
+  const order = await getOrder(db, organizationId, orderId, marketplaceAccountId)
   if (!order) {
     return {
       found: false,
@@ -387,8 +402,9 @@ export async function markLabelReady(
   db: Db,
   organizationId: string,
   orderId: string,
+  marketplaceAccountId?: string | null,
 ): Promise<LabelReadyResult> {
-  const orderRow = await findOrderById(db, organizationId, orderId)
+  const orderRow = await findOrderById(db, organizationId, orderId, marketplaceAccountId)
   if (!orderRow) {
     return { found: false, updated: false, operationStatus: null, order: null }
   }
@@ -433,7 +449,17 @@ export async function markLabelPrinted(
   db: Db,
   organizationId: string,
   orderId: string,
+  marketplaceAccountId?: string | null,
 ): Promise<LabelPrintedResult> {
+  // Aktif hesap kapsamı dışındaki sipariş (başka hesap/legacy) GÜNCELLENEMEZ:
+  // önce hesap-kapsamlı varlık kontrolü (org+id UPDATE'i tek başına hesap
+  // sızıntısına izin vermesin diye).
+  if (marketplaceAccountId !== undefined) {
+    const scoped = await findOrderById(db, organizationId, orderId, marketplaceAccountId)
+    if (!scoped) {
+      return { found: false, updated: false, operationStatus: null, order: null }
+    }
+  }
   const result = await markOrderLabelPrinted(db, organizationId, orderId)
   if (!result.found) {
     return { found: false, updated: false, operationStatus: null, order: null }

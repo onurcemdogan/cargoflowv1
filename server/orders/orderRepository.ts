@@ -47,8 +47,24 @@ export function resolvePageSize(value: unknown): number {
   return Math.min(parsed, MAX_PAGE_SIZE)
 }
 
-function buildWhere(organizationId: string, filters: OrderFilters) {
+// Pazaryeri hesabı kapsamı. `undefined` → filtre YOK (legacy servis çağrıları);
+// `null` → yalnız hesapsız (legacy) kayıtlar; `string` → yalnız o hesabın
+// kayıtları. Endpoint her zaman aktif hesabı (string|null) açıkça geçer.
+function accountClause(marketplaceAccountId: string | null | undefined) {
+  if (marketplaceAccountId === undefined) return null
+  return marketplaceAccountId === null
+    ? isNull(orders.marketplaceAccountId)
+    : eq(orders.marketplaceAccountId, marketplaceAccountId)
+}
+
+function buildWhere(
+  organizationId: string,
+  filters: OrderFilters,
+  marketplaceAccountId?: string | null,
+) {
   const clauses = [eq(orders.organizationId, organizationId)]
+  const scope = accountClause(marketplaceAccountId)
+  if (scope) clauses.push(scope)
   if (filters.status) clauses.push(eq(orders.marketplaceStatus, filters.status))
   if (filters.operationStatus) {
     clauses.push(eq(orders.operationStatus, filters.operationStatus))
@@ -80,6 +96,7 @@ export async function findOrders(
   db: Db,
   organizationId: string,
   filters: OrderFilters = {},
+  marketplaceAccountId?: string | null,
 ): Promise<{
   orderRows: Record<string, unknown>[]
   total: number
@@ -88,7 +105,7 @@ export async function findOrders(
 }> {
   const pageSize = resolvePageSize(filters.pageSize)
   const page = Math.max(1, Math.trunc(Number(filters.page ?? 1)) || 1)
-  const where = buildWhere(organizationId, filters)
+  const where = buildWhere(organizationId, filters, marketplaceAccountId)
   const orderBy =
     filters.sort === 'orderDateAsc' ? asc(orders.orderDate) : desc(orders.orderDate)
   const rows = await db
@@ -131,11 +148,19 @@ export async function findOrderById(
   db: Db,
   organizationId: string,
   orderId: string,
+  marketplaceAccountId?: string | null,
 ): Promise<Record<string, unknown> | null> {
+  const scope = accountClause(marketplaceAccountId)
   const rows = await db
     .select()
     .from(orders)
-    .where(and(eq(orders.organizationId, organizationId), eq(orders.id, orderId)))
+    .where(
+      and(
+        eq(orders.organizationId, organizationId),
+        eq(orders.id, orderId),
+        ...(scope ? [scope] : []),
+      ),
+    )
     .limit(1)
   return rows[0] ?? null
 }
@@ -214,6 +239,7 @@ export async function upsertMarketplaceOrders(
   db: Db,
   organizationId: string,
   normalizedOrders: Record<string, unknown>[],
+  marketplaceAccountId: string | null = null,
 ): Promise<{
   persisted: number
   inserted: number
@@ -224,6 +250,12 @@ export async function upsertMarketplaceOrders(
   const packageIds = normalizedOrders
     .map((order) => String(order.packageId ?? order.shipmentPackageId ?? '').trim())
     .filter(Boolean)
+  // Var/yok ayrımı AKTİF HESAP kapsamında yapılır (aynı packageId başka hesapta
+  // olsa da bu hesap için "yeni" sayılabilir).
+  const accountScope =
+    marketplaceAccountId == null
+      ? isNull(orders.marketplaceAccountId)
+      : eq(orders.marketplaceAccountId, marketplaceAccountId)
   const existingRows =
     packageIds.length > 0
       ? await db
@@ -232,6 +264,7 @@ export async function upsertMarketplaceOrders(
           .where(
             and(
               eq(orders.organizationId, organizationId),
+              accountScope,
               inArray(orders.packageId, packageIds),
             ),
           )
@@ -248,12 +281,17 @@ export async function upsertMarketplaceOrders(
       continue
     }
     try {
-      const insertValues = toOrderInsertValues(organizationId, order)
+      const insertValues = toOrderInsertValues(organizationId, order, marketplaceAccountId)
       const [row] = await db
         .insert(orders)
         .values(insertValues)
         .onConflictDoUpdate({
-          target: [orders.organizationId, orders.marketplace, orders.packageId],
+          target: [
+            orders.organizationId,
+            orders.marketplace,
+            orders.marketplaceAccountId,
+            orders.packageId,
+          ],
           set: marketplaceUpdateSet(order),
         })
         .returning({ id: orders.id })
@@ -317,7 +355,15 @@ export async function archiveMissingOrders(
   organizationId: string,
   freshPackageIds: string[],
   window?: SyncWindow,
+  marketplaceAccountId: string | null = null,
 ): Promise<number> {
+  // KAPSAM: reconcile YALNIZ aynı marketplaceAccountId kayıtlarını değerlendirir.
+  // Hesap B'nin COMPLETE sync'i hesap A kayıtlarına ASLA dokunmaz. accountId
+  // null → legacy/hesapsız kapsam (eski davranış).
+  const accountScope =
+    marketplaceAccountId == null
+      ? isNull(orders.marketplaceAccountId)
+      : eq(orders.marketplaceAccountId, marketplaceAccountId)
   const rows = await db
     .select({
       id: orders.id,
@@ -331,6 +377,7 @@ export async function archiveMissingOrders(
     .where(
       and(
         eq(orders.organizationId, organizationId),
+        accountScope,
         sql`${orders.archivedAt} is null`,
       ),
     )
