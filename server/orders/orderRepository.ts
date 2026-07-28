@@ -221,7 +221,13 @@ export async function countOrdersByOrganization(
   return Number(rows[0]?.value ?? 0)
 }
 
-// Satırları upsert eder (unique org+order+externalLineId → duplicate olmaz).
+// Satırları IDEMPOTENT reconcile eder: canonical externalLineId ile upsert +
+// provider sonucunda ARTIK OLMAYAN eski satırları (bu sipariş kapsamında) kaldır.
+// Tek transaction; org+order-scoped. Böylece aynı siparişin ikinci sync/backfill'i
+// (farklı yol/fallback id olsa bile) DUPLICATE üretmez ve eski/aykırı satırlar
+// temizlenir. GÜVENLİK: sipariş satırsız gelirse (items boş) MEVCUT satırlar
+// KORUNUR (geçici boş fetch yanlışlıkla satır silmesin); yalnız ≥1 canonical
+// satır varken stale silinir.
 export async function replaceOrUpsertOrderLines(
   db: Db,
   organizationId: string,
@@ -229,33 +235,49 @@ export async function replaceOrUpsertOrderLines(
   order: Record<string, unknown>,
 ): Promise<void> {
   const values = toLineInsertValues(organizationId, orderId, order)
-  for (const line of values) {
-    await db
-      .insert(orderLines)
-      .values(line)
-      .onConflictDoUpdate({
-        target: [
-          orderLines.organizationId,
-          orderLines.orderId,
-          orderLines.externalLineId,
-        ],
-        set: {
-          productId: line.productId,
-          merchantSku: line.merchantSku,
-          barcode: line.barcode,
-          productName: line.productName,
-          variantAttributes: line.variantAttributes,
-          quantity: line.quantity,
-          unitPrice: line.unitPrice,
-          lineTotal: line.lineTotal,
-          discountTotal: line.discountTotal,
-          lineStatus: line.lineStatus,
-          imageUrl: line.imageUrl,
-          rawPayloadEncrypted: line.rawPayloadEncrypted,
-          updatedAt: new Date(),
-        },
-      })
-  }
+  const keepIds = values.map((line) => String(line.externalLineId))
+  await db.transaction(async (tx: Db) => {
+    for (const line of values) {
+      await tx
+        .insert(orderLines)
+        .values(line)
+        .onConflictDoUpdate({
+          target: [
+            orderLines.organizationId,
+            orderLines.orderId,
+            orderLines.externalLineId,
+          ],
+          set: {
+            productId: line.productId,
+            merchantSku: line.merchantSku,
+            barcode: line.barcode,
+            productName: line.productName,
+            variantAttributes: line.variantAttributes,
+            quantity: line.quantity,
+            unitPrice: line.unitPrice,
+            lineTotal: line.lineTotal,
+            discountTotal: line.discountTotal,
+            lineStatus: line.lineStatus,
+            imageUrl: line.imageUrl,
+            rawPayloadEncrypted: line.rawPayloadEncrypted,
+            updatedAt: new Date(),
+          },
+        })
+    }
+    // Reconcile: yalnız canonical set BOŞ DEĞİLKEN, kümede olmayan (eski/aykırı
+    // fallback id'li) satırları bu sipariş kapsamında sil.
+    if (keepIds.length > 0) {
+      await tx
+        .delete(orderLines)
+        .where(
+          and(
+            eq(orderLines.organizationId, organizationId),
+            eq(orderLines.orderId, orderId),
+            notInArray(orderLines.externalLineId, keepIds),
+          ),
+        )
+    }
+  })
 }
 
 // Marketplace siparişlerini organization için upsert eder. operation_status/

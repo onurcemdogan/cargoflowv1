@@ -22,6 +22,7 @@ import {
   canMarkPrinted,
 } from '../utils/orderStatus'
 import { verifySuratShipment } from '../utils/suratVerification'
+import { detectOrderLineDuplication } from '../utils/orderLineIntegrity'
 import {
   resolveSuratPrintEligibility,
   resolveSuratPrintSource,
@@ -90,6 +91,23 @@ export function OrderDetailDrawer({
     (total, item) => total + (Number(item.quantity) || 0),
     0,
   )
+
+  // DEV/diagnostic bütünlük kontrolü: aynı canonical satır anahtarı birden çok
+  // kez var VE sum(lineTotal) totalAmount'ı aşırı aşıyorsa (cross-path duplicate
+  // işareti) YALNIZ dev konsoluna uyarı yazar. Üretim UI'ında sessizce quantity
+  // düzeltmesi / client-side dedupe YAPMAZ — asıl çözüm persistence katmanında.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return
+    const integrity = detectOrderLineDuplication(order)
+    if (integrity.suspectedDuplicate) {
+      console.warn(
+        '[order-line-integrity] Şüpheli duplicate satır (persistence sorunu): ' +
+          `duplicateKeyCount=${integrity.duplicateKeyCount} ` +
+          `lineTotalSum=${integrity.lineTotalSum} totalAmount=${integrity.orderTotal} ` +
+          `ratio=${integrity.ratio}. order-lines:repair CLI ile onarın.`,
+      )
+    }
+  }, [order])
   const packageCountLabel = `${Math.max(1, Math.round(order.packageCount ?? 1))} paket`
   const labelStatusLabel =
     order.labelStatus === 'PRINTED'
