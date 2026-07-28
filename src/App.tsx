@@ -683,34 +683,51 @@ function App() {
     orderIds: string[],
   ): Promise<{ effectiveOrders: CargoOrder[]; unresolved: string[] }> {
     const idSet = new Set(orderIds)
-    const zplById = new Map<string, string>()
+    const patchById = new Map<string, { zpl?: string; desi?: number }>()
     const unresolved: string[] = []
     await Promise.all(
       orders
         .filter((order) => idSet.has(order.id) && isReprintEligible(order))
         .map(async (order) => {
           const artifact = resolvePersistedLabelArtifact(order)
-          if (artifact.zpl) return
+          const hasDesi =
+            typeof order.desi === 'number' &&
+            Number.isFinite(order.desi) &&
+            order.desi > 0
+          const needsZpl = !artifact.zpl
+          // Kalıcı desi eksikse (reload sonrası order.desi kaybı) etiket "Top
+          // Ds/Kg" alanı "-" olmasın diye desi de uçtan çözülür.
+          const needsDesi = !hasDesi
+          if (!needsZpl && !needsDesi) return
           try {
             const fetched = await workflowService.fetchPersistedLabel(order.id)
-            if (fetched?.zpl) {
-              zplById.set(order.id, fetched.zpl)
-            } else if (artifact.hasPrintableLabel) {
+            const patch: { zpl?: string; desi?: number } = {}
+            if (needsZpl && fetched?.zpl) patch.zpl = fetched.zpl
+            if (needsDesi && fetched?.desi != null) patch.desi = fetched.desi
+            if (patch.zpl || patch.desi != null) patchById.set(order.id, patch)
+            // Ham ZPL gerçekten gerekli ama alınamadıysa kontrollü uyarı
+            // (sessiz "-" etiket üretilmez; provider'a çıkılmaz).
+            if (needsZpl && !fetched?.zpl && artifact.hasPrintableLabel) {
               unresolved.push(order.orderNumber)
             }
           } catch {
-            if (artifact.hasPrintableLabel) unresolved.push(order.orderNumber)
+            if (needsZpl && artifact.hasPrintableLabel) {
+              unresolved.push(order.orderNumber)
+            }
           }
         }),
     )
     const effectiveOrders =
-      zplById.size === 0
+      patchById.size === 0
         ? orders
-        : orders.map((order) =>
-            zplById.has(order.id)
-              ? injectPersistedZpl(order, zplById.get(order.id) as string)
-              : order,
-          )
+        : orders.map((order) => {
+            const patch = patchById.get(order.id)
+            if (!patch) return order
+            // Var olan ham ZPL KORUNUR; yalnız eksik alan (ZPL ve/veya desi)
+            // doldurulur. injectPersistedZpl mevcut geçerli desiyi ezmez.
+            const zpl = patch.zpl ?? String(order.shipment?.barcodeRaw ?? '')
+            return injectPersistedZpl(order, zpl, patch.desi ?? null)
+          })
     return { effectiveOrders, unresolved }
   }
 

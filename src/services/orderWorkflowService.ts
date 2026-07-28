@@ -309,9 +309,12 @@ export class OrderWorkflowService {
   // frontend org göndermez. Provider'a ÇIKMAZ, yeni shipment/barkod OLUŞTURMAZ,
   // desi doğrulaması YAPMAZ. `hasPrintableLabel=true` fakat ham ZPL yoksa zpl=null
   // döner (çağıran kontrollü hata gösterir). Legacy modda uç yoktur → null.
-  async fetchPersistedLabel(
-    orderId: string,
-  ): Promise<{ hasPrintableLabel: boolean; zpl: string | null; source: string | null } | null> {
+  async fetchPersistedLabel(orderId: string): Promise<{
+    hasPrintableLabel: boolean
+    zpl: string | null
+    source: string | null
+    desi: number | null
+  } | null> {
     if (!this.authMode) return null
     const response = await fetch(
       `/api/orders/${encodeURIComponent(orderId)}/label`,
@@ -322,15 +325,18 @@ export class OrderWorkflowService {
       hasPrintableLabel?: boolean
       zpl?: string | null
       source?: string | null
+      desi?: number | null
       message?: string
     }
     if (!response.ok || payload?.ok === false) {
       throw new Error(String(payload?.message ?? 'Kayıtlı etiket alınamadı.'))
     }
+    const desiNum = Number(payload.desi)
     return {
       hasPrintableLabel: payload.hasPrintableLabel === true,
       zpl: typeof payload.zpl === 'string' && payload.zpl.trim() ? payload.zpl : null,
       source: payload.source ?? null,
+      desi: Number.isFinite(desiNum) && desiNum > 0 ? desiNum : null,
     }
   }
 

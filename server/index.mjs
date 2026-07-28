@@ -695,6 +695,8 @@ app.get('/api/orders/:id/label', async (request, response) => {
       hasPrintableLabel: result.hasPrintableLabel,
       zpl: result.zpl,
       source: result.source,
+      // Kalıcı desi: reprint etiketinin "Top Ds/Kg" alanı orijinal değeri korur.
+      desi: result.desi,
     })
   } catch {
     response.status(500).json({ ok: false, message: 'Kayıtlı etiket alınamadı.' })
