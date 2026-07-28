@@ -40,12 +40,24 @@ export async function persistSyncResult(
   db: Db,
   organizationId: string,
   normalizedOrders: Record<string, unknown>[],
-  options: { complete: boolean; fetchedCount?: number },
+  options: {
+    complete: boolean
+    fetchedCount?: number
+    // Reconciliation KAPSAMI: mevcut sync'in tarih penceresi (epoch ms). Yalnız
+    // bu pencereye giren kayıtlar reconcile edilir; pencere dışı kayıtlar
+    // current-active set'te yok diye arşivlenmez.
+    window?: { startMs: number; endMs: number }
+  },
 ): Promise<SyncPersistResult> {
   const result = await upsertMarketplaceOrders(db, organizationId, normalizedOrders)
   let archivedCount = 0
   if (options.complete) {
-    archivedCount = await archiveMissingOrders(db, organizationId, result.packageIds)
+    archivedCount = await archiveMissingOrders(
+      db,
+      organizationId,
+      result.packageIds,
+      options.window,
+    )
   }
   return {
     complete: options.complete,
