@@ -20,6 +20,15 @@ import {
   type AnalyticsClaim,
   type ClaimPeriodAdjustment,
 } from './analyticsClaims'
+import {
+  classifyCanonicalDisposition,
+  describeSalesMetric,
+  SALES_DATE_BASIS,
+  SALES_DATE_BASIS_LABEL,
+  type SalesDateBasis,
+  type SalesDisposition,
+  type SalesMetricDefinition,
+} from './dashboardSalesMetricDefinition'
 
 // Yalnız SATIŞ analitiği rapor günü UTC'dir (Durusoft mutabakatı);
 // operasyon sayaçları ve tarih GÖSTERİMLERİ yerel (Europe/Istanbul)
@@ -190,6 +199,12 @@ export interface DashboardRecentOperation {
 export interface DashboardViewModel {
   period: DashboardDateRange
   comparisonPeriod: DashboardDateRange
+  // Satış metriklerinin TARİH EKSENİ kullanıcıya açıkça gösterilir: Dashboard
+  // satışı bir sipariş KOHORTUDUR (orderDate), provider "son güncellenme"
+  // aktivite penceresi DEĞİL. İki farklı metrik aynı isimle sunulmaz.
+  salesDateBasis: SalesDateBasis
+  salesDateBasisLabel: string
+  salesMetricDefinition: SalesMetricDefinition
   salesPeriodCards: DashboardSalesPeriodCard[]
   salesSummary: {
     salesAmount: DashboardMetric
@@ -417,6 +432,9 @@ export function buildDashboardViewModel({
   return {
     period,
     comparisonPeriod: resolvedComparison,
+    salesDateBasis: SALES_DATE_BASIS,
+    salesDateBasisLabel: SALES_DATE_BASIS_LABEL,
+    salesMetricDefinition: describeSalesMetric(),
     salesPeriodCards: buildDashboardSalesPeriodCards(
       salesSource,
       now,
@@ -1068,39 +1086,23 @@ function resolveItemRevenue(
   return orderAmount * (quantity / orderQuantity)
 }
 
-function salesDisposition(order: CargoOrder): 'sale' | 'return' | 'cancel' {
+// Satış/iade/iptal dispozisyonu CANONICAL tanımdan (tek kaynak) türetilir:
+// dashboardSalesMetricDefinition.classifyCanonicalDisposition. Token kümeleri,
+// Türkçe-katlamalı normalize ve RETURN>CANCEL>SALE önceliği o modülde tanımlıdır;
+// backend mutabakatı ve diagnostic ile AYNI kuralı paylaşır (davranış aynı).
+function salesDisposition(order: CargoOrder): SalesDisposition {
   const rawOrder =
     order.rawOrder && typeof order.rawOrder === 'object'
       ? (order.rawOrder as Record<string, unknown>)
       : undefined
-  const tokens = [
+  return classifyCanonicalDisposition(
     order.marketplaceStatus,
     order.packageStatus,
     order.shipmentStatusName,
     rawOrder?.status,
     rawOrder?.packageStatus,
     rawOrder?.shipmentStatus,
-  ].map(normalizeIdentity)
-
-  if (
-    tokens.some((token) =>
-      ['returned', 'returning', 'return', 'iade', 'undelivered'].some(
-        (candidate) => token === candidate || token.includes(candidate),
-      ),
-    )
-  ) {
-    return 'return'
-  }
-  if (
-    tokens.some((token) =>
-      ['cancelled', 'canceled', 'cancel', 'iptal', 'unsupplied'].some(
-        (candidate) => token === candidate || token.includes(candidate),
-      ),
-    )
-  ) {
-    return 'cancel'
-  }
-  return 'sale'
+  )
 }
 
 function buildDistribution(

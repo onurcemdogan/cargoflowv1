@@ -1,22 +1,38 @@
-// CANONICAL Dashboard satış/iade metrik tanımları (tek kaynak). Local-only
-// Dashboard ile referans (Trendyol) Dashboard arasındaki karşılaştırmalarda
-// tanım belirsizliğini ortadan kaldırır. Provider'a çıkmaz; yalnız tanım/sabit.
+// Server-tarafı Dashboard satış AMOUNT-BUCKET yardımcısı (diagnostic mutabakatı).
+// TEK KAYNAK tanım (date basis, disposition token'ları, kimlikler, etiketler)
+// src/dashboard/dashboardSalesMetricDefinition.ts'tedir; bu modül o kimlik
+// sabitlerini RE-EXPORT eder (kavram üç yerde AYRI tanımlanmasın) ve yalnızca
+// STATÜ-BUCKET tutar toplamı (Cancelled/Returned) mantığını ekler.
 //
 // NOT: Bu modül TANIMLARI açıkça belgeler. Rakamları referans Dashboard'a
 // ZORLA eşitlemek için formül değiştirilmez; fark tanım farkıysa raporlanır.
+import {
+  ACTIVITY_DATE_BASIS_LABEL,
+  AMOUNT_SOURCE,
+  describeSalesMetric,
+  HISTORICAL_ACTIVITY_BASIS,
+  METRIC_LINE,
+  METRIC_PACKAGE,
+  METRIC_UNIT_QUANTITY,
+  SALES_DATE_BASIS,
+  SALES_DATE_BASIS_LABEL,
+} from '../../src/dashboard/dashboardSalesMetricDefinition.ts'
 
-// PAKET: benzersiz sevkiyat/operasyon birimi = distinct packageId
-// (yoksa shipmentPackageId, yoksa marketplace::orderNumber). Bir Trendyol
-// siparişi birden çok pakete bölünebilir; her paket bir operasyon birimidir.
-export const METRIC_PACKAGE = 'distinct_package_id'
-
-// KALEM (line): order_lines SATIR SAYISI (distinct order line), quantity toplamı
-// DEĞİL. "Kalem 285" = 285 sipariş satırı. (quantity toplamı ayrı bir metriktir:
-// METRIC_UNIT_QUANTITY.)
-export const METRIC_LINE = 'order_line_count'
-
-// ÜRÜN ADEDİ (quantity): order_lines quantity TOPLAMI (kaç adet ürün satıldı).
-export const METRIC_UNIT_QUANTITY = 'order_line_quantity_sum'
+// PAKET / KALEM / ÜRÜN ADEDİ kimlikleri canonical modülden gelir (tek kaynak).
+//   PAKET       = distinct packageId (bir sipariş çok pakete bölünebilir)
+//   KALEM       = order_lines satır sayısı (quantity toplamı DEĞİL)
+//   ÜRÜN ADEDİ  = order_lines quantity toplamı
+export {
+  ACTIVITY_DATE_BASIS_LABEL,
+  AMOUNT_SOURCE,
+  describeSalesMetric,
+  HISTORICAL_ACTIVITY_BASIS,
+  METRIC_LINE,
+  METRIC_PACKAGE,
+  METRIC_UNIT_QUANTITY,
+  SALES_DATE_BASIS,
+  SALES_DATE_BASIS_LABEL,
+}
 
 // SATIŞ (gross): kapsamdaki TÜM siparişlerin totalAmount toplamı (statü
 // ayırt etmeden). İptal/iade AYRI gösterilir; brüt satıştan otomatik
