@@ -1,7 +1,5 @@
 import type { CargoOrder } from '../types/cargoflow'
-import { getOrderOperationStatus, isHistoricalOrder } from './orderStatus'
-import { verifySuratShipment } from './suratVerification'
-import { isPreassignedAwaitingAcceptance } from './suratPrintEligibility'
+import { classifyCanonicalOrderStatus } from './orderClassification'
 import {
   resolveOrderStatus,
   type OrderStatusSource,
@@ -101,167 +99,71 @@ export function mapMarketplaceStatus(
   }
 }
 
-export function mapOperationStatus(order: CargoOrder): StatusPresentation {
-  const operationStatus = getOrderOperationStatus(order)
-  const verification = verifySuratShipment(order)
-  const resolvedStatus = resolveOrderStatus(order)
+const PRESENTATION_LABEL: Record<string, string> = {
+  canceledOrReturned: 'İptal / İade',
+  delivered: 'Teslim Edildi',
+  handedToCargo: 'Kargoya Verildi',
+  labelPrinted: 'Etiket Basıldı',
+  labelReady: 'Etiket Hazır',
+  archived: 'Arşiv',
+  error: 'Kontrol Gerekli',
+  barcodeWaiting: 'Barkod Bekliyor',
+  open: 'Açık Operasyon',
+  unknown: 'Bilinmiyor',
+}
 
-  if (resolvedStatus.statusSource !== 'localOperation') {
-    return {
-      label: resolvedStatus.label,
-      description:
-        resolvedStatus.statusSource === 'suratTracking'
-          ? 'Gerçek Sürat Kargo takip hareketinden alındı.'
-          : 'Pazaryerinin gerçek paket durumundan alındı.',
-      color:
-        resolvedStatus.delivered || resolvedStatus.shipped
-          ? 'green'
-          : resolvedStatus.canceledOrReturned
-            ? 'red'
-            : 'yellow',
-      source: resolvedStatus.statusSource,
-      sourceLabel: resolvedStatus.sourceLabel,
-    }
-  }
-  // ÖNCELİK 1: canonical operationStatus rozeti DOĞRUDAN belirler. Etiket
-  // başarıyla oluşturulunca LABEL_READY, kullanıcı yazdırınca LABEL_PRINTED
-  // yazılır; shipment/verification türetmesi bunun üzerine yazıp "Barkod Bekliyor"
-  // GÖSTEREMEZ. (Pazaryeri gerçek forward statüsü yukarıda zaten önceliklidir.)
-  if (operationStatus === 'LABEL_PRINTED') {
-    return {
-      label: 'Etiket Basıldı',
-      description: 'Etiket basıldı. Gerektiğinde tekrar yazdırabilirsiniz.',
-      color: 'green',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  if (operationStatus === 'LABEL_READY') {
-    return {
-      label: 'Etiket Hazır',
-      description: 'Etiket hazır ve yazdırılabilir.',
-      color: 'teal',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  if (operationStatus === 'SURAT_TRACKING_MISSING') {
-    return {
-      label: 'Takip no/T.No Alınamadı',
-      description:
-        'SÃ¼rat teknik cevap verdi ancak operasyonel takip no, T.No veya numeric barkod dÃ¶nmedi.',
-      color: 'red',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  if (operationStatus === 'LABEL_CREATED_NOT_REGISTERED') {
-    return {
-      label: 'Etiket Oluştu, Kayıt Yok',
-      description:
-        'Etiket adayları alındı ancak Serendip gönderi kaydı açılmadı. Yazdırma kapalıdır.',
-      color: 'red',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  if (
-    order.status === 'Hata' ||
-    operationStatus === 'ERROR' ||
-    operationStatus === 'SURAT_DISPATCH_REJECTED' ||
-    operationStatus === 'SURAT_BARCODE_FAILED'
-  ) {
-    return {
-      label: 'Hatalı',
-      description: 'Operasyon kontrolü gerekiyor.',
-      color: 'red',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  // Eski + güçlü sinyalsiz sipariş: aktif "Barkod Bekliyor" yerine pasif Arşiv
-  // rozetiyle gösterilir. isHistoricalOrder yukarıdaki güçlü sinyalleri (forward
-  // pazaryeri statüsü / etiket / hata) zaten eler; buraya yalnız gerçekten
-  // sinyalsiz eski kayıtlar düşer. SAHTE "Kargoya Verildi/Teslim" ATANMAZ.
-  if (isHistoricalOrder(order)) {
-    return {
-      label: 'Arşiv',
-      description:
-        'Eski sipariş — aktif operasyon sinyali yok. Arşiv kaydı olarak gösteriliyor.',
-      color: 'gray',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  if (
-    order.labelStatus === 'PRINTED' &&
-    Boolean(order.label?.printedAt)
-  ) {
-    return {
-      label: 'Etiket Basıldı',
-      description: 'Etiket basıldı. Gerektiğinde tekrar yazdırabilirsiniz.',
-      color: 'green',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  if (
-    verification.barcodeRaw &&
-    (verification.verifiedShipment ||
-      order.matchStatus ||
-      order.shipment?.verifiedShipment)
-  ) {
-    return {
-      label: 'Etiket Hazır',
-      description: 'Takip no, barkod ve ZPL verisi hazır.',
-      color: 'teal',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  if (
-    isPreassignedAwaitingAcceptance(order.shipment) &&
-    verification.barcodeRaw
-  ) {
-    return {
-      label: 'Etiket Hazır',
-      description: 'Etiket hazır ve yazdırılabilir.',
-      color: 'teal',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  if (
-    order.shipment &&
-    [
-      'SHIPMENT_CREATED',
-      'SURAT_CREATED_NO_TRACKING',
-      'SURAT_TRANSFERRED_BUT_NO_BARCODE',
-      'TRACKING_CONFIRMED',
-    ].includes(operationStatus)
-  ) {
-    return {
-      label: 'Sürat Doğrulama Bekliyor',
-      description: 'Sürat ortak barkod alanları doğrulanıyor.',
-      color: 'yellow',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  if (operationStatus === 'SHIPMENT_PENDING') {
-    return {
-      label: 'Ortak Barkod Oluşturulacak',
-      description: 'Sürat ortak barkod işlemi başlatılacak.',
-      color: 'yellow',
-      source: 'localOperation',
-      sourceLabel: 'CargoFlow',
-    }
-  }
-  return {
-    label: 'Barkod Bekliyor',
-    description: 'Kargo barkodu oluşturulması gerekiyor.',
-    color: 'blue',
+// TEK CANONICAL KAYNAK: sipariş operasyon rozeti classifyCanonicalOrderStatus
+// üzerinden belirlenir. Böylece Siparişler tablosu, Tümü sekmesi ve sipariş
+// detay drawer'ı; Dashboard Operasyon Akışı/Son Operasyonlar ile AYNI canonical
+// statüyü gösterir (eski legacy mapOperationStatus dallanması canonical sonucu
+// artık EZMEZ). Terminal/forward aşamalarda (teslim/kargoya verildi/iptal) gerçek
+// kaynak atfı (Sürat takip / pazaryeri) korunur.
+export function mapOperationStatus(order: CargoOrder): StatusPresentation {
+  const { stage } = classifyCanonicalOrderStatus(order)
+  const resolved = resolveOrderStatus(order)
+  const local = (color: StatusTone, description: string): StatusPresentation => ({
+    label: PRESENTATION_LABEL[stage],
+    description,
+    color,
     source: 'localOperation',
     sourceLabel: 'CargoFlow',
+  })
+  const attributed = (
+    color: StatusTone,
+    fallbackDesc: string,
+  ): StatusPresentation =>
+    resolved.statusSource !== 'localOperation'
+      ? {
+          label: PRESENTATION_LABEL[stage],
+          description:
+            resolved.statusSource === 'suratTracking'
+              ? 'Gerçek Sürat Kargo takip hareketinden alındı.'
+              : 'Pazaryerinin gerçek paket durumundan alındı.',
+          color,
+          source: resolved.statusSource,
+          sourceLabel: resolved.sourceLabel,
+        }
+      : local(color, fallbackDesc)
+  switch (stage) {
+    case 'canceledOrReturned':
+      return attributed('red', 'Sipariş iptal edildi veya iade sürecinde.')
+    case 'delivered':
+      return attributed('green', 'Sipariş müşteriye teslim edildi.')
+    case 'handedToCargo':
+      return attributed('green', 'Sipariş kargoya verildi / taşımada.')
+    case 'labelPrinted':
+      return local('green', 'Etiket basıldı. Gerektiğinde tekrar yazdırabilirsiniz.')
+    case 'labelReady':
+      return local('teal', 'Etiket hazır ve yazdırılabilir.')
+    case 'archived':
+      return local('gray', 'Arşivlenmiş sipariş.')
+    case 'error':
+      return local('red', 'Operasyon kontrolü gerekiyor.')
+    case 'open':
+      return local('blue', 'Aktif operasyon; işlem bekliyor.')
+    case 'barcodeWaiting':
+      return local('blue', 'Kargo barkodu oluşturulması gerekiyor.')
+    default:
+      return local('gray', 'Durum belirlenemedi.')
   }
 }
