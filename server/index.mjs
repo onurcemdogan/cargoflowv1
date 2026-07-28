@@ -9551,16 +9551,32 @@ async function callTrendyolOrders(credentials, query) {
   const retryDelaysMs = getOrderRetryDelaysMs()
   let result
   let rateLimitRetries = 0
+  let transientRetries = 0
   for (let attempt = 0; attempt <= retryDelaysMs.length; attempt += 1) {
     result = await fetchTrendyolJson(url, credentials)
-    if (Number(result.statusCode) !== 429 || attempt === retryDelaysMs.length) {
+    // GÜVENLİ GET retry: yalnız GEÇİCİ hatalar tekrar denenir — 429 (rate limit),
+    // 5xx (upstream/gateway) ve ağ hataları (statusCode yok/0). Kalıcı 4xx
+    // (credential/validation) TEKRAR DENENMEZ. Retry sayısı üst sınırlıdır
+    // (sonsuz döngü yok). Bu, "ilk denemede 502, tekrar deneyince başarılı"
+    // durumunu tek istek içinde çözer; proxy'ye geçici hata sızmaz.
+    const code = Number(result.statusCode)
+    const isRateLimited = code === 429
+    const isServerError = code >= 500 && code <= 599
+    const isNetworkError = !result.ok && (!Number.isFinite(code) || code === 0)
+    const isTransient = isRateLimited || isServerError || isNetworkError
+    if (result.ok || !isTransient || attempt === retryDelaysMs.length) {
       break
     }
-    rateLimitRetries += 1
+    if (isRateLimited) rateLimitRetries += 1
+    else transientRetries += 1
     const retryAfterMs = Number(result.debug?.retryAfterMs ?? 0)
+    // 429 için Retry-After'a saygı; diğer geçici hatalarda exponential backoff +
+    // jitter (eşzamanlı isteklerin senkronize retry'ını dağıtır).
+    const baseDelay = retryDelaysMs[attempt]
+    const jitter = isRateLimited ? 0 : Math.floor(Math.random() * baseDelay * 0.3)
     const delayMs = Math.max(
-      retryDelaysMs[attempt],
-      Number.isFinite(retryAfterMs) ? retryAfterMs : 0,
+      baseDelay + jitter,
+      isRateLimited && Number.isFinite(retryAfterMs) ? retryAfterMs : 0,
     )
     await new Promise((resolve) => setTimeout(resolve, delayMs))
   }
@@ -9569,6 +9585,7 @@ async function callTrendyolOrders(credentials, query) {
     debug: {
       ...(result?.debug ?? {}),
       rateLimitRetries,
+      transientRetries,
     },
   }
 }
