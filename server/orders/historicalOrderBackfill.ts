@@ -13,11 +13,50 @@ import { persistSyncResult } from './orderPersistenceService.ts'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
 
+// Historical fetch penceresinin GERÇEK ekseni: Trendyol'a verilen startDate/
+// endDate pratikte orderDate DEĞİL packageLastModifiedDate aktivitesidir. Bu
+// sabit manifest/plan içinde açıkça damgalanır (kullanıcı --start/--end'i
+// "sipariş ayı" sanmasın).
+export const BACKFILL_DATE_BASIS = 'marketplace_last_modified_at' as const
+
 export interface BackfillScope {
   organizationId: string
   marketplaceAccountId: string
   startMs: number
   endMs: number
+}
+
+// Çekilen paketlerin orderDate DAĞILIMI (güvenli aggregate — ham ID/PII yok).
+// Modified penceresi ile çekilen kayıtların HANGİ sipariş aylarına düştüğünü
+// gösterir (ör. Haziran modified penceresinde Mayıs orderDate'li kayıtlar).
+export interface OrderDateDistribution {
+  min: string | null
+  max: string | null
+  byMonth: { month: string; count: number }[]
+}
+
+function computeOrderDateDistribution(
+  providerOrders: Record<string, unknown>[],
+): OrderDateDistribution {
+  let minMs: number | null = null
+  let maxMs: number | null = null
+  const byMonth = new Map<string, number>()
+  for (const order of providerOrders) {
+    const ms = Date.parse(String(order.orderDate ?? ''))
+    // new Date(0) (epoch) = orderDate bilinmiyor → dağılıma katılmaz.
+    if (!Number.isFinite(ms) || ms <= 0) continue
+    if (minMs == null || ms < minMs) minMs = ms
+    if (maxMs == null || ms > maxMs) maxMs = ms
+    const month = new Date(ms).toISOString().slice(0, 7) // YYYY-MM (UTC)
+    byMonth.set(month, (byMonth.get(month) ?? 0) + 1)
+  }
+  return {
+    min: minMs == null ? null : new Date(minMs).toISOString(),
+    max: maxMs == null ? null : new Date(maxMs).toISOString(),
+    byMonth: [...byMonth.entries()]
+      .map(([month, count]) => ({ month, count }))
+      .sort((a, b) => a.month.localeCompare(b.month)),
+  }
 }
 
 export function computeConfirmationToken(scope: BackfillScope): string {
@@ -60,6 +99,10 @@ async function localPackageIds(
 export interface BackfillPlan {
   organizationId: string
   marketplaceAccountId: string
+  // Tarih ekseni AÇIK: startDate/endDate bir MODIFIED aktivite penceresidir,
+  // sipariş ayı DEĞİL.
+  dateBasis: typeof BACKFILL_DATE_BASIS
+  fetchedModifiedWindow: { start: string; end: string }
   startDate: string
   endDate: string
   providerPackageCount: number
@@ -68,6 +111,9 @@ export interface BackfillPlan {
   updateNeededCount: number
   conflictCount: number
   providerStatusBuckets: { key: string; count: number }[]
+  // Çekilen paketlerin GERÇEK orderDate dağılımı (modified penceresi ≠ sipariş ayı).
+  resultingOrderDateMinMax: { min: string | null; max: string | null }
+  resultingOrderDateBuckets: { month: string; count: number }[]
   confirmationToken: string
   willModify: false
 }
@@ -87,11 +133,16 @@ export async function planBackfill(
     const key = String(order.marketplaceStatus ?? '(null)')
     statusBuckets.set(key, (statusBuckets.get(key) ?? 0) + 1)
   }
+  const distribution = computeOrderDateDistribution(providerOrders)
+  const startDate = new Date(scope.startMs).toISOString()
+  const endDate = new Date(scope.endMs).toISOString()
   return {
     organizationId: scope.organizationId,
     marketplaceAccountId: scope.marketplaceAccountId,
-    startDate: new Date(scope.startMs).toISOString(),
-    endDate: new Date(scope.endMs).toISOString(),
+    dateBasis: BACKFILL_DATE_BASIS,
+    fetchedModifiedWindow: { start: startDate, end: endDate },
+    startDate,
+    endDate,
     providerPackageCount: providerIds.size,
     localPackageCount: existing.size,
     missingCount: missing,
@@ -101,6 +152,8 @@ export async function planBackfill(
     // yalnız hedef hesaba yazdığından 0.
     conflictCount: 0,
     providerStatusBuckets: [...statusBuckets.entries()].map(([key, count]) => ({ key, count })),
+    resultingOrderDateMinMax: { min: distribution.min, max: distribution.max },
+    resultingOrderDateBuckets: distribution.byMonth,
     confirmationToken: computeConfirmationToken(scope),
     willModify: false,
   }
@@ -110,6 +163,9 @@ export interface BackfillManifest {
   batchId: string
   organizationId: string
   marketplaceAccountId: string
+  // Tarih ekseni AÇIK: pencere MODIFIED aktivitesidir, sipariş ayı DEĞİL.
+  dateBasis: typeof BACKFILL_DATE_BASIS
+  fetchedModifiedWindow: { start: string; end: string }
   startDate: string
   endDate: string
   appliedAt: string
@@ -117,6 +173,9 @@ export interface BackfillManifest {
   failedWindows: number
   before: { localPackageCount: number }
   after: { insertedCount: number; updatedCount: number; failedCount: number }
+  // Yazılan paketlerin GERÇEK orderDate dağılımı (modified penceresi ≠ sipariş ayı).
+  resultingOrderDateMinMax: { min: string | null; max: string | null }
+  resultingOrderDateBuckets: { month: string; count: number }[]
   checksum: string
 }
 
@@ -156,12 +215,17 @@ export async function applyBackfill(
     .digest('hex')
     .slice(0, 16)
 
+  const distribution = computeOrderDateDistribution(providerOrders)
+  const startDate = new Date(options.startMs).toISOString()
+  const endDate = new Date(options.endMs).toISOString()
   return {
     batchId: options.batchId,
     organizationId: options.organizationId,
     marketplaceAccountId: options.marketplaceAccountId,
-    startDate: new Date(options.startMs).toISOString(),
-    endDate: new Date(options.endMs).toISOString(),
+    dateBasis: BACKFILL_DATE_BASIS,
+    fetchedModifiedWindow: { start: startDate, end: endDate },
+    startDate,
+    endDate,
     appliedAt: options.appliedAt,
     providerComplete: options.providerComplete,
     failedWindows: options.failedWindows,
@@ -171,6 +235,8 @@ export async function applyBackfill(
       updatedCount: result.updatedCount,
       failedCount: result.failedCount,
     },
+    resultingOrderDateMinMax: { min: distribution.min, max: distribution.max },
+    resultingOrderDateBuckets: distribution.byMonth,
     checksum,
   }
 }
