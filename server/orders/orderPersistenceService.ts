@@ -67,6 +67,47 @@ function firstStr(...values: unknown[]): string {
   return ''
 }
 
+function positiveDesi(value: unknown): number | null {
+  const num = Number(value)
+  if (!Number.isFinite(num) || num <= 0) return null
+  return Math.round(num * 100) / 100
+}
+
+// Kayıtlı (persisted) etiket desisini ham ZPL'in "Top Ds/Kg" alanından çözer.
+// Frontend extractZplDesi ile aynı sözleşme; server tarafında bağımsız uygulanır
+// (frontend util import edilmez). Yalnız pozitif değer döner.
+function extractDesiFromZpl(zpl: string): number | null {
+  if (!zpl) return null
+  const index = zpl.toLowerCase().indexOf('top ds/kg')
+  if (index < 0) return null
+  const after = zpl.slice(index)
+  const fields = [...after.matchAll(/\^FD([^^]*?)\^FS/gi)].slice(0, 4)
+  for (const field of fields) {
+    const parsed = positiveDesi(field[1])
+    if (parsed != null) return parsed
+  }
+  return null
+}
+
+// Kalıcı desi kaynağı önceliği: operation payload.desi (kullanıcının ilk create'te
+// girdiği kesin değer) → ham ZPL'e gömülü desi (byte-for-byte orijinal etiket) →
+// null. YENİ KOLON EKLENMEZ; mevcut persisted payload/ZPL alanları kullanılır.
+function resolvePersistedDesi(
+  payload: Record<string, unknown>,
+  technicalZpl: string,
+): number | null {
+  const persistedShipment =
+    payload.shipment && typeof payload.shipment === 'object'
+      ? (payload.shipment as Record<string, unknown>)
+      : null
+  return (
+    positiveDesi(payload.desi) ??
+    positiveDesi(payload.apiRequestDesi) ??
+    positiveDesi(persistedShipment?.desi) ??
+    extractDesiFromZpl(technicalZpl)
+  )
+}
+
 // GERÇEK persistence shape'i: Sürat create idempotency payload'ı (shipment_
 // operations.response_payload) bir `shipment` NESNESİ TUTMAZ. Yazdırılabilir ZPL
 // artifact'i `technicalZpl` / `technicalZplSha256` / `technicalZplLength`
@@ -79,7 +120,12 @@ function firstStr(...values: unknown[]): string {
 function buildShipmentViewFromPayload(
   payload: Record<string, unknown>,
   shipmentRow: Record<string, unknown>,
-): { shipment: Record<string, unknown>; hasPrintableLabel: boolean; ozelKargoTakipNo: string } {
+): {
+  shipment: Record<string, unknown>
+  hasPrintableLabel: boolean
+  ozelKargoTakipNo: string
+  desi: number | null
+} {
   const persisted =
     payload.shipment && typeof payload.shipment === 'object'
       ? (payload.shipment as Record<string, unknown>)
@@ -108,9 +154,14 @@ function buildShipmentViewFromPayload(
     shipmentRow.barcode,
   )
   const ozelKargoTakipNo = firstStr(persisted?.ozelKargoTakipNo, payload.ozelKargoTakipNo)
+  // Kalıcı desi (ilk create girişi / ham ZPL'e gömülü). Sayfa yenilemesinde
+  // order.desi kaybolduğunda etiket "Top Ds/Kg" alanı boş ("-") kalmasın diye
+  // shipment görünümüne ve order.desi'ye geri yansıtılır.
+  const desi = resolvePersistedDesi(payload, technicalZpl)
   const shipment: Record<string, unknown> = {
     ...(persisted ?? {}),
     provider: 'surat-kargo',
+    ...(desi != null ? { desi } : {}),
     trackingNumber: tNo,
     tNo,
     kargoTakipNo: firstStr(persisted?.kargoTakipNo, tNo),
@@ -132,7 +183,7 @@ function buildShipmentViewFromPayload(
     candidateTNo: firstStr(persisted?.candidateTNo, tNo),
     candidateBarkodNo: firstStr(persisted?.candidateBarkodNo, barcode),
   }
-  return { shipment, hasPrintableLabel, ozelKargoTakipNo }
+  return { shipment, hasPrintableLabel, ozelKargoTakipNo, desi }
 }
 
 // Order view-model'ine shipment linkage ekler. Başka organization shipment'ı
@@ -160,6 +211,10 @@ async function attachShipment(
       // 727 Trendyol referansı DB kolonunda boşsa payload'dan doldur. Canonical
       // orderNumber (114...) DEĞİŞMEZ; yalnız görünüm/fallback zenginleşir.
       cargoTrackingNumber: firstStr(order.cargoTrackingNumber, view.ozelKargoTakipNo),
+      // Desi orders tablosunda TUTULMAZ; sayfa yenilemesinde kalıcı payload/ZPL'den
+      // geri yansıtılır ki reprint etiketi "Top Ds/Kg" alanı "-" kalmasın. Order'da
+      // zaten geçerli desi varsa KORUNUR (overwrite yok).
+      desi: positiveDesi(order.desi) ?? view.desi ?? order.desi ?? null,
       // Backend güvenli capability bayrağı (raw ZPL değil): kalıcı persistence'tan.
       hasPrintableLabel: view.hasPrintableLabel,
       shipment: view.shipment,
@@ -234,6 +289,9 @@ export interface PersistedLabelResult {
   operationStatus: string | null
   zpl: string | null
   source: string | null
+  // Kalıcı desi: reprint etiketinde "Top Ds/Kg" alanı orijinal değeri korusun
+  // diye (order.desi reload'da kaybolduğunda) kalıcı payload/ZPL'den döner.
+  desi: number | null
 }
 
 // Reprint (tekrar yazdırma) için KAYITLI etiket artifact'ini çözer. Provider'a
@@ -258,6 +316,7 @@ export async function resolvePersistedLabel(
       operationStatus: null,
       zpl: null,
       source: null,
+      desi: null,
     }
   }
   const operationStatus = firstStr(order.operationStatus) || null
@@ -284,6 +343,9 @@ export async function resolvePersistedLabel(
       source = found.source
     }
   }
+  // Kalıcı desi: attachShipment order.desi'yi zaten payload/ZPL'den geri
+  // yansıttı; yine de ham ZPL'den ekstraksiyon son güvence olarak eklenir.
+  const desi = positiveDesi(order.desi) ?? extractDesiFromZpl(zpl || '')
   return {
     found: true,
     eligible,
@@ -291,6 +353,7 @@ export async function resolvePersistedLabel(
     operationStatus,
     zpl: zpl || null,
     source,
+    desi,
   }
 }
 
