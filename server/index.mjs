@@ -833,9 +833,13 @@ app.post('/api/orders/sync', async (request, response) => {
       return
     }
 
-    const complete = Boolean(result.ok) && result.debug?.syncStatus === 'COMPLETE'
-    if (!result.ok) {
-      // Başarısız çekim: mevcut siparişlere DOKUNMA (silme/arşivleme/ezme yok).
+    const syncStatus = result.debug?.syncStatus
+    const partial = result.partial === true || syncStatus === 'PARTIAL'
+    const complete = Boolean(result.ok) && syncStatus === 'COMPLETE'
+    // TOTAL_FAILURE (hiçbir statü başarılı değil): gerçek başarısızlık → 502.
+    // Mevcut siparişlere DOKUNULMAZ (silme/arşivleme/ezme yok), reconcile yok,
+    // lastSuccessfulSyncAt değişmez. PARTIAL bu daldan GEÇMEZ (aşağıda 207).
+    if (!result.ok && !partial) {
       await recordOnboardingSyncState(context.db, context.organizationId, {
         provider: 'trendyol',
         resource: 'orders',
@@ -846,6 +850,9 @@ app.post('/api/orders/sync', async (request, response) => {
       response.status(502).json({
         ok: false,
         complete: false,
+        syncStatus: 'FAILED',
+        successfulStatuses: result.successfulStatuses ?? [],
+        failedStatuses: result.failedStatuses ?? [],
         message: `Trendyol sipariş senkronu başarısız: ${result.message}`,
         fetchedCount: 0,
         persistedCount: 0,
@@ -894,9 +901,33 @@ app.post('/api/orders/sync', async (request, response) => {
       // analitiği cache'i geçersizleşir; sonraki Dashboard isteği yeniden hesaplar.
       await invalidateTenantAnalyticsCache(context.organizationId)
       released = true
+      if (partial) {
+        // KISMİ başarı: uygulama hatası DEĞİL → HTTP 207 (2xx; tarayıcıda 502
+        // oluşmaz). Başarılı statülerin içeriği upsert edildi (reconcile
+        // ÇALIŞMADI, hiçbir kayıt arşivlenmedi). Frontend sarı warning ile
+        // başarılı/başarısız statüleri gösterir; mevcut liste korunur.
+        response.status(207).json({
+          ok: false,
+          complete: false,
+          partial: true,
+          syncStatus: 'PARTIAL',
+          successfulStatuses: result.successfulStatuses ?? [],
+          failedStatuses: result.failedStatuses ?? [],
+          message: result.message,
+          fetchedCount: persistResult.fetchedCount,
+          persistedCount: persistResult.persistedCount,
+          updatedCount: persistResult.updatedCount,
+          insertedCount: persistResult.insertedCount,
+          failedCount: persistResult.failedCount,
+          archivedCount: 0,
+          syncBatchId: persistResult.syncBatchId,
+        })
+        return
+      }
       response.json({
         ok: true,
         complete: persistResult.complete,
+        syncStatus: 'COMPLETE',
         fetchedCount: persistResult.fetchedCount,
         persistedCount: persistResult.persistedCount,
         updatedCount: persistResult.updatedCount,
@@ -9187,6 +9218,16 @@ async function callTrendyolOrdersByStatuses(credentials, query = {}) {
   }
 }
 
+// Geçici (retryable) hata sınıfı: 429 (rate limit), 5xx (upstream/gateway) veya
+// ağ hatası (statusCode yok/0). Kalıcı 4xx (credential/validation) retryable
+// DEĞİLDİR. Frontend'e güvenli boolean olarak sunulur.
+function isRetryableTrendyolStatus(statusCode) {
+  const code = Number(statusCode)
+  if (!Number.isFinite(code) || code === 0) return true
+  if (code === 429) return true
+  return code >= 500 && code <= 599
+}
+
 async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
   const statuses = normalizeTrendyolStatusQuery(query)
 
@@ -9194,8 +9235,15 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
     return callTrendyolOrdersForStatus(credentials, query, statuses[0])
   }
 
+  // Statü istekleri SIRALI çalışır (kontrollü, düşük eşzamanlılık): Trendyol
+  // rate-limitini tetiklememek için ardışık istekler arasında küçük bir bekleme
+  // uygulanır. Her isteğin kendi bounded retry'ı (429/5xx/ağ) zaten vardır.
+  const interStatusDelayMs = getStatusRequestSpacingMs()
   const results = []
   for (const status of statuses) {
+    if (results.length > 0 && interStatusDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, interStatusDelayMs))
+    }
     const result = await callTrendyolOrdersForStatus(credentials, query, status)
     results.push({ status, result })
   }
@@ -9210,14 +9258,24 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
       message: 'Trendyol siparişleri çekilemedi.',
     }
 
+    // TOTAL_FAILURE: hiçbir statü başarılı olmadı. Bu gerçek başarısızlıktır
+    // (endpoint 502/503 döndürür, mevcut liste korunur, reconcile edilmez).
     return {
       ...firstFailure,
+      successfulStatuses: [],
+      failedStatuses: failures.map((entry) => ({
+        status: entry.status,
+        httpStatus: entry.result.statusCode ?? null,
+        retryable: isRetryableTrendyolStatus(entry.result.statusCode),
+      })),
       message: `Trendyol aktif statü istekleri başarısız: ${firstFailure.message}`,
       debug: {
+        syncStatus: 'FAILED',
         statusRequests: results.map((entry) => ({
           status: entry.status,
           ok: entry.result.ok,
           statusCode: entry.result.statusCode,
+          retryable: isRetryableTrendyolStatus(entry.result.statusCode),
           message: entry.result.message,
           requestUrl: entry.result.debug?.requestUrl,
           userAgent: entry.result.debug?.userAgent,
@@ -9238,19 +9296,31 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
   const firstData = successes[0]?.result.data ?? {}
 
   if (failures.length > 0) {
+    // KISMİ (PARTIAL) başarı: en az bir statü başarılı. Bu UYGULAMA HATASI
+    // DEĞİLDİR — 502 gibi sunulmaz. Başarılı statülerin içeriği döndürülür
+    // (endpoint reconcile ETMEDEN upsert edebilir); güvenli status kırılımı ve
+    // her hatalı statü için retryable sınıfı eklenir. Ham response/PII loglanmaz.
     return {
       ok: false,
+      partial: true,
       source: 'real',
-      statusCode: failures[0]?.result.statusCode ?? 502,
+      statusCode: 207,
+      successfulStatuses: successes.map((entry) => entry.status),
+      failedStatuses: failures.map((entry) => ({
+        status: entry.status,
+        httpStatus: entry.result.statusCode ?? null,
+        retryable: isRetryableTrendyolStatus(entry.result.statusCode),
+      })),
       message: `Trendyol sipariş senkronu kısmi kaldı. Başarılı statüler: ${successes
         .map((entry) => entry.status)
         .join(', ')}. Hatalı statüler: ${failures
         .map((entry) => entry.status)
-        .join(', ')}. Mevcut tam liste korunmalıdır.`,
+        .join(', ')}. Mevcut tam liste korunur.`,
       data: {
-        content: [],
-        totalElements: 0,
-        totalPages: 0,
+        ...firstData,
+        content: combinedContent,
+        totalElements: combinedContent.length,
+        totalPages: 1,
       },
       debug: {
         syncStatus: 'PARTIAL',
@@ -9259,6 +9329,7 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
           status: entry.status,
           ok: entry.result.ok,
           statusCode: entry.result.statusCode,
+          retryable: isRetryableTrendyolStatus(entry.result.statusCode),
           message: entry.result.message,
           requestUrl: entry.result.debug?.requestUrl,
           userAgent: entry.result.debug?.userAgent,
@@ -9993,6 +10064,16 @@ function getOrderRetryDelaysMs() {
     .map((part) => Number(part.trim()))
     .filter((value) => Number.isFinite(value) && value >= 0)
   return parsed.length > 0 ? parsed.slice(0, 3) : [2000, 4000, 8000]
+}
+
+// Statü istekleri arası bekleme (ms): ardışık Trendyol statü çağrılarını
+// yayarak rate-limit riskini azaltır. Prod varsayılanı 250ms; test ortamı
+// TRENDYOL_STATUS_REQUEST_SPACING_MS=0 ile devre dışı bırakabilir.
+function getStatusRequestSpacingMs() {
+  const raw = String(process.env.TRENDYOL_STATUS_REQUEST_SPACING_MS ?? '').trim()
+  if (raw === '') return 250
+  const value = Number(raw)
+  return Number.isFinite(value) && value >= 0 ? value : 250
 }
 
 function parseRetryAfterMs(value) {

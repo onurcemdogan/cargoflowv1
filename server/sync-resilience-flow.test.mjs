@@ -69,8 +69,12 @@ test('RES-4: complete=false (kısmi/başarısız) reconcile ÇALIŞMAZ; endpoint
   const persist = readSrc('server/orders/orderPersistenceService.ts')
   assert.match(persist, /if \(options\.complete\)/)
   assert.match(persist, /archiveMissingOrders/)
-  // Endpoint: !result.ok veya fetch throw → 502, mevcut siparişlere DOKUNULMAZ.
-  assert.match(server, /Başarısız çekim: mevcut siparişlere DOKUNMA/)
+  // Endpoint: complete YALNIZ debug.syncStatus === 'COMPLETE' iken true → kısmi
+  // (PARTIAL) veya başarısız sync reconcile ÇALIŞTIRMAZ.
+  assert.match(server, /complete = Boolean\(result\.ok\) && syncStatus === 'COMPLETE'/)
+  // TOTAL_FAILURE (PARTIAL değil) → 502, mevcut siparişlere DOKUNULMAZ.
+  assert.match(server, /if \(!result\.ok && !partial\)/)
+  assert.match(server, /response\.status\(502\)/)
 })
 
 test('RES-5: frontend — 409 sync_in_progress hata değil (info); mevcut liste korunur', () => {
