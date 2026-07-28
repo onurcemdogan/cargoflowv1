@@ -461,6 +461,7 @@ app.put('/api/local-config/integration', async (request, response) => {
         isCredentialEncryptionConfigured,
         saveIntegrationCredential,
         getMaskedIntegrationStatus,
+        loadOrganizationIntegrationConfig,
       } = await import('./integrations/credentialService.ts')
       if (!isCredentialEncryptionConfigured()) {
         response.status(503).json({
@@ -479,6 +480,34 @@ app.put('/api/local-config/integration', async (request, response) => {
       if (incoming.surat && typeof incoming.surat === 'object') {
         await saveIntegrationCredential(db, organizationId, 'surat', normalized.surat)
       }
+      // FAZ 0.3 — Aktif pazaryeri hesabını çöz. Trendyol'un KALICI, gizli olmayan
+      // hesap kimliği (sellerId) üzerinden hesabı bul/oluştur ve AKTİF yap. Aynı
+      // hesap tekrar kaydedilirse yeni hesap oluşmaz; farklı hesap girilirse eski
+      // hesap SİLİNMEZ (pasifleşir, verileri korunur), yeni hesap aktif olur.
+      // marketplaceAccountId istemciden ASLA kabul edilmez; backend org + kayıtlı
+      // config'ten deterministik çözer.
+      let activeAccount = null
+      const effective = await loadOrganizationIntegrationConfig(db, organizationId)
+      const {
+        resolveProviderAccountId,
+        resolveOrCreateActiveAccount,
+      } = await import('./integrations/marketplaceAccountRepository.ts')
+      const providerAccountId = resolveProviderAccountId('Trendyol', effective.trendyol)
+      if (providerAccountId) {
+        const account = await resolveOrCreateActiveAccount(
+          db,
+          organizationId,
+          'Trendyol',
+          providerAccountId,
+        )
+        activeAccount = {
+          id: account.id,
+          marketplace: account.marketplace,
+          providerAccountId: account.providerAccountId,
+          displayName: account.displayName,
+          isActive: account.isActive,
+        }
+      }
       const status = await getMaskedIntegrationStatus(db, organizationId)
       response.json({
         ok: true,
@@ -486,6 +515,8 @@ app.put('/api/local-config/integration', async (request, response) => {
         configured: status.trendyol.configured || status.surat.configured,
         trendyol: status.trendyol,
         surat: status.surat,
+        // Frontend bu bağlamı state reset için kullanır (hesap değişimi tespiti).
+        activeMarketplaceAccount: activeAccount,
         message: 'Entegrasyon bilgileri organization için şifreli olarak saklandı.',
       })
     } catch {

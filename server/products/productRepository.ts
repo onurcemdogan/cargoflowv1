@@ -2,7 +2,7 @@
 // organizationId ZORUNLU ilk parametredir; organization filtresi olmayan genel
 // ürün lookup YOKTUR. Düz varyant listesi products⋈product_variants join'iyle
 // reconstruct edilir (4293 varyant koruması).
-import { and, asc, desc, eq, ilike, inArray, or, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm'
 import { products, productVariants } from '../db/schema.ts'
 import {
   productKeyOf,
@@ -240,6 +240,7 @@ export async function upsertMarketplaceProducts(
   db: Db,
   organizationId: string,
   flatProducts: Record<string, unknown>[],
+  marketplaceAccountId: string | null = null,
 ): Promise<{
   insertedProducts: number
   updatedProducts: number
@@ -249,6 +250,10 @@ export async function upsertMarketplaceProducts(
   productKeys: string[]
 }> {
   const marketplace = 'Trendyol'
+  const accountScope =
+    marketplaceAccountId == null
+      ? isNull(products.marketplaceAccountId)
+      : eq(products.marketplaceAccountId, marketplaceAccountId)
   // Ana ürün bazında grupla (varyantlar tek ana ürün altında toplanır).
   const groups = new Map<string, Record<string, unknown>[]>()
   let failed = 0
@@ -272,6 +277,7 @@ export async function upsertMarketplaceProducts(
           .where(
             and(
               eq(products.organizationId, organizationId),
+              accountScope,
               eq(products.marketplace, marketplace),
               inArray(products.externalProductId, productKeys),
             ),
@@ -308,7 +314,11 @@ export async function upsertMarketplaceProducts(
   let updatedVariants = 0
   for (const [key, variants] of groups) {
     try {
-      const insertValues = toProductInsertValues(organizationId, variants[0])
+      const insertValues = toProductInsertValues(
+        organizationId,
+        variants[0],
+        marketplaceAccountId,
+      )
       const [row] = await db
         .insert(products)
         .values(insertValues)
@@ -316,6 +326,7 @@ export async function upsertMarketplaceProducts(
           target: [
             products.organizationId,
             products.marketplace,
+            products.marketplaceAccountId,
             products.externalProductId,
           ],
           set: productMarketplaceUpdateSet(variants[0]),
@@ -352,13 +363,20 @@ export async function archiveMissingProducts(
   db: Db,
   organizationId: string,
   freshProductKeys: string[],
+  marketplaceAccountId: string | null = null,
 ): Promise<number> {
+  // Reconcile YALNIZ aynı marketplaceAccountId ürünlerini değerlendirir.
+  const accountScope =
+    marketplaceAccountId == null
+      ? isNull(products.marketplaceAccountId)
+      : eq(products.marketplaceAccountId, marketplaceAccountId)
   const rows = await db
     .select({ id: products.id, externalProductId: products.externalProductId })
     .from(products)
     .where(
       and(
         eq(products.organizationId, organizationId),
+        accountScope,
         eq(products.archived, false),
       ),
     )

@@ -36,12 +36,23 @@ export async function persistProductSyncResult(
   db: Db,
   organizationId: string,
   flatProducts: Record<string, unknown>[],
-  options: { complete: boolean },
+  options: { complete: boolean; marketplaceAccountId?: string | null },
 ): Promise<ProductSyncPersistResult> {
-  const result = await upsertMarketplaceProducts(db, organizationId, flatProducts)
+  const marketplaceAccountId = options.marketplaceAccountId ?? null
+  const result = await upsertMarketplaceProducts(
+    db,
+    organizationId,
+    flatProducts,
+    marketplaceAccountId,
+  )
   let archivedCount = 0
   if (options.complete) {
-    archivedCount = await archiveMissingProducts(db, organizationId, result.productKeys)
+    archivedCount = await archiveMissingProducts(
+      db,
+      organizationId,
+      result.productKeys,
+      marketplaceAccountId,
+    )
   }
   return {
     complete: options.complete,

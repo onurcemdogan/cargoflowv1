@@ -75,7 +75,12 @@ async function importOne(
       .insert(orders)
       .values(insertValues)
       .onConflictDoNothing({
-        target: [orders.organizationId, orders.marketplace, orders.packageId],
+        target: [
+          orders.organizationId,
+          orders.marketplace,
+          orders.marketplaceAccountId,
+          orders.packageId,
+        ],
       })
       .returning({ id: orders.id })
     if (inserted.length === 0) return { outcome: 'skipped', lines: 0 }

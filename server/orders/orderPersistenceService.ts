@@ -47,9 +47,19 @@ export async function persistSyncResult(
     // bu pencereye giren kayıtlar reconcile edilir; pencere dışı kayıtlar
     // current-active set'te yok diye arşivlenmez.
     window?: { startMs: number; endMs: number }
+    // Pazaryeri hesabı kapsamı: upsert edilen kayıtlar bu hesapla damgalanır ve
+    // reconcile YALNIZ bu hesabı değerlendirir (başka hesaba dokunmaz). null →
+    // legacy/hesapsız kapsam.
+    marketplaceAccountId?: string | null
   },
 ): Promise<SyncPersistResult> {
-  const result = await upsertMarketplaceOrders(db, organizationId, normalizedOrders)
+  const marketplaceAccountId = options.marketplaceAccountId ?? null
+  const result = await upsertMarketplaceOrders(
+    db,
+    organizationId,
+    normalizedOrders,
+    marketplaceAccountId,
+  )
   let archivedCount = 0
   if (options.complete) {
     archivedCount = await archiveMissingOrders(
@@ -57,6 +67,7 @@ export async function persistSyncResult(
       organizationId,
       result.packageIds,
       options.window,
+      marketplaceAccountId,
     )
   }
   return {

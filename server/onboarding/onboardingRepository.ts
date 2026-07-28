@@ -10,6 +10,16 @@ type Db = any
 export type SyncResource = 'products' | 'orders'
 export type SyncStatus = 'success' | 'partial' | 'failed'
 
+// Sync metadata + kilit kapsamı pazaryeri hesabını da içerir. accountId null →
+// legacy/hesapsız kapsam (nullsNotDistinct: eski org+provider+resource satırı).
+// Farklı hesaplar ayrı satırlara yazar → birbirinin kilidini/metadata'sını
+// paylaşmaz.
+function syncAccountScope(marketplaceAccountId: string | null) {
+  return marketplaceAccountId == null
+    ? isNull(integrationSyncState.marketplaceAccountId)
+    : eq(integrationSyncState.marketplaceAccountId, marketplaceAccountId)
+}
+
 // Aynı organization+resource için aynı anda tek sync garanti eden kilit statüsü.
 // Terminal statülerden (success/partial/failed) ayrıdır; recordSyncState terminal
 // statü yazınca kilit serbest kalır.
@@ -74,11 +84,14 @@ export async function recordSyncState(
     status: SyncStatus
     fetchedCount?: number
     errorCode?: string | null
+    marketplaceAccountId?: string | null
   },
 ): Promise<void> {
   const now = new Date()
+  const marketplaceAccountId = entry.marketplaceAccountId ?? null
   const values = {
     organizationId,
+    marketplaceAccountId,
     provider: entry.provider,
     resource: entry.resource,
     lastSuccessfulSyncAt: entry.status === 'success' ? now : null,
@@ -96,6 +109,7 @@ export async function recordSyncState(
         integrationSyncState.organizationId,
         integrationSyncState.provider,
         integrationSyncState.resource,
+        integrationSyncState.marketplaceAccountId,
       ],
       set: {
         // Başarısız sync son BAŞARILI zamanı EZMEZ (yalnız başarıda güncellenir).
@@ -113,11 +127,17 @@ export async function recordSyncState(
 export async function getSyncStates(
   db: Db,
   organizationId: string,
+  marketplaceAccountId: string | null = null,
 ): Promise<Record<string, Record<string, unknown>>> {
   const rows = await db
     .select()
     .from(integrationSyncState)
-    .where(eq(integrationSyncState.organizationId, organizationId))
+    .where(
+      and(
+        eq(integrationSyncState.organizationId, organizationId),
+        syncAccountScope(marketplaceAccountId),
+      ),
+    )
   const byResource: Record<string, Record<string, unknown>> = {}
   for (const row of rows) {
     byResource[String(row.resource)] = row
@@ -129,6 +149,7 @@ export async function getSyncState(
   db: Db,
   organizationId: string,
   resource: SyncResource,
+  marketplaceAccountId: string | null = null,
 ): Promise<Record<string, unknown> | null> {
   const rows = await db
     .select()
@@ -137,6 +158,7 @@ export async function getSyncState(
       and(
         eq(integrationSyncState.organizationId, organizationId),
         eq(integrationSyncState.resource, resource),
+        syncAccountScope(marketplaceAccountId),
       ),
     )
     .limit(1)
@@ -156,9 +178,10 @@ export async function acquireSyncLock(
   db: Db,
   organizationId: string,
   resource: SyncResource,
-  options?: { provider?: string; staleMs?: number },
+  options?: { provider?: string; staleMs?: number; marketplaceAccountId?: string | null },
 ): Promise<boolean> {
   const provider = options?.provider ?? 'trendyol'
+  const marketplaceAccountId = options?.marketplaceAccountId ?? null
   const staleMs = Number.isFinite(Number(options?.staleMs))
     ? Number(options?.staleMs)
     : SYNC_LOCK_STALE_MS
@@ -168,6 +191,7 @@ export async function acquireSyncLock(
     .insert(integrationSyncState)
     .values({
       organizationId,
+      marketplaceAccountId,
       provider,
       resource,
       lastSyncStatus: SYNC_LOCK_STATUS,
@@ -178,6 +202,7 @@ export async function acquireSyncLock(
         integrationSyncState.organizationId,
         integrationSyncState.provider,
         integrationSyncState.resource,
+        integrationSyncState.marketplaceAccountId,
       ],
       set: { lastSyncStatus: SYNC_LOCK_STATUS, updatedAt: now },
       // Yalnızca kilit boşsa devral: statü running değil, NULL veya bayat.
@@ -199,9 +224,10 @@ export async function releaseSyncLock(
   db: Db,
   organizationId: string,
   resource: SyncResource,
-  options?: { provider?: string; errorCode?: string | null },
+  options?: { provider?: string; errorCode?: string | null; marketplaceAccountId?: string | null },
 ): Promise<void> {
   const provider = options?.provider ?? 'trendyol'
+  const marketplaceAccountId = options?.marketplaceAccountId ?? null
   await db
     .update(integrationSyncState)
     .set({
@@ -214,6 +240,7 @@ export async function releaseSyncLock(
         eq(integrationSyncState.organizationId, organizationId),
         eq(integrationSyncState.provider, provider),
         eq(integrationSyncState.resource, resource),
+        syncAccountScope(marketplaceAccountId),
         eq(integrationSyncState.lastSyncStatus, SYNC_LOCK_STATUS),
       ),
     )

@@ -52,9 +52,12 @@ export function variantKeyOf(product: Record<string, unknown>): string {
 export function toProductInsertValues(
   organizationId: string,
   product: Record<string, unknown>,
+  marketplaceAccountId: string | null = null,
 ): Record<string, unknown> {
   return {
     organizationId,
+    // Aktif pazaryeri hesabı kapsamı (null → legacy/hesapsız).
+    marketplaceAccountId: marketplaceAccountId ?? null,
     marketplace: str(product.marketplace) || 'Trendyol',
     externalProductId: productKeyOf(product),
     title: str(product.productName) || 'Ürün',
