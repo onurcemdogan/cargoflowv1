@@ -542,6 +542,15 @@ export function DashboardPage({
         </section>
       ) : (
         <>
+      {analyticsOrders && analyticsOrders.length === 0 && orders.length === 0 ? (
+        <section className="dashboard-analytics-warning" role="status">
+          <AlertTriangle size={16} />
+          <span>
+            Bu hesap için henüz yerel veri bulunmuyor. Trendyol senkronunu
+            Siparişler ekranından başlatabilirsiniz.
+          </span>
+        </section>
+      ) : null}
       {claimsError ? (
         <section className="dashboard-analytics-warning" role="status">
           <AlertTriangle size={16} />

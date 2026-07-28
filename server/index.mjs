@@ -1111,6 +1111,76 @@ app.get('/api/analytics/orders', async (request, response) => {
   const refresh = String(request.query?.refresh ?? '') === 'true'
   const tenantId = resolveAnalyticsTenantId(request)
   try {
+    const { analyticsCache, buildAnalyticsCacheKey, sanitizeAnalyticsOrders } =
+      await getAnalyticsCacheModule()
+    // AUTH modu: satış analitiği YALNIZ yerel PostgreSQL'den (aktif pazaryeri
+    // hesabı kapsamı) hesaplanır. Provider API ÇAĞRILMAZ, /api/orders/sync
+    // TETİKLENMEZ. refresh=true yalnız account-scoped cache'i bypass edip yerel
+    // DB'den yeniden hesaplar (yine provider yok).
+    if (isTenantAuthMode() && request.auth?.organizationId) {
+      const { getDb } = await import('./db/client.ts')
+      const db = getDb()
+      const organizationId = request.auth.organizationId
+      const marketplaceAccountId = await resolveActiveMarketplaceAccountId(
+        db,
+        organizationId,
+      )
+      const cacheKey = buildAnalyticsCacheKey({
+        resource: 'orders',
+        tenantId,
+        startMs: startDate,
+        endMs: endDate,
+        timezone,
+        // Hesap kapsamı cache anahtarına dahildir: farklı hesaplar ASLA aynı
+        // cache'i paylaşmaz. tenantId prefix'i korunur → invalidateTenant tüm
+        // hesapların cache'ini (ilgili account dahil) düşürür.
+        filters: { marketplaceAccountId: marketplaceAccountId ?? 'none' },
+      })
+      const { value, cached, generatedAt, cacheAgeMs } =
+        await analyticsCache.getOrCompute(
+          cacheKey,
+          async () => {
+            const { listOrdersForAnalytics } = await import(
+              './orders/orderPersistenceService.ts'
+            )
+            const localOrders = await listOrdersForAnalytics(
+              db,
+              organizationId,
+              { startMs: startDate, endMs: endDate },
+              marketplaceAccountId,
+            )
+            const packageCount = new Set(
+              localOrders.map((order) =>
+                String(
+                  order.packageId ??
+                    order.shipmentPackageId ??
+                    `${order.marketplace}::${order.orderNumber}`,
+                ),
+              ),
+            ).size
+            return {
+              totalElements: localOrders.length,
+              fetchedCount: localOrders.length,
+              packageCount,
+              orders: sanitizeAnalyticsOrders(localOrders),
+            }
+          },
+          { bypass: refresh },
+        )
+      response.json({
+        ok: true,
+        startDate: new Date(startDate).toISOString(),
+        endDate: new Date(endDate).toISOString(),
+        ...value,
+        source: 'local-db',
+        cached,
+        generatedAt: new Date(generatedAt).toISOString(),
+        cacheAgeMs,
+      })
+      return
+    }
+    // LEGACY modu (DATABASE_URL yok): yerel DB yoktur; mevcut Trendyol-fetch
+    // yolu KORUNUR (dev/tek-tenant). Bu yol account-isolation kapsamı DIŞIDIR.
     const orgConfig = await getRequestIntegrationConfig(request)
     const credentials = orgConfig?.trendyol
     if (!credentials?.sellerId || !credentials?.apiKey || !credentials?.apiSecret) {
@@ -1121,8 +1191,6 @@ app.get('/api/analytics/orders', async (request, response) => {
       })
       return
     }
-    const { analyticsCache, buildAnalyticsCacheKey, sanitizeAnalyticsOrders } =
-      await getAnalyticsCacheModule()
     const cacheKey = buildAnalyticsCacheKey({
       resource: 'orders',
       tenantId,
@@ -1264,6 +1332,31 @@ app.get('/api/analytics/claims', async (request, response) => {
   const refresh = String(request.query?.refresh ?? '') === 'true'
   const tenantId = resolveAnalyticsTenantId(request)
   try {
+    // AUTH modu: Dashboard provider API ÇAĞIRMAZ. Yerel PostgreSQL'de ayrı bir
+    // iade (claims) tablosu YOKTUR → güvenli BOŞ sonuç döner (yerel iade/iptal
+    // sayıları Dashboard'da siparişlerin marketplaceStatus=Returned/Cancelled
+    // değerinden zaten türetilir). "Eksik alan → provider'a dönme; yerelden
+    // hesapla / boş göster" sözleşmesi. Bu, claim-tarihli net iade mutabakatını
+    // (refinement) devre dışı bırakır; brüt satış ve statü-bazlı iade korunur.
+    if (isTenantAuthMode() && request.auth?.organizationId) {
+      response.json({
+        ok: true,
+        startDate: new Date(startDate).toISOString(),
+        endDate: new Date(endDate).toISOString(),
+        source: 'local-db',
+        localClaimsUnavailable: true,
+        fetchedCount: 0,
+        uniqueClaimCount: 0,
+        affectedPackageCount: 0,
+        amountBasis: 'local-order-status',
+        claims: [],
+        cached: false,
+        generatedAt: new Date().toISOString(),
+        cacheAgeMs: 0,
+      })
+      return
+    }
+    // LEGACY modu (DATABASE_URL yok): mevcut Trendyol getClaims yolu korunur.
     const orgConfig = await getRequestIntegrationConfig(request)
     const credentials = orgConfig?.trendyol
     if (!credentials?.sellerId || !credentials?.apiKey || !credentials?.apiSecret) {

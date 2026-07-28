@@ -8,6 +8,7 @@ import {
   findLinesForOrders,
   findOrderById,
   findOrders,
+  findOrdersInRange,
   markOrderLabelPrinted,
   markOrderLabelReady,
   upsertMarketplaceOrders,
@@ -293,6 +294,30 @@ export async function listOrders(
     viewModels.push(await attachShipment(db, organizationId, base))
   }
   return { orders: viewModels, total, page, pageSize }
+}
+
+// Dashboard SATIŞ analitiği: bir tarih aralığındaki TÜM hesap-kapsamlı
+// siparişleri CAP'SİZ, view-model (CargoOrder) olarak döner. Provider'a ÇIKMAZ;
+// yalnız yerel PostgreSQL orders/order_lines okunur. Shipment/label linkage'i
+// (attachShipment) EKLENMEZ — satış aggregate'i için gereksizdir (daha hızlı).
+export async function listOrdersForAnalytics(
+  db: Db,
+  organizationId: string,
+  range: { startMs: number; endMs: number },
+  marketplaceAccountId?: string | null,
+): Promise<Record<string, unknown>[]> {
+  const rows = await findOrdersInRange(db, organizationId, range, marketplaceAccountId)
+  const orderIds = rows.map((row) => String(row.id))
+  const lineRows = await findLinesForOrders(db, organizationId, orderIds)
+  const linesByOrder = new Map<string, Record<string, unknown>[]>()
+  for (const line of lineRows) {
+    const key = String(line.orderId)
+    if (!linesByOrder.has(key)) linesByOrder.set(key, [])
+    linesByOrder.get(key)!.push(line)
+  }
+  return rows.map((row) =>
+    rowToOrder(row, linesByOrder.get(String(row.id)) ?? []),
+  )
 }
 
 export async function getOrder(

@@ -127,6 +127,31 @@ export async function findOrders(
   }
 }
 
+// Dashboard SATIŞ analitiği için: bir tarih aralığındaki (orderDate) TÜM
+// hesap-kapsamlı siparişleri CAP'SİZ döner (sayfalama YOK). Analitik dönemsel
+// satış hesabı olduğundan arşivli/aktif ayrımı yapmaz (Cancelled/Returned dahil
+// tüm statüler; client viewModel statüye göre sınıflandırır). Provider'a ÇIKMAZ.
+export async function findOrdersInRange(
+  db: Db,
+  organizationId: string,
+  range: { startMs: number; endMs: number },
+  marketplaceAccountId?: string | null,
+): Promise<Record<string, unknown>[]> {
+  const scope = accountClause(marketplaceAccountId)
+  return db
+    .select()
+    .from(orders)
+    .where(
+      and(
+        eq(orders.organizationId, organizationId),
+        ...(scope ? [scope] : []),
+        gte(orders.orderDate, new Date(range.startMs)),
+        lte(orders.orderDate, new Date(range.endMs)),
+      ),
+    )
+    .orderBy(desc(orders.orderDate))
+}
+
 export async function findLinesForOrders(
   db: Db,
   organizationId: string,
