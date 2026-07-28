@@ -29,6 +29,7 @@ const backfill = await import('./orders/historicalOrderBackfill.ts')
 const fetchMod = await import('./trendyol/historicalOrderFetch.ts')
 const mapper = await import('./orders/orderMapper.ts')
 const reportMod = await import('./analytics/dashboardReconcileReport.ts')
+const projection = await import('./analytics/dashboardProjectionReconcile.ts')
 
 // ── Ortak vite (frontend gerçek fonksiyonları) — bir kez, sonda kapanır ──────
 let _vite
@@ -146,6 +147,7 @@ test('DSR-1/8: dashboard:reconcile GERÇEK buildDashboardSalesPeriodCards kullan
     salesDateBasisLabel: metrics.SALES_DATE_BASIS_LABEL,
     monthCard, lastMonthCard,
     refundDataSource: 'order_status',
+    orders: salesSource,
     reconcile: (args) =>
       recon.reconcileLocalOrders(db, {
         organizationId: org, marketplaceAccountId: a.id,
@@ -191,6 +193,7 @@ test('DSR-2: --as-of sabitlendiğinde sonuç DETERMİNİSTİK', async (t) => {
       monthCard: cards.find((c) => c.key === 'month'),
       lastMonthCard: cards.find((c) => c.key === 'lastMonth'),
       refundDataSource: 'order_status',
+      orders: salesSource,
       reconcile: (args) => recon.reconcileLocalOrders(db, { organizationId: org, marketplaceAccountId: a.id, ...args }),
     })
   }
@@ -462,4 +465,88 @@ test('DSR-29/30: backfill idempotent + LABEL_PRINTED/operationStatus KORUNUR; PA
   )
   assert.equal(partial.complete, false, 'başarısız pencere → PARTIAL')
   assert.ok(partial.failedWindows > 0)
+})
+
+// ═══ FAZ — projeksiyon mutabakatı + UnDelivered iade + invaryantlar ══════════
+
+test('DSR-31: UnDelivered returnAmount\'a girer; UnSupplied cancelAmount\'a (canonical, tek kaynak)', () => {
+  const orders = [
+    frontOrder({ packageId: 'U1', marketplaceStatus: 'Delivered', totalAmount: 1000, orderDate: '2026-07-10T08:00:00Z' }),
+    frontOrder({ packageId: 'U2', marketplaceStatus: 'UnDelivered', totalAmount: 120, orderDate: '2026-07-11T08:00:00Z' }),
+    frontOrder({ packageId: 'U3', marketplaceStatus: 'UnSupplied', totalAmount: 80, orderDate: '2026-07-12T08:00:00Z' }),
+    frontOrder({ packageId: 'U4', marketplaceStatus: 'Returned', totalAmount: 40, orderDate: '2026-07-13T08:00:00Z' }),
+    frontOrder({ packageId: 'U5', marketplaceStatus: 'Cancelled', totalAmount: 60, orderDate: '2026-07-14T08:00:00Z' }),
+  ]
+  const july = { startMs: Date.parse('2026-07-01T00:00:00Z'), endMs: Date.parse('2026-07-31T23:59:59Z') }
+  const m = projection.buildProjectionModel(orders, july, 5)
+  assert.equal(m.projectedDashboardModel.returnPackageCount, 2, 'UnDelivered + Returned')
+  assert.equal(Math.round(m.projectedDashboardModel.returnAmount), 160, 'UnDelivered 120 + Returned 40')
+  assert.equal(m.projectedDashboardModel.cancelPackageCount, 2, 'UnSupplied + Cancelled')
+  assert.equal(Math.round(m.projectedDashboardModel.cancelAmount), 140, 'UnSupplied 80 + Cancelled 60')
+  assert.equal(m.projectedDashboardModel.salePackageCount, 1)
+})
+
+test('DSR-32: projeksiyon INVARYANTLARI (raw = sale+cancel+return+dropped; para 0,01; line)', () => {
+  const orders = [
+    frontOrder({ packageId: 'P1', marketplaceStatus: 'Delivered', totalAmount: 100, orderDate: '2026-07-10T08:00:00Z', items: [{ id: 'a', quantity: 1, price: 100, productName: 'X' }] }),
+    frontOrder({ packageId: 'P1', marketplaceStatus: 'Delivered', totalAmount: 100, orderDate: '2026-07-10T08:00:00Z', items: [{ id: 'a', quantity: 1, price: 100, productName: 'X' }] }), // dup packageId
+    frontOrder({ packageId: 'P2', marketplaceStatus: 'Cancelled', totalAmount: 30, orderDate: '2026-07-11T08:00:00Z', items: [{ id: 'b', quantity: 1, price: 30, productName: 'X' }, { id: 'c', quantity: 1, price: 0, productName: 'Y' }] }),
+    frontOrder({ packageId: 'P3', marketplaceStatus: 'UnDelivered', totalAmount: 50, orderDate: '2026-07-12T08:00:00Z', items: [{ id: 'd', quantity: 1, price: 50, productName: 'X' }] }),
+  ]
+  const july = { startMs: Date.parse('2026-07-01T00:00:00Z'), endMs: Date.parse('2026-07-31T23:59:59Z') }
+  const m = projection.buildProjectionModel(orders, july, 4)
+  const p = m.projectedDashboardModel
+  const d = m.projectionDiff
+  // raw rowCount = sale + cancel + return + dropped
+  assert.equal(m.rawDatabaseModel.rowCount, p.salePackageCount + p.cancelPackageCount + p.returnPackageCount + d.droppedPackageCount)
+  assert.equal(d.droppedPackageCount, 1, 'P1 duplicate düşer')
+  assert.equal(d.droppedBuckets.duplicate_package_id, 1)
+  // para: raw = projected + dropped (0,01 tol)
+  assert.ok(Math.abs(m.rawDatabaseModel.totalAmount - (p.totalAmount + d.droppedAmount)) <= 0.01)
+  // line: raw = projected + dropped
+  assert.equal(m.rawDatabaseModel.lineCount, p.lineCount + d.droppedLineCount)
+  assert.deepEqual(d.invariants, { packageOk: true, amountOk: true, lineOk: true, loaderComplete: true })
+})
+
+test('DSR-33: dropped bucket — kimliksiz kayıt missing_identifier; loaderComplete DB satırıyla', () => {
+  const orders = [
+    // Aynı orderNumber, packageId YOK → dedupe missing_identifier
+    frontOrder({ packageId: '', shipmentPackageId: '', orderNumber: 'SAMEORD', marketplaceStatus: 'Delivered', totalAmount: 10, orderDate: '2026-07-10T08:00:00Z' }),
+    frontOrder({ id: 'x2', packageId: '', shipmentPackageId: '', orderNumber: 'SAMEORD', marketplaceStatus: 'Delivered', totalAmount: 10, orderDate: '2026-07-10T08:00:00Z' }),
+  ]
+  const july = { startMs: Date.parse('2026-07-01T00:00:00Z'), endMs: Date.parse('2026-07-31T23:59:59Z') }
+  // databaseRowCount 3 > yüklenen 2 → loaderComplete=false, notLoadedCount=1
+  const m = projection.buildProjectionModel(orders, july, 3)
+  assert.equal(m.projectionDiff.droppedBuckets.missing_identifier, 1, 'kimliksiz eşleşme')
+  assert.equal(m.projectionDiff.notLoadedCount, 1)
+  assert.equal(m.projectionDiff.loaderComplete, false)
+  assert.equal(m.projectionDiff.invariants.loaderComplete, false)
+})
+
+test('DSR-34: yükleyici pencere düzeltmesi — as-of SAAT truncation kart penceresini eksik yükler', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'dsr-34')
+  const a = await accounts.resolveOrCreateActiveAccount(db, org, 'Trendyol', '277221')
+  const { buildDashboardSalesPeriodCards } = await frontend()
+  const asOf = new Date(AS_OF) // 2026-07-28T20:00:00Z
+  // as-of gününün GEÇ saatinde (20:00Z sonrası) 2 sipariş → kart penceresinde
+  // (gün sonu 23:59:59.999Z) ama as-of saatinde truncate edilirse yüklenmez.
+  await orderService.persistSyncResult(db, org, [
+    dbOrder({ packageId: 'DAY-EARLY', orderDate: '2026-07-28T08:00:00Z', totalAmount: 100 }),
+    dbOrder({ packageId: 'LATE-1', orderDate: '2026-07-28T21:30:00Z', totalAmount: 200 }),
+    dbOrder({ packageId: 'LATE-2', orderDate: '2026-07-28T22:45:00Z', totalAmount: 300 }),
+  ], { complete: false, marketplaceAccountId: a.id })
+  const monthRange = buildDashboardSalesPeriodCards([], asOf).find((c) => c.key === 'month').range
+  // YANLIŞ (eski) yükleme: endMs = asOf saati → geç saat siparişleri kaçar
+  const truncated = await orderService.listOrdersForAnalytics(db, org, { startMs: monthRange.start.getTime(), endMs: asOf.getTime() }, a.id)
+  // DOĞRU (yeni) yükleme: endMs = ay kartı gün sonu → hepsi gelir
+  const full = await orderService.listOrdersForAnalytics(db, org, { startMs: monthRange.start.getTime(), endMs: monthRange.end.getTime() }, a.id)
+  assert.equal(truncated.length, 1, 'as-of saati truncation: yalnız erken sipariş')
+  assert.equal(full.length, 3, 'gün sonu penceresi: geç saat siparişleri dahil')
+  // Kart geç saat siparişleri gün sonu penceresiyle sayar (truncation ile eksik).
+  const truncatedCard = buildDashboardSalesPeriodCards(truncated, asOf).find((c) => c.key === 'month')
+  const fullCard = buildDashboardSalesPeriodCards(full, asOf).find((c) => c.key === 'month')
+  assert.equal(truncatedCard.packageCount, 1, 'truncation: 6-paket açığının kaynağı')
+  assert.equal(fullCard.packageCount, 3, 'düzeltme: tam gün yüklenir')
 })
