@@ -121,6 +121,95 @@ export function classifyCanonicalDisposition(
   return 'sale'
 }
 
+// Bir SİPARİŞ nesnesinden canonical dispozisyon (Dashboard, reconciliation,
+// backend metrics ve diagnostic AYNI fonksiyonu kullanır). marketplaceStatus,
+// packageStatus, shipmentStatusName ve ham (rawOrder) statü alanları birlikte
+// değerlendirilir.
+export function orderDispositionOf(order: {
+  marketplaceStatus?: unknown
+  packageStatus?: unknown
+  shipmentStatusName?: unknown
+  rawOrder?: unknown
+}): SalesDisposition {
+  const raw =
+    order.rawOrder && typeof order.rawOrder === 'object'
+      ? (order.rawOrder as Record<string, unknown>)
+      : undefined
+  return classifyCanonicalDisposition(
+    order.marketplaceStatus,
+    order.packageStatus,
+    order.shipmentStatusName,
+    raw?.status,
+    raw?.packageStatus,
+    raw?.shipmentStatus,
+  )
+}
+
+// ── TUTAR ÇÖZÜMLEME (single source) ──────────────────────────────────────────
+// Satış tutarı SİPARİŞ SEVİYESİNDEN gelir: totalAmount → totalPrice → (son çare)
+// satırların price×quantity toplamı. lineTotal KULLANILMAZ. Hesaplanamıyorsa
+// null (tutar bilinmiyor; "kesin 0" DEĞİL).
+// viewModel isNumber ile AYNI: null/'' değil ve sonlu (negatif de kabul; mevcut
+// davranışla birebir).
+function isNumberLike(value: unknown): boolean {
+  return value !== null && value !== '' && Number.isFinite(Number(value))
+}
+function toFinite(value: unknown): number {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+export function resolveCanonicalOrderAmount(order: {
+  totalAmount?: unknown
+  totalPrice?: unknown
+  items?: Array<{ price?: unknown; quantity?: unknown }>
+}): number | null {
+  for (const candidate of [order.totalAmount, order.totalPrice]) {
+    const parsed = Number(candidate)
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed
+  }
+  const items = Array.isArray(order.items) ? order.items : []
+  if (items.length > 0 && items.every((item) => isNumberLike(item.price))) {
+    return items.reduce(
+      (sum, item) => sum + toFinite(item.price) * Math.max(0, toFinite(item.quantity)),
+      0,
+    )
+  }
+  return null
+}
+
+// ── PAKET KİMLİĞİ / DEDUPE (single source) ───────────────────────────────────
+// Dashboard paket tekilleştirme anahtarı: packageId → shipmentPackageId →
+// marketplace::orderNumber → id → (son çare) order-<orderDate ms>.
+function firstNonEmpty(...values: unknown[]): string {
+  for (const value of values) {
+    const text = String(value ?? '').trim()
+    if (text) return text
+  }
+  return ''
+}
+function orderTimestampMs(order: { orderDate?: unknown; createdAt?: unknown }): number {
+  const time = new Date(String(order.orderDate ?? order.createdAt ?? '')).getTime()
+  return Number.isFinite(time) ? time : 0
+}
+export function orderDedupeKey(order: {
+  packageId?: unknown
+  shipmentPackageId?: unknown
+  marketplace?: unknown
+  orderNumber?: unknown
+  id?: unknown
+  orderDate?: unknown
+  createdAt?: unknown
+}): string {
+  return (
+    firstNonEmpty(
+      String(order.packageId ?? ''),
+      String(order.shipmentPackageId ?? ''),
+      `${String(order.marketplace ?? '')}::${String(order.orderNumber ?? '')}`,
+      String(order.id ?? ''),
+    ) || `order-${orderTimestampMs(order)}`
+  )
+}
+
 // ── GROSS / NET anlamı ───────────────────────────────────────────────────────
 // GROSS satış = sale dispozisyonlu siparişlerin tutar toplamı (iptal/iade hariç
 // tutulur, ayrı gösterilir). NET satış = gross − kabul edilen kısmi/tam iade

@@ -21,8 +21,10 @@ import {
   type ClaimPeriodAdjustment,
 } from './analyticsClaims'
 import {
-  classifyCanonicalDisposition,
   describeSalesMetric,
+  orderDedupeKey,
+  orderDispositionOf,
+  resolveCanonicalOrderAmount,
   SALES_DATE_BASIS,
   SALES_DATE_BASIS_LABEL,
   type SalesDateBasis,
@@ -1058,20 +1060,10 @@ function metric(
   }
 }
 
+// Tutar kaynağı CANONICAL (tek kaynak): totalAmount → totalPrice → item
+// price×quantity toplamı; lineTotal DEĞİL. Diagnostic ile AYNI fonksiyon.
 function resolveOrderAmount(order: CargoOrder): number | null {
-  const candidates = [order.totalAmount, order.totalPrice]
-  for (const candidate of candidates) {
-    const parsed = Number(candidate)
-    if (Number.isFinite(parsed) && parsed >= 0) return parsed
-  }
-  if (order.items.length > 0 && order.items.every((item) => isNumber(item.price))) {
-    return order.items.reduce(
-      (sum, item) =>
-        sum + finiteNumber(item.price) * Math.max(0, finiteNumber(item.quantity)),
-      0,
-    )
-  }
-  return null
+  return resolveCanonicalOrderAmount(order)
 }
 
 function resolveItemRevenue(
@@ -1087,22 +1079,11 @@ function resolveItemRevenue(
 }
 
 // Satış/iade/iptal dispozisyonu CANONICAL tanımdan (tek kaynak) türetilir:
-// dashboardSalesMetricDefinition.classifyCanonicalDisposition. Token kümeleri,
-// Türkçe-katlamalı normalize ve RETURN>CANCEL>SALE önceliği o modülde tanımlıdır;
+// dashboardSalesMetricDefinition.orderDispositionOf. Token kümeleri, Türkçe-
+// katlamalı normalize ve RETURN>CANCEL>SALE önceliği o modülde tanımlıdır;
 // backend mutabakatı ve diagnostic ile AYNI kuralı paylaşır (davranış aynı).
 function salesDisposition(order: CargoOrder): SalesDisposition {
-  const rawOrder =
-    order.rawOrder && typeof order.rawOrder === 'object'
-      ? (order.rawOrder as Record<string, unknown>)
-      : undefined
-  return classifyCanonicalDisposition(
-    order.marketplaceStatus,
-    order.packageStatus,
-    order.shipmentStatusName,
-    rawOrder?.status,
-    rawOrder?.packageStatus,
-    rawOrder?.shipmentStatus,
-  )
+  return orderDispositionOf(order)
 }
 
 function buildDistribution(
@@ -1454,15 +1435,10 @@ function formatUtcShortDate(date: Date): string {
   }).format(date)
 }
 
+// Paket tekilleştirme anahtarı CANONICAL (tek kaynak): diagnostic projection
+// ile AYNI dedupe kuralı.
 function dashboardOrderKey(order: CargoOrder): string {
-  return (
-    firstString(
-      String(order.packageId ?? ''),
-      String(order.shipmentPackageId ?? ''),
-      `${String(order.marketplace ?? '')}::${String(order.orderNumber ?? '')}`,
-      order.id,
-    ) || `order-${orderTimestamp(order)}`
-  )
+  return orderDedupeKey(order)
 }
 
 function dashboardProductKey(item: OrderItem): string {

@@ -10,6 +10,10 @@ import type {
   OrderReconciliationReport,
   ReconcileDateBasis,
 } from './orderReconciliation.ts'
+import {
+  buildProjectionModel,
+  type ProjectionModel,
+} from './dashboardProjectionReconcile.ts'
 
 // Frontend DashboardSalesPeriodCard'ın diagnostic için gerekli ALT KÜMESİ.
 export interface SalesPeriodCardLike {
@@ -37,6 +41,11 @@ export interface ReconcilePeriodReport {
   cancelCount: number
   returnCount: number
   refundDataSource: RefundDataSource
+  // Ham DB → Dashboard projeksiyonu: her düşen kayıt güvenli bir bucket'a atanır
+  // ve invaryantlar (raw = sale+cancel+return+dropped) doğrulanır.
+  rawDatabaseModel: ProjectionModel['rawDatabaseModel']
+  projectedDashboardModel: ProjectionModel['projectedDashboardModel']
+  projectionDiff: ProjectionModel['projectionDiff']
   // İki tarih EKSENİ modeli (aynı dönem sınırları, farklı çapa sütunu). Aynı
   // isimle sunulmayan iki ayrı metrik: kohort vs aktivite.
   dateBasisModels: {
@@ -104,12 +113,12 @@ async function buildPeriod(
     endMs: number
     dateBasis: ReconcileDateBasis
   }) => Promise<OrderReconciliationReport>,
+  orders: Record<string, unknown>[],
 ): Promise<ReconcilePeriodReport> {
   const startMs = card.range.start.getTime()
   const endMs = card.range.end.getTime()
-  const orderDateCohort = modelFromReconcile(
-    await reconcile({ startMs, endMs, dateBasis: 'order_date' }),
-  )
+  const orderDateReport = await reconcile({ startMs, endMs, dateBasis: 'order_date' })
+  const orderDateCohort = modelFromReconcile(orderDateReport)
   const modifiedActivity = modelFromReconcile(
     await reconcile({
       startMs,
@@ -117,6 +126,10 @@ async function buildPeriod(
       dateBasis: 'marketplace_last_modified_at',
     }),
   )
+  // Projeksiyon: yüklenen satırlardan Dashboard'un gösterdiği kümeye iniş +
+  // düşen kayıt bucket'ları. databaseRowCount = order_date SQL satır sayısı
+  // (yükleyici truncation'ını tespit için).
+  const projection = buildProjectionModel(orders, { startMs, endMs }, orderDateReport.orderCount)
   return {
     start: card.range.start.toISOString(),
     end: card.range.end.toISOString(),
@@ -128,6 +141,9 @@ async function buildPeriod(
     cancelCount: card.cancelPackageCount,
     returnCount: card.returnPackageCount,
     refundDataSource,
+    rawDatabaseModel: projection.rawDatabaseModel,
+    projectedDashboardModel: projection.projectedDashboardModel,
+    projectionDiff: projection.projectionDiff,
     dateBasisModels: { orderDateCohort, modifiedActivity },
   }
 }
@@ -143,6 +159,8 @@ export async function buildDashboardReconciliationReport(input: {
   monthCard: SalesPeriodCardLike
   lastMonthCard: SalesPeriodCardLike
   refundDataSource: RefundDataSource
+  // YÜKLENEN satırlar (rowToOrder eşlenmiş); projeksiyon mutabakatı için.
+  orders: Record<string, unknown>[]
   reconcile: (args: {
     startMs: number
     endMs: number
@@ -153,11 +171,13 @@ export async function buildDashboardReconciliationReport(input: {
     input.monthCard,
     input.refundDataSource,
     input.reconcile,
+    input.orders,
   )
   const comparisonPeriod = await buildPeriod(
     input.lastMonthCard,
     input.refundDataSource,
     input.reconcile,
+    input.orders,
   )
   const notes = [
     'currentPeriod/comparisonPeriod GERÇEK buildDashboardSalesPeriodCards ' +
@@ -174,8 +194,14 @@ export async function buildDashboardReconciliationReport(input: {
       'generatedAt değeri, claim tanımı ve capture anındaki provider snapshot\'ı ' +
       'burada YOK. Kalan fark capture-time, status, claim ve harici tanımdan ' +
       'kaynaklanabilir.',
-    'refundDataSource=order_status ise iade YALNIZ Returned/UnDelivered ' +
-      'statüsünden türetilir (kısmi claim tutarı yereldeki DEĞİL).',
+    'projectionDiff: ham DB satırlarından Dashboard kümesine iniş. INVARYANT: ' +
+      'raw rowCount = sale+cancel+return+dropped (para tol. 0,01 TL). ' +
+      'droppedBuckets her düşen kaydı tek stage\'e atar. loaderComplete=false ise ' +
+      'yükleme penceresi dönemi tam kapsamamıştır (notLoadedCount kadar kayıt DB\'de ' +
+      'var ama yüklenmedi) — kart/projeksiyon o kadar EKSİK sayar.',
+    'iade/iptal tutarı CANONICAL disposition ile: UnDelivered→return, ' +
+      'UnSupplied→cancel (Dashboard ile AYNI). refundDataSource=order_status ise ' +
+      'iade Returned/UnDelivered statüsünden türetilir (kısmi claim tutarı yereldeki DEĞİL).',
     'Rakamlar as-of anındaki YEREL DB durumudur; eski ekran görüntüsü ' +
       'rakamıyla doğrudan eşitlenmemelidir (provider verisi sonradan değişmiş olabilir).',
   ]

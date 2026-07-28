@@ -9,6 +9,7 @@
 import {
   ACTIVITY_DATE_BASIS_LABEL,
   AMOUNT_SOURCE,
+  classifyCanonicalDisposition,
   describeSalesMetric,
   HISTORICAL_ACTIVITY_BASIS,
   METRIC_LINE,
@@ -40,16 +41,19 @@ export {
 // buradan gelebilir.
 export const METRIC_SALES_GROSS = 'sum_total_amount_all_status'
 
-// İPTAL tutarı: marketplaceStatus = 'Cancelled' siparişlerin totalAmount toplamı.
-export const CANCEL_STATUSES = ['Cancelled'] as const
+// İPTAL statüleri (canonical disposition ile AYNI): Cancelled + UnSupplied.
+// (Bilgilendirme sabiti; tutar ayrıştırması classifyCanonicalDisposition ile
+// yapılır — Dashboard ile tek kaynak.)
+export const CANCEL_STATUSES = ['Cancelled', 'UnSupplied'] as const
 
-// İADE tutarı — İKİ kaynak (bkz. dashboardViewModel.refundDataSource):
+// İADE statüleri (canonical disposition ile AYNI): Returned + UnDelivered.
+//   İade tutarı kaynağı (bkz. dashboardViewModel.refundDataSource):
 //   persisted_claims: gerçek claim muhasebesi (claim effectiveDate + kısmi tutar)
-//   order_status: marketplaceStatus = 'Returned' siparişlerin totalAmount toplamı
+//   order_status: Returned/UnDelivered siparişlerin totalAmount toplamı
 //   unavailable: hesaplanacak yerel veri yok
-// Auth modunda claim tablosu olmadığından order_status kullanılır (yalnız Returned
-// statülü siparişlerin tam tutarı; kısmi iade tutarı YOKTUR).
-export const RETURN_STATUSES = ['Returned'] as const
+// Auth modunda claim tablosu olmadığından order_status kullanılır (kısmi iade
+// tutarı YOKTUR).
+export const RETURN_STATUSES = ['Returned', 'UnDelivered'] as const
 
 // NET SATIŞ: gross - (iptal + iade). Local-only Dashboard iptal/iadeyi statüden
 // türetir; kısmi claim tutarı olmadığından net, referans (claim-tabanlı) net'ten
@@ -84,7 +88,10 @@ export interface CanonicalMetricSummary {
   netSales: number
 }
 
-// Yerel mutabakat aggregate'inden canonical metrik özeti üretir (pure).
+// Yerel mutabakat aggregate'inden canonical metrik özeti üretir (pure). İptal/
+// iade tutarı statü bucket'larını CANONICAL disposition ile sınıflayarak toplar
+// (tek kaynak): UnDelivered → return, UnSupplied → cancel. Böylece Dashboard,
+// reconciliation ve diagnostic AYNI iade/iptal tutarını üretir.
 export function toCanonicalSummary(input: {
   distinctPackageIds: number
   orderLineCount: number
@@ -92,12 +99,13 @@ export function toCanonicalSummary(input: {
   totalAmount: number
   byMarketplaceStatus: { key: string; count: number; amount: number }[]
 }): CanonicalMetricSummary {
-  const amountForStatuses = (statuses: readonly string[]) =>
-    input.byMarketplaceStatus
-      .filter((row) => statuses.includes(row.key))
-      .reduce((sum, row) => sum + row.amount, 0)
-  const cancelAmount = amountForStatuses(CANCEL_STATUSES)
-  const returnAmount = amountForStatuses(RETURN_STATUSES)
+  let cancelAmount = 0
+  let returnAmount = 0
+  for (const row of input.byMarketplaceStatus) {
+    const disposition = classifyCanonicalDisposition(row.key)
+    if (disposition === 'cancel') cancelAmount += row.amount
+    else if (disposition === 'return') returnAmount += row.amount
+  }
   return {
     packageCount: input.distinctPackageIds,
     lineCount: input.orderLineCount,

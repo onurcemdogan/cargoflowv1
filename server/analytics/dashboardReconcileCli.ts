@@ -68,16 +68,6 @@ async function main(): Promise<number> {
     return 1
   }
 
-  // Kartların (bugün/dün/ay/geçen ay) hesaplanabilmesi için orderDate'i geçen
-  // ay başından as-of'a kadar olan siparişleri yükle (cap yok, account-scoped).
-  const windowStartMs = Date.UTC(asOf.getUTCFullYear(), asOf.getUTCMonth() - 2, 1)
-  const salesSource = await listOrdersForAnalytics(
-    db,
-    organizationId,
-    { startMs: windowStartMs, endMs: asOfMs },
-    account.id,
-  )
-
   // GERÇEK frontend fonksiyonları (vite ssrLoadModule). buildDashboardViewModel
   // ve buildDashboardSalesPeriodCards UI'nın kullandığı AYNI koddur.
   const vite = await createServer({
@@ -91,15 +81,32 @@ async function main(): Promise<number> {
           orders: unknown[],
           now?: Date,
           claims?: unknown[],
-        ) => SalesPeriodCardLike[] & { key: string }[]
+        ) => Array<SalesPeriodCardLike & { key: string }>
         buildDashboardViewModel: (input: unknown) => {
           salesSummary: { refundDataSource: RefundDataSource }
         }
       }
 
-    const cards = buildDashboardSalesPeriodCards(salesSource, asOf) as Array<
-      SalesPeriodCardLike & { key: string }
-    >
+    // Önce kart DÖNEM SINIRLARINI boş kartlardan çöz (veriye bağlı değil), sonra
+    // yükleme penceresini TAM bu sınırlara göre belirle. Kritik: pencere ay
+    // kartının GÜN SONUNA (end-of-day) kadar uzanır; as-of SAAT'inde kesilirse
+    // as-of gününün geç saat siparişleri kart penceresinde olup yüklenmez
+    // (projeksiyon o kadar eksik sayar). windowEnd = ay kartı range.end.
+    const rangeCards = buildDashboardSalesPeriodCards([], asOf)
+    const monthRange = rangeCards.find((card) => card.key === 'month')?.range
+    const lastMonthRange = rangeCards.find((card) => card.key === 'lastMonth')?.range
+    if (!monthRange || !lastMonthRange) {
+      console.error('[dashboard:reconcile] kart dönem sınırları çözülemedi.')
+      return 1
+    }
+    const salesSource = await listOrdersForAnalytics(
+      db,
+      organizationId,
+      { startMs: lastMonthRange.start.getTime(), endMs: monthRange.end.getTime() },
+      account.id,
+    )
+
+    const cards = buildDashboardSalesPeriodCards(salesSource, asOf)
     const monthCard = cards.find((card) => card.key === 'month')
     const lastMonthCard = cards.find((card) => card.key === 'lastMonth')
     if (!monthCard || !lastMonthCard) {
@@ -125,6 +132,7 @@ async function main(): Promise<number> {
       monthCard,
       lastMonthCard,
       refundDataSource,
+      orders: salesSource,
       reconcile: (args) =>
         reconcileLocalOrders(db, {
           organizationId,
