@@ -243,7 +243,7 @@ test('1-3) App.tsx: sayfa açılışı/route/dashboard geçişi DB okur, Trendyo
   assert.doesNotMatch(app, /productsAutoRefreshAttempted/, 'otomatik ürün sync efekti kaldırıldı')
 
   // handleReloadOrders yalnız DB okuma yolunu (loadOrdersFromServer) kullanır.
-  const reloadBlock = sliceBlock(app, 'async function handleReloadOrders() {', 700)
+  const reloadBlock = sliceBlock(app, 'async function handleReloadOrders() {', 2000)
   assert.match(reloadBlock, /loadOrdersFromServer\(\)/, 'reload DB\'den okur')
   assert.doesNotMatch(reloadBlock, /\/api\/orders\/sync/, 'reload sync endpoint\'i çağırmaz')
 })
