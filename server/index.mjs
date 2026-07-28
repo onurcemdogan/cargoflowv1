@@ -863,9 +863,22 @@ app.post('/api/orders/sync', async (request, response) => {
   // çalışır. Frontend kilidine ek olarak (ve ondan bağımsız) DB satırı üzerinde
   // atomik alınır; birden çok PM2 instance'ı arasında güvenlidir. Farklı
   // tenant'lar ayrı satır kullandığından birbirini bloklamaz.
-  const locked = await acquireOrgSyncLock(context.db, context.organizationId, 'orders')
+  // Kilit AKTİF pazaryeri hesabı bazında alınır: farklı Trendyol hesapları
+  // birbirinin sync kilidini paylaşmaz (hesap A sync'i hesap B'yi bloklamaz).
+  const syncAccountId = context.marketplaceAccountId
+  const locked = await acquireOrgSyncLock(
+    context.db,
+    context.organizationId,
+    'orders',
+    syncAccountId,
+  )
   if (!locked) {
-    const state = await readOrgSyncState(context.db, context.organizationId, 'orders')
+    const state = await readOrgSyncState(
+      context.db,
+      context.organizationId,
+      'orders',
+      syncAccountId,
+    )
     response.status(409).json({
       ok: false,
       code: 'sync_in_progress',
@@ -890,6 +903,7 @@ app.post('/api/orders/sync', async (request, response) => {
         resource: 'orders',
         status: 'failed',
         errorCode: null,
+        marketplaceAccountId: syncAccountId,
       })
       released = true
       response.status(502).json({ ok: false, message: 'Trendyol sipariş senkronu başarısız.' })
@@ -908,6 +922,7 @@ app.post('/api/orders/sync', async (request, response) => {
         resource: 'orders',
         status: 'failed',
         errorCode: result.statusCode ? String(result.statusCode) : null,
+        marketplaceAccountId: syncAccountId,
       })
       released = true
       response.status(502).json({
@@ -950,16 +965,37 @@ app.post('/api/orders/sync', async (request, response) => {
           complete,
           fetchedCount: normalized.orders.length,
           window: reconcileWindow,
+          // YAZMA İZOLASYONU: upsert edilen her kayıt bu hesapla damgalanır ve
+          // reconcile YALNIZ bu hesabı değerlendirir (başka hesaba dokunmaz).
+          // Hesap sync başında sabitlendi; mid-sync hesap değişse de bu sync A
+          // context'iyle tamamlanır.
+          marketplaceAccountId: syncAccountId,
         },
       )
       // Başarı/kısmi metadata'sını yaz (kilidi serbest bırakır + UI'ye "son
       // başarılı sync" zamanı sağlar). complete=true tam sync'i, aksi kısmî.
+      const syncOutcome = persistResult.complete ? 'success' : 'partial'
       await recordOnboardingSyncState(context.db, context.organizationId, {
         provider: 'trendyol',
         resource: 'orders',
-        status: persistResult.complete ? 'success' : 'partial',
+        status: syncOutcome,
         fetchedCount: persistResult.fetchedCount,
+        marketplaceAccountId: syncAccountId,
       })
+      // Aktif hesabın kendi sync metadata'sı (yalnız success son başarılı zamanı
+      // ilerletir; partial/failed BOZMAZ).
+      if (syncAccountId) {
+        try {
+          const { updateAccountSyncMeta } = await import(
+            './integrations/marketplaceAccountRepository.ts'
+          )
+          await updateAccountSyncMeta(context.db, context.organizationId, syncAccountId, {
+            status: syncOutcome,
+          })
+        } catch {
+          // hesap metadata best-effort; sync sonucunu etkilemez
+        }
+      }
       // Sipariş durum/tutar/iptal/iade verisi değişti → bu tenant'ın satış
       // analitiği cache'i geçersizleşir; sonraki Dashboard isteği yeniden hesaplar.
       await invalidateTenantAnalyticsCache(context.organizationId)
@@ -1005,14 +1041,16 @@ app.post('/api/orders/sync', async (request, response) => {
         resource: 'orders',
         status: 'failed',
         errorCode: null,
+        marketplaceAccountId: syncAccountId,
       })
       released = true
       response.status(500).json({ ok: false, message: 'Siparişler kaydedilemedi.' })
     }
   } finally {
     if (!released) {
-      // Beklenmedik yol (ör. response gönderilmeden bir throw): kilidi bırak.
-      await releaseOrgSyncLock(context.db, context.organizationId, 'orders')
+      // Beklenmedik yol (ör. response gönderilmeden bir throw): kilidi bırak
+      // (aynı hesap kapsamında).
+      await releaseOrgSyncLock(context.db, context.organizationId, 'orders', null, syncAccountId)
     }
   }
 })
@@ -1334,10 +1372,10 @@ async function recordOnboardingSyncState(db, organizationId, entry) {
 // üzerinde atomik). Kilit altyapısı yüklenemezse fail-open (true) döner: geçici
 // bir altyapı hatası sync'i tamamen engellemesin. Normal koşulda aynı org için
 // aynı anda ikinci bir sync false alır.
-async function acquireOrgSyncLock(db, organizationId, resource) {
+async function acquireOrgSyncLock(db, organizationId, resource, marketplaceAccountId = null) {
   try {
     const { acquireSyncLock } = await import('./onboarding/onboardingRepository.ts')
-    return await acquireSyncLock(db, organizationId, resource)
+    return await acquireSyncLock(db, organizationId, resource, { marketplaceAccountId })
   } catch {
     return true
   }
@@ -1345,10 +1383,13 @@ async function acquireOrgSyncLock(db, organizationId, resource) {
 
 // Beklenmedik hata yolunda kilidi serbest bırakır (best-effort). Normal akışta
 // recordOnboardingSyncState terminal statü yazarak kilidi zaten bırakır.
-async function releaseOrgSyncLock(db, organizationId, resource, errorCode) {
+async function releaseOrgSyncLock(db, organizationId, resource, errorCode, marketplaceAccountId = null) {
   try {
     const { releaseSyncLock } = await import('./onboarding/onboardingRepository.ts')
-    await releaseSyncLock(db, organizationId, resource, { errorCode: errorCode ?? null })
+    await releaseSyncLock(db, organizationId, resource, {
+      errorCode: errorCode ?? null,
+      marketplaceAccountId,
+    })
   } catch {
     // best-effort; bayat kilit staleMs sonrası kendiliğinden devralınır
   }
@@ -1356,10 +1397,10 @@ async function releaseOrgSyncLock(db, organizationId, resource, errorCode) {
 
 // UI'nin sync durumunu (son başarılı zaman, son statü, çekilen adet, hata kodu)
 // yüzeye çıkarabilmesi için tek resource'un sync state satırını döner.
-async function readOrgSyncState(db, organizationId, resource) {
+async function readOrgSyncState(db, organizationId, resource, marketplaceAccountId = null) {
   try {
     const { getSyncState } = await import('./onboarding/onboardingRepository.ts')
-    const row = await getSyncState(db, organizationId, resource)
+    const row = await getSyncState(db, organizationId, resource, marketplaceAccountId)
     if (!row) return null
     return {
       lastSyncStatus: row.lastSyncStatus ?? null,
@@ -1466,10 +1507,21 @@ app.post('/api/products/sync', async (request, response) => {
   const context = await requireProductPersistenceContext(request, response)
   if (!context) return
 
-  // Org bazlı kilit (siparişteki ile aynı mantık; ayrı resource='products').
-  const locked = await acquireOrgSyncLock(context.db, context.organizationId, 'products')
+  // Kilit + yazma AKTİF pazaryeri hesabı bazında (başka hesap etkilenmez).
+  const syncAccountId = context.marketplaceAccountId
+  const locked = await acquireOrgSyncLock(
+    context.db,
+    context.organizationId,
+    'products',
+    syncAccountId,
+  )
   if (!locked) {
-    const state = await readOrgSyncState(context.db, context.organizationId, 'products')
+    const state = await readOrgSyncState(
+      context.db,
+      context.organizationId,
+      'products',
+      syncAccountId,
+    )
     response.status(409).json({
       ok: false,
       code: 'sync_in_progress',
@@ -1491,6 +1543,7 @@ app.post('/api/products/sync', async (request, response) => {
         resource: 'products',
         status: 'failed',
         errorCode: null,
+        marketplaceAccountId: syncAccountId,
       })
       released = true
       response.status(502).json({ ok: false, message: 'Trendyol ürün senkronu başarısız.' })
@@ -1504,6 +1557,7 @@ app.post('/api/products/sync', async (request, response) => {
         resource: 'products',
         status: 'failed',
         errorCode: result.statusCode ? String(result.statusCode) : null,
+        marketplaceAccountId: syncAccountId,
       })
       released = true
       response.status(502).json({
@@ -1537,13 +1591,14 @@ app.post('/api/products/sync', async (request, response) => {
         context.db,
         context.organizationId,
         products,
-        { complete },
+        { complete, marketplaceAccountId: syncAccountId },
       )
       await recordOnboardingSyncState(context.db, context.organizationId, {
         provider: 'trendyol',
         resource: 'products',
         status: complete ? 'success' : 'partial',
         fetchedCount: persistResult.fetchedVariantCount,
+        marketplaceAccountId: syncAccountId,
       })
       released = true
       response.json({
@@ -1565,13 +1620,14 @@ app.post('/api/products/sync', async (request, response) => {
         resource: 'products',
         status: 'failed',
         errorCode: null,
+        marketplaceAccountId: syncAccountId,
       })
       released = true
       response.status(500).json({ ok: false, message: 'Ürünler kaydedilemedi.' })
     }
   } finally {
     if (!released) {
-      await releaseOrgSyncLock(context.db, context.organizationId, 'products')
+      await releaseOrgSyncLock(context.db, context.organizationId, 'products', null, syncAccountId)
     }
   }
 })
