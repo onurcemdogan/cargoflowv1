@@ -162,9 +162,18 @@ export async function buildDashboardReconciliationReport(input: {
   const notes = [
     'currentPeriod/comparisonPeriod GERÇEK buildDashboardSalesPeriodCards ' +
       'çıktısıdır (ay + geçen ay kartı); orderDate kohortu.',
+    'KANITLANAN temel semantik fark TARİH EKSENİdir: CargoFlow local Dashboard ' +
+      'date basis = orderDate; historical Trendyol fetch/backfill date basis = ' +
+      'marketplaceLastModifiedAt. Bu iki metriğin aynı isimle karşılaştırılması ' +
+      'semantik olarak yanlıştır.',
     'dateBasisModels.orderDateCohort = Dashboard ekseni; modifiedActivity = ' +
-      'provider historical-fetch/backfill ekseni (marketplaceLastModifiedAt). ' +
-      'İki eksen aynı dönem için farklı küme döndürür; karıştırılmamalıdır.',
+      'provider historical-fetch/backfill ekseni. Aynı dönem için farklı küme ' +
+      'döndürürler; karıştırılmamalıdır.',
+    'DİKKAT: Referans (harici) Dashboard rakamlarının (ör. 754/854) TEK nedeni ' +
+      'tarih ekseni OLDUĞU İDDİA EDİLEMEZ. Harici uygulamanın kaynak kodu, cache ' +
+      'generatedAt değeri, claim tanımı ve capture anındaki provider snapshot\'ı ' +
+      'burada YOK. Kalan fark capture-time, status, claim ve harici tanımdan ' +
+      'kaynaklanabilir.',
     'refundDataSource=order_status ise iade YALNIZ Returned/UnDelivered ' +
       'statüsünden türetilir (kısmi claim tutarı yereldeki DEĞİL).',
     'Rakamlar as-of anındaki YEREL DB durumudur; eski ekran görüntüsü ' +
