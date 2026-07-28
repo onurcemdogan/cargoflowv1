@@ -66,6 +66,76 @@ export function operationStatusFromMarketplaceStatus(
   return 'NEW'
 }
 
+// Eski (historical) sipariş eşiği: bu yaştan eski VE hiçbir güçlü sinyali
+// (kapanış/etiket/hata/aktif-forward) OLMAYAN sipariş, aktif operasyon
+// kuyruğuna değil pasif "Arşiv" sunumuna düşer.
+export const HISTORICAL_ORDER_AGE_DAYS = 60
+
+// "Historical" sipariş: CargoFlow'da aktif işlenme sinyali OLMAYAN, güçlü bir
+// kapanış/etiket/hata kanıtı TAŞIMAYAN ve yaş eşiğini aşmış eski sipariş.
+// KRİTİK: yalnız tarih (veya 727 referansı, packageId, kargo firma adı) tek
+// başına historical yapmaz; historical bir sipariş SAHTE "Kargoya Verildi/
+// Teslim" statüsü ALMAZ — yalnız aktif kuyruktan çıkarılıp pasif Arşiv
+// sunumuyla gösterilir. Güçlü sinyal (delivered/shipped/cancelled/etiket/
+// hata) varsa historical DEĞİLDİR ve gerçek canonical statüsünü korur.
+export function isHistoricalOrder(
+  order: CargoOrder,
+  now: Date = new Date(),
+): boolean {
+  const marketplaceStatus = String(order.marketplaceStatus ?? '').trim()
+  // Güçlü pazaryeri kapanış/forward statüsü (Shipped/Delivered/AtCollectionPoint/
+  // Cancelled/Returned/UnDelivered/UnSupplied) → gerçek canonical statü alır.
+  if (isArchiveMarketplaceStatus(marketplaceStatus)) return false
+  const resolved = resolveOrderStatus(order)
+  if (resolved.delivered || resolved.shipped || resolved.canceledOrReturned) {
+    return false
+  }
+  // Persist edilmiş güçlü taşıyıcı zaman damgaları → historical değil (gerçek
+  // Kargoya Verildi/Teslim statüsünü korur).
+  if (
+    String(order.shipment?.shippedAt ?? '').trim() ||
+    String(order.shipment?.deliveredAt ?? '').trim()
+  ) {
+    return false
+  }
+  const op = String(order.operationStatus ?? '').toUpperCase()
+  // Canonical kapanış/etiket durumu → historical değil (mevcut akışlar korunur).
+  if (
+    [
+      'DELIVERED',
+      'DELIVERED_SPECIAL',
+      'HANDED_TO_CARGO',
+      'SHIPPED',
+      'RETURNING',
+      'LABEL_READY',
+      'LABEL_PRINTED',
+    ].includes(op)
+  ) {
+    return false
+  }
+  // Yazdırılabilir etiket sinyali → historical değil (LABEL akışları korunur).
+  if (order.hasPrintableLabel === true) return false
+  if (String(order.shipment?.barcodeRaw ?? '').trim()) return false
+  const labelStatus = String(order.labelStatus ?? '').toUpperCase()
+  if (['READY', 'PRINTED', 'GENERATED'].includes(labelStatus)) return false
+  // Hata sinyali → historical değil (görünür kalır; kontrol gerekir).
+  if (
+    order.status === 'Hata' ||
+    op === 'ERROR' ||
+    op.includes('FAILED') ||
+    op.includes('REJECTED')
+  ) {
+    return false
+  }
+  // Yaş eşiği: orderDate (yoksa createdAt) eşikten daha eski mi?
+  const anchor = String(order.orderDate || order.createdAt || '').trim()
+  if (!anchor) return false
+  const anchorTime = new Date(anchor).getTime()
+  if (Number.isNaN(anchorTime)) return false
+  const ageDays = (now.getTime() - anchorTime) / 86_400_000
+  return ageDays >= HISTORICAL_ORDER_AGE_DAYS
+}
+
 export function getOrderOperationStatus(order: CargoOrder): OperationStatus {
   const resolvedStatus = resolveOrderStatus(order)
   if (resolvedStatus.statusSource !== 'localOperation') {

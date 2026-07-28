@@ -4,6 +4,7 @@ import {
   canCreateShipment,
   canMarkPrinted,
   hasCarrierTracking,
+  isHistoricalOrder,
 } from './orderStatus'
 import type { OrdersActionFilter } from './ordersNavigation'
 import { resolveOrderStatus } from './shipmentStatus'
@@ -35,6 +36,9 @@ export interface OrderTabClassification {
   isDelivered: boolean
   isCanceledOrReturned: boolean
   isArchived: boolean
+  // Eski + güçlü sinyalsiz sipariş: aktif kuyruğa (Barkod Bekliyor/Yeni
+  // Siparişler) girmez, pasif Arşiv sunumuyla gösterilir.
+  isHistorical: boolean
   hasError: boolean
   operationStatusLabel: string
 }
@@ -114,6 +118,7 @@ export interface VisibleOrdersResult {
 
 export function classifyOrderForTabs(
   order: CargoOrder,
+  now: Date = new Date(),
 ): OrderTabClassification {
   const record = order as CargoOrder & Record<string, unknown>
   const shipment = order.shipment as
@@ -140,12 +145,37 @@ export function classifyOrderForTabs(
     'UnSupplied',
   ].includes(marketplaceStatus)
   const resolvedStatus = resolveOrderStatus(order)
-  const isCanceledOrReturned = Boolean(
-    resolvedStatus.canceledOrReturned || marketplaceCanceledOrReturned,
+  // Persist edilmiş taşıyıcı zaman damgaları GÜÇLÜ kanıttır: yalnız eski tarih,
+  // 727 referansı, packageId veya kargo firma adı DEĞİL. shippedAt/deliveredAt
+  // (ve handedToCargoAt) → gerçek "Kargoya Verildi / Teslim".
+  const shipmentShippedAt = firstString(
+    readString(shipment, 'shippedAt'),
+    readString(shipment, 'handedToCargoAt'),
   )
-  const isDelivered = Boolean(resolvedStatus.delivered || marketplaceDelivered)
+  const shipmentDeliveredAt = readString(shipment, 'deliveredAt')
+  // Canonical (DB'de kalıcı) forward operationStatus da güçlü kanıttır: pazaryeri
+  // status'ü operationStatus'ü körlemesine ezmez; birlikte kullanılır.
+  const canonicalDelivered = ['delivered', 'deliveredspecial'].includes(
+    operationStatus,
+  )
+  const canonicalShipped = ['shipped', 'handedtocargo'].includes(operationStatus)
+  const canonicalReturning = operationStatus === 'returning'
+  const isCanceledOrReturned = Boolean(
+    resolvedStatus.canceledOrReturned ||
+      marketplaceCanceledOrReturned ||
+      canonicalReturning,
+  )
+  const isDelivered = Boolean(
+    resolvedStatus.delivered ||
+      marketplaceDelivered ||
+      shipmentDeliveredAt ||
+      canonicalDelivered,
+  )
   const isHandedToCargo = Boolean(
-    resolvedStatus.shipped || marketplaceHandedToCargo,
+    resolvedStatus.shipped ||
+      marketplaceHandedToCargo ||
+      shipmentShippedAt ||
+      canonicalShipped,
   )
   const isArchived = Boolean(
     readBoolean(record, 'archived') ||
@@ -218,10 +248,15 @@ export function classifyOrderForTabs(
         (!preassignedReady && noTrackingReason) ||
         (!preassignedReady && providerResponseError)),
   )
+  // Eski + güçlü sinyalsiz sipariş: aktif operasyon değildir (Barkod Bekliyor/
+  // Yeni Siparişler kuyruğuna GİRMEZ). Güçlü kapanış/etiket/hata sinyali olan
+  // (isHistoricalOrder içinde elenen) ya da yakın tarihli sipariş etkilenmez.
+  const isHistorical = isHistoricalOrder(order, now)
   const processClosed = Boolean(
     isCanceledOrReturned ||
       isDelivered ||
       isArchived ||
+      isHistorical ||
       isHandedToCargo ||
       explicitlyClosed,
   )
@@ -282,6 +317,7 @@ export function classifyOrderForTabs(
     isDelivered,
     isCanceledOrReturned,
     isArchived,
+    isHistorical,
     hasError,
     // Statü etiketi de TEK canonical aşama helper'ından türetilir; böylece
     // recentOperations statüsü ile Operation Flow sayaçları aynı kaynaktan gelir.
@@ -295,6 +331,7 @@ export function classifyOrderForTabs(
         isDelivered,
         isCanceledOrReturned,
         isArchived,
+        isHistorical,
         hasError,
       }),
     ),
@@ -340,7 +377,7 @@ export function orderMatchesQuickTab(
     case 'cancelReturn':
       return classification.isCanceledOrReturned
     case 'archive':
-      return classification.isArchived
+      return classification.isArchived || classification.isHistorical
     case 'all':
     default:
       return true
@@ -477,7 +514,8 @@ export function buildVisibleOrders({
   } else if (selectedTab !== 'all') {
     current = applyOrderFilter(
       current,
-      (order) => orderMatchesQuickTab(classifyOrderForTabs(order), selectedTab),
+      (order) =>
+        orderMatchesQuickTab(classifyOrderForTabs(order, now), selectedTab),
       exclusions,
       'selectedTab',
       `Sipariş ${selectedTab} sekmesi kapsamına girmiyor.`,
@@ -492,7 +530,7 @@ export function buildVisibleOrders({
       current,
       (order) =>
         orderMatchesQuickTab(
-          classifyOrderForTabs(order),
+          classifyOrderForTabs(order, now),
           operationTabFilter as QuickTab,
         ),
       exclusions,
@@ -553,7 +591,7 @@ export function buildVisibleOrders({
         return !hasCarrierTracking(order)
       }
       if (cargoToken.includes('hatal')) {
-        return classifyOrderForTabs(order).hasError
+        return classifyOrderForTabs(order, now).hasError
       }
       return normalizedToken(order.cargoProviderName).includes(cargoToken)
     })
@@ -863,6 +901,7 @@ export function resolveDashboardOperationStage(
     | 'isDelivered'
     | 'isCanceledOrReturned'
     | 'isArchived'
+    | 'isHistorical'
     | 'hasError'
   >,
 ): DashboardOperationStage {
@@ -871,7 +910,9 @@ export function resolveDashboardOperationStage(
   if (state.isHandedToCargo) return 'handedToCargo'
   if (state.isLabelPrinted) return 'labelPrinted'
   if (state.isLabelReady) return 'labelReady'
-  if (state.isArchived) return 'archived'
+  // Eski + güçlü sinyalsiz sipariş mevcut "Arşiv" sunumuyla gösterilir (yeni
+  // enum yok); aktif sayaçlara/kuyruklara girmez.
+  if (state.isArchived || state.isHistorical) return 'archived'
   if (state.hasError) return 'error'
   if (state.isBarcodeWaiting) return 'barcodeWaiting'
   if (state.isOpenOperation) return 'open'
@@ -886,12 +927,36 @@ export function dashboardOperationStageLabel(
 
 // Sipariş → tek canonical operasyon aşaması (+ Türkçe etiket). Dashboard'daki
 // tüm operasyon sayımları ve statü gösterimleri buradan geçmelidir.
-export function classifyDashboardOperationStage(order: CargoOrder): {
+export function classifyDashboardOperationStage(
+  order: CargoOrder,
+  now: Date = new Date(),
+): {
   stage: DashboardOperationStage
   label: string
 } {
-  const stage = resolveDashboardOperationStage(classifyOrderForTabs(order))
+  const stage = resolveDashboardOperationStage(classifyOrderForTabs(order, now))
   return { stage, label: DASHBOARD_OPERATION_STAGE_LABELS[stage] }
+}
+
+// MERKEZİ canonical sipariş statüsü. Siparişler tablo rozeti, Tümü/Yeni
+// Siparişler/Etiket Hazır/Kargoya Verildi/Teslim sekmeleri, Dashboard sayaçları
+// ve sipariş detay drawer'ı AYNI bu helper'dan beslenmelidir; böylece aynı
+// sipariş her ekranda aynı canonical statüyü gösterir. Öncelik (yüksekten
+// düşüğe): iptal/iade → teslim → kargoya verildi → etiket basıldı → etiket
+// hazır → (eski+sinyalsiz) arşiv/historical → kontrol gerekli → barkod bekliyor
+// → açık/yeni. Marketplace status operationStatus'ü körlemesine EZMEZ; yalnız
+// güçlü kanıt (isHistoricalOrder içinde elenir) canonical statüyü belirler.
+export function classifyCanonicalOrderStatus(
+  order: CargoOrder,
+  now: Date = new Date(),
+): { stage: DashboardOperationStage; label: string; isHistorical: boolean } {
+  const state = classifyOrderForTabs(order, now)
+  const stage = resolveDashboardOperationStage(state)
+  return {
+    stage,
+    label: DASHBOARD_OPERATION_STAGE_LABELS[stage],
+    isHistorical: state.isHistorical,
+  }
 }
 
 function isAllFilter(value?: string): boolean {

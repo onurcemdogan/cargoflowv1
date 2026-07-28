@@ -1,5 +1,5 @@
 import type { CargoOrder } from '../types/cargoflow'
-import { getOrderOperationStatus } from './orderStatus'
+import { getOrderOperationStatus, isHistoricalOrder } from './orderStatus'
 import { verifySuratShipment } from './suratVerification'
 import { isPreassignedAwaitingAcceptance } from './suratPrintEligibility'
 import {
@@ -175,6 +175,20 @@ export function mapOperationStatus(order: CargoOrder): StatusPresentation {
       label: 'Hatalı',
       description: 'Operasyon kontrolü gerekiyor.',
       color: 'red',
+      source: 'localOperation',
+      sourceLabel: 'CargoFlow',
+    }
+  }
+  // Eski + güçlü sinyalsiz sipariş: aktif "Barkod Bekliyor" yerine pasif Arşiv
+  // rozetiyle gösterilir. isHistoricalOrder yukarıdaki güçlü sinyalleri (forward
+  // pazaryeri statüsü / etiket / hata) zaten eler; buraya yalnız gerçekten
+  // sinyalsiz eski kayıtlar düşer. SAHTE "Kargoya Verildi/Teslim" ATANMAZ.
+  if (isHistoricalOrder(order)) {
+    return {
+      label: 'Arşiv',
+      description:
+        'Eski sipariş — aktif operasyon sinyali yok. Arşiv kaydı olarak gösteriliyor.',
+      color: 'gray',
       source: 'localOperation',
       sourceLabel: 'CargoFlow',
     }

@@ -341,7 +341,7 @@ export function buildDashboardViewModel({
   )
   const classified = uniqueOrders.map((order) => ({
     order,
-    state: classifyOrderForTabs(order),
+    state: classifyOrderForTabs(order, now),
   }))
   // Operation Flow "Anlık operasyon durumu" SNAPSHOT'ıdır: TÜM tenant siparişleri
   // üzerinde (recentOperations ile AYNI veri kümesi), döneme/güne göre daraltılmaz.
@@ -493,7 +493,10 @@ export function buildDashboardViewModel({
         products,
       ).slice(0, 10),
     },
-    recentOperations: buildRecentOperations(uniqueOrders, products).slice(0, 10),
+    recentOperations: buildRecentOperations(uniqueOrders, products, now).slice(
+      0,
+      10,
+    ),
     latestSyncAt: latestSyncAt ?? resolveLatestSyncAt(uniqueOrders),
   }
 }
@@ -1229,12 +1232,13 @@ function buildActionRequired(
 function buildRecentOperations(
   orders: CargoOrder[],
   products: CargoProduct[],
+  now: Date = new Date(),
 ): DashboardRecentOperation[] {
   return [...orders]
     .sort((left, right) => orderTimestamp(right) - orderTimestamp(left))
     .map((order) => {
       const firstItem = order.items[0]
-      const state = classifyOrderForTabs(order)
+      const state = classifyOrderForTabs(order, now)
       // Yetki kalıcı (canonical operationStatus + persisted metadata) kaynaktan;
       // geçici tarayıcı state'ine bağlı değil → sayfa yenilemesinde korunur.
       const capabilities = resolveOrderActionCapabilities(order)
