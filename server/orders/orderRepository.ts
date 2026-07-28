@@ -14,7 +14,7 @@ import {
   or,
   sql,
 } from 'drizzle-orm'
-import { orderLines, orders } from '../db/schema.ts'
+import { orderLines, orders, shipments } from '../db/schema.ts'
 import {
   marketplaceUpdateSet,
   toLineInsertValues,
@@ -275,13 +275,50 @@ export async function upsertMarketplaceOrders(
 
 // YALNIZ kanıtlı tam sync'te: fresh sette OLMAYAN, henüz arşivlenmemiş
 // siparişleri arşivler (SİLMEZ). Partial sync'te ÇAĞRILMAZ.
+// GÜÇLÜ operasyon kanıtı taşıyan canonical operationStatus değerleri: bu
+// kayıtlar reconcile'de ARŞİVLENMEZ (canonical statüleri korunur, geriye
+// düşürülmez). Etiket-hazır/basıldı/kargoda/teslim/iade.
+const STRONG_OPERATION_STATUSES = new Set([
+  'LABEL_READY',
+  'LABEL_PRINTED',
+  'SHIPPED',
+  'HANDED_TO_CARGO',
+  'DELIVERED',
+  'DELIVERED_SPECIAL',
+  'RETURNING',
+  'TRACKING_ACTIVE',
+])
+// Terminal/forward pazaryeri statüsü de güçlü kanıttır.
+const TERMINAL_MARKETPLACE_STATUSES = new Set([
+  'Shipped',
+  'Delivered',
+  'AtCollectionPoint',
+  'Cancelled',
+  'Returned',
+  'UnDelivered',
+  'UnSupplied',
+])
+
+// TAM BAŞARILI (complete) sync sonrası reconciliation. Provider'ın güncel aktif
+// paket kimliklerinde (freshPackageIds) BULUNMAYAN kayıtlardan YALNIZ güçlü
+// operasyon kanıtı OLMAYANLAR arşivlenir. GÜÇLÜ kanıt = canonical operationStatus
+// (LABEL_READY/PRINTED/SHIPPED/HANDED_TO_CARGO/DELIVERED/…), terminal pazaryeri
+// statüsü VEYA persist edilmiş bir shipment. Bu kayıtlar KORUNUR (silinmez,
+// canonical statüsü değişmez). Yalnız NEW/BARCODE_WAITING + etiketsiz + shipmentsız
+// bayat aktif kayıtlar aktif kuyruktan çıkarılır. Yaş/727/packageId/kargo firması
+// TEK BAŞINA arşiv sebebi DEĞİLDİR. (complete=false ise bu fonksiyon çağrılmaz.)
 export async function archiveMissingOrders(
   db: Db,
   organizationId: string,
   freshPackageIds: string[],
 ): Promise<number> {
   const rows = await db
-    .select({ id: orders.id, packageId: orders.packageId })
+    .select({
+      id: orders.id,
+      packageId: orders.packageId,
+      operationStatus: orders.operationStatus,
+      marketplaceStatus: orders.marketplaceStatus,
+    })
     .from(orders)
     .where(
       and(
@@ -290,9 +327,24 @@ export async function archiveMissingOrders(
       ),
     )
   const fresh = new Set(freshPackageIds)
-  const missing = rows.filter((row: { packageId: string }) => !fresh.has(row.packageId))
+  // Persist edilmiş shipment taşıyan paketler (güçlü kanıt) — arşivlenmez.
+  const shipmentRows = await db
+    .select({ packageId: shipments.packageId })
+    .from(shipments)
+    .where(eq(shipments.organizationId, organizationId))
+  const withShipment = new Set(
+    shipmentRows.map((row: { packageId: string }) => String(row.packageId)),
+  )
   let archived = 0
-  for (const row of missing) {
+  for (const row of rows) {
+    if (fresh.has(row.packageId)) continue
+    const op = String(row.operationStatus ?? '').toUpperCase()
+    const marketplace = String(row.marketplaceStatus ?? '').trim()
+    const hasStrongEvidence =
+      STRONG_OPERATION_STATUSES.has(op) ||
+      TERMINAL_MARKETPLACE_STATUSES.has(marketplace) ||
+      withShipment.has(String(row.packageId))
+    if (hasStrongEvidence) continue
     await db
       .update(orders)
       .set({ archivedAt: new Date(), updatedAt: new Date() })
