@@ -378,8 +378,15 @@ export class OrderWorkflowService {
     const nextScope = normalizeMarketplaceAccountScope(sellerId)
     const changed = nextScope !== this.marketplaceAccountScope
     this.marketplaceAccountScope = nextScope
-    if (changed && nextScope) {
-      prepareMarketplaceAccountCaches(nextScope)
+    if (changed) {
+      // Hesap değişti: ESKİ hesabın oturum-içi (in-memory) auth snapshot'ları
+      // yeni hesap sunucudan hydrate edilene kadar ekranda KALMAMALI. Storage
+      // zaten hesap-kapsamlı anahtar kullanır; auth modda kaynak-of-truth
+      // sunucu olduğundan in-memory cache'i de temizleriz (çapraz-hesap sızıntı
+      // önlenir).
+      this.authOrdersCache = []
+      this.authProductsCache = []
+      if (nextScope) prepareMarketplaceAccountCaches(nextScope)
     }
     return changed
   }
