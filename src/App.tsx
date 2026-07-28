@@ -79,6 +79,10 @@ function App() {
   // ayrıdır; bu yalnız yerel yeniden okumayı korur.
   const ordersReloadInFlight = useRef(false)
   const productsSyncInFlight = useRef(false)
+  // Local-first paralel yükleme: siparişler ÜRÜN KATALOĞUNU BEKLEMEZ. Katalog
+  // (görsel eşleme kaynağı) siparişlerden bağımsız gelir; hangisi önce gelirse
+  // gelsin görseller doğru zenginleşsin diye en güncel katalog burada tutulur.
+  const catalogProductsRef = useRef<CargoProduct[]>([])
   const [activePage, setActivePage] = useState<PageKey>('dashboard')
   const [integrationConfig, setIntegrationConfig] = useState<IntegrationConfig>(
     () => integrationConfigService.loadIntegrationConfig(),
@@ -156,37 +160,69 @@ function App() {
       // integration hydrate). Frontend organizationId'sinden türetilmez.
       const authMode = integrationConfigService.isAuthMode()
       workflowService.setAuthMode(authMode)
-      if (active) {
-        setMaskedIntegrationStatus(
-          integrationConfigService.getMaskedStatus(),
-        )
-        workflowService.setMarketplaceAccount(
-          hydrated.trendyol.sellerId,
-        )
-        const cachedCatalog = await workflowService.hydrateProductCatalog()
-        const cachedProducts = cachedCatalog.products
-        // Auth modda sipariş kaynak-of-truth PostgreSQL'dir: yenilemede
-        // sunucudan (org-scoped) yüklenir. Legacy modda localStorage'tan.
-        const baseOrders = authMode
-          ? await workflowService.loadOrdersFromServer().catch(() => [])
-          : workflowService.loadOrders()
-        setIntegrationConfig(hydrated)
-        setIntegrationConfigRevision((current) => current + 1)
-        setSelectedIds([])
+      if (!active) return
+      setMaskedIntegrationStatus(integrationConfigService.getMaskedStatus())
+      workflowService.setMarketplaceAccount(hydrated.trendyol.sellerId)
+      // Bu yükleme turunu hesap nesline sabitle: geç gelen (stale) sonuç yanlış
+      // hesaba yazılmasın (account switch race koruması).
+      const generation = workflowService.getMarketplaceAccountGeneration()
+      setIntegrationConfig(hydrated)
+      setIntegrationConfigRevision((current) => current + 1)
+      setSelectedIds([])
+      setIntegrationHydrated(true)
+
+      const isFresh = () =>
+        active && generation === workflowService.getMarketplaceAccountGeneration()
+
+      // SWR: aktif hesap için taze cache varsa siparişleri ANINDA göster; arkada
+      // yine de sunucudan revalidate edilir.
+      const cachedOrders = authMode ? workflowService.peekCachedOrders() : null
+      catalogProductsRef.current = []
+      setOrdersState({
+        orders: cachedOrders
+          ? workflowService.enrichOrderImages(cachedOrders, [])
+          : [],
+        ordersLoading: true,
+      })
+      setProductsState((current) => ({ ...current, productsLoading: true }))
+
+      // LOCAL-FIRST + PARALEL: siparişler ürün kataloğunu (auth modda ~binlerce
+      // varyant, çok sayfalı) BEKLEMEZ. İkisi bağımsız yüklenir; hangisi önce
+      // gelirse görseller doğru zenginleşir. Provider sync bu yolu bloklamaz.
+      const ordersPromise = authMode
+        ? workflowService.loadOrdersFromServer().catch(() => [] as CargoOrder[])
+        : Promise.resolve(workflowService.loadOrders())
+      const catalogPromise = workflowService
+        .hydrateProductCatalog()
+        .catch(() => ({ products: [] as CargoProduct[], metadata: undefined }))
+
+      void ordersPromise.then((baseOrders) => {
+        if (!isFresh()) return
         setOrdersState({
           orders: workflowService.enrichOrderImages(
             baseOrders,
-            cachedProducts,
+            catalogProductsRef.current,
           ),
           ordersLoading: false,
         })
+      })
+      void catalogPromise.then((cachedCatalog) => {
+        if (!isFresh()) return
+        catalogProductsRef.current = cachedCatalog.products
         setProductsState({
-          products: cachedProducts,
+          products: cachedCatalog.products,
           productsLoading: false,
           metadata: cachedCatalog.metadata,
         })
-        setIntegrationHydrated(true)
-      }
+        // Katalog geldi → mevcut siparişlerin görsellerini yeniden zenginleştir.
+        setOrdersState((current) => ({
+          ...current,
+          orders: workflowService.enrichOrderImages(
+            current.orders,
+            cachedCatalog.products,
+          ),
+        }))
+      })
     })()
     return () => {
       active = false
@@ -202,14 +238,30 @@ function App() {
     if (ordersReloadInFlight.current) return
     ordersReloadInFlight.current = true
     if (integrationConfigService.isAuthMode()) {
-      // Yeni yükleme: önceki (bayat) yükleme hatası TEMİZLENİR.
-      setOrdersState((current) => ({
-        ...current,
-        ordersLoading: true,
-        ordersError: undefined,
-      }))
+      const generation = workflowService.getMarketplaceAccountGeneration()
+      // SWR: aktif hesap için taze cache varsa ANINDA göster (loading'e düşmeden);
+      // yoksa loading. Her iki durumda da arkada DB'den revalidate edilir.
+      const cached = workflowService.peekCachedOrders()
+      if (cached) {
+        setOrdersState((current) => ({
+          ...current,
+          orders: workflowService.enrichOrderImages(cached, productsState.products),
+          ordersError: undefined,
+        }))
+      } else {
+        setOrdersState((current) => ({
+          ...current,
+          ordersLoading: true,
+          ordersError: undefined,
+        }))
+      }
       try {
         const baseOrders = await workflowService.loadOrdersFromServer()
+        // Hesap bu istek sırasında değiştiyse sonucu ATLA (stale — yanlış hesaba
+        // yazma önlenir).
+        if (generation !== workflowService.getMarketplaceAccountGeneration()) {
+          return
+        }
         setOrdersState((current) => ({
           ...current,
           orders: workflowService.enrichOrderImages(
@@ -469,21 +521,35 @@ function App() {
     )
     setIntegrationConfig(saved)
     if (accountChanged) {
+      // Yeni hesaba geçildi: eski hesap verisi bir kare bile görünmesin. Nesle
+      // sabitle (eski hesabın geç gelen istekleri DISCARD edilir).
+      const generation = workflowService.getMarketplaceAccountGeneration()
+      const isFresh = () =>
+        generation === workflowService.getMarketplaceAccountGeneration()
       setSelectedIds([])
-      const emptyCatalog = workflowService.loadProductCatalog()
-      setOrdersState({
-        orders: workflowService.enrichOrderImages(
-          workflowService.loadOrders(),
-          emptyCatalog.products,
-        ),
-        ordersLoading: false,
-      })
-      setProductsState({
-        products: emptyCatalog.products,
-        productsLoading: false,
-        metadata: emptyCatalog.metadata,
+      catalogProductsRef.current = []
+      // Eski liste anında temizlenir; yeni hesabın local verisi paralel yüklenir.
+      setOrdersState({ orders: [], ordersLoading: true })
+      setProductsState((current) => ({ ...current, products: [], productsLoading: true }))
+
+      // LOCAL-FIRST + PARALEL: yeni hesabın siparişleri ürün kataloğunu BEKLEMEZ.
+      const authMode = integrationConfigService.isAuthMode()
+      const ordersPromise = authMode
+        ? workflowService.loadOrdersFromServer().catch(() => [] as CargoOrder[])
+        : Promise.resolve(workflowService.loadOrders())
+      void ordersPromise.then((baseOrders) => {
+        if (!isFresh()) return
+        setOrdersState({
+          orders: workflowService.enrichOrderImages(
+            baseOrders,
+            catalogProductsRef.current,
+          ),
+          ordersLoading: false,
+        })
       })
       void workflowService.hydrateProductCatalog().then((catalog) => {
+        if (!isFresh()) return
+        catalogProductsRef.current = catalog.products
         setProductsState({
           products: catalog.products,
           productsLoading: false,

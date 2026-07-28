@@ -284,7 +284,7 @@ test('SSC-8: App.tsx — çift-tık tek sync (single-flight) + Dashboard Yenile 
   // Buton her yolda finally'de serbest bırakılır (kalıcı disabled kalmaz).
   assert.match(fetchBlock, /finally \{[\s\S]*ordersSyncInFlight\.current = false/)
   // Dashboard Yenile yalnız DB okur; /api/orders/sync ÇAĞIRMAZ.
-  const reload = sliceBlock(app, 'async function handleReloadOrders()', 900)
+  const reload = sliceBlock(app, 'async function handleReloadOrders()', 2000)
   assert.doesNotMatch(reload, /\/api\/orders\/sync/)
   assert.match(reload, /loadOrdersFromServer\(\)/)
 })

@@ -198,6 +198,12 @@ export interface DashboardViewModel {
     productCount: DashboardMetric
     returnAmount: DashboardMetric
     returnCount: DashboardMetric
+    // İade metriğinin KESİN veri kaynağı. "persisted_claims": gerçek claim
+    // muhasebesi (legacy Trendyol getClaims / ileride kalıcı claims).
+    // "order_status": claim verisi yok; iade YALNIZ Returned sipariş
+    // statüsünden türetildi (tam claim muhasebesi DEĞİL). "unavailable": iade
+    // hesaplanacak yerel veri yok → "kesin 0 iade" izlenimi verilmez.
+    refundDataSource: 'order_status' | 'persisted_claims' | 'unavailable'
   }
   operationalSummary: {
     openOperations: number
@@ -238,6 +244,11 @@ interface BuildDashboardViewModelInput {
   // Kabul edilmiş iadeler (claims endpoint'i); verilirse net satış
   // metriklerinden claim effectiveDate dönemine göre düşülür.
   analyticsClaims?: AnalyticsClaim[]
+  // Gerçek bir claim veri kaynağı sorgulandı mı? Auth modunda /api/analytics/
+  // claims provider ÇAĞIRMAZ ve source="unavailable" döner → claimsAvailable
+  // false geçilir; iade YALNIZ Returned sipariş statüsünden türetilir. Verilmezse
+  // (undefined) analyticsClaims varlığından türetilir (geriye dönük uyumluluk).
+  claimsAvailable?: boolean
   products?: CargoProduct[]
   selectedPeriod: DashboardPeriodSelection
   comparisonPeriod?: DashboardDateRange
@@ -266,6 +277,7 @@ export function buildDashboardViewModel({
   orders,
   analyticsOrders,
   analyticsClaims,
+  claimsAvailable,
   products = [],
   selectedPeriod,
   comparisonPeriod,
@@ -278,6 +290,19 @@ export function buildDashboardViewModel({
   const salesSource = analyticsOrders
     ? dedupeDashboardOrders(analyticsOrders)
     : uniqueOrders
+  // İade metriğinin KESİN kaynağı. Gerçek claim kaynağı sorgulandıysa (legacy
+  // getClaims veya ileride kalıcı claims) → persisted_claims. Aksi halde (auth:
+  // claims unavailable) iade YALNIZ Returned sipariş statüsünden türetilir; satış
+  // verisi varsa order_status, hiç yerel veri yoksa unavailable ("kesin 0 iade"
+  // izlenimi verilmez).
+  const claimsQueried =
+    claimsAvailable !== undefined ? claimsAvailable : analyticsClaims !== undefined
+  const refundDataSource: 'order_status' | 'persisted_claims' | 'unavailable' =
+    claimsQueried
+      ? 'persisted_claims'
+      : salesSource.length > 0
+        ? 'order_status'
+        : 'unavailable'
   // Yerel (Europe/Istanbul) dönem: operasyon sayaçları ve etiket/kargo
   // dönem filtreleri MEVCUT semantiğini korur.
   const localPeriod = resolveDashboardPeriod(selectedPeriod, now)
@@ -412,12 +437,15 @@ export function buildDashboardViewModel({
       returnAmount: metric(
         currentTotals.returnAmount,
         previousTotals.returnAmount,
-        currentTotals.returnAmountAvailable,
+        // "unavailable" → tutar KESİN gösterilmez ("—"); ₺0,00 ile yanlış
+        // kesinlik verilmez.
+        currentTotals.returnAmountAvailable && refundDataSource !== 'unavailable',
       ),
       returnCount: metric(
         currentTotals.returnCount,
         previousTotals.returnCount,
       ),
+      refundDataSource,
     },
     operationalSummary,
     salesChart: {

@@ -226,6 +226,21 @@ export class OrderWorkflowService {
     string,
     ProductCatalogCacheEnvelope
   >()
+  // Hesap nesli (generation): her aktif hesap değişiminde artar. Geç gelen
+  // (stale) bir hesap isteğinin sonucunun yanlış hesabın UI state'ine yazılmasını
+  // önlemek için çağıran, isteği başlatmadan önce bu değeri okur ve sonuç
+  // geldiğinde hâlâ eşit mi diye kontrol eder (race-condition koruması).
+  private marketplaceAccountGeneration = 0
+  // Account-scoped KISA ÖMÜRLÜ (SWR) in-memory önbellek: yalnız AKTİF hesap için;
+  // hesap değişince tamamen atılır. Raw order/ZPL/PII localStorage'a YAZILMAZ —
+  // yalnız oturum-içi bellek. Bounded (LRU) + TTL. Yeniden mount/navigasyonda
+  // önce taze cache gösterilir, arkada DB'den revalidate edilir.
+  private readonly accountScopedOrdersCache = new Map<
+    string,
+    { at: number; generation: number; orders: CargoOrder[] }
+  >()
+  private static readonly ORDERS_CACHE_TTL_MS = 30_000
+  private static readonly ORDERS_CACHE_MAX_ENTRIES = 8
 
   constructor(
     marketplaceProvider: MarketplaceProvider,
@@ -279,6 +294,8 @@ export class OrderWorkflowService {
       }
     }
     const query = params.toString()
+    const startedAt =
+      typeof performance !== 'undefined' ? performance.now() : Date.now()
     const response = await fetch(
       `/api/orders${query ? `?${query}` : ''}`,
       { credentials: 'include' },
@@ -300,6 +317,23 @@ export class OrderWorkflowService {
       total: Number(payload.total ?? orders.length),
       page: Number(payload.page ?? 1),
       pageSize: Number(payload.pageSize ?? orders.length),
+    }
+    // Yalnız filtresiz (varsayılan) liste SWR cache'ine yazılır; filtreli
+    // sorgular önbelleklenmez (kombinasyon patlamasını önler).
+    if (query === '') this.writeOrdersCache('default', orders)
+    // Güvenli timing metadata (yalnız DEV): ham org/account id, PII, raw order,
+    // ZPL, credential veya secret LOGLANMAZ — yalnız süre/sayı/varlık bayrağı.
+    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+      const now =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
+      console.debug('PERF_ORDERS_LOAD', {
+        route: 'orders',
+        marketplaceAccountScopePresent: this.marketplaceAccountScope !== '',
+        totalDurationMs: Math.round(now - startedAt),
+        cacheHit: false,
+        itemCount: orders.length,
+        filtered: query !== '',
+      })
     }
     return orders
   }
@@ -340,35 +374,61 @@ export class OrderWorkflowService {
     }
   }
 
-  // Auth modda sunucudan (GET /api/products) org-scoped TÜM katalog varyantlarını
-  // yükler (resolver/görsel eşleme tam katalog ister). Sayfa sayfa çekip birleştirir;
-  // in-memory cache'i günceller. Organization req.auth'tan çözülür.
+  // Tek ürün sayfası çeker (GET /api/products; server-side pagination, org+aktif
+  // hesap kapsamı backend'de). Ham payload localStorage'a YAZILMAZ.
+  private async fetchProductsPage(
+    page: number,
+    pageSize: number,
+  ): Promise<{ products: CargoProduct[]; total: number }> {
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+    })
+    const response = await fetch(`/api/products?${params.toString()}`, {
+      credentials: 'include',
+    })
+    if (!response.ok) {
+      throw new Error(`Ürünler yüklenemedi (${response.status}).`)
+    }
+    const payload = (await response.json()) as {
+      products?: CargoProduct[]
+      total?: number
+    }
+    const products = Array.isArray(payload.products) ? payload.products : []
+    return { products, total: Number(payload.total ?? products.length) }
+  }
+
+  // Auth modda sunucudan (GET /api/products) org+aktif-hesap kapsamlı TÜM katalog
+  // varyantlarını yükler (resolver/görsel eşleme tam katalog ister). Eski davranış
+  // ~60 SERİ istek yapıyordu (sayfa sayfa, her biri öncekini bekliyor) → yavaş.
+  // Yeni: ilk sayfayla toplam öğrenilir, kalan sayfalar SINIRLI EŞZAMANLILIKLA
+  // (BOUNDED, en fazla 4 paralel) çekilir — sınırsız paralel DEĞİL. Server-side
+  // pagination korunur; katalog tam yüklendiğinden görsel eşleme değişmez.
+  // İptal/nesil kontrolü ÇAĞIRANDADIR (App mount/account-switch stale sonucu
+  // generation ile discard eder; ham payload storage'a yazılmaz).
   async loadProductsFromServer(): Promise<CargoProduct[]> {
     const pageSize = 100
-    let page = 1
-    let total = Infinity
-    const all: CargoProduct[] = []
-    while (all.length < total) {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-      })
-      const response = await fetch(`/api/products?${params.toString()}`, {
-        credentials: 'include',
-      })
-      if (!response.ok) {
-        throw new Error(`Ürünler yüklenemedi (${response.status}).`)
+    const CONCURRENCY = 4
+    const MAX_PAGES = 1000 // güvenlik: sonsuz döngü koruması
+    const first = await this.fetchProductsPage(1, pageSize)
+    const total = first.total
+    const all: CargoProduct[] = [...first.products]
+    const totalPages = Math.min(
+      MAX_PAGES,
+      Math.max(1, Math.ceil(total / pageSize)),
+    )
+    // Kalan sayfalar bounded paralel batch'ler halinde.
+    for (let start = 2; start <= totalPages; start += CONCURRENCY) {
+      const pages: number[] = []
+      for (let p = start; p < start + CONCURRENCY && p <= totalPages; p += 1) {
+        pages.push(p)
       }
-      const payload = (await response.json()) as {
-        products?: CargoProduct[]
-        total?: number
-      }
-      const batch = Array.isArray(payload.products) ? payload.products : []
-      all.push(...batch)
-      total = Number(payload.total ?? all.length)
-      if (batch.length === 0) break
-      page += 1
-      if (page > 1000) break // güvenlik: sonsuz döngü koruması
+      const batches = await Promise.all(
+        pages.map((p) => this.fetchProductsPage(p, pageSize).then((r) => r.products)),
+      )
+      for (const products of batches) all.push(...products)
+      // Beklenenden erken biterse (boş sayfa) dur.
+      if (batches.some((products) => products.length === 0)) break
     }
     this.authProductsCache = all
     return all
@@ -386,9 +446,52 @@ export class OrderWorkflowService {
       // önlenir).
       this.authOrdersCache = []
       this.authProductsCache = []
+      // Nesli artır: bu andan önce başlamış (eski hesap) istekler geç gelirse
+      // çağıran tarafından DISCARD edilir. Account-scoped SWR cache tamamen atılır
+      // (eski hesap cache'i yeni hesapta ASLA kullanılmaz).
+      this.marketplaceAccountGeneration += 1
+      this.accountScopedOrdersCache.clear()
       if (nextScope) prepareMarketplaceAccountCaches(nextScope)
     }
     return changed
+  }
+
+  // Race-condition koruması: çağıran, bir hesaba özgü isteği başlatmadan önce bu
+  // değeri okur; sonuç geldiğinde hâlâ eşitse uygular, değilse (hesap değişmiş)
+  // sonucu atar.
+  getMarketplaceAccountGeneration(): number {
+    return this.marketplaceAccountGeneration
+  }
+
+  // Account-scoped SWR: taze (< TTL) cache varsa döner (stale-while-revalidate
+  // için anında gösterim), yoksa null. Yalnız aktif hesap nesli için geçerlidir.
+  peekCachedOrders(cacheKey = 'default'): CargoOrder[] | null {
+    const entry = this.accountScopedOrdersCache.get(cacheKey)
+    if (!entry) return null
+    if (entry.generation !== this.marketplaceAccountGeneration) return null
+    if (Date.now() - entry.at > OrderWorkflowService.ORDERS_CACHE_TTL_MS) return null
+    return entry.orders
+  }
+
+  private writeOrdersCache(cacheKey: string, orders: CargoOrder[]): void {
+    // Bounded LRU: en eski girdiyi düşür.
+    if (
+      this.accountScopedOrdersCache.size >= OrderWorkflowService.ORDERS_CACHE_MAX_ENTRIES &&
+      !this.accountScopedOrdersCache.has(cacheKey)
+    ) {
+      const oldest = this.accountScopedOrdersCache.keys().next().value
+      if (oldest !== undefined) this.accountScopedOrdersCache.delete(oldest)
+    }
+    this.accountScopedOrdersCache.set(cacheKey, {
+      at: Date.now(),
+      generation: this.marketplaceAccountGeneration,
+      orders,
+    })
+  }
+
+  // Aktif hesap orders cache'ini geçersizleştir (COMPLETE sync sonrası çağrılır).
+  invalidateOrdersCache(): void {
+    this.accountScopedOrdersCache.clear()
   }
 
   private ordersStorageKey(): string {

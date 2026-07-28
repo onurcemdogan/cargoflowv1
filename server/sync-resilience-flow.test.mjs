@@ -97,7 +97,7 @@ test('RES-6: frontend — tek-uçuş kilidi + buton finally ile açılır', () =
 
 test('RES-7: Dashboard Yenile /api/orders/sync ÇAĞIRMAZ (yalnız yerel reload)', () => {
   const app = readSrc('src/App.tsx')
-  const block = sliceBlock(app, 'async function handleReloadOrders()', 900)
+  const block = sliceBlock(app, 'async function handleReloadOrders()', 2000)
   assert.doesNotMatch(block, /\/api\/orders\/sync/)
   assert.match(block, /loadOrdersFromServer\(\)/)
 })

@@ -20,6 +20,10 @@ export interface DashboardClaimsResult {
   uniqueClaimCount: number
   affectedPackageCount: number
   amountBasis: string
+  // İade veri kaynağı: "unavailable" (auth: provider çağrılmadı, kesin claim
+  // muhasebesi yok) veya gerçek kaynak (legacy). Dashboard buna göre
+  // claimsAvailable belirler.
+  source: string
   rangeStart: Date
   rangeEnd: Date
 }
@@ -148,6 +152,10 @@ async function requestClaims(
     uniqueClaimCount: Number(payload.uniqueClaimCount ?? 0),
     affectedPackageCount: Number(payload.affectedPackageCount ?? 0),
     amountBasis: String(payload.amountBasis ?? ''),
+    // "unavailable": auth modunda kesin claim muhasebesi yok (provider
+    // çağrılmadı). Dashboard bu durumda iadeyi Returned sipariş statüsünden
+    // türetir (claimsAvailable=false). Verilmezse gerçek claim kaynağı sayılır.
+    source: String(payload.source ?? 'persisted_claims'),
     rangeStart: new Date(String(payload.startDate)),
     rangeEnd: new Date(String(payload.endDate)),
   }
