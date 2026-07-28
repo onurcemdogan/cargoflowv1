@@ -160,7 +160,21 @@ test('REC-5: canonical metrik tanimlari acikca belgeli (paket/kalem/urun/net)', 
   assert.equal(metrics.METRIC_PACKAGE, 'distinct_package_id')
   assert.equal(metrics.METRIC_LINE, 'order_line_count')
   assert.equal(metrics.METRIC_UNIT_QUANTITY, 'order_line_quantity_sum')
-  assert.deepEqual([...metrics.CANCEL_STATUSES], ['Cancelled'])
-  assert.deepEqual([...metrics.RETURN_STATUSES], ['Returned'])
+  // İptal/iade statüleri canonical disposition ile katlanır (UnDelivered→return,
+  // UnSupplied→cancel); Dashboard ile TEK kaynak.
+  assert.deepEqual([...metrics.CANCEL_STATUSES], ['Cancelled', 'UnSupplied'])
+  assert.deepEqual([...metrics.RETURN_STATUSES], ['Returned', 'UnDelivered'])
   assert.match(metrics.NET_SALES_FORMULA, /gross - \(cancel_amount \+ return_amount\)/)
+  // toCanonicalSummary UnDelivered'ı returnAmount'a, UnSupplied'ı cancelAmount'a yazar.
+  const folded = metrics.toCanonicalSummary({
+    distinctPackageIds: 4, orderLineCount: 4, lineQuantityTotal: 4, totalAmount: 400,
+    byMarketplaceStatus: [
+      { key: 'Delivered', count: 1, amount: 100 },
+      { key: 'UnDelivered', count: 1, amount: 120 },
+      { key: 'UnSupplied', count: 1, amount: 80 },
+      { key: 'Cancelled', count: 1, amount: 100 },
+    ],
+  })
+  assert.equal(Math.round(folded.returnAmount), 120, 'UnDelivered → returnAmount')
+  assert.equal(Math.round(folded.cancelAmount), 180, 'Cancelled+UnSupplied → cancelAmount')
 })

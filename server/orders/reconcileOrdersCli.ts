@@ -5,8 +5,15 @@
 // complete=false → reconcile/arşiv YOK. Dashboard'a provider fetch EKLEMEZ
 // (bu ayrı, açık bir operasyon CLI'ıdır).
 //
+// TARİH EKSENİ AÇIK: --start/--end verilen tarihler Trendyol'da pratikte
+// orderDate DEĞİL packageLastModifiedDate (MODIFIED aktivite) penceresidir.
+// Bu yüzden açık isimlendirme tercih edilir: --modified-start/--modified-end.
+// Eski --start/--end desteklenir ama açık UYARI verir; manifest her durumda
+// dateBasis="marketplace_last_modified_at" damgalar.
+//
 //   npm run orders:reconcile -- --organization-id <org> --provider Trendyol \
-//     --provider-account-id 2777221 --start 2026-06-01 --end 2026-07-31 --dry-run
+//     --provider-account-id 277221 --modified-start 2026-06-01 \
+//     --modified-end 2026-07-31 --dry-run
 //   npm run orders:reconcile -- ... --apply --confirmation-token <TOKEN>
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -57,12 +64,38 @@ async function main(): Promise<number> {
   const organizationId = parseArg('organization-id')
   const marketplace = parseArg('provider') ?? 'Trendyol'
   const providerAccountId = parseArg('provider-account-id')
-  const startMs = parseDate(parseArg('start'))
-  const endMs = parseDate(parseArg('end'), true)
+  // Tarih ekseni: tercih edilen açık isimler --modified-start/--modified-end;
+  // eski --start/--end desteklenir ama UYARI verir. --date-basis verilirse
+  // yalnız 'modified' geçerlidir (fetch fiilen modified penceresi uygular).
+  const modifiedStart = parseArg('modified-start')
+  const modifiedEnd = parseArg('modified-end')
+  const legacyStart = parseArg('start')
+  const legacyEnd = parseArg('end')
+  const dateBasisArg = parseArg('date-basis')
+  if (dateBasisArg && dateBasisArg !== 'modified') {
+    console.error(
+      "[orders:reconcile] --date-basis yalnız 'modified' olabilir (fetch " +
+        'penceresi marketplaceLastModifiedAt aktivitesidir, orderDate DEĞİL).',
+    )
+    return 1
+  }
+  const usingLegacyNames =
+    modifiedStart == null && modifiedEnd == null && (legacyStart != null || legacyEnd != null)
+  if (usingLegacyNames) {
+    console.warn(
+      '[orders:reconcile] UYARI: --start/--end bir MODIFIED aktivite penceresidir ' +
+        '(marketplaceLastModifiedAt), sipariş AYI DEĞİL. Açık isim için ' +
+        '--modified-start/--modified-end kullanın. Manifest dateBasis=' +
+        '"marketplace_last_modified_at" damgalanır.',
+    )
+  }
+  const startMs = parseDate(modifiedStart ?? legacyStart)
+  const endMs = parseDate(modifiedEnd ?? legacyEnd, true)
   const apply = hasFlag('apply')
   if (!organizationId || !providerAccountId || startMs == null || endMs == null) {
     console.error(
-      '[orders:reconcile] --organization-id, --provider-account-id, --start, --end zorunlu.',
+      '[orders:reconcile] --organization-id, --provider-account-id ve ' +
+        '--modified-start/--modified-end (veya eski --start/--end) zorunlu.',
     )
     return 1
   }

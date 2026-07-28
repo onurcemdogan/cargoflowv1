@@ -1,22 +1,39 @@
-// CANONICAL Dashboard satış/iade metrik tanımları (tek kaynak). Local-only
-// Dashboard ile referans (Trendyol) Dashboard arasındaki karşılaştırmalarda
-// tanım belirsizliğini ortadan kaldırır. Provider'a çıkmaz; yalnız tanım/sabit.
+// Server-tarafı Dashboard satış AMOUNT-BUCKET yardımcısı (diagnostic mutabakatı).
+// TEK KAYNAK tanım (date basis, disposition token'ları, kimlikler, etiketler)
+// src/dashboard/dashboardSalesMetricDefinition.ts'tedir; bu modül o kimlik
+// sabitlerini RE-EXPORT eder (kavram üç yerde AYRI tanımlanmasın) ve yalnızca
+// STATÜ-BUCKET tutar toplamı (Cancelled/Returned) mantığını ekler.
 //
 // NOT: Bu modül TANIMLARI açıkça belgeler. Rakamları referans Dashboard'a
 // ZORLA eşitlemek için formül değiştirilmez; fark tanım farkıysa raporlanır.
+import {
+  ACTIVITY_DATE_BASIS_LABEL,
+  AMOUNT_SOURCE,
+  classifyCanonicalDisposition,
+  describeSalesMetric,
+  HISTORICAL_ACTIVITY_BASIS,
+  METRIC_LINE,
+  METRIC_PACKAGE,
+  METRIC_UNIT_QUANTITY,
+  SALES_DATE_BASIS,
+  SALES_DATE_BASIS_LABEL,
+} from '../../src/dashboard/dashboardSalesMetricDefinition.ts'
 
-// PAKET: benzersiz sevkiyat/operasyon birimi = distinct packageId
-// (yoksa shipmentPackageId, yoksa marketplace::orderNumber). Bir Trendyol
-// siparişi birden çok pakete bölünebilir; her paket bir operasyon birimidir.
-export const METRIC_PACKAGE = 'distinct_package_id'
-
-// KALEM (line): order_lines SATIR SAYISI (distinct order line), quantity toplamı
-// DEĞİL. "Kalem 285" = 285 sipariş satırı. (quantity toplamı ayrı bir metriktir:
-// METRIC_UNIT_QUANTITY.)
-export const METRIC_LINE = 'order_line_count'
-
-// ÜRÜN ADEDİ (quantity): order_lines quantity TOPLAMI (kaç adet ürün satıldı).
-export const METRIC_UNIT_QUANTITY = 'order_line_quantity_sum'
+// PAKET / KALEM / ÜRÜN ADEDİ kimlikleri canonical modülden gelir (tek kaynak).
+//   PAKET       = distinct packageId (bir sipariş çok pakete bölünebilir)
+//   KALEM       = order_lines satır sayısı (quantity toplamı DEĞİL)
+//   ÜRÜN ADEDİ  = order_lines quantity toplamı
+export {
+  ACTIVITY_DATE_BASIS_LABEL,
+  AMOUNT_SOURCE,
+  describeSalesMetric,
+  HISTORICAL_ACTIVITY_BASIS,
+  METRIC_LINE,
+  METRIC_PACKAGE,
+  METRIC_UNIT_QUANTITY,
+  SALES_DATE_BASIS,
+  SALES_DATE_BASIS_LABEL,
+}
 
 // SATIŞ (gross): kapsamdaki TÜM siparişlerin totalAmount toplamı (statü
 // ayırt etmeden). İptal/iade AYRI gösterilir; brüt satıştan otomatik
@@ -24,16 +41,19 @@ export const METRIC_UNIT_QUANTITY = 'order_line_quantity_sum'
 // buradan gelebilir.
 export const METRIC_SALES_GROSS = 'sum_total_amount_all_status'
 
-// İPTAL tutarı: marketplaceStatus = 'Cancelled' siparişlerin totalAmount toplamı.
-export const CANCEL_STATUSES = ['Cancelled'] as const
+// İPTAL statüleri (canonical disposition ile AYNI): Cancelled + UnSupplied.
+// (Bilgilendirme sabiti; tutar ayrıştırması classifyCanonicalDisposition ile
+// yapılır — Dashboard ile tek kaynak.)
+export const CANCEL_STATUSES = ['Cancelled', 'UnSupplied'] as const
 
-// İADE tutarı — İKİ kaynak (bkz. dashboardViewModel.refundDataSource):
+// İADE statüleri (canonical disposition ile AYNI): Returned + UnDelivered.
+//   İade tutarı kaynağı (bkz. dashboardViewModel.refundDataSource):
 //   persisted_claims: gerçek claim muhasebesi (claim effectiveDate + kısmi tutar)
-//   order_status: marketplaceStatus = 'Returned' siparişlerin totalAmount toplamı
+//   order_status: Returned/UnDelivered siparişlerin totalAmount toplamı
 //   unavailable: hesaplanacak yerel veri yok
-// Auth modunda claim tablosu olmadığından order_status kullanılır (yalnız Returned
-// statülü siparişlerin tam tutarı; kısmi iade tutarı YOKTUR).
-export const RETURN_STATUSES = ['Returned'] as const
+// Auth modunda claim tablosu olmadığından order_status kullanılır (kısmi iade
+// tutarı YOKTUR).
+export const RETURN_STATUSES = ['Returned', 'UnDelivered'] as const
 
 // NET SATIŞ: gross - (iptal + iade). Local-only Dashboard iptal/iadeyi statüden
 // türetir; kısmi claim tutarı olmadığından net, referans (claim-tabanlı) net'ten
@@ -68,7 +88,10 @@ export interface CanonicalMetricSummary {
   netSales: number
 }
 
-// Yerel mutabakat aggregate'inden canonical metrik özeti üretir (pure).
+// Yerel mutabakat aggregate'inden canonical metrik özeti üretir (pure). İptal/
+// iade tutarı statü bucket'larını CANONICAL disposition ile sınıflayarak toplar
+// (tek kaynak): UnDelivered → return, UnSupplied → cancel. Böylece Dashboard,
+// reconciliation ve diagnostic AYNI iade/iptal tutarını üretir.
 export function toCanonicalSummary(input: {
   distinctPackageIds: number
   orderLineCount: number
@@ -76,12 +99,13 @@ export function toCanonicalSummary(input: {
   totalAmount: number
   byMarketplaceStatus: { key: string; count: number; amount: number }[]
 }): CanonicalMetricSummary {
-  const amountForStatuses = (statuses: readonly string[]) =>
-    input.byMarketplaceStatus
-      .filter((row) => statuses.includes(row.key))
-      .reduce((sum, row) => sum + row.amount, 0)
-  const cancelAmount = amountForStatuses(CANCEL_STATUSES)
-  const returnAmount = amountForStatuses(RETURN_STATUSES)
+  let cancelAmount = 0
+  let returnAmount = 0
+  for (const row of input.byMarketplaceStatus) {
+    const disposition = classifyCanonicalDisposition(row.key)
+    if (disposition === 'cancel') cancelAmount += row.amount
+    else if (disposition === 'return') returnAmount += row.amount
+  }
   return {
     packageCount: input.distinctPackageIds,
     lineCount: input.orderLineCount,

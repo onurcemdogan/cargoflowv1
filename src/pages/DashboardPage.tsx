@@ -522,6 +522,12 @@ export function DashboardPage({
         <p>Satış metrikleri yalnız sipariş, paket ve ürün satırı verilerinden hesaplanır.</p>
         <p
           className="dashboard-reporting-note"
+          title="Satış dönemi sipariş oluşturma tarihine (orderDate) göre gruplanır; provider panelindeki 'son güncellenme' aktivite penceresinden farklıdır. İki metrik aynı isimle sunulmaz."
+        >
+          {viewModel.salesDateBasisLabel} (sipariş oluşturma tarihine göre).
+        </p>
+        <p
+          className="dashboard-reporting-note"
           title="Durusoft satış raporlarıyla aynı gün sınırı kullanılır. Sipariş saatleri Türkiye saatiyle gösterilmeye devam eder."
         >
           Rapor günü UTC bazında hesaplanır.
