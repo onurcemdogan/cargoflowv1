@@ -54,6 +54,13 @@ test('RES-3: reconciliation güçlü kanıtı korur (silmez); kaynak sözleşmes
   // Yaş/727/packageId TEK BAŞINA arşiv sebebi olmamalı: archive yalnız güçlü
   // kanıt yoksa yapılır.
   assert.match(repo, /if \(hasStrongEvidence\) continue/)
+  // KAPSAM: reconcile yalnız sync tarih penceresine giren kayıtları değerlendirir.
+  assert.match(repo, /inSyncWindow/)
+  assert.match(repo, /if \(!inSyncWindow\(row\)\) continue/)
+  // Pencere endpoint'ten persistSyncResult'a threadlenir.
+  const server = readSrc('server/index.mjs')
+  assert.match(server, /reconcileWindow/)
+  assert.match(server, /window: reconcileWindow/)
 })
 
 test('RES-4: complete=false (kısmi/başarısız) reconcile ÇALIŞMAZ; endpoint sözleşmesi', () => {

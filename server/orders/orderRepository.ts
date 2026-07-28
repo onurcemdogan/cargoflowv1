@@ -307,10 +307,16 @@ const TERMINAL_MARKETPLACE_STATUSES = new Set([
 // canonical statüsü değişmez). Yalnız NEW/BARCODE_WAITING + etiketsiz + shipmentsız
 // bayat aktif kayıtlar aktif kuyruktan çıkarılır. Yaş/727/packageId/kargo firması
 // TEK BAŞINA arşiv sebebi DEĞİLDİR. (complete=false ise bu fonksiyon çağrılmaz.)
+export interface SyncWindow {
+  startMs: number
+  endMs: number
+}
+
 export async function archiveMissingOrders(
   db: Db,
   organizationId: string,
   freshPackageIds: string[],
+  window?: SyncWindow,
 ): Promise<number> {
   const rows = await db
     .select({
@@ -318,6 +324,8 @@ export async function archiveMissingOrders(
       packageId: orders.packageId,
       operationStatus: orders.operationStatus,
       marketplaceStatus: orders.marketplaceStatus,
+      orderDate: orders.orderDate,
+      marketplaceLastModifiedAt: orders.marketplaceLastModifiedAt,
     })
     .from(orders)
     .where(
@@ -335,9 +343,29 @@ export async function archiveMissingOrders(
   const withShipment = new Set(
     shipmentRows.map((row: { packageId: string }) => String(row.packageId)),
   )
+  // KAPSAM (SCOPE) SÖZLEŞMESİ: reconciliation YALNIZ mevcut sync'in tarih
+  // penceresine giren kayıtları değerlendirir. Trendyol packageLastModifiedDate
+  // ile filtreler; DB'de marketplaceLastModifiedAt (yoksa orderDate) çapası
+  // kullanılır. Pencere DIŞINDAKİ kayıtlar current-active set'te yok diye
+  // arşivlenmez (fetch onları hiç kapsamadı). window verilmezse (eski çağrı)
+  // eski davranış korunur.
+  const inSyncWindow = (row: {
+    orderDate: Date | string | null
+    marketplaceLastModifiedAt: Date | string | null
+  }): boolean => {
+    if (!window) return true
+    const anchor =
+      row.marketplaceLastModifiedAt ?? row.orderDate ?? null
+    if (anchor == null) return false
+    const ms = anchor instanceof Date ? anchor.getTime() : Date.parse(String(anchor))
+    if (!Number.isFinite(ms)) return false
+    return ms >= window.startMs && ms <= window.endMs
+  }
   let archived = 0
   for (const row of rows) {
     if (fresh.has(row.packageId)) continue
+    // Sync kapsamı dışındaki kayıt (fetch görmedi) → DOKUNMA.
+    if (!inSyncWindow(row)) continue
     const op = String(row.operationStatus ?? '').toUpperCase()
     const marketplace = String(row.marketplaceStatus ?? '').trim()
     const hasStrongEvidence =

@@ -186,6 +186,55 @@ test('RCN-7: güncel aktif set içindeki sipariş arşivlenmez', async (t) => {
   assert.equal(await archivedAtOf(db, 'KEEP-1'), null)
 })
 
+// Sync tarih penceresi (23–28 Tem gibi). Fetch bu pencereyi kapsar; reconcile
+// YALNIZ bu pencereye giren kayıtları değerlendirir.
+const JULY_WINDOW = {
+  startMs: Date.parse('2026-07-20T00:00:00Z'),
+  endMs: Date.parse('2026-07-28T23:59:59Z'),
+}
+
+test('RCN-9: SYNC PENCERESİ DIŞINDAKİ NEW sipariş arşivlenmez (kapsam dışı)', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'rcn-9')
+  // Ocak tarihli bayat NEW — Temmuz sync penceresinin DIŞINDA.
+  await orderService.persistSyncResult(
+    db,
+    org,
+    [order({ packageId: 'OLD-JAN', orderDate: '2026-01-01T08:00:00Z' })],
+    { complete: true, window: JULY_WINDOW },
+  )
+  // Temmuz tam sync: OLD-JAN aktif set'te yok AMA pencere dışı → DOKUNULMAZ.
+  const result = await orderService.persistSyncResult(
+    db,
+    org,
+    [order({ packageId: 'JUL-ACTIVE', orderDate: '2026-07-25T08:00:00Z' })],
+    { complete: true, window: JULY_WINDOW },
+  )
+  assert.equal(result.archivedCount, 0)
+  assert.equal(await archivedAtOf(db, 'OLD-JAN'), null, 'pencere dışı NEW korunur')
+})
+
+test('RCN-10: SYNC PENCERESİ İÇİNDEKİ bayat NEW sipariş arşivlenir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'rcn-10')
+  await orderService.persistSyncResult(
+    db,
+    org,
+    [order({ packageId: 'JUL-STALE', orderDate: '2026-07-24T08:00:00Z' })],
+    { complete: true, window: JULY_WINDOW },
+  )
+  await orderService.persistSyncResult(
+    db,
+    org,
+    [order({ packageId: 'JUL-ACTIVE', orderDate: '2026-07-25T08:00:00Z' })],
+    { complete: true, window: JULY_WINDOW },
+  )
+  assert.ok(await archivedAtOf(db, 'JUL-STALE'), 'pencere içi bayat NEW arşivlenir')
+  assert.equal(await archivedAtOf(db, 'JUL-ACTIVE'), null)
+})
+
 test('RCN-8: tenant izolasyonu — reconcile yalnız kendi org kayıtlarını etkiler', async (t) => {
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())

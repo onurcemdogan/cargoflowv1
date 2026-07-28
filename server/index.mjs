@@ -859,11 +859,28 @@ app.post('/api/orders/sync', async (request, response) => {
 
     try {
       const normalized = normalizeTrendyolOrders(result.data)
+      // Reconciliation KAPSAMI: bu sync'in tarih penceresi. Fetch ile aynı
+      // varsayılanlar (startDate yoksa son 7 gün, endDate yoksa now). Yalnız bu
+      // pencereye giren kayıtlar reconcile edilir; pencere DIŞI kayıtlar
+      // (fetch onları kapsamadı) current-active set'te yok diye ARŞİVLENMEZ.
+      const syncNow = Date.now()
+      const windowStart = Number(query.startDate)
+      const windowEnd = Number(query.endDate)
+      const reconcileWindow = {
+        startMs: Number.isFinite(windowStart)
+          ? windowStart
+          : syncNow - 1000 * 60 * 60 * 24 * 7,
+        endMs: Number.isFinite(windowEnd) ? windowEnd : syncNow,
+      }
       const persistResult = await context.service.persistSyncResult(
         context.db,
         context.organizationId,
         normalized.orders,
-        { complete, fetchedCount: normalized.orders.length },
+        {
+          complete,
+          fetchedCount: normalized.orders.length,
+          window: reconcileWindow,
+        },
       )
       // Başarı/kısmi metadata'sını yaz (kilidi serbest bırakır + UI'ye "son
       // başarılı sync" zamanı sağlar). complete=true tam sync'i, aksi kısmî.
