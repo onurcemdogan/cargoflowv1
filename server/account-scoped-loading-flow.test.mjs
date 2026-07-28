@@ -138,8 +138,13 @@ test('PERF-10: ürün kataloğu background hydrate; sayfa provider ürün sync\'
   assert.match(app, /catalogPromise\.then\(\(cachedCatalog\) => \{/)
   // Ürün SENKRONU (fetchProducts) yalnız açık aksiyonla; mount onu tetiklemez.
   const svc = readSrc('src/services/orderWorkflowService.ts')
-  // loadProductsFromServer (DB okuma) sync'ten ayrıdır; POST /api/products/sync değil.
+  // Ürün sayfaları fetchProductsPage ile GET /api/products'tan okunur (DB);
+  // POST /api/products/sync (provider) DEĞİL. loadProductsFromServer bu yardımcıyı
+  // bounded paralel kullanır.
+  const pageFetch = sliceBlock(svc, 'private async fetchProductsPage(', 700)
+  assert.match(pageFetch, /\/api\/products\?/)
+  assert.doesNotMatch(pageFetch, /\/api\/products\/sync/)
   const load = sliceBlock(svc, 'async loadProductsFromServer()', 900)
   assert.doesNotMatch(load, /\/api\/products\/sync/)
-  assert.match(load, /\/api\/products\?/)
+  assert.match(load, /fetchProductsPage/)
 })

@@ -374,35 +374,61 @@ export class OrderWorkflowService {
     }
   }
 
-  // Auth modda sunucudan (GET /api/products) org-scoped TÜM katalog varyantlarını
-  // yükler (resolver/görsel eşleme tam katalog ister). Sayfa sayfa çekip birleştirir;
-  // in-memory cache'i günceller. Organization req.auth'tan çözülür.
+  // Tek ürün sayfası çeker (GET /api/products; server-side pagination, org+aktif
+  // hesap kapsamı backend'de). Ham payload localStorage'a YAZILMAZ.
+  private async fetchProductsPage(
+    page: number,
+    pageSize: number,
+  ): Promise<{ products: CargoProduct[]; total: number }> {
+    const params = new URLSearchParams({
+      page: String(page),
+      pageSize: String(pageSize),
+    })
+    const response = await fetch(`/api/products?${params.toString()}`, {
+      credentials: 'include',
+    })
+    if (!response.ok) {
+      throw new Error(`Ürünler yüklenemedi (${response.status}).`)
+    }
+    const payload = (await response.json()) as {
+      products?: CargoProduct[]
+      total?: number
+    }
+    const products = Array.isArray(payload.products) ? payload.products : []
+    return { products, total: Number(payload.total ?? products.length) }
+  }
+
+  // Auth modda sunucudan (GET /api/products) org+aktif-hesap kapsamlı TÜM katalog
+  // varyantlarını yükler (resolver/görsel eşleme tam katalog ister). Eski davranış
+  // ~60 SERİ istek yapıyordu (sayfa sayfa, her biri öncekini bekliyor) → yavaş.
+  // Yeni: ilk sayfayla toplam öğrenilir, kalan sayfalar SINIRLI EŞZAMANLILIKLA
+  // (BOUNDED, en fazla 4 paralel) çekilir — sınırsız paralel DEĞİL. Server-side
+  // pagination korunur; katalog tam yüklendiğinden görsel eşleme değişmez.
+  // İptal/nesil kontrolü ÇAĞIRANDADIR (App mount/account-switch stale sonucu
+  // generation ile discard eder; ham payload storage'a yazılmaz).
   async loadProductsFromServer(): Promise<CargoProduct[]> {
     const pageSize = 100
-    let page = 1
-    let total = Infinity
-    const all: CargoProduct[] = []
-    while (all.length < total) {
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: String(pageSize),
-      })
-      const response = await fetch(`/api/products?${params.toString()}`, {
-        credentials: 'include',
-      })
-      if (!response.ok) {
-        throw new Error(`Ürünler yüklenemedi (${response.status}).`)
+    const CONCURRENCY = 4
+    const MAX_PAGES = 1000 // güvenlik: sonsuz döngü koruması
+    const first = await this.fetchProductsPage(1, pageSize)
+    const total = first.total
+    const all: CargoProduct[] = [...first.products]
+    const totalPages = Math.min(
+      MAX_PAGES,
+      Math.max(1, Math.ceil(total / pageSize)),
+    )
+    // Kalan sayfalar bounded paralel batch'ler halinde.
+    for (let start = 2; start <= totalPages; start += CONCURRENCY) {
+      const pages: number[] = []
+      for (let p = start; p < start + CONCURRENCY && p <= totalPages; p += 1) {
+        pages.push(p)
       }
-      const payload = (await response.json()) as {
-        products?: CargoProduct[]
-        total?: number
-      }
-      const batch = Array.isArray(payload.products) ? payload.products : []
-      all.push(...batch)
-      total = Number(payload.total ?? all.length)
-      if (batch.length === 0) break
-      page += 1
-      if (page > 1000) break // güvenlik: sonsuz döngü koruması
+      const batches = await Promise.all(
+        pages.map((p) => this.fetchProductsPage(p, pageSize).then((r) => r.products)),
+      )
+      for (const products of batches) all.push(...products)
+      // Beklenenden erken biterse (boş sayfa) dur.
+      if (batches.some((products) => products.length === 0)) break
     }
     this.authProductsCache = all
     return all
