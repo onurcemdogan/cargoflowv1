@@ -833,9 +833,13 @@ app.post('/api/orders/sync', async (request, response) => {
       return
     }
 
-    const complete = Boolean(result.ok) && result.debug?.syncStatus === 'COMPLETE'
-    if (!result.ok) {
-      // Başarısız çekim: mevcut siparişlere DOKUNMA (silme/arşivleme/ezme yok).
+    const syncStatus = result.debug?.syncStatus
+    const partial = result.partial === true || syncStatus === 'PARTIAL'
+    const complete = Boolean(result.ok) && syncStatus === 'COMPLETE'
+    // TOTAL_FAILURE (hiçbir statü başarılı değil): gerçek başarısızlık → 502.
+    // Mevcut siparişlere DOKUNULMAZ (silme/arşivleme/ezme yok), reconcile yok,
+    // lastSuccessfulSyncAt değişmez. PARTIAL bu daldan GEÇMEZ (aşağıda 207).
+    if (!result.ok && !partial) {
       await recordOnboardingSyncState(context.db, context.organizationId, {
         provider: 'trendyol',
         resource: 'orders',
@@ -846,6 +850,9 @@ app.post('/api/orders/sync', async (request, response) => {
       response.status(502).json({
         ok: false,
         complete: false,
+        syncStatus: 'FAILED',
+        successfulStatuses: result.successfulStatuses ?? [],
+        failedStatuses: result.failedStatuses ?? [],
         message: `Trendyol sipariş senkronu başarısız: ${result.message}`,
         fetchedCount: 0,
         persistedCount: 0,
@@ -894,9 +901,33 @@ app.post('/api/orders/sync', async (request, response) => {
       // analitiği cache'i geçersizleşir; sonraki Dashboard isteği yeniden hesaplar.
       await invalidateTenantAnalyticsCache(context.organizationId)
       released = true
+      if (partial) {
+        // KISMİ başarı: uygulama hatası DEĞİL → HTTP 207 (2xx; tarayıcıda 502
+        // oluşmaz). Başarılı statülerin içeriği upsert edildi (reconcile
+        // ÇALIŞMADI, hiçbir kayıt arşivlenmedi). Frontend sarı warning ile
+        // başarılı/başarısız statüleri gösterir; mevcut liste korunur.
+        response.status(207).json({
+          ok: false,
+          complete: false,
+          partial: true,
+          syncStatus: 'PARTIAL',
+          successfulStatuses: result.successfulStatuses ?? [],
+          failedStatuses: result.failedStatuses ?? [],
+          message: result.message,
+          fetchedCount: persistResult.fetchedCount,
+          persistedCount: persistResult.persistedCount,
+          updatedCount: persistResult.updatedCount,
+          insertedCount: persistResult.insertedCount,
+          failedCount: persistResult.failedCount,
+          archivedCount: 0,
+          syncBatchId: persistResult.syncBatchId,
+        })
+        return
+      }
       response.json({
         ok: true,
         complete: persistResult.complete,
+        syncStatus: 'COMPLETE',
         fetchedCount: persistResult.fetchedCount,
         persistedCount: persistResult.persistedCount,
         updatedCount: persistResult.updatedCount,

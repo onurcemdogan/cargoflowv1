@@ -717,6 +717,10 @@ export class OrderWorkflowService {
       ok?: boolean
       code?: string
       complete?: boolean
+      partial?: boolean
+      syncStatus?: string
+      successfulStatuses?: string[]
+      failedStatuses?: Array<{ status?: string; httpStatus?: number | null; retryable?: boolean }>
       message?: string
       insertedCount?: number
       updatedCount?: number
@@ -767,17 +771,35 @@ export class OrderWorkflowService {
     }
 
     if (!syncOk) {
+      // KISMİ (HTTP 207) senkron: bazı statüler başarılı, bazıları başarısız.
+      // Tarayıcıda 502 OLUŞMAZ (2xx). Başarılı statülerin içeriği tazelendi,
+      // hiçbir kayıt silinmedi/arşivlenmedi. Kullanıcıya hangi statülerin
+      // başarısız olduğunu (ve yeniden denenebilir mi) bildir.
+      const partial = syncPayload.partial === true || syncPayload.syncStatus === 'PARTIAL'
+      const successfulStatuses = syncPayload.successfulStatuses ?? []
+      const failedStatuses = syncPayload.failedStatuses ?? []
+      const failedLabel = failedStatuses
+        .map((entry) => {
+          const retry = entry.retryable ? ' — yeniden denenebilir' : ''
+          return `${entry.status ?? 'bilinmeyen'}${retry}`
+        })
+        .join(', ')
+      const statusSummary = partial
+        ? ` Başarılı statüler: ${successfulStatuses.join(', ') || '—'}. Başarısız statüler: ${failedLabel || '—'}.`
+        : ''
       this.auditLogService.append({
         action: 'Siparişler çekildi',
         level: 'warning',
-        details: `${syncPayload.message ?? 'Senkron tamamlanamadı.'} Mevcut ${orders.length} sipariş korunuyor.`,
+        details: `${syncPayload.message ?? 'Senkron tamamlanamadı.'}${statusSummary} Mevcut ${orders.length} sipariş korunuyor.`,
       })
       return {
         orders,
         result: {
           level: 'warning',
           source: 'real',
-          message: `${syncPayload.message ?? 'Senkron tamamlanamadı.'} Kısmi/başarısız sonuç sunucu kaydını silmedi; ${orders.length} sipariş korundu.`,
+          message: `${
+            partial ? 'Senkron kısmi kaldı.' : syncPayload.message ?? 'Senkron tamamlanamadı.'
+          }${statusSummary} Sunucu kaydı silinmedi; ${orders.length} sipariş korundu.`,
         },
       }
     }
