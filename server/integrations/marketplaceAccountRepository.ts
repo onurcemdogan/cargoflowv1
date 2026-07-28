@@ -105,6 +105,60 @@ export async function resolveOrCreateActiveAccount(
   return account as MarketplaceAccount
 }
 
+// (org, marketplace, providerAccountId) hesabını READ-ONLY döner (yoksa null).
+// Hiçbir şey OLUŞTURMAZ/aktifleştirmez — dry-run ve doğrulama için güvenli.
+export async function getAccountByProviderAccountId(
+  db: Db,
+  organizationId: string,
+  marketplace: string,
+  providerAccountId: string,
+): Promise<MarketplaceAccount | null> {
+  const rows = await db
+    .select()
+    .from(marketplaceAccounts)
+    .where(
+      and(
+        eq(marketplaceAccounts.organizationId, organizationId),
+        eq(marketplaceAccounts.marketplace, marketplace),
+        eq(marketplaceAccounts.providerAccountId, providerAccountId),
+      ),
+    )
+    .limit(1)
+  return (rows[0] as MarketplaceAccount) ?? null
+}
+
+// Hesabı garanti eder ama AKTİFLİK durumuna DOKUNMAZ (aktifleştirmez/pasifleştirmez).
+// Backfill hedef hesabı için: eski/pasif bir hesabı, aktif hesabı değiştirmeden
+// oluşturabilmek/çözebilmek gerekir. resolveOrCreateActiveAccount'tan farkı budur.
+export async function ensureAccount(
+  db: Db,
+  organizationId: string,
+  marketplace: string,
+  providerAccountId: string,
+): Promise<MarketplaceAccount> {
+  const existing = await getAccountByProviderAccountId(
+    db,
+    organizationId,
+    marketplace,
+    providerAccountId,
+  )
+  if (existing) return existing
+  const now = new Date()
+  const [row] = await db
+    .insert(marketplaceAccounts)
+    .values({
+      organizationId,
+      marketplace,
+      providerAccountId,
+      displayName: buildAccountDisplayName(marketplace, providerAccountId),
+      isActive: false,
+      updatedAt: now,
+    })
+    .returning({ id: marketplaceAccounts.id })
+  const account = await getAccountById(db, organizationId, String(row.id))
+  return account as MarketplaceAccount
+}
+
 // (org, marketplace) için TEK aktif hesabı döner (yoksa null). Reads/writes bu
 // hesaba göre kapsamlanır.
 export async function getActiveAccount(

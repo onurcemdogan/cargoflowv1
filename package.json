@@ -28,6 +28,7 @@
     "db:import:legacy-shipments": "node server/shipments/importLegacyShipmentsCli.ts",
     "db:import:legacy-orders": "node server/orders/importLegacyOrdersCli.ts",
     "db:import:legacy-products": "node server/products/importLegacyProductsCli.ts",
+    "marketplace-account:backfill": "node server/integrations/backfillMarketplaceAccountCli.ts",
     "platform-admin:create": "node server/admin/createPlatformAdminCli.ts",
     "platform-admin:reset-password": "node server/admin/resetPlatformAdminPasswordCli.ts",
     "org-user:reset-password": "node server/admin/resetOrgUserPasswordCli.ts",
