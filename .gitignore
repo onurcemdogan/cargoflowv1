@@ -20,6 +20,8 @@ outputs/
 
 # Marketplace-account backfill manifest'leri (audit/rollback; git'e girmez)
 marketplace-account-backfill-*.json
+# Historical order backfill manifest'leri (audit; git'e girmez)
+order-backfill-*.json
 
 # Editor directories and files
 .vscode/*
