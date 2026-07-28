@@ -535,7 +535,10 @@ export function DashboardPage({
         >
           <div className="dashboard-skeleton dashboard-skeleton-cards" />
           <div className="dashboard-skeleton dashboard-skeleton-chart" />
-          <span>Satış analitiği yükleniyor…</span>
+          <span>
+            Satış analitiği yükleniyor… Operasyon verileri (aşağıda) zaten hazır;
+            bu bölüm bloklamıyor.
+          </span>
         </section>
       ) : (
         <>
