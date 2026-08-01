@@ -397,6 +397,16 @@ app.get('/api/local-config/integration', async (request, response) => {
         request.auth.organizationId,
         'orders',
       )
+      // Gönderi varsayılanları (varsayılan birim desi) KALICI olarak
+      // organization_settings'ten okunur; secret DEĞİLDİR, localStorage'a
+      // güvenilmez. Böylece sayfa yenilense de Ayarlar'daki desi korunur.
+      const { getShipmentDefaults } = await import(
+        './onboarding/shipmentDefaultsRepository.ts'
+      )
+      const shipmentDefaults = await getShipmentDefaults(
+        getDb(),
+        request.auth.organizationId,
+      )
       response.json({
         ok: true,
         mode: 'auth',
@@ -407,6 +417,7 @@ app.get('/api/local-config/integration', async (request, response) => {
           lastSyncStatus: ordersSyncState?.lastSyncStatus ?? null,
         },
         surat: status.surat,
+        desi: { defaultUnitDesi: shipmentDefaults.defaultUnitDesi },
       })
     } catch {
       response.status(500).json({
@@ -508,6 +519,18 @@ app.put('/api/local-config/integration', async (request, response) => {
           isActive: account.isActive,
         }
       }
+      // Gönderi varsayılanları (varsayılan birim desi) KALICI yazılır. Secret
+      // DEĞİLDİR; organization_settings.settings_json altında org kapsamında
+      // saklanır. Alan gönderilmezse mevcut değer KORUNUR (kısmi kayıt güvenli).
+      const { getShipmentDefaults, saveShipmentDefaults } = await import(
+        './onboarding/shipmentDefaultsRepository.ts'
+      )
+      let shipmentDefaults = await getShipmentDefaults(db, organizationId)
+      if (incoming.desi && typeof incoming.desi === 'object') {
+        shipmentDefaults = await saveShipmentDefaults(db, organizationId, {
+          defaultUnitDesi: incoming.desi.defaultUnitDesi,
+        })
+      }
       const status = await getMaskedIntegrationStatus(db, organizationId)
       response.json({
         ok: true,
@@ -515,6 +538,7 @@ app.put('/api/local-config/integration', async (request, response) => {
         configured: status.trendyol.configured || status.surat.configured,
         trendyol: status.trendyol,
         surat: status.surat,
+        desi: { defaultUnitDesi: shipmentDefaults.defaultUnitDesi },
         // Frontend bu bağlamı state reset için kullanır (hesap değişimi tespiti).
         activeMarketplaceAccount: activeAccount,
         message: 'Entegrasyon bilgileri organization için şifreli olarak saklandı.',
