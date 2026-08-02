@@ -37,7 +37,16 @@ function reprintShipment(over = {}) {
     barkodNo: '01252765588',
     barcodeValue: '01252765588',
     ozelKargoTakipNo: '7270034994447844',
-    barcodeRaw: '^XA^FO20,20^FD01252765588^FS^XZ',
+    // Sürat'in RESMÎ ZPL'ini temsil eden sentetik örnek (PII yok).
+    // Reprint bu artefaktı AYNEN basar; CargoFlow yeniden üretmez.
+    barcodeRaw: [
+      '^XA', '^CI28', '^PW799', '^LL799',
+      '^FO40,20^A0N,28,28^FDSube: MERKEZ^FS',
+      '^FO500,20^A0N,26,26^FDT.No: 11820824092123^FS',
+      '^FO60,120^BY3^BCN,140,Y,N,N^FD01252765588^FS',
+      '^FO60,560^BQN,2,6^FDLA,01252765588^FS',
+      '^XZ',
+    ].join('\n'),
     ...over,
   }
 }
@@ -110,7 +119,10 @@ test('REP-2: generateSingle kayıtlı ZPL YOK + desi=null → desi hatası (fres
         template: defaultLabelTemplate,
         mappingConfig: {},
       }),
-    /Desi bilgisi eksik/,
+    // Desi artık sipariş bazında GİRİLMEZ; kaynak Ayarlar'daki "Varsayılan
+    // Gönderi Desisi"dir. Tanımlı değilse fresh-create BLOKLANIR ve kullanıcı
+    // Ayarlar'a yönlendirilir (fresh-create koruması aynen sürüyor).
+    /Ayarlar/,
   )
 })
 

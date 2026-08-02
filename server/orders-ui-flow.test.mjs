@@ -275,8 +275,12 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     }),
   )
   assert.match(tableHtml, /cdn\.example\.com\/product\.jpg/)
-  assert.match(tableHtml, /Toplam koli desisi/)
-  assert.match(tableHtml, /11336194107 Toplam koli desisi/)
+  // Manuel desi girişi ("Desi Gir" + satır içi editör) KALDIRILDI: desi yalnız
+  // Ayarlar → "Varsayılan Gönderi Desisi" değerinden hesaplanır. Listede desi
+  // artık SALT OKUNUR gösterilir.
+  assert.equal(/Desi Gir/.test(tableHtml), false, 'Desi Gir butonu yok')
+  assert.equal(/Toplam koli desisi/.test(tableHtml), false, 'manuel desi editörü yok')
+  assert.match(tableHtml, /Desi:/, 'desi salt okunur gösterilir')
 
   const barcodeMatchedOrder = buildOrder()
   barcodeMatchedOrder.items[0].productContentId = ''

@@ -236,6 +236,11 @@ export interface Shipment {
   trendyolPreflight?: TrendyolShipmentPreflight
   addressNormalization?: AddressNormalizationDebug
   barcodeRaw?: string
+  // Persistence katmanının BarcodeRaw için kullandığı normalize alan adı
+  // (server buildSafeZplReference). barcodeRaw ile AYNI artefakttır.
+  technicalZpl?: string
+  technicalZplSha256?: string
+  technicalZplLength?: number
   zplSource?:
     | 'surat.ortakBarkod.BarcodeRaw'
     | 'surat.KargoBarkoduSiparis.PdfBarkod'
@@ -530,6 +535,7 @@ export interface SuratCreateLog {
   KargoTakipNo?: string
   Barcode?: string
   BarcodeRaw?: string
+  technicalZpl?: string
   barcodeSource?: string
   trackingSource?: string
   codeCandidates?: SuratCodeCandidates

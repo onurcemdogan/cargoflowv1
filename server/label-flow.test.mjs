@@ -77,18 +77,12 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
   assert.equal(labelData.barcodeSource, 'surat.ortakBarkod.Barcode')
 
   const provider = new ZebraZplLabelProvider()
-  const label = await provider.generateSingle({
-    order,
-    shipment,
-    template: buildTemplate(),
-  })
-  assert.equal(label.barcodeValue, '01231201025')
-  assert.match(label.zplContent, /FDT\.No: 25220148446193/)
-  assert.match(label.zplContent, /\^FD01231201025\^FS/)
-  // Sol dikey ray etiketi gerçek Sürat etiketindeki gibi "Siparis No:"dur
-  // (referans DEĞERİ değişmedi, yalnız başlık metni fotoğrafa hizalandı).
-  assert.match(label.zplContent, /Siparis No: 7270033563324593/)
-  assert.equal(label.zplSource, 'generated')
+  // Sürat'in RESMÎ ZPL'i yoksa CargoFlow ŞABLON ÜRETMEZ: fallback yerine açık
+  // hata. (Sahte/yanlış etiket basılmaz.)
+  await assert.rejects(
+    () => provider.generateSingle({ order, shipment, template: buildTemplate() }),
+    /Sürat resmî etiketi alınamadı/,
+  )
 
   const suratRawZpl =
     '^XA\n^FO20,20^A0N,30,30^FDSURAT RAW LABEL^FS\n^FO20,70^BCN,80,Y,N,N^FD01231201025^FS\n^XZ'
@@ -110,14 +104,22 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
     shipment: rawShipment,
     template: buildTemplate(),
   })
-  assert.equal(rawLabel.zplSource, 'generated')
+  // Provider ZPL'i BYTE-FOR-BYTE aynen basılır; buildZpl'den geçirilmez.
+  assert.equal(rawLabel.zplSource, 'surat.ortakBarkod.BarcodeRaw')
+  assert.equal(rawLabel.zplContent, suratRawZpl)
+  assert.equal(rawLabel.barcodeValue, '01231201025')
   assert.equal(rawLabel.desi, 2)
   assert.equal(rawLabel.desiSource, 'manual')
-  assert.match(rawLabel.zplContent, /\^FDTop Ds\/Kg\^FS/)
-  assert.match(rawLabel.zplContent, /\^FD2\.00\^FS/)
+  // CargoFlow provider ZPL'ine desi/ürün metni ENJEKTE ETMEZ.
+  assert.doesNotMatch(rawLabel.zplContent, /Top Ds\/Kg/)
+  assert.doesNotMatch(rawLabel.zplContent, /Siparis No:/)
+  assert.equal((rawLabel.zplContent.match(/\^XA/g) ?? []).length, 1)
 
+  // Provider ZPL'inin desisi CargoFlow hesabından farklıysa: uyarı verilir ama
+  // ZPL YENİDEN YAZILMAZ (resmî çıktı değiştirilmez).
   const mismatchedRawZpl =
-    '^XA\n^FO20,20^A0N,20,20^FDTop Ds/Kg^FS\n^FO20,45^A0N,30,30^FD1.00^FS\n^XZ'
+    '^XA\n^FO20,20^A0N,20,20^FDTop Ds/Kg^FS\n^FO20,45^A0N,30,30^FD1.00^FS\n' +
+    '^FO20,90^BCN,80,Y,N,N^FD01231201025^FS\n^XZ'
   const mismatchShipment = {
     ...rawShipment,
     barcodeRaw: mismatchedRawZpl,
@@ -138,8 +140,13 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
   assert.match(mismatchLabel.desiMismatchWarning, /farkl/i)
   assert.equal(mismatchLabel.desiDebug.apiResponseDesi, 1)
   assert.equal(mismatchLabel.desiDebug.finalNormalizedDesi, 2)
-  assert.equal(mismatchLabel.desiDebug.zplPrintedDesi, 2)
-  assert.match(mismatchLabel.zplContent, /\^FD2\.00\^FS/)
+  assert.equal(mismatchLabel.zplContent, mismatchedRawZpl)
+  assert.match(mismatchLabel.zplContent, /\^FD1\.00\^FS/)
+
+  // NOT: "canonical barkodu taşımayan provider ZPL'i reddedilir" kuralı
+  // validateOfficialSuratZpl seviyesinde OZ-11b'de doğrulanır. Buradaki
+  // fixture ZPL'i birden çok kaynaktan (rawResponse.parsedResponse dahil)
+  // çözdüğü için aynı kuralı bu katmanda kurmak yanıltıcı olurdu.
 
   const manualDesi = resolveNormalizedDesi({
     ...order,

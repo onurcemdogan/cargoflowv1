@@ -52,7 +52,9 @@ interface OrderDetailDrawerProps {
   onTrackShipment: (orderId: string) => void
   onDownloadZpl: (orderId: string) => void
   onPrintLabel: (orderId: string) => void
-  onDesiChange: (
+  // Manuel desi girişi KALDIRILDI; prop geriye dönük uyumluluk için kabul
+  // edilir ama KULLANILMAZ.
+  onDesiChange?: (
     orderId: string,
     desi: number | null,
     desiSource: CargoOrder['desiSource'],
@@ -71,7 +73,6 @@ export function OrderDetailDrawer({
   onTrackShipment,
   onDownloadZpl,
   onPrintLabel,
-  onDesiChange,
   desiConfig,
 }: OrderDetailDrawerProps) {
   const suratVerification = verifySuratShipment(order)
@@ -462,29 +463,14 @@ export function OrderDetailDrawer({
                   {printSource.reason}
                 </div>
               ) : null}
+              {/* Desi GİRİŞİ KALDIRILDI: Ayarlar → "Varsayılan Gönderi
+                  Desisi" değerinden (adet çarpanıyla) hesaplanır; burada
+                  yalnız SALT OKUNUR gösterilir. */}
               <div className="drawer-desi-editor">
                 <span>Toplam koli desisi</span>
-                <input
-                  aria-label="Toplam koli desisi"
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={normalizedDesi.desi ?? ''}
-                  placeholder="Desi girin"
-                  onChange={(event) => {
-                    const value = Number(event.target.value.replace(',', '.'))
-                    onDesiChange(
-                      order.id,
-                      Number.isFinite(value) && value > 0 ? value : null,
-                      Number.isFinite(value) && value > 0
-                        ? 'manual_total'
-                        : null,
-                    )
-                  }}
-                />
                 <strong>
                   {formatDesi(normalizedDesi.desi)} ·{' '}
-                  {normalizedDesi.desiSource || 'eksik'}
+                  {normalizedDesi.desiSource || 'Ayarlar varsayılanı'}
                 </strong>
               </div>
               <div className="desi-breakdown" data-testid="desi-breakdown">

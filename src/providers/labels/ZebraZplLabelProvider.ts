@@ -1,6 +1,6 @@
 import type { Label } from '../../types/cargoflow'
 import { createId } from '../../utils/ids'
-import { buildLabelData, type LabelData, type LabelDataItem } from '../../utils/labelData'
+import type { LabelData, LabelDataItem } from '../../utils/labelData'
 import {
   buildProductItemBlocks,
   paginateProductBlocks,
@@ -9,6 +9,11 @@ import {
 import { verifySuratShipment } from '../../utils/suratVerification'
 import { resolveSuratPrintEligibility } from '../../utils/suratPrintEligibility'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
+import { validateOfficialSuratZpl } from '../../utils/officialSuratLabel'
+import {
+  DEFAULT_DESI_MISSING_MESSAGE,
+  resolveEffectiveLabelDesi,
+} from '../../utils/labelDesi'
 import {
   buildDesiDebug,
   desiValuesDiffer,
@@ -20,7 +25,22 @@ import type { GenerateLabelInput, LabelProvider } from './LabelProvider'
 
 const LABEL_WIDTH_DOTS = 799
 const LABEL_HEIGHT_DOTS = 799
-const RAIL_WIDTH = 58
+// Referans etikette sol dikey ray DAR bir şerittir (önceki 58 çok genişti).
+const RAIL_WIDTH = 44
+// Çerçeve/ayraç kalınlığı: referans baskıda çizgiler İNCE (önceki 2 kalındı).
+const LINE = 1
+
+// Yatay bant sınırları (referans fotoğraftaki dikey oranlara göre).
+const Y_HEADER_END = 88
+const Y_BARCODE_END = 232
+const Y_RECIPIENT_END = 392
+const Y_SUMMARY_END = 452
+const Y_ROUTING_END = 690
+
+// Ödeme/birim/desi satırı üç eşit hücre (ray sağından etiket sonuna).
+const CELL_1 = RAIL_WIDTH
+const CELL_2 = 295
+const CELL_3 = 546
 
 // ── Ürün bölümü (etiket ALT şeridi) — sabit, deterministik yerleşim ─────────
 // Etiketin fiziksel yüksekliği (^LL799) DEĞİŞMEZ. Son yatay çizgi y=696'da,
@@ -38,18 +58,6 @@ const PRODUCT_META_FONT = 17
 const PRODUCT_TITLE_MAX_CHARS = 64
 const PRODUCT_META_MAX_CHARS = 72
 
-// ── DEVAM (continuation) ürün etiketi ───────────────────────────────────────
-// Ana etikete sığmayan ürünler için ek SAYFA(lar). Kargo barkodu/QR/T.No
-// İÇERMEZ, yeni gönderi OLUŞTURMAZ, desi/parça adedini DEĞİŞTİRMEZ; yalnız
-// ürün detayı taşır. Aynı ^PW/^LL (10×10 cm) kullanılır.
-const CONT_START_Y = 122
-const CONT_LINE_HEIGHT = 21
-const CONT_TITLE_FONT = 20
-const CONT_META_FONT = 18
-const CONT_TITLE_MAX_CHARS = 60
-const CONT_META_MAX_CHARS = 66
-// y = 122 + n*21 ≤ 742 (alt not için yer bırakılır) → 30 satır.
-const CONT_MAX_LINES = 30
 
 // Ortalama ^A0 (scalable) glif genişliği / yükseklik oranı. Metnin verilen
 // piksel genişliğine sığıp sığmadığını kestirmek için kullanılır.
@@ -160,9 +168,10 @@ function paginateProducts(items: LabelDataItem[]): LabelProductLine[][] {
     titleMaxChars: PRODUCT_TITLE_MAX_CHARS,
     metaMaxChars: PRODUCT_META_MAX_CHARS,
   })
+  // TEK fiziksel etiket: devam sayfası ÜRETİLMEZ.
   return paginateProductBlocks(blocks, {
     firstPageLines: PRODUCT_MAX_LINES,
-    continuationPageLines: CONT_MAX_LINES,
+    continuationPageLines: PRODUCT_MAX_LINES,
   })
 }
 
@@ -175,47 +184,25 @@ function productZplLines(page: LabelProductLine[]): string[] {
   })
 }
 
-// DEVAM ürün etiketi. Sürat takip barkodu (^BC), QR (^BQ), T.No veya yeni
-// gönderi YOKTUR; yalnız sipariş no + ürün detayı. Deterministiktir.
-function buildContinuationZpl(
-  labelData: LabelData,
-  page: LabelProductLine[],
-  pageIndex: number,
-  pageTotal: number,
-): string {
-  return [
-    '^XA',
-    '^CI28',
-    `^PW${LABEL_WIDTH_DOTS}`,
-    `^LL${LABEL_HEIGHT_DOTS}`,
-    '^LH0,0',
-    '^FO0,0^GB799,799,2^FS',
-    '^FO30,104^GB739,2,2^FS',
-    ...textField(30, 26, 30, '^FDSIPARIS URUNLERI - DEVAM^FS'),
-    `^FO30,68^A0N,22,22^FDSiparis No: ${zplSafe(labelData.orderNumber, 42)}^FS`,
-    `^FO520,68^A0N,20,20^FB249,1,0,R,0^FDSayfa ${pageIndex} / ${pageTotal}^FS`,
-    ...page.flatMap((line, index) => {
-      const y = CONT_START_Y + index * CONT_LINE_HEIGHT
-      const font = line.kind === 'title' ? CONT_TITLE_FONT : CONT_META_FONT
-      const maxChars =
-        line.kind === 'title' ? CONT_TITLE_MAX_CHARS : CONT_META_MAX_CHARS
-      return textField(30, y, font, `^FD${zplSafe(line.text, maxChars + 20)}^FS`)
-    }),
-    // Bu sayfanın kargo etiketi OLMADIĞI açıkça yazılır (yanlış okutma önlenir).
-    '^FO30,760^A0N,17,17^FDBu sayfa kargo etiketi degildir; kargo barkodu ve QR icermez.^FS',
-    '^XZ',
-  ].join('\n')
-}
 
 // Yönlendirme bandı metin genişliği: x=222'den küçük QR'ın (x=696) soluna.
-const ROUTE_WIDTH = 462
-// Dikey bütçe: "Adrese Teslim/1-1" satırlarının altından ürün çizgisinin (696) üstüne.
-const ROUTE_BAND_TOP = 598
-const ROUTE_BAND_BOTTOM = 694
+const ROUTE_X = 196
+const QR_LEFT_X = 56
+const QR_LEFT_Y = 468
+const QR_LEFT_MAG = 5
+const QR_RIGHT_X = 688
+const QR_RIGHT_Y = 468
+const QR_RIGHT_MAG = 3
+const ROUTE_WIDTH = 476
+// Dikey bütçe: parça/teslim satırlarının altından ürün çizgisinin üstüne.
+const ROUTE_BAND_TOP = 536
+const ROUTE_BAND_BOTTOM = Y_ROUTING_END - 4
 // İri→küçük punto merdiveni (kesme yerine güvenli küçültme).
-const ROUTE_FONT_LADDER = [50, 44, 38, 33, 28, 24]
+const ROUTE_FONT_LADDER = [48, 42, 36, 31, 27, 23]
 
-function buildZpl(labelData: LabelData): string {
+// NOT: Sürat için ARTIK KULLANILMAZ (resmî provider ZPL'i tek kaynak doğrusudur).
+// Diğer/legacy entegrasyonlar için korunur ve dışa açılır.
+export function buildZpl(labelData: LabelData): string {
   const trackingText = labelData.tNo || '-'
   const leftReference =
     labelData.leftVerticalReference ||
@@ -243,114 +230,107 @@ function buildZpl(labelData: LabelData): string {
     `^PW${LABEL_WIDTH_DOTS}`,
     `^LL${LABEL_HEIGHT_DOTS}`,
     '^LH0,0',
-    '^FO0,0^GB799,799,2^FS',
-    `^FO${RAIL_WIDTH},0^GB2,799,2^FS`,
-    '^FO58,96^GB741,2,2^FS',
-    '^FO58,240^GB741,2,2^FS',
-    '^FO58,440^GB741,2,2^FS',
-    '^FO58,520^GB741,2,2^FS',
-    '^FO58,696^GB741,2,2^FS',
+    // ── Çerçeve + İNCE ayraçlar (referans baskıdaki gibi) ────────────────
+    `^FO0,0^GB${LABEL_WIDTH_DOTS},${LABEL_HEIGHT_DOTS},${LINE}^FS`,
+    `^FO${RAIL_WIDTH},0^GB${LINE},${LABEL_HEIGHT_DOTS},${LINE}^FS`,
+    `^FO${RAIL_WIDTH},${Y_HEADER_END}^GB${799 - RAIL_WIDTH},${LINE},${LINE}^FS`,
+    `^FO${RAIL_WIDTH},${Y_BARCODE_END}^GB${799 - RAIL_WIDTH},${LINE},${LINE}^FS`,
+    `^FO${RAIL_WIDTH},${Y_RECIPIENT_END}^GB${799 - RAIL_WIDTH},${LINE},${LINE}^FS`,
+    `^FO${RAIL_WIDTH},${Y_SUMMARY_END}^GB${799 - RAIL_WIDTH},${LINE},${LINE}^FS`,
+    `^FO${RAIL_WIDTH},${Y_ROUTING_END}^GB${799 - RAIL_WIDTH},${LINE},${LINE}^FS`,
 
-    // ── Sol dikey ray: marka + sipariş referansı (gerçek etiketteki gibi). ──
-    ...['^FO14,92^A0B,24,24^FDSURAT KARGO^FS', '^FO15,92^A0B,24,24^FDSURAT KARGO^FS'],
-    `^FO16,600^A0B,17,17^FDSiparis No: ${zplSafe(leftReference, 48)}^FS`,
+    // ── Sol dikey DAR ray: marka + sipariş referansı ──────────────────────
+    ...['^FO10,84^A0B,22,22^FDSURAT KARGO^FS', '^FO11,84^A0B,22,22^FDSURAT KARGO^FS'],
+    `^FO12,600^A0B,15,15^FDSiparis No: ${zplSafe(leftReference, 48)}^FS`,
 
-    // ── Üst blok: Sube / GÖNDERİCİ adı / MUST.IRS.NO — sağda T.No (+ varsa
-    // gönderici TEL). Alıcı adı/telefonu BURAYA GİRMEZ; onlar yalnız ortadaki
-    // alıcı kutusundadır (gerçek etiket sözleşmesi).
-    ...textField(72, 12, 22, `^FDSube: ${zplSafe(labelData.branchName, 24)}^FS`),
-    ...textField(72, 38, 29, `^FD${zplUpper(labelData.senderName ?? '', 34)}^FS`),
-    `^FO72,70^A0N,18,18^FDMUST.IRS.NO: ${zplSafe(labelData.orderNumber, 42)}^FS`,
-    ...textField(500, 14, 22, `^FDT.No: ${zplSafe(trackingText, 30)}^FS`),
-    // Gönderici telefonu YALNIZ gerçekten varsa basılır (sahte numara YOK).
+    // ── Üst blok (kompakt): Sube / GÖNDERİCİ adı / MUST.IRS.NO — sağda T.No.
+    // Alıcı adı/telefonu BURAYA GİRMEZ (yalnız alıcı kutusunda).
+    ...textField(56, 8, 20, `^FDSube: ${zplSafe(labelData.branchName, 24)}^FS`),
+    ...textField(56, 32, 26, `^FD${zplUpper(labelData.senderName ?? '', 34)}^FS`),
+    `^FO56,62^A0N,16,16^FDMUST.IRS.NO: ${zplSafe(labelData.orderNumber, 42)}^FS`,
+    ...textField(480, 10, 20, `^FDT.No: ${zplSafe(trackingText, 30)}^FS`),
+    // Gönderici telefonu YALNIZ gerçekten varsa (alıcı telefonu BURAYA GİRMEZ).
     ...(senderPhone
-      ? [`^FO500,58^A0N,16,16^FDTEL: ${zplSafe(maskPhone(senderPhone), 20)}^FS`]
+      ? [`^FO480,42^A0N,15,15^FDTEL: ${zplSafe(maskPhone(senderPhone), 20)}^FS`]
       : []),
 
-    // ── Büyük yatay 1D barkod + altında okunabilir takip no (^BC ... ,Y,).
-    // PROVIDER İÇERİĞİ: barcodeValue aynen; kalınlaştırma UYGULANMAZ.
-    `^FO88,104^BY3,2,120^BCN,120,Y,N,N^FD${zplSafe(
-      labelData.barcodeValue,
-      60,
-    )}^FS`,
+    // ── Büyük 1D barkod: kullanılabilir yatay alanın neredeyse tamamı.
+    // PROVIDER İÇERİĞİ AYNEN; kalınlaştırma UYGULANMAZ.
+    `^FO88,98^BY4,2,110^BCN,110,Y,N,N^FD${zplSafe(labelData.barcodeValue, 60)}^FS`,
 
-    // ── Alıcı kutusu: ad, açık adres, telefon; sağ altta il/ilçe (varış).
-    // routeCenter burada TEK KEZ görünür (ayrı sağ hücrede tekrar edilmez).
-    '^FO68,250^GB720,180,1^FS',
-    ...textField(80, 260, 24, `^FD${zplUpper(labelData.recipientName, 38)}^FS`),
-    `^FO80,292^A0N,20,20^FB700,4,4,L,0^FD${zplUpper(labelData.address, 220)}^FS`,
-    `^FO80,398^A0N,18,18^FDTEL: ${zplSafe(
-      maskPhone(labelData.recipientPhone),
-      24,
-    )}^FS`,
-    `^FO420,398^A0N,20,20^FB360,1,0,R,0^FD${zplUpper(
-      labelData.routeCenter,
-      42,
-    )}^FS`,
+    // ── Alıcı kutusu: TEK geniş alan, dikey ayraç YOK, kompakt.
+    ...textField(56, 240, 22, `^FD${zplUpper(labelData.recipientName, 40)}^FS`),
+    `^FO56,268^A0N,18,18^FB731,3,3,L,0^FD${zplUpper(labelData.address, 220)}^FS`,
+    `^FO56,358^A0N,16,16^FDTEL: ${zplSafe(maskPhone(labelData.recipientPhone), 24)}^FS`,
+    `^FO420,358^A0N,18,18^FB367,1,0,R,0^FD${zplUpper(labelData.routeCenter, 42)}^FS`,
 
-    // ── Gönderi özeti: OdemeTipi / Birim / Top Ds/Kg (foto oranları).
-    '^FO58,440^GB247,80,1^FS',
-    '^FO305,440^GB247,80,1^FS',
-    '^FO552,440^GB247,80,1^FS',
-    '^FO74,450^A0N,17,17^FDOdemeTipi^FS',
-    '^FO318,450^A0N,17,17^FDBirim^FS',
-    '^FO566,450^A0N,17,17^FDTop Ds/Kg^FS',
-    ...textField(74, 478, 35, '^FDPOCH^FS'),
-    ...textField(318, 478, 35, '^FDKOLI^FS'),
-    ...textField(566, 478, 35, `^FD${desiKg}^FS`),
+    // ── Ödeme / Birim / Top Ds/Kg: ince ayraç, küçük başlık, kontrollü kalın değer.
+    `^FO${CELL_2},${Y_RECIPIENT_END}^GB${LINE},${Y_SUMMARY_END - Y_RECIPIENT_END},${LINE}^FS`,
+    `^FO${CELL_3},${Y_RECIPIENT_END}^GB${LINE},${Y_SUMMARY_END - Y_RECIPIENT_END},${LINE}^FS`,
+    `^FO${CELL_1 + 12},398^A0N,15,15^FDOdemeTipi^FS`,
+    `^FO${CELL_2 + 12},398^A0N,15,15^FDBirim^FS`,
+    `^FO${CELL_3 + 12},398^A0N,15,15^FDTop Ds/Kg^FS`,
+    ...textField(CELL_1 + 12, 418, 28, '^FDPOCH^FS'),
+    ...textField(CELL_2 + 12, 418, 28, '^FDKOLI^FS'),
+    ...textField(CELL_3 + 12, 418, 28, `^FD${desiKg}^FS`),
 
-    // ── Yönlendirme bandı: sol büyük QR, Parca Adedi / Adrese Teslim,
-    // altında iki KALIN satır (varış şubesi + aktarma merkezi), sağda küçük QR.
+    // ── Yönlendirme: sol BÜYÜK QR, orta parça/teslim + rota, sağ KÜÇÜK QR.
     // QR payload'ları provider içeriğidir; AYNEN korunur.
-    `^FO74,538^BQN,2,7^FDLA,${zplSafe(
+    `^FO${QR_LEFT_X},${QR_LEFT_Y}^BQN,2,${QR_LEFT_MAG}^FDLA,${zplSafe(
       `${labelData.orderNumber}|${labelData.barcodeValue}`,
       90,
     )}^FS`,
-    '^FO222,528^A0N,20,20^FDParca Adedi^FS',
-    ...textField(222, 556, 38, '^FD1 / 1^FS'),
-    ...textField(344, 528, 36, '^FDAdrese Teslim^FS'),
-    // Uzun metin KESİLMEZ: sığan en iri punto seçilir, gerekirse ^FB ile en
-    // fazla 2 satıra sarılır. Genişlik küçük QR'ın (x=696) solunda biter →
-    // QR alanına taşma yok.
+    `^FO${ROUTE_X},462^A0N,17,17^FDParca Adedi^FS`,
+    ...textField(ROUTE_X, 484, 32, '^FD1 / 1^FS'),
+    ...textField(ROUTE_X + 130, 462, 30, '^FDAdrese Teslim^FS'),
+    // Uzun metin KESİLMEZ: sığan en iri punto, gerekirse 2 satır; sağ QR'a taşmaz.
     ...routingRows.flatMap((row) =>
       textField(
-        222,
+        ROUTE_X,
         row.y,
         row.font,
         `^FB${ROUTE_WIDTH},${row.lines},0,L,0^FD${row.text}^FS`,
       ),
     ),
-    `^FO696,540^BQN,2,4^FDLA,${zplSafe(labelData.barcodeValue, 60)}^FS`,
+    `^FO${QR_RIGHT_X},${QR_RIGHT_Y}^BQN,2,${QR_RIGHT_MAG}^FDLA,${zplSafe(
+      labelData.barcodeValue,
+      60,
+    )}^FS`,
 
     // En alt: ürün/model, renk, beden, varyant, SKU, barkod (ilk sayfa).
     ...productZplLines(productPages[0] ?? []),
     '^XZ',
-    // Sığmayan ürünler için DEVAM etiketleri (aynı ZPL akışında ayrı sayfalar).
-    // Kargo barkodu/QR/T.No YOK; desi ve parça adedi DEĞİŞMEZ.
-    ...productPages
-      .slice(1)
-      .map((page, index) =>
-        buildContinuationZpl(
-          labelData,
-          page,
-          index + 2,
-          productPages.length,
-        ),
-      ),
   ].join('\n')
 }
 
 export class ZebraZplLabelProvider implements LabelProvider {
   async generateSingle(input: GenerateLabelInput): Promise<Label> {
-    const { order, shipment, template, mappingConfig } = input
-    const labelData = buildLabelData(order, shipment, template, mappingConfig)
+    const { order, shipment, template } = input
+    // NOT: Sürat etiket İÇERİĞİ artık buildLabelData/buildZpl'den ÜRETİLMEZ;
+    // provider'ın resmî ZPL'i aynen kullanılır. Bu yüzden burada yalnız
+    // doğrulama ve desi için gereken canonical alanlar çözülür.
     const verification = verifySuratShipment(order, shipment)
-    const normalizedDesi = resolveNormalizedDesi(order, shipment)
+    // Efektif desi: kayıtlı/geçmiş değer varsa o; yoksa Ayarlar'daki
+    // "Varsayılan Gönderi Desisi" × adet (mevcut çarpan sözleşmesi).
+    // Kullanıcı sipariş bazında desi GİRMEZ.
+    const effectiveDesi = resolveEffectiveLabelDesi(
+      order,
+      shipment,
+      input.products ?? [],
+      input.desiConfig,
+    )
+    const baseDesi = resolveNormalizedDesi(order, shipment)
+    const normalizedDesi = {
+      ...baseDesi,
+      desi: effectiveDesi.desi ?? baseDesi.desi,
+      desiSource: effectiveDesi.desiSource ?? baseDesi.desiSource,
+    }
     // Render ve click AYNI eligibility helper'ını kullanır: VERIFIED veya
     // LABEL_READY_AWAITING_ACCEPTANCE + T.No + barkod etiket üretebilir.
     // Eski verifiedShipment / dispatchRegistrationConfirmed / Serendip
-    // zorunluluğu kaldırıldı. Not: bu sağlayıcı ZPL'i KENDİSİ ürettiği için
-    // Sürat ham ZPL'inin varlığı burada şart değildir.
+    // zorunluluğu kaldırıldı. Bu ilk kapı YALNIZ kimlik kapısıdır (T.No +
+    // barkod çözülebiliyor mu). Sürat'in resmî ZPL'inin varlığı aşağıda,
+    // validateOfficialSuratZpl ile ayrıca ZORUNLU tutulur.
     const eligibility = resolveSuratPrintEligibility(order, shipment)
     const printableState =
       eligibility.verified || eligibility.awaitingAcceptance
@@ -364,9 +344,14 @@ export class ZebraZplLabelProvider implements LabelProvider {
         : 'T.No veya barkod çözülemedi.'
       throw new Error(`Etiket yazdırılamadı: ${reason}`)
     }
+    // Persistence katmanı provider BarcodeRaw'ını `technicalZpl` adı altında
+    // normalize eder (server buildSafeZplReference). Bu yüzden technicalZpl de
+    // resmî ZPL kaynağıdır ve zincire DAHİLDİR.
     const apiBarcodeRaw = resolveSuratBarcodeRawZpl(
       shipment.barcodeRaw,
+      shipment.technicalZpl,
       shipment.suratCreateLog?.BarcodeRaw,
+      shipment.suratCreateLog?.technicalZpl,
       verification.barcodeRaw,
     )
     // KAYITLI taşıyıcı ZPL'i (reprint) varsa doğrudan o basılır: yeni ZPL
@@ -374,39 +359,37 @@ export class ZebraZplLabelProvider implements LabelProvider {
     // CargoFlow'un üreteceği (kayıtlı ZPL yok — fresh create / legacy HTML)
     // durumda çalışır. Böylece daha önce basılmış (LABEL_PRINTED) siparişte
     // "Etiketi Yazdır" desi istemeden kayıtlı etiketi yeniden basar.
+    // Kayıtlı taşıyıcı ZPL (reprint) varsa desi GEREKMEZ; eski etiket aynen
+    // basılır. Yalnız YENİ etiket üretiminde efektif desi zorunludur ve
+    // kaynağı Ayarlar'daki varsayılandır (per-order desi girişi YOK).
     const hasPersistedZpl = Boolean(apiBarcodeRaw)
     if (!hasPersistedZpl && normalizedDesi.desi == null) {
       throw new Error(
-        'Desi bilgisi eksik. Etiket oluşturmadan önce sipariş desisini girin.',
+        effectiveDesi.blockedReason ?? DEFAULT_DESI_MISSING_MESSAGE,
       )
-    }
-    const officialSource = eligibility.verified
-      ? verification.barcodeSource || 'surat.verifiedBarcode'
-      : 'surat.create.preassignedBarkod'
-    const liveLabelData: LabelData = {
-      ...labelData,
-      tNo: eligibility.trackingNumber,
-      trackingNumber: eligibility.trackingNumber,
-      barcodeValue: eligibility.barcode,
-      mainBarcodeValue: eligibility.barcode,
-      barcodeSource: officialSource,
-      tNoSource: eligibility.verified
-        ? verification.tNoSource
-        : 'surat.create.preassignedTNo',
-      mainBarcodeSource: officialSource,
     }
     const apiResponseDesi = extractZplDesi(apiBarcodeRaw)
     const desiMismatch = desiValuesDiffer(
       normalizedDesi.desi,
       apiResponseDesi,
     )
-    // Reprint: kayıtlı taşıyıcı ZPL'i olduğu gibi kullanılır. Fresh create:
-    // canonical alanlardan üretilir.
-    // Etiket içeriği HER ZAMAN canonical alanlardan yeniden üretilir (temiz
-    // CargoFlow ZPL). Reprint'te tek fark desi DOĞRULAMASININ atlanmasıdır;
-    // içerik üretimi/kaynağı değişmez (fresh-create ile aynı davranış korunur).
-    const zplContent = buildZpl(liveLabelData)
-    const zplSource = 'generated'
+    // ── TEK KAYNAK DOĞRUSU: SÜRAT'İN RESMÎ ZPL'İ ────────────────────────────
+    // Sürat etiketi CargoFlow tarafından yeniden TASARLANMAZ. Provider'ın kendi
+    // ZPL'i (OrtakBarkodOlustur → BarcodeRaw) doğrulanır ve BYTE-FOR-BYTE aynen
+    // kullanılır: ^PW/^LL/^FO/^GB/^BC/^BQ, font, rota ve kutu koordinatlarına
+    // DOKUNULMAZ, buildZpl'den GEÇİRİLMEZ. Devam/ikinci sayfa ÜRETİLMEZ.
+    //
+    // Resmî ZPL yoksa veya doğrulamayı geçmezse CargoFlow şablonuna FALLBACK
+    // YAPILMAZ; kullanıcıya açık hata verilir (sahte/yanlış etiket basılmaz).
+    const official = validateOfficialSuratZpl(apiBarcodeRaw, {
+      trackingNumber: eligibility.trackingNumber,
+      barcode: eligibility.barcode,
+    })
+    if (!official.ok) {
+      throw new Error(`Sürat resmî etiketi alınamadı: ${official.reason}`)
+    }
+    const zplContent = official.zpl
+    const zplSource = 'surat.ortakBarkod.BarcodeRaw'
     const desiMismatchWarning = desiMismatch
       ? 'API’den dönen etiket desisi, CargoFlow önizlemesinden farklı.'
       : undefined

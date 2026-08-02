@@ -15,6 +15,7 @@ import type {
   ProductCatalogCacheMetadata,
   Shipment,
   SuratLabelMappingConfig,
+  TenantDesiConfig,
   TrendyolProductSyncDebug,
   WorkflowResult,
 } from '../types/cargoflow'
@@ -254,6 +255,15 @@ export class OrderWorkflowService {
     this.labelProvider = labelProvider
     this.printProvider = printProvider
     this.auditLogService = auditLogService
+  }
+
+  // Ayarlar → "Varsayılan Gönderi Desisi". Kullanıcı sipariş bazında desi
+  // GİRMEZ; yeni etiketlerin desisi bu konfigürasyondan (adet çarpanıyla)
+  // hesaplanır. App entegrasyon ayarları yüklendiğinde/değiştiğinde çağırır.
+  private tenantDesiConfig?: TenantDesiConfig
+
+  setDesiConfig(config?: TenantDesiConfig): void {
+    this.tenantDesiConfig = config
   }
 
   // Auth modu integrationConfigService tespitinden (auth/me + integration
@@ -1804,6 +1814,7 @@ export class OrderWorkflowService {
         shipment,
         template,
         mappingConfig,
+        desiConfig: this.tenantDesiConfig,
       })
       apiDebugService.append({
         provider: 'Sürat',
@@ -1927,6 +1938,7 @@ export class OrderWorkflowService {
         shipment,
         template,
         mappingConfig,
+        desiConfig: this.tenantDesiConfig,
       })
       if (label.desiMismatchWarning) {
         desiMismatchOrders.push(order.orderNumber)
@@ -2062,6 +2074,7 @@ export class OrderWorkflowService {
         shipment,
         template,
         mappingConfig,
+        desiConfig: this.tenantDesiConfig,
       })
       printableOrders.push({
         ...order,

@@ -5,7 +5,7 @@ import {
   MoveDown,
   MoveUp,
 } from 'lucide-react'
-import { Fragment, useState } from 'react'
+import { Fragment } from 'react'
 import type { CargoOrder, CargoProduct, OrderItem } from '../types/cargoflow'
 import { resolveNormalizedDesi } from '../utils/desi'
 import { formatCurrency } from '../utils/formatters'
@@ -38,6 +38,8 @@ interface OrdersTableProps {
   sortKey: OrdersSortKey
   sortDirection: OrdersSortDirection
   onSortChange: (sortKey: OrdersSortKey) => void
+  // NOT: manuel desi girişi KALDIRILDI (Ayarlar varsayılanı kullanılır).
+  // Prop geriye dönük uyumluluk için kabul edilir ama KULLANILMAZ.
   onDesiChange?: (
     orderId: string,
     desi: number | null,
@@ -59,11 +61,9 @@ export function OrdersTable({
   sortKey,
   sortDirection,
   onSortChange,
-  onDesiChange,
   emptyMessage = 'Veri bulunamadı.',
   emptyDetails = [],
 }: OrdersTableProps) {
-  const [desiEditorOrderId, setDesiEditorOrderId] = useState<string>()
   const allSelected =
     orders.length > 0 && orders.every((order) => selectedIds.includes(order.id))
 
@@ -128,7 +128,6 @@ export function OrdersTable({
                 order.marketplaceStatus,
               )
               const normalizedDesi = resolveNormalizedDesi(order)
-              const editingDesi = desiEditorOrderId === order.id
 
               return (
                 <Fragment key={order.id}>
@@ -213,34 +212,8 @@ export function OrdersTable({
                             })
                           : '-'}
                       </span>
-                      {editingDesi && onDesiChange ? (
-                        <label className="orders-inline-desi-editor">
-                          <span>Toplam koli desisi</span>
-                          <input
-                            type="number"
-                            min="0.01"
-                            step="0.01"
-                            autoFocus
-                            aria-label={`${order.orderNumber} Toplam koli desisi`}
-                            value={normalizedDesi.desi ?? ''}
-                            placeholder="Desi girin"
-                            onChange={(event) => {
-                              const value = Number(
-                                event.target.value.replace(',', '.'),
-                              )
-                              onDesiChange(
-                                order.id,
-                                Number.isFinite(value) && value > 0
-                                  ? value
-                                  : null,
-                                Number.isFinite(value) && value > 0
-                                  ? 'manual_total'
-                                  : null,
-                              )
-                            }}
-                          />
-                        </label>
-                      ) : null}
+                      {/* Satır içi desi düzenleyici KALDIRILDI (yukarıdaki
+                          "Desi" değeri salt okunur gösterimdir). */}
                     </td>
                     <td>
                       <div className="orders-row-actions">
@@ -251,21 +224,10 @@ export function OrdersTable({
                         >
                           Detay
                         </button>
-                        {onDesiChange ? (
-                          <button
-                            type="button"
-                            className="orders-compact-button"
-                            aria-label={`${order.orderNumber} Toplam koli desisi`}
-                            aria-expanded={editingDesi}
-                            onClick={() =>
-                              setDesiEditorOrderId(
-                                editingDesi ? undefined : order.id,
-                              )
-                            }
-                          >
-                            Desi Gir
-                          </button>
-                        ) : null}
+                        {/* "Desi Gir" KALDIRILDI: yeni etiketlerin desisi
+                            Ayarlar → "Varsayılan Gönderi Desisi" değerinden
+                            (adet çarpanıyla) hesaplanır; sipariş bazında manuel
+                            desi girişi YOKTUR. */}
                         <details className="orders-more-menu">
                           <summary aria-label={`${order.orderNumber} diğer işlemler`}>
                             <MoreVertical size={17} />

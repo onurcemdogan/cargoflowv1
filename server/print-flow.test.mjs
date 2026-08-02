@@ -155,9 +155,11 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
     shipment: readyOrder.shipment,
     template: buildTemplate(),
   })
-  assert.equal(previewLabel.zplSource, 'generated')
+  // Önizleme = BASILACAK olanla AYNI ZPL: Sürat'in resmî çıktısı.
+  assert.equal(previewLabel.zplSource, 'surat.ortakBarkod.BarcodeRaw')
+  assert.equal(previewLabel.zplContent, readyOrder.shipment.barcodeRaw)
+  assert.equal((previewLabel.zplContent.match(/\^XA/g) ?? []).length, 1)
   assert.equal(previewLabel.desi, 2)
-  assert.match(previewLabel.zplContent, /\^FD2\.00\^FS/)
   assert.equal(readyOrder.labelStatus, 'READY')
   assert.equal(readyOrder.operationStatus, 'LABEL_READY')
 
@@ -193,7 +195,8 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   assert.ok(printed.label.printedAt)
   assert.equal(printed.label.printCount, 1)
   assert.equal(printed.label.printedBy, 'local user')
-  assert.equal(printed.label.printSource, 'generated')
+  // Fiziksel baskı da Sürat'in resmî ZPL'ini kullanır (CargoFlow şablonu DEĞİL).
+  assert.equal(printed.label.printSource, 'surat.ortakBarkod.BarcodeRaw')
   assert.equal(printed.label.printHistory.length, 1)
   assert.equal(printed.label.printHistory[0].type, 'PRINT')
   assert.equal(isLabelPrinted(printed), true)
