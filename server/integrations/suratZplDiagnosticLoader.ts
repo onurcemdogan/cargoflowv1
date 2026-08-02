@@ -14,13 +14,17 @@ import { decryptShipmentPayload } from '../shipments/shipmentEncryption.ts'
 import { getAccountByProviderAccountId } from './marketplaceAccountRepository.ts'
 import {
   extractSuratLabelArtifact,
+  SURAT_PROVIDER_ALIASES,
   type SuratLabelArtifactInput,
 } from './suratZplDiagnostic.ts'
 
 export interface DiagnosticScope {
   organizationId: string
   marketplace: string
-  provider: string
+  // Boş bırakılırsa BİLİNEN TÜM Sürat kimlikleri taranır ('surat',
+  // 'surat-kargo'). Tek bir isme sabitlemek, kullanıcının yanlış isim vermesi
+  // hâlinde kayıtları SESSİZCE sıfırlar — bu yüzden varsayılan alias listesidir.
+  providers?: string[]
   providerAccountId?: string
   limit: number
 }
@@ -30,6 +34,15 @@ export interface LoadedArtifacts {
   undecryptableCount: number
   accountResolved: boolean
   scopedPackageCount: number | null
+  providersScanned: string[]
+}
+
+export function resolveProviderFilter(providers?: string[]): string[] {
+  const explicit = (providers ?? []).map((p) => p.trim()).filter(Boolean)
+  if (explicit.length === 0) return [...SURAT_PROVIDER_ALIASES]
+  // Verilen isimleri KORU ama bilinen alias'ları da ekle: yanlış/eksik isim
+  // yüzünden gerçek kayıtlar taranmadan "0 kayıt" raporlanmasın.
+  return [...new Set([...explicit, ...SURAT_PROVIDER_ALIASES])]
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -53,7 +66,8 @@ export async function loadSuratLabelArtifacts(
   db: Db,
   scope: DiagnosticScope,
 ): Promise<LoadedArtifacts> {
-  const { organizationId, marketplace, provider, limit } = scope
+  const { organizationId, marketplace, limit } = scope
+  const providers = resolveProviderFilter(scope.providers)
   let scopedPackageIds: string[] | null = null
 
   if (scope.providerAccountId) {
@@ -69,6 +83,7 @@ export async function loadSuratLabelArtifacts(
         undecryptableCount: 0,
         accountResolved: false,
         scopedPackageCount: 0,
+        providersScanned: providers,
       }
     }
     // shipments tablosunda marketplaceAccountId YOKTUR; hesap kapsamı orders
@@ -105,7 +120,7 @@ export async function loadSuratLabelArtifacts(
       .where(
         and(
           eq(shipments.organizationId, organizationId),
-          eq(shipments.provider, provider),
+          inArray(shipments.provider, providers),
           ...(scopedPackageIds
             ? [inArray(shipments.packageId, scopedPackageIds)]
             : []),
@@ -139,7 +154,7 @@ export async function loadSuratLabelArtifacts(
         .where(
           and(
             eq(shipmentOperations.organizationId, organizationId),
-            eq(shipmentOperations.provider, provider),
+            inArray(shipmentOperations.provider, providers),
             ...(scopedPackageIds
               ? [inArray(shipmentOperations.packageId, scopedPackageIds)]
               : []),
@@ -165,5 +180,6 @@ export async function loadSuratLabelArtifacts(
     undecryptableCount,
     accountResolved: true,
     scopedPackageCount: scopedPackageIds?.length ?? null,
+    providersScanned: providers,
   }
 }

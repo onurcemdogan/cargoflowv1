@@ -33,7 +33,10 @@ export function resolvePersistedLabelArtifact(
   const verification = verifySuratShipment(order, shipment)
   const zpl = resolveSuratBarcodeRawZpl(
     shipment?.barcodeRaw,
+    // Persistence katmanı BarcodeRaw'ı `technicalZpl` adıyla saklar.
+    shipment?.technicalZpl,
     shipment?.suratCreateLog?.BarcodeRaw,
+    shipment?.suratCreateLog?.technicalZpl,
     verification.barcodeRaw,
   )
   if (zpl) {

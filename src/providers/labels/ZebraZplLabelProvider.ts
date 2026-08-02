@@ -344,9 +344,14 @@ export class ZebraZplLabelProvider implements LabelProvider {
         : 'T.No veya barkod çözülemedi.'
       throw new Error(`Etiket yazdırılamadı: ${reason}`)
     }
+    // Persistence katmanı provider BarcodeRaw'ını `technicalZpl` adı altında
+    // normalize eder (server buildSafeZplReference). Bu yüzden technicalZpl de
+    // resmî ZPL kaynağıdır ve zincire DAHİLDİR.
     const apiBarcodeRaw = resolveSuratBarcodeRawZpl(
       shipment.barcodeRaw,
+      shipment.technicalZpl,
       shipment.suratCreateLog?.BarcodeRaw,
+      shipment.suratCreateLog?.technicalZpl,
       verification.barcodeRaw,
     )
     // KAYITLI taşıyıcı ZPL'i (reprint) varsa doğrudan o basılır: yeni ZPL

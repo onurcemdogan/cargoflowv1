@@ -53,10 +53,13 @@ async function main(): Promise<number> {
     return 1
   }
 
+  // --provider verilmezse BİLİNEN TÜM Sürat kimlikleri taranır. Verilse bile
+  // alias'lar eklenir; yanlış isim yüzünden "0 kayıt" raporlanmasın.
+  const providerArg = parseArg('provider')
   const scope = {
     organizationId,
     marketplace: parseArg('marketplace') ?? 'Trendyol',
-    provider: parseArg('provider') ?? 'surat-kargo',
+    providers: providerArg ? [providerArg] : undefined,
     providerAccountId: parseArg('provider-account-id'),
     limit: Math.min(
       MAX_LIMIT,
@@ -74,6 +77,9 @@ async function main(): Promise<number> {
   const decision = decideSuratZplReadiness(report)
 
   console.info(`${TAG} SALT OKUNUR tarama tamamlandı (DB değişmedi).`)
+  console.info(
+    `${TAG} Taranan provider kimlikleri: ${loaded.providersScanned.join(', ')}`,
+  )
   console.info(JSON.stringify(report, null, 2))
   if (loaded.scopedPackageCount === 0) {
     console.info(`${TAG} Bu hesapta sipariş yok; taranacak kayıt bulunamadı.`)
