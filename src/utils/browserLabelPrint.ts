@@ -710,9 +710,17 @@ export function buildCleanLabelHtml(
     .surat-barcode {
       display: grid;
       place-items: stretch;
-      padding: .4mm 1mm 0;
+      /* Alt bosluk (2mm) ZORUNLU: insan-okunur barkod numarasi ile bolum
+         ayirici cizgisi arasinda net beyaz alan birakir. Onceki 0 degeri
+         rakamlarin tabanini cizgiye yapistiriyordu. Negatif margin YOK;
+         sayi ve cizgi ayri layout akisinda. */
+      padding: .4mm 1mm 2.3mm;
+      overflow: visible;
     }
-    .surat-barcode svg { width: 100%; height: 20.5mm; display: block; }
+    /* Yukseklik 20.5 -> 18.5mm: alt bosluk eklendigi icin satir yuksekligi
+       (21.5mm) asilmaz. YATAY geometri (cubuk genisligi, 10X sessiz alan)
+       preserveAspectRatio='none' sayesinde bundan ETKILENMEZ. */
+    .surat-barcode svg { width: 100%; height: 18.2mm; display: block; }
     /* Referans: adres kutusu TEK bölmedir; sağda ayrı kutu YOKTUR.
        Alt satırda solda alıcı telefonu, sağda il/ilçe bulunur. */
     .surat-address {
@@ -1078,7 +1086,10 @@ function renderBarcodeSvg(value: string): string {
     margin: 0,
     displayValue: true,
     fontSize: 16,
-    textMargin: 3,
+    // Cubuklar ile insan-okunur sayi arasindaki bosluk (intrinsic birim).
+    // 3 -> 8: 20.5mm'lik alanda ~0.7mm yerine ~1.8mm gorsel bosluk verir;
+    // termal baskida rakamlarin tepesi cubuklara degmez.
+    textMargin: 8,
   })
   // Çubuklar gövdeye yayılır AMA her iki yanda 10X sessiz alan korunur.
   // Sessiz alan viewBox'a gömüldüğü için çubuklarla AYNI katsayıyla ölçeklenir

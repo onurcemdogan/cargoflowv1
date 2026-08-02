@@ -36,7 +36,8 @@ export function BarcodePreview({
         margin,
         displayValue,
         fontSize,
-        textMargin: 4,
+        // Baski ile AYNI: cubuk -> sayi arasi guvenli bosluk.
+        textMargin: 8,
       })
       // Baskı yoluyla AYNI sessiz alan kuralı (tek kaynak).
       applyScalableQuietZone(svgRef.current, width)
