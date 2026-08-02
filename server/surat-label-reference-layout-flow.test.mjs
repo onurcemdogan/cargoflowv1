@@ -327,3 +327,87 @@ test('REF-18: önizleme ve baskı AYNI sessiz alan yardımcısını kullanır', 
     assert.match(src, /margin: 0|margin = 0/, `${name}: JsBarcode margin'i devre dışı`)
   }
 })
+
+// ── ürün alanı sığdırma: sessiz kırpma YOK ────────────────────────────────
+
+test('REF-19: sığdırma kademeli — önce normal punto, sonra minimuma kadar küçültme', async () => {
+  const { resolveProductFit, PRODUCT_FIT_TIERS } = await load(
+    '/src/utils/labelProductFit.ts')
+  const one = [{ productName: 'Saten Elbise', quantity: 1, color: 'Lacivert', size: '40', sku: 'sku1' }]
+  const fitOne = resolveProductFit({ items: one, availableWidthMm: 89, availableHeightMm: 9.4 })
+  assert.equal(fitOne.fits, true)
+  assert.deepEqual(fitOne.tier, PRODUCT_FIT_TIERS[0], 'tek ürün NORMAL puntoda kalır')
+
+  // İki ürün: sığmak için bir alt kademeye iner ama yine sığar.
+  const two = [...one, { productName: 'Pantolon Modeli', quantity: 2, color: 'Mavi', size: '42', sku: 'pnt77' }]
+  const fitTwo = resolveProductFit({ items: two, availableWidthMm: 89, availableHeightMm: 9.4 })
+  assert.equal(fitTwo.fits, true)
+  assert.ok(fitTwo.tier.titlePt < PRODUCT_FIT_TIERS[0].titlePt, 'punto küçüldü')
+  assert.ok(
+    fitTwo.tier.titlePt >= PRODUCT_FIT_TIERS[PRODUCT_FIT_TIERS.length - 1].titlePt,
+    'minimumun altına inilmedi',
+  )
+})
+
+test('REF-20: uzun ürün adı SESSİZCE kırpılmaz; kırpma CSS\'i kaldırıldı', async () => {
+  const LONG = 'Zara Saten Tesettür Elbise Drapeli Uzun Abiye Elbise Dik Yaka Şık Özel Gün Elbisesi ttzeyna44.40'
+  const out = await html([{ id: 'l1', quantity: 1, productName: LONG, color: 'Lacivert', size: '40', sku: 'ttzeyna44' }])
+  // Ürün adı TAM olarak yer alır (kesme yok).
+  assert.ok(out.includes(LONG), 'uzun ad tam basılır')
+  assert.ok(out.includes('(Renk: Lacivert, Beden: 40) [ttzeyna44]'), 'meta korunur')
+  // Ürün bloğunda kırpma/ellipsis yok.
+  const productCss = out.slice(out.indexOf('.surat-product {'), out.indexOf('@media print'))
+  assert.equal(/overflow: hidden/.test(productCss), false, 'overflow:hidden yok')
+  assert.equal(/text-overflow: ellipsis/.test(productCss), false, 'ellipsis yok')
+  assert.match(productCss, /white-space: normal/)
+  assert.match(productCss, /\.surat-product-multi \{ overflow: visible/)
+  // Tek sayfa korunur.
+  assert.equal((out.match(/class="label-page"/g) ?? []).length, 1)
+})
+
+test('REF-21: sığmayan içerik SESSİZCE basılmaz, açık hata verir', async () => {
+  const { PRODUCT_OVERFLOW_MESSAGE } = await load('/src/utils/labelProductFit.ts')
+  const LONG = 'Zara Saten Tesettür Elbise Drapeli Uzun Abiye Elbise Dik Yaka Şık Özel Gün Elbisesi ttzeyna44.40'
+  await assert.rejects(
+    () => html([
+      { id: 'l1', quantity: 1, productName: LONG, color: 'Lacivert', size: '40', sku: 'uzun1' },
+      { id: 'l2', quantity: 1, productName: LONG + ' IKINCI MODEL', color: 'Kırmızı', size: '38', sku: 'uzun2' },
+    ]),
+    new RegExp(PRODUCT_OVERFLOW_MESSAGE.replace('.', '\.')),
+    'sessiz kırpma yerine açık hata',
+  )
+  assert.match(PRODUCT_OVERFLOW_MESSAGE, /tek etikete sığmıyor/)
+})
+
+test('REF-22: Renk / Beden / SKU meta satırı ASLA atılmaz', async () => {
+  const { resolveProductFit, buildProductMetaText } = await load(
+    '/src/utils/labelProductFit.ts')
+  const item = { productName: 'Ürün', quantity: 1, color: 'Lacivert', size: '40', sku: 'sku1' }
+  // Meta metni her kademede aynı içerikte kalır (kısaltma/atma YOK).
+  assert.equal(buildProductMetaText(item), '(Renk: Lacivert, Beden: 40) [sku1]')
+  const fit = resolveProductFit({ items: [item], availableWidthMm: 89, availableHeightMm: 9.4 })
+  assert.ok(fit.lineCount >= 2, 'başlık + meta satırı birlikte sayılır')
+  // Eksik alanlarda boş parantez basılmaz.
+  assert.equal(buildProductMetaText({ productName: 'X', quantity: 1 }), '')
+  assert.equal(buildProductMetaText({ productName: 'X', quantity: 1, sku: 's' }), '[s]')
+})
+
+test('REF-23: önizleme ile baskı AYNI sığdırma sözleşmesini kullanır', () => {
+  const preview = readFileSync(
+    join(here, '..', 'src/components/LabelHtmlPreview.tsx'), 'utf8')
+  const print = readFileSync(
+    join(here, '..', 'src/utils/browserLabelPrint.ts'), 'utf8')
+  for (const [name, src] of [['önizleme', preview], ['baskı', print]]) {
+    assert.match(src, /resolveProductFit/, `${name} ortak sığdırmayı kullanır`)
+  }
+  assert.match(preview, /PRODUCT_OVERFLOW_MESSAGE/, 'önizleme de uyarır')
+  // Önizlemede line-clamp/kırpma kaldırıldı.
+  const css = readFileSync(join(here, '..', 'src/index.css'), 'utf8')
+  // Yorumlar çıkarılır; aksi hâlde açıklama metni yanlış alarm verir.
+  const section = css
+    .slice(css.indexOf('.surat-product-section'), css.indexOf('.label-preview-card'))
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+  assert.equal(/-webkit-line-clamp/.test(section), false, 'line-clamp kaldırıldı')
+  assert.equal(/overflow: hidden/.test(section), false, 'overflow:hidden kaldırıldı')
+  assert.match(section, /overflow: visible/)
+})

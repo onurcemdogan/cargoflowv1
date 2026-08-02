@@ -253,7 +253,9 @@ test('Çoklu ürünlü sipariş yazdırılabilir model ve etiket üretir', async
   )
   // Referans biçimi; çoklu satırlarda da aynı sözleşme.
   assert.ok(multiHtml.includes('(Renk: Bordo, Beden: 38)'))
-  assert.equal((multiHtml.match(/<article class="label-page">/g) ?? []).length, 1)
+  // article artik sigdirma degiskenlerini style ile tasir; TEK sayfa
+  // invaryanti class uzerinden dogrulanir.
+  assert.equal((multiHtml.match(/class="label-page"/g) ?? []).length, 1)
 
   // Legacy kayıt (11425963017 birebir): raw ZPL yok, canonical alanlar tam.
   // canPrint=true (canonical_html), canDownloadZpl=false, ZPL indirme
@@ -320,7 +322,9 @@ test('Çoklu ürünlü sipariş yazdırılabilir model ve etiket üretir', async
   assert.ok(legacyHtml.includes('data-barcode-value="01250312435"'))
   assert.ok(legacyHtml.includes('data-qr-value="7270034562631323"'))
   assert.ok(legacyHtml.includes('11722641149218'))
-  assert.equal((legacyHtml.match(/<article class="label-page">/g) ?? []).length, 1)
+  // article artik sigdirma degiskenlerini style ile tasir; TEK sayfa
+  // invaryanti class uzerinden dogrulanir.
+  assert.equal((legacyHtml.match(/class="label-page"/g) ?? []).length, 1)
   assert.ok(legacyHtml.includes('surat-product-multi'))
 
   // Kritik alan (adres) eksikse baskı engellenir ve neden açıktır.
@@ -344,18 +348,41 @@ test('Çoklu ürünlü sipariş yazdırılabilir model ve etiket üretir', async
     true,
   )
 
-  // D) Uzun ürün adları: renderer throw etmez, tek sayfa kalır.
-  const longName =
-    'Çok Uzun Ürün Adı ' + 'Saten Detaylı Şifon Astarlı Tesettür Abiye '.repeat(6)
-  const longHtml = renderPrintableLabelHtml(
+  // D) Uzun ürün adları — SÖZLEŞME DEĞİŞTİ:
+  // Eskiden fazla içerik CSS ile SESSİZCE kırpılırdı. Artık önce punto
+  // kademeli küçültülür; hiçbir kademede sığmıyorsa renderer AÇIK hata verir
+  // (sessiz kırpma yok). Tek sayfa invaryantı her iki durumda da korunur.
+  const moderateName = 'Saten Detaylı Şifon Astarlı Tesettür Abiye'
+  const moderateHtml = renderPrintableLabelHtml(
     buildLabelData({
       items: [
-        { productName: longName, quantity: 2, sku: 'SKU-L1', color: 'Siyah', size: '38' },
-        { productName: `${longName} B`, quantity: 1, sku: 'SKU-L2', color: 'Bordo', size: '40' },
+        { productName: moderateName, quantity: 2, sku: 'SKU-L1', color: 'Siyah', size: '38' },
+        { productName: `${moderateName} B`, quantity: 1, sku: 'SKU-L2', color: 'Bordo', size: '40' },
       ],
       totalQuantity: 3,
     }),
   )
-  assert.equal((longHtml.match(/<article class="label-page">/g) ?? []).length, 1)
-  assert.ok(longHtml.includes('surat-product-multi'))
+  // Sığdırılabilen çoklu ürün: tek sayfa, TAM detay, kırpma yok.
+  assert.equal((moderateHtml.match(/class="label-page"/g) ?? []).length, 1)
+  assert.ok(moderateHtml.includes('surat-product-multi'))
+  assert.ok(moderateHtml.includes('[SKU-L1]'))
+  assert.ok(moderateHtml.includes('[SKU-L2]'))
+  assert.ok(moderateHtml.includes('(Renk: Bordo, Beden: 40)'))
+
+  // Gerçekten sığmayan içerik: SESSİZCE basılmaz, açık hata verir.
+  const longName =
+    'Çok Uzun Ürün Adı ' + 'Saten Detaylı Şifon Astarlı Tesettür Abiye '.repeat(6)
+  assert.throws(
+    () =>
+      renderPrintableLabelHtml(
+        buildLabelData({
+          items: [
+            { productName: longName, quantity: 2, sku: 'SKU-L1', color: 'Siyah', size: '38' },
+            { productName: `${longName} B`, quantity: 1, sku: 'SKU-L2', color: 'Bordo', size: '40' },
+          ],
+          totalQuantity: 3,
+        }),
+      ),
+    /tek etikete sığmıyor/,
+  )
 })

@@ -15,6 +15,12 @@ import {
   resolveSuratPrintEligibility,
 } from './suratPrintEligibility'
 import { formatDesi } from './desi'
+import {
+  buildProductMetaText,
+  buildProductTitleText,
+  PRODUCT_OVERFLOW_MESSAGE,
+  resolveProductFit,
+} from './labelProductFit'
 
 // Her etiket sayfası kendi bağımsız (immutable) modelini kullanır; bir
 // siparişin kodları başka siparişe sızamaz.
@@ -807,34 +813,44 @@ export function buildCleanLabelHtml(
     .surat-destination-normal { font-size: 9.5pt; }
     .surat-destination-small { font-size: 7.5pt; }
     .surat-transfer { font-size: 8.5pt !important; }
+    /* Urun alani: SESSIZ KIRPMA YOK. Metin sarilir; sigmazsa punto
+       resolveProductFit ile kademeli kucultulur (--product-* degiskenleri).
+       Hicbir kademede sigmazsa render ACIK hata verir. */
     .surat-product {
-      padding: 1.5mm 2mm;
+      padding: 1.2mm 2mm;
+      overflow: visible;
     }
     .surat-product strong,
     .surat-product span {
       display: block;
-      overflow: hidden;
       font-weight: 900;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: break-word;
+      word-break: normal;
+      line-height: var(--product-line-height, 1.15);
     }
-    .surat-product strong { font-size: 8pt; }
-    .surat-product span { font-size: 7pt; margin-top: .5mm; }
-    /* Çoklu ürün: satırlar kayıpsız sarılır, alan taşarsa gizlenir ki
-       etiket TEK sayfada kalsın. Tekli kurallar yukarıda aynen durur. */
-    .surat-product-multi { overflow: hidden; }
+    .surat-product strong { font-size: var(--product-title-size, 8pt); }
+    .surat-product span {
+      font-size: var(--product-meta-size, 7pt);
+      margin-top: .3mm;
+    }
+    /* Coklu urun: satirlar kayipsiz sarilir. overflow:hidden KALDIRILDI —
+       icerik sessizce gizlenmez; sigdirma punto kademesiyle yapilir. */
+    .surat-product-multi { overflow: visible; }
     .surat-product-multi .surat-product-line { margin-top: .4mm; }
     .surat-product-multi .surat-product-line:first-child { margin-top: 0; }
     .surat-product-multi strong,
     .surat-product-multi span {
       white-space: normal;
-      text-overflow: clip;
       overflow-wrap: break-word;
       word-break: normal;
-      line-height: 1.05;
+      line-height: var(--product-line-height, 1.05);
     }
-    .surat-product-multi strong { font-size: 6.5pt; }
-    .surat-product-multi span { font-size: 6pt; margin-top: 0; }
+    .surat-product-multi strong { font-size: var(--product-title-size, 6.5pt); }
+    .surat-product-multi span {
+      font-size: var(--product-meta-size, 6pt);
+      margin-top: 0;
+    }
     @media print {
       html, body {
         width: ${widthMm}mm;
@@ -849,25 +865,6 @@ export function buildCleanLabelHtml(
 </head>
 <body>${pages.join('')}</body>
 </html>`
-}
-
-// Referans etiketteki alt ürün meta biçimi:
-//   "(Renk: {renk}, Beden: {beden}) [{sku/varyant/model kodu}]"
-// Eksik alanlar sessizce atlanır; hiçbiri yoksa boş string döner (boş parantez
-// veya boş köşeli parantez BASILMAZ).
-function buildReferenceProductMeta(item?: {
-  color?: string
-  size?: string
-  sku?: string
-}): string {
-  if (!item) return ''
-  const attrs = [
-    item.color ? `Renk: ${item.color}` : '',
-    item.size ? `Beden: ${item.size}` : '',
-  ].filter(Boolean)
-  const grouped = attrs.length > 0 ? `(${attrs.join(', ')})` : ''
-  const code = item.sku ? `[${item.sku}]` : ''
-  return [grouped, code].filter(Boolean).join(' ')
 }
 
 export function renderPrintableLabelHtml(data: LabelData): string {
@@ -895,10 +892,32 @@ export function renderPrintableLabelHtml(data: LabelData): string {
     routeCenter.length > 24
       ? 'surat-destination-small'
       : 'surat-destination-normal'
-  const productTitle = item
-    ? `${item.quantity || 1} x ${item.productName}`
-    : 'Ürün bilgisi yok'
-  const productMeta = buildReferenceProductMeta(item)
+  const productTitle = item ? buildProductTitleText(item) : 'Ürün bilgisi yok'
+  const productMeta = buildProductMetaText(item ?? {
+    productName: '',
+    quantity: 1,
+  })
+  // Alt urun alanina sigdirma: govde 93mm, urun satiri icin kullanilabilir
+  // yukseklik ~9.4mm (100mm etiket - sabit satirlar - padding). Sigmazsa
+  // punto kademeli kucultulur; hicbir kademede sigmazsa ACIK hata.
+  const productFit = resolveProductFit({
+    items: (data.items ?? []).map((line) => ({
+      productName: String(line.productName ?? ''),
+      quantity: Number(line.quantity) || 1,
+      color: line.color,
+      size: line.size,
+      sku: line.sku,
+    })),
+    availableWidthMm: 89,
+    availableHeightMm: 9.4,
+  })
+  if (!productFit.fits) {
+    throw new Error(PRODUCT_OVERFLOW_MESSAGE)
+  }
+  const productStyle =
+    `--product-title-size:${productFit.tier.titlePt}pt;` +
+    `--product-meta-size:${productFit.tier.metaPt}pt;` +
+    `--product-line-height:${productFit.tier.lineHeight}`
   // Çoklu ürün: tüm satırlar footer'da listelenir (kayıpsız, sarmalı).
   // Tekli sipariş markup'ı regression baseline'dır ve birebir korunur.
   const multipleItems = data.items.length > 1
@@ -908,7 +927,13 @@ export function renderPrintableLabelHtml(data: LabelData): string {
               .map((line) => {
                 // Çoklu üründe de ÖZET DEĞİL tam detay: ad + adet + renk +
                 // beden + sku. "+X ürün daha" ÜRETİLMEZ.
-                const lineMeta = buildReferenceProductMeta(line)
+                const lineMeta = buildProductMetaText({
+                  productName: String(line.productName ?? ''),
+                  quantity: Number(line.quantity) || 1,
+                  color: line.color,
+                  size: line.size,
+                  sku: line.sku,
+                })
                 return `<div class="surat-product-line"><strong>${escapeHtml(
                   `${line.quantity || 1} x ${line.productName}`,
                 )}</strong>${
@@ -923,7 +948,7 @@ export function renderPrintableLabelHtml(data: LabelData): string {
           </footer>`
 
   return `
-      <article class="label-page">
+      <article class="label-page" style="${productStyle}">
         <aside class="surat-rail">
           <strong>SURAT KARGO</strong>
           <span>Siparis No: ${escapeHtml(leftReference)}</span>

@@ -9,6 +9,10 @@ import type {
 import { buildLabelData, type LabelData, type LabelDataItem } from '../utils/labelData'
 import { formatDesi } from '../utils/desi'
 import { BarcodePreview } from './BarcodePreview'
+import {
+  PRODUCT_OVERFLOW_MESSAGE,
+  resolveProductFit,
+} from '../utils/labelProductFit'
 import { QrCodeSvg } from './QrCodeSvg'
 
 interface LabelHtmlPreviewProps {
@@ -57,6 +61,18 @@ export function LabelHtmlPreview({
     'Ürün bilgisi yok'
   const productMeta =
     overrides?.productMeta ?? formatProductMeta(primaryItem)
+  // Onizleme, baski ile AYNI sigdirma hesabini kullanir (preview == print).
+  const productFit = resolveProductFit({
+    items: (data.items ?? []).map((line) => ({
+      productName: String(line.productName ?? ''),
+      quantity: Number(line.quantity) || 1,
+      color: line.color,
+      size: line.size,
+      sku: line.sku,
+    })),
+    availableWidthMm: 89,
+    availableHeightMm: 9.4,
+  })
   const branchName = overrides?.branchName || data.branchName
   const recipientName = overrides?.recipientName || data.recipientName
   const barcodeValue = data.barcodeValue
@@ -87,18 +103,11 @@ export function LabelHtmlPreview({
       22,
       14,
     )}px`,
-    '--label-product-title-size': `${fitFont(
-      typography.productTitle,
-      productTitle,
-      56,
-      9,
-    )}px`,
-    '--label-product-meta-size': `${fitFont(
-      typography.productMeta,
-      productMeta,
-      62,
-      8,
-    )}px`,
+    // Baski yoluyla AYNI sigdirma sozlesmesi (resolveProductFit): once normal
+    // punto, sigmazsa minimuma kadar kademeli kucultme. Kirpma YOK.
+    '--label-product-title-size': `${productFit.tier.titlePt}pt`,
+    '--label-product-meta-size': `${productFit.tier.metaPt}pt`,
+    '--label-product-line-height': `${productFit.tier.lineHeight}`,
   } as CSSProperties
 
   return (
@@ -193,8 +202,16 @@ export function LabelHtmlPreview({
           </section>
 
           <footer className="surat-section surat-product-section">
-            <strong>{productTitle}</strong>
-            <span>{productMeta}</span>
+            {productFit.fits ? (
+              <>
+                <strong>{productTitle}</strong>
+                <span>{productMeta}</span>
+              </>
+            ) : (
+              <strong className="surat-product-overflow">
+                {PRODUCT_OVERFLOW_MESSAGE}
+              </strong>
+            )}
           </footer>
         </div>
       </article>

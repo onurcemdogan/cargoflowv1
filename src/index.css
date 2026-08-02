@@ -2807,22 +2807,24 @@ button:disabled {
   padding: 7px 9px;
 }
 
+/* SESSIZ KIRPMA YOK: -webkit-line-clamp ve overflow:hidden kaldirildi.
+   Metin sarilir; sigdirma punto kademesiyle (resolveProductFit) yapilir. */
 .surat-product-section strong,
 .surat-product-section span {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
+  overflow: visible;
   font-weight: 900;
-  -webkit-box-orient: vertical;
+  white-space: normal;
+  overflow-wrap: break-word;
+  line-height: var(--label-product-line-height, 1.15);
 }
 
 .surat-product-section strong {
   font-size: var(--label-product-title-size, 11px);
-  -webkit-line-clamp: 2;
 }
 
 .surat-product-section span {
   font-size: var(--label-product-meta-size, 9px);
-  -webkit-line-clamp: 2;
 }
 
 .label-preview-card {
