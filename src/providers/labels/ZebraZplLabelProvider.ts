@@ -1,6 +1,6 @@
 import type { Label } from '../../types/cargoflow'
 import { createId } from '../../utils/ids'
-import { buildLabelData, type LabelData, type LabelDataItem } from '../../utils/labelData'
+import type { LabelData, LabelDataItem } from '../../utils/labelData'
 import {
   buildProductItemBlocks,
   paginateProductBlocks,
@@ -9,6 +9,7 @@ import {
 import { verifySuratShipment } from '../../utils/suratVerification'
 import { resolveSuratPrintEligibility } from '../../utils/suratPrintEligibility'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
+import { validateOfficialSuratZpl } from '../../utils/officialSuratLabel'
 import {
   DEFAULT_DESI_MISSING_MESSAGE,
   resolveEffectiveLabelDesi,
@@ -57,18 +58,6 @@ const PRODUCT_META_FONT = 17
 const PRODUCT_TITLE_MAX_CHARS = 64
 const PRODUCT_META_MAX_CHARS = 72
 
-// ── DEVAM (continuation) ürün etiketi ───────────────────────────────────────
-// Ana etikete sığmayan ürünler için ek SAYFA(lar). Kargo barkodu/QR/T.No
-// İÇERMEZ, yeni gönderi OLUŞTURMAZ, desi/parça adedini DEĞİŞTİRMEZ; yalnız
-// ürün detayı taşır. Aynı ^PW/^LL (10×10 cm) kullanılır.
-const CONT_START_Y = 122
-const CONT_LINE_HEIGHT = 21
-const CONT_TITLE_FONT = 20
-const CONT_META_FONT = 18
-const CONT_TITLE_MAX_CHARS = 60
-const CONT_META_MAX_CHARS = 66
-// y = 122 + n*21 ≤ 742 (alt not için yer bırakılır) → 30 satır.
-const CONT_MAX_LINES = 30
 
 // Ortalama ^A0 (scalable) glif genişliği / yükseklik oranı. Metnin verilen
 // piksel genişliğine sığıp sığmadığını kestirmek için kullanılır.
@@ -179,9 +168,10 @@ function paginateProducts(items: LabelDataItem[]): LabelProductLine[][] {
     titleMaxChars: PRODUCT_TITLE_MAX_CHARS,
     metaMaxChars: PRODUCT_META_MAX_CHARS,
   })
+  // TEK fiziksel etiket: devam sayfası ÜRETİLMEZ.
   return paginateProductBlocks(blocks, {
     firstPageLines: PRODUCT_MAX_LINES,
-    continuationPageLines: CONT_MAX_LINES,
+    continuationPageLines: PRODUCT_MAX_LINES,
   })
 }
 
@@ -194,37 +184,6 @@ function productZplLines(page: LabelProductLine[]): string[] {
   })
 }
 
-// DEVAM ürün etiketi. Sürat takip barkodu (^BC), QR (^BQ), T.No veya yeni
-// gönderi YOKTUR; yalnız sipariş no + ürün detayı. Deterministiktir.
-function buildContinuationZpl(
-  labelData: LabelData,
-  page: LabelProductLine[],
-  pageIndex: number,
-  pageTotal: number,
-): string {
-  return [
-    '^XA',
-    '^CI28',
-    `^PW${LABEL_WIDTH_DOTS}`,
-    `^LL${LABEL_HEIGHT_DOTS}`,
-    '^LH0,0',
-    '^FO0,0^GB799,799,2^FS',
-    '^FO30,104^GB739,2,2^FS',
-    ...textField(30, 26, 30, '^FDSIPARIS URUNLERI - DEVAM^FS'),
-    `^FO30,68^A0N,22,22^FDSiparis No: ${zplSafe(labelData.orderNumber, 42)}^FS`,
-    `^FO520,68^A0N,20,20^FB249,1,0,R,0^FDSayfa ${pageIndex} / ${pageTotal}^FS`,
-    ...page.flatMap((line, index) => {
-      const y = CONT_START_Y + index * CONT_LINE_HEIGHT
-      const font = line.kind === 'title' ? CONT_TITLE_FONT : CONT_META_FONT
-      const maxChars =
-        line.kind === 'title' ? CONT_TITLE_MAX_CHARS : CONT_META_MAX_CHARS
-      return textField(30, y, font, `^FD${zplSafe(line.text, maxChars + 20)}^FS`)
-    }),
-    // Bu sayfanın kargo etiketi OLMADIĞI açıkça yazılır (yanlış okutma önlenir).
-    '^FO30,760^A0N,17,17^FDBu sayfa kargo etiketi degildir; kargo barkodu ve QR icermez.^FS',
-    '^XZ',
-  ].join('\n')
-}
 
 // Yönlendirme bandı metin genişliği: x=222'den küçük QR'ın (x=696) soluna.
 const ROUTE_X = 196
@@ -241,7 +200,9 @@ const ROUTE_BAND_BOTTOM = Y_ROUTING_END - 4
 // İri→küçük punto merdiveni (kesme yerine güvenli küçültme).
 const ROUTE_FONT_LADDER = [48, 42, 36, 31, 27, 23]
 
-function buildZpl(labelData: LabelData): string {
+// NOT: Sürat için ARTIK KULLANILMAZ (resmî provider ZPL'i tek kaynak doğrusudur).
+// Diğer/legacy entegrasyonlar için korunur ve dışa açılır.
+export function buildZpl(labelData: LabelData): string {
   const trackingText = labelData.tNo || '-'
   const leftReference =
     labelData.leftVerticalReference ||
@@ -339,25 +300,15 @@ function buildZpl(labelData: LabelData): string {
     // En alt: ürün/model, renk, beden, varyant, SKU, barkod (ilk sayfa).
     ...productZplLines(productPages[0] ?? []),
     '^XZ',
-    // Sığmayan ürünler için DEVAM etiketleri (aynı ZPL akışında ayrı sayfalar).
-    // Kargo barkodu/QR/T.No YOK; desi ve parça adedi DEĞİŞMEZ.
-    ...productPages
-      .slice(1)
-      .map((page, index) =>
-        buildContinuationZpl(
-          labelData,
-          page,
-          index + 2,
-          productPages.length,
-        ),
-      ),
   ].join('\n')
 }
 
 export class ZebraZplLabelProvider implements LabelProvider {
   async generateSingle(input: GenerateLabelInput): Promise<Label> {
-    const { order, shipment, template, mappingConfig } = input
-    const labelData = buildLabelData(order, shipment, template, mappingConfig)
+    const { order, shipment, template } = input
+    // NOT: Sürat etiket İÇERİĞİ artık buildLabelData/buildZpl'den ÜRETİLMEZ;
+    // provider'ın resmî ZPL'i aynen kullanılır. Bu yüzden burada yalnız
+    // doğrulama ve desi için gereken canonical alanlar çözülür.
     const verification = verifySuratShipment(order, shipment)
     // Efektif desi: kayıtlı/geçmiş değer varsa o; yoksa Ayarlar'daki
     // "Varsayılan Gönderi Desisi" × adet (mevcut çarpan sözleşmesi).
@@ -377,8 +328,9 @@ export class ZebraZplLabelProvider implements LabelProvider {
     // Render ve click AYNI eligibility helper'ını kullanır: VERIFIED veya
     // LABEL_READY_AWAITING_ACCEPTANCE + T.No + barkod etiket üretebilir.
     // Eski verifiedShipment / dispatchRegistrationConfirmed / Serendip
-    // zorunluluğu kaldırıldı. Not: bu sağlayıcı ZPL'i KENDİSİ ürettiği için
-    // Sürat ham ZPL'inin varlığı burada şart değildir.
+    // zorunluluğu kaldırıldı. Bu ilk kapı YALNIZ kimlik kapısıdır (T.No +
+    // barkod çözülebiliyor mu). Sürat'in resmî ZPL'inin varlığı aşağıda,
+    // validateOfficialSuratZpl ile ayrıca ZORUNLU tutulur.
     const eligibility = resolveSuratPrintEligibility(order, shipment)
     const printableState =
       eligibility.verified || eligibility.awaitingAcceptance
@@ -411,37 +363,28 @@ export class ZebraZplLabelProvider implements LabelProvider {
         effectiveDesi.blockedReason ?? DEFAULT_DESI_MISSING_MESSAGE,
       )
     }
-    const officialSource = eligibility.verified
-      ? verification.barcodeSource || 'surat.verifiedBarcode'
-      : 'surat.create.preassignedBarkod'
-    const liveLabelData: LabelData = {
-      ...labelData,
-      // Etikette basılan desi EFEKTİF desidir (Ayarlar varsayılanı × adet ya da
-      // kayıtlı/geçmiş değer); sipariş bazında girilen desi YOKTUR.
-      desi: normalizedDesi.desi,
-      desiSource: normalizedDesi.desiSource,
-      tNo: eligibility.trackingNumber,
-      trackingNumber: eligibility.trackingNumber,
-      barcodeValue: eligibility.barcode,
-      mainBarcodeValue: eligibility.barcode,
-      barcodeSource: officialSource,
-      tNoSource: eligibility.verified
-        ? verification.tNoSource
-        : 'surat.create.preassignedTNo',
-      mainBarcodeSource: officialSource,
-    }
     const apiResponseDesi = extractZplDesi(apiBarcodeRaw)
     const desiMismatch = desiValuesDiffer(
       normalizedDesi.desi,
       apiResponseDesi,
     )
-    // Reprint: kayıtlı taşıyıcı ZPL'i olduğu gibi kullanılır. Fresh create:
-    // canonical alanlardan üretilir.
-    // Etiket içeriği HER ZAMAN canonical alanlardan yeniden üretilir (temiz
-    // CargoFlow ZPL). Reprint'te tek fark desi DOĞRULAMASININ atlanmasıdır;
-    // içerik üretimi/kaynağı değişmez (fresh-create ile aynı davranış korunur).
-    const zplContent = buildZpl(liveLabelData)
-    const zplSource = 'generated'
+    // ── TEK KAYNAK DOĞRUSU: SÜRAT'İN RESMÎ ZPL'İ ────────────────────────────
+    // Sürat etiketi CargoFlow tarafından yeniden TASARLANMAZ. Provider'ın kendi
+    // ZPL'i (OrtakBarkodOlustur → BarcodeRaw) doğrulanır ve BYTE-FOR-BYTE aynen
+    // kullanılır: ^PW/^LL/^FO/^GB/^BC/^BQ, font, rota ve kutu koordinatlarına
+    // DOKUNULMAZ, buildZpl'den GEÇİRİLMEZ. Devam/ikinci sayfa ÜRETİLMEZ.
+    //
+    // Resmî ZPL yoksa veya doğrulamayı geçmezse CargoFlow şablonuna FALLBACK
+    // YAPILMAZ; kullanıcıya açık hata verilir (sahte/yanlış etiket basılmaz).
+    const official = validateOfficialSuratZpl(apiBarcodeRaw, {
+      trackingNumber: eligibility.trackingNumber,
+      barcode: eligibility.barcode,
+    })
+    if (!official.ok) {
+      throw new Error(`Sürat resmî etiketi alınamadı: ${official.reason}`)
+    }
+    const zplContent = official.zpl
+    const zplSource = 'surat.ortakBarkod.BarcodeRaw'
     const desiMismatchWarning = desiMismatch
       ? 'API’den dönen etiket desisi, CargoFlow önizlemesinden farklı.'
       : undefined
