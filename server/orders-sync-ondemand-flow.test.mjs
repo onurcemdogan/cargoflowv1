@@ -273,8 +273,12 @@ test('1-2) OrdersPage.tsx: sekme değişimi client-side filtreler, sync ATMAZ; Y
 
 test('orderWorkflowService: DB okuma GET /api/orders; sync ayrı POST /api/orders/sync', () => {
   const svc = readSrc('src/services/orderWorkflowService.ts')
-  const loadBlock = sliceBlock(svc, 'async loadOrdersFromServer(', 1200)
+  // NOT: tek sayfa cekme private fetchOrdersPage'e tasindi; blok ikisini de
+  // kapsayacak sekilde alinir (davranis sozlesmesi AYNI).
+  const loadBlock = sliceBlock(svc, 'async loadOrdersFromServer(', 6000)
   assert.match(loadBlock, /\/api\/orders/, 'DB okuma GET /api/orders kullanır')
+  // Tum sayfalar yuklenir (25 kayit tavani YOK).
+  assert.match(loadBlock, /ORDERS_LOAD_PAGE_SIZE/, 'sayfali yukleme')
   assert.doesNotMatch(loadBlock, /\/api\/orders\/sync/, 'DB okuma sync tetiklemez')
   assert.doesNotMatch(loadBlock, /method:\s*'POST'/, 'DB okuma GET\'tir (POST değil)')
   // 409 (sync zaten çalışıyor) veri kaybı yapmadan yüzeye çıkar.
