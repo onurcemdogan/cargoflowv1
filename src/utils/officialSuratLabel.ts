@@ -8,7 +8,10 @@
 // Güvenlik sözleşmesi (kod tabanında zaten uygulanan kural): "Web" ile başlayan
 // dahilî kod OPERASYONEL barkod sayılmaz. Resmî ZPL yalnız canonical numerik
 // barkodu taşıyorsa baskıya uygundur; aksi halde SESSİZCE basılmaz.
-import { isNumericOperationalCode } from './suratZplAnalysis'
+//
+// Bu dosya SAF'tır: hiçbir import'u yoktur, DOM/Node API'sine dokunmaz. Böylece
+// hem frontend hem de server-side read-only diagnostic aynı doğrulayıcıyı
+// paylaşır (kural çatallanmasın).
 
 export type OfficialLabelRejection =
   | 'missing'
@@ -108,10 +111,4 @@ export function validateOfficialSuratZpl(
   }
 
   return { ok: true, zpl: trimmed, pageCount: 1, rejection: null, reason: '' }
-}
-
-// Beklenen canonical barkodun operasyonel (numerik) olup olmadığı — çağıranın
-// "Web" kodla baskı açmasını engellemek için.
-export function isOperationalBarcode(value: unknown): boolean {
-  return isNumericOperationalCode(String(value ?? '').trim())
 }
