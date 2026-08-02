@@ -85,7 +85,9 @@ test('Ortak Barkod SOAP label mapping ve canlı ZPL guard doğru çalışır', a
   assert.equal(label.barcodeValue, '01231201025')
   assert.match(label.zplContent, /FDT\.No: 25220148446193/)
   assert.match(label.zplContent, /\^FD01231201025\^FS/)
-  assert.match(label.zplContent, /Ref No: 7270033563324593/)
+  // Sol dikey ray etiketi gerçek Sürat etiketindeki gibi "Siparis No:"dur
+  // (referans DEĞERİ değişmedi, yalnız başlık metni fotoğrafa hizalandı).
+  assert.match(label.zplContent, /Siparis No: 7270033563324593/)
   assert.equal(label.zplSource, 'generated')
 
   const suratRawZpl =

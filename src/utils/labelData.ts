@@ -111,6 +111,9 @@ export interface LabelData {
   qrPayload?: string
   // Üst bölümdeki GÖNDERİCİ adı (alıcı adı ASLA buraya düşmez).
   senderName?: string
+  // Üst bölümdeki GÖNDERİCİ telefonu. YALNIZ Sürat yanıtında gerçekten varsa
+  // dolar; yoksa '' kalır ve etikette TEL satırı BASILMAZ (sahte numara YOK).
+  senderPhone?: string
   // Kayıpsız sarılmış tam alıcı adresi satırları + font kademesi.
   fullAddressLines?: string[]
   addressFontScale?: 'normal' | 'long' | 'xlong'
@@ -225,6 +228,7 @@ export function buildSuratLabelData(
       recipientPhoneResolution.phone ||
       String(order?.customerPhone ?? '').trim(),
     senderName: resolveSuratSenderName(order, effectiveShipment, mappingConfig),
+    senderPhone: resolveSuratSenderPhone(order, effectiveShipment),
     fullAddressLines: addressLayout.lines,
     addressFontScale: addressLayout.fontScale,
     address: fullAddress || String(order?.address ?? '').trim(),
@@ -743,6 +747,29 @@ export function resolveSuratSenderName(
     mappingConfig.senderName,
     DEFAULT_SURAT_SENDER_NAME,
   )
+}
+
+// GÖNDERİCİ telefonu: YALNIZ Sürat yanıtındaki gerçek alanlardan okunur
+// (GonderenTel / GonderenTelefon / GonderenCep). Bulunamazsa '' döner —
+// alıcı telefonu ASLA gönderici alanına düşmez ve sahte numara ÜRETİLMEZ.
+export function resolveSuratSenderPhone(
+  order?: CargoOrder,
+  shipment?: Shipment,
+): string {
+  const effectiveShipment = shipment ?? order?.shipment
+  const raw = firstNonEmpty(
+    readUnknown(effectiveShipment?.suratTrackingLog, [
+      'GonderenTel',
+      'GonderenTelefon',
+      'GonderenCep',
+    ]),
+    readUnknown(effectiveShipment?.rawResponse, [
+      'GonderenTel',
+      'GonderenTelefon',
+      'GonderenCep',
+    ]),
+  )
+  return normalizeRecipientPhone(raw)
 }
 
 const PHONE_PLACEHOLDERS = new Set([

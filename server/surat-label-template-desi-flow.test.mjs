@@ -123,15 +123,28 @@ test('SLT-3: barkod/QR alanına kalınlaştırma UYGULANMAZ, global koyuluk değ
   assert.equal(/\^MD|~SD/.test(zplContent), false, 'global baskı koyuluğu değiştirilmez')
 })
 
-test('SLT-4: metinler daha kalın (aynı metin 1 nokta kaydırılmış çift basım)', async () => {
+test('SLT-4: kalınlaştırma YALNIZ iri puntoda (203 DPI bulanıklık kontrolü)', async () => {
   const { zplContent } = await renderZpl(labelOrder())
   const lines = zplContent.split('\n')
   const brand = lines.filter((l) => l.includes('SURAT KARGO'))
-  assert.equal(brand.length, 2, 'metin çift basılır (faux bold)')
+  assert.equal(brand.length, 2, 'iri metin çift basılır (faux bold)')
   const xs = brand.map((l) => Number(l.match(/\^FO(\d+),/)[1]))
   assert.equal(Math.abs(xs[0] - xs[1]), 1, '1 nokta offset')
-  // Büyük rota/aktarma metinleri de kalın.
-  assert.equal(lines.filter((l) => l.includes('Adrese Teslim')).length, 2)
+  assert.equal(lines.filter((l) => l.includes('Adrese Teslim')).length, 2, 'iri rota metni kalın')
+
+  // KÜÇÜK puntolar (<24) TEK geçiş olmalı: 203 DPI'da 1 nokta kaydırma küçük
+  // gövdelerde harfleri birleştirip bulanıklaştırır.
+  const smallFieldCounts = new Map()
+  for (const line of lines) {
+    const m = line.match(/^\^FO(\d+),(\d+)\^A0N,(\d+),\d+(.*)$/)
+    if (!m) continue
+    const font = Number(m[3])
+    if (font >= 24) continue
+    const key = `${m[2]}|${m[3]}|${m[4]}`
+    smallFieldCounts.set(key, (smallFieldCounts.get(key) ?? 0) + 1)
+  }
+  const doubled = [...smallFieldCounts.entries()].filter(([, c]) => c > 1)
+  assert.deepEqual(doubled, [], 'küçük punto metinler çift basılmaz (net kalır)')
 })
 
 test('SLT-5: 203 DPI şablon sınırları içinde (10x10 cm = 799 nokta) kalır', async () => {
@@ -154,14 +167,63 @@ test('SLT-5: 203 DPI şablon sınırları içinde (10x10 cm = 799 nokta) kalır'
   assert.ok(Math.max(...positions.map((p) => p.x)) < 799, 'yatay taşma yok')
 })
 
+test('SLT-5b: uzun varış/aktarma metni KESİLMEZ, güvenli küçültülür ve QR alanına girmez', async () => {
+  const { zplContent } = await renderZpl(
+    labelOrder({ city: 'AFYONKARAHISAR', district: 'BASMAKCI SANDIKLI YOLU' }),
+  )
+  const routing = [
+    ...zplContent.matchAll(
+      /\^FO222,(\d+)\^A0N,(\d+),\d+\^FB(\d+),(\d+),0,L,0\^FD([^^]*)\^FS/g,
+    ),
+  ].map((m) => ({ y: +m[1], font: +m[2], width: +m[3], maxLines: +m[4], text: m[5] }))
+  assert.equal(routing.length, 2, 'iki satır: varış şubesi + aktarma merkezi')
+  for (const row of routing) {
+    // Kesme yok: '…' veya kırpılmış metin olmamalı.
+    assert.equal(row.text.includes('…'), false, 'metin kesilmedi: ' + row.text)
+    // Sığdırma: seçilen punto + izin verilen satır sayısıyla metin sığar.
+    const capacity =
+      Math.floor(row.width / (row.font * 0.58)) * row.maxLines
+    assert.ok(row.text.length <= capacity, 'punto/satır sığacak şekilde ayarlandı')
+    assert.ok(row.maxLines <= 2, 'en fazla 2 satıra sarılır')
+    // Küçük QR (x=696) alanına taşmaz.
+    assert.ok(222 + row.width <= 696, 'rota bandı QR alanına girmez')
+  }
+  assert.ok(routing[1].y > routing[0].y, 'aktarma satırı varış satırının altında')
+  const last = routing[1]
+  assert.ok(
+    last.y + last.font * last.maxLines <= 696,
+    'rota bandı ürün çizgisini aşmaz',
+  )
+})
+
 // ═══ 6-9: ürün detayları ══════════════════════════════════════════════════
 
-test('SLT-6/7: tek ürün detayları + renk/beden doğru basılır', async () => {
+test('SLT-6/7: tek ürün detayları GERÇEK etiket biçiminde basılır', async () => {
   const { zplContent } = await renderZpl(labelOrder())
   assert.ok(zplContent.includes('1 x Test Elbise'), 'adet + ürün adı')
-  assert.ok(zplContent.includes('Renk: Lacivert'), 'renk')
-  assert.ok(zplContent.includes('Beden: 40'), 'beden')
-  assert.ok(zplContent.includes('SKU: SKU-1'), 'SKU')
+  // Foto biçimi: "(Renk: Lacivert, Beden: 40) [SKU-1]"
+  assert.ok(zplContent.includes('(Renk: Lacivert, Beden: 40) [SKU-1]'), 'varyant + kod')
+})
+
+test('SLT-6b: ÜST BLOK gönderici, alıcı YALNIZ orta kutuda (gerçek etiket ayrımı)', async () => {
+  const { zplContent } = await renderZpl(labelOrder())
+  const header = zplContent.split('\n').filter((l) => /\^FO\d+,\d{1,2}\^A0N/.test(l))
+  const headerText = header.join('\n')
+  // Üst blok: Sube + gönderici adı + MUST.IRS.NO + T.No.
+  assert.match(headerText, /Sube: /, 'şube üst blokta')
+  assert.match(headerText, /MUST\.IRS\.NO: /, 'müşteri irsaliye no üst blokta')
+  assert.match(headerText, /T\.No: /, 'T.No üst blokta')
+  assert.match(headerText, /HASAN/, 'gönderici adı üst blokta')
+  assert.equal(/TEST ALICI/.test(headerText), false, 'alıcı adı üst blokta OLMAZ')
+  // Gönderici telefonu veri modelinde yok → TEL satırı basılmaz (uydurma yok).
+  assert.equal(/\^FO500,58/.test(zplContent), false, 'gönderici TEL uydurulmaz')
+  // Alıcı adı/telefonu/il-ilçesi orta kutuda.
+  assert.ok(zplContent.includes('^FO80,260^A0N,24,24^FDTEST ALICI^FS'), 'alıcı orta kutuda')
+  assert.match(zplContent, /\^FO80,398\^A0N,18,18\^FDTEL: /, 'alıcı telefonu orta kutuda')
+  // routeCenter gereksiz TEKRAR etmez: orta kutuda 1 + büyük rota alanında 1.
+  const routeHits = zplContent.split('\n').filter((l) => l.includes('KASTAMONU / ARAC'))
+  const distinctY = new Set(routeHits.map((l) => l.match(/\^FO\d+,(\d+)/)[1]))
+  assert.equal(distinctY.size, 2, 'il/ilçe yalnız 2 yerde (alıcı kutusu + rota bandı)')
 })
 
 test('SLT-7b: renk/beden variantAttributes içinden çözülür', async () => {
@@ -175,9 +237,9 @@ test('SLT-7b: renk/beden variantAttributes içinden çözülür', async () => {
         { name: 'Model', value: 'Slim' },
       ],
     }],
-    { maxLines: 5, titleMaxChars: 66, metaMaxChars: 74 },
+    { maxLines: 3, titleMaxChars: 64, metaMaxChars: 68 },
   )
-  assert.equal(meta.text, 'Renk: Kırmızı · Beden: M · Model: Slim')
+  assert.equal(meta.text, '(Renk: Kırmızı, Beden: M, Model: Slim)')
 })
 
 test('SLT-8: eksik varyant alanları güvenli atlanır (undefined/null yazılmaz)', async () => {
@@ -188,7 +250,7 @@ test('SLT-8: eksik varyant alanları güvenli atlanır (undefined/null yazılmaz
   )
   assert.equal(/undefined|null/.test(zplContent), false, 'undefined/null basılmaz')
   assert.equal(zplContent.includes('Renk:'), false, 'boş renk yazılmaz')
-  assert.ok(zplContent.includes('Barkod: 869123'), 'SKU yoksa barkod fallback')
+  assert.ok(zplContent.includes('[869123]'), 'SKU yoksa barkod fallback')
 })
 
 test('SLT-9: çok ürün taşmadan basılır ve fazlası özetlenir', async () => {
@@ -197,17 +259,17 @@ test('SLT-9: çok ürün taşmadan basılır ve fazlası özetlenir', async () =
     productName: `Ürün ${i}`, quantity: 1, color: `R${i}`, size: `${i}`, sku: `S${i}`,
   }))
   const lines = buildLabelProductLines(items, {
-    maxLines: 5, titleMaxChars: 66, metaMaxChars: 74,
+    maxLines: 3, titleMaxChars: 64, metaMaxChars: 68,
   })
-  assert.ok(lines.length <= 5, 'satır bütçesi aşılmaz')
+  assert.ok(lines.length <= 3, 'satır bütçesi (2-3 satır) aşılmaz')
   assert.equal(lines.at(-1).kind, 'more')
   assert.match(lines.at(-1).text, /^\+\d+ ürün daha$/)
   // Uzun ad sarılır, kesilse bile '…' ile işaretlenir.
   const long = buildLabelProductLines(
     [{ productName: 'A'.repeat(400), quantity: 1 }],
-    { maxLines: 5, titleMaxChars: 66, metaMaxChars: 74 },
+    { maxLines: 3, titleMaxChars: 64, metaMaxChars: 68 },
   )
-  assert.ok(long.every((l) => l.text.length <= 67), 'satır genişliği aşılmaz')
+  assert.ok(long.every((l) => l.text.length <= 65), 'satır genişliği aşılmaz')
 })
 
 // ═══ 10-11: quantity + duplicate ══════════════════════════════════════════

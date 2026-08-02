@@ -22,23 +22,93 @@ const RAIL_WIDTH = 58
 // Etiketin fiziksel yüksekliği (^LL799) DEĞİŞMEZ. Son yatay çizgi y=696'da,
 // dış çerçeve 799'da biter; ürün şeridi bu aralıkta kalır ve barkod/QR
 // alanlarına ASLA taşmaz.
-const PRODUCT_START_Y = 701
-const PRODUCT_LINE_HEIGHT = 18
-const PRODUCT_MAX_LINES = 5
+// Gerçek Sürat etiketinde ürün bloğu 2-3 satırdır (miktar × ad, sonra
+// "(Renk: X, Beden: Y) [SKU]"). Son yatay çizgi y=696; dış çerçeve 799.
+const PRODUCT_START_Y = 703
+const PRODUCT_LINE_HEIGHT = 21
+const PRODUCT_MAX_LINES = 3
 const PRODUCT_X = 72
-const PRODUCT_TITLE_FONT = 17
-const PRODUCT_META_FONT = 15
-// Font genişliği ~0.58×yükseklik; x=72'den 795'e ≈ 723 nokta kullanılabilir.
-const PRODUCT_TITLE_MAX_CHARS = 66
-const PRODUCT_META_MAX_CHARS = 74
+const PRODUCT_TITLE_FONT = 19
+const PRODUCT_META_FONT = 18
+// Font genişliği ≈0.58×yükseklik; x=72'den 793'e ≈ 721 nokta kullanılabilir.
+const PRODUCT_TITLE_MAX_CHARS = 64
+const PRODUCT_META_MAX_CHARS = 68
 
-// ZPL'de yerleşik "bold" komutu YOKTUR. Termal baskıda metni koyulaştırmanın
-// güvenli yolu aynı METİN alanını 1 nokta kaydırarak iki kez basmaktır
-// (double-strike / faux bold). Bu teknik YALNIZ metin (^A0/^FD) alanlarına
-// uygulanır; ^BC (1D barkod) ve ^BQ (QR) alanlarına ASLA dokunulmaz ve genel
-// baskı koyuluğu (^MD/~SD) DEĞİŞTİRİLMEZ → barkod taranabilirliği korunur.
-function boldText(x: number, y: number, body: string): string[] {
-  return [`^FO${x},${y}${body}`, `^FO${x + 1},${y}${body}`]
+// Ortalama ^A0 (scalable) glif genişliği / yükseklik oranı. Metnin verilen
+// piksel genişliğine sığıp sığmadığını kestirmek için kullanılır.
+const GLYPH_WIDTH_RATIO = 0.58
+
+// Yönlendirme bandı satır yerleşimi. Metin ASLA kesilmez: önce iri puntoda tek
+// satır denenir, sığmazsa punto küçültülür, gerekirse en fazla 2 satıra sarılır.
+// Seçilen kombinasyon bandın dikey bütçesine (598..694) sığmak zorundadır.
+export interface RoutingRow {
+  text: string
+  font: number
+  lines: number
+  y: number
+}
+
+export function layoutRoutingRows(
+  texts: string[],
+  options: {
+    widthDots: number
+    top: number
+    bottom: number
+    ladder: number[]
+    gap?: number
+  },
+): RoutingRow[] {
+  const gap = options.gap ?? 4
+  const budget = options.bottom - options.top
+  for (const font of options.ladder) {
+    const charsPerLine = Math.max(
+      1,
+      Math.floor(options.widthDots / (font * GLYPH_WIDTH_RATIO)),
+    )
+    const rows = texts.map((text) => ({
+      text,
+      font,
+      lines: Math.max(1, Math.ceil(text.length / charsPerLine)),
+    }))
+    // En fazla 2 satır ve toplam yükseklik banda sığmalı.
+    if (rows.some((row) => row.lines > 2)) continue
+    const total =
+      rows.reduce((sum, row) => sum + row.font * row.lines, 0) +
+      gap * (rows.length - 1)
+    if (total > budget) continue
+    let cursor = options.top
+    return rows.map((row) => {
+      const placed = { ...row, y: cursor }
+      cursor += row.font * row.lines + gap
+      return placed
+    })
+  }
+  // Son çare: en küçük punto, 2 satır sınırı (içerik yine kesilmez).
+  const font = options.ladder[options.ladder.length - 1]
+  let cursor = options.top
+  return texts.map((text) => {
+    const placed = { text, font, lines: 2, y: cursor }
+    cursor += font * 2 + gap
+    return placed
+  })
+}
+
+// ZPL'de yerleşik "bold" komutu YOKTUR. Metni koyulaştırmanın güvenli yolu aynı
+// METİN alanını 1 nokta kaydırarak iki kez basmaktır (double-strike).
+//
+// 203 DPI'da 1 nokta ≈ 0,125 mm'dir. KÜÇÜK puntolarda (adres, telefon, ürün
+// satırı) bu kaydırma gövde kalınlığına oranla büyük kalır ve harfler fiziksel
+// baskıda birbirine girip BULANIKLAŞIR. Bu yüzden double-strike YALNIZ
+// BOLD_MIN_FONT ve üzeri (iri) metinlerde uygulanır — gerçek Sürat etiketinde de
+// yalnız iri başlıklar kalındır. Küçük metinler tek geçiş (net) kalır.
+// ^BC/^BQ alanlarına ASLA uygulanmaz; ^MD/~SD (genel koyuluk) DEĞİŞTİRİLMEZ.
+const BOLD_MIN_FONT = 24
+
+function textField(x: number, y: number, font: number, body: string): string[] {
+  const field = `^A0N,${font},${font}${body}`
+  return font >= BOLD_MIN_FONT
+    ? [`^FO${x},${y}${field}`, `^FO${x + 1},${y}${field}`]
+    : [`^FO${x},${y}${field}`]
 }
 
 function zplSafe(value: string | number, maxLength = 160): string {
@@ -68,17 +138,22 @@ function productZplLines(items: LabelDataItem[]): string[] {
     titleMaxChars: PRODUCT_TITLE_MAX_CHARS,
     metaMaxChars: PRODUCT_META_MAX_CHARS,
   })
+  // Ürün satırları küçük puntodur → tek geçiş (net). Gerçek etikette de bu
+  // bölüm normal kalınlıktadır.
   return lines.flatMap((line, index) => {
     const y = PRODUCT_START_Y + index * PRODUCT_LINE_HEIGHT
     const font = line.kind === 'title' ? PRODUCT_TITLE_FONT : PRODUCT_META_FONT
-    const body = `^A0N,${font},${font}^FD${zplSafe(line.text, 160)}^FS`
-    // Başlık satırları koyu (faux bold); meta satırı normal kalır ki küçük
-    // punto okunaklılığı bozulmasın.
-    return line.kind === 'title'
-      ? boldText(PRODUCT_X, y, body)
-      : [`^FO${PRODUCT_X},${y}${body}`]
+    return textField(PRODUCT_X, y, font, `^FD${zplSafe(line.text, 160)}^FS`)
   })
 }
+
+// Yönlendirme bandı metin genişliği: x=222'den küçük QR'ın (x=696) soluna.
+const ROUTE_WIDTH = 462
+// Dikey bütçe: "Adrese Teslim/1-1" satırlarının altından ürün çizgisinin (696) üstüne.
+const ROUTE_BAND_TOP = 598
+const ROUTE_BAND_BOTTOM = 694
+// İri→küçük punto merdiveni (kesme yerine güvenli küçültme).
+const ROUTE_FONT_LADDER = [50, 44, 38, 33, 28, 24]
 
 function buildZpl(labelData: LabelData): string {
   const trackingText = labelData.tNo || '-'
@@ -87,6 +162,18 @@ function buildZpl(labelData: LabelData): string {
     labelData.shipmentReference ||
     labelData.orderNumber
   const desiKg = formatDesi(labelData.desi)
+  const senderPhone = String(labelData.senderPhone ?? '').trim()
+  // Varış şubesi + aktarma merkezi: KESİLMEZ. Sığacak en iri punto seçilir,
+  // gerekirse en fazla 2 satıra sarılır; band bütçesine (598..694) uyar.
+  const routingRows = layoutRoutingRows(
+    [zplUpper(labelData.routeCenter, 60), zplUpper(labelData.transferCenter, 60)],
+    {
+      widthDots: ROUTE_WIDTH,
+      top: ROUTE_BAND_TOP,
+      bottom: ROUTE_BAND_BOTTOM,
+      ladder: ROUTE_FONT_LADDER,
+    },
+  )
 
   return [
     '^XA',
@@ -102,78 +189,74 @@ function buildZpl(labelData: LabelData): string {
     '^FO58,520^GB741,2,2^FS',
     '^FO58,696^GB741,2,2^FS',
 
-    // Sol dikey ray (marka + referans).
-    ...boldText(14, 92, '^A0B,24,24^FDSURAT KARGO^FS'),
-    `^FO16,560^A0B,17,17^FDRef No: ${zplSafe(leftReference, 48)}^FS`,
+    // ── Sol dikey ray: marka + sipariş referansı (gerçek etiketteki gibi). ──
+    ...['^FO14,92^A0B,24,24^FDSURAT KARGO^FS', '^FO15,92^A0B,24,24^FDSURAT KARGO^FS'],
+    `^FO16,600^A0B,17,17^FDSiparis No: ${zplSafe(leftReference, 48)}^FS`,
 
-    // Üst bölüm: şube / gönderici / müşteri irsaliye + T.No.
-    ...boldText(72, 12, `^A0N,22,22^FDSube: ${zplSafe(labelData.branchName, 24)}^FS`),
-    // NOT: üst bölüm ad/telefon kaynağı MEVCUT sözleşmedir (HTML önizleme ile
-    // aynı: recipientName/recipientPhone). Bu tur yalnız okunabilirlik
-    // (kalınlaştırma) değiştirir; alan kaynakları DEĞİŞMEZ.
-    ...boldText(72, 38, `^A0N,29,29^FD${zplUpper(labelData.recipientName, 34)}^FS`),
+    // ── Üst blok: Sube / GÖNDERİCİ adı / MUST.IRS.NO — sağda T.No (+ varsa
+    // gönderici TEL). Alıcı adı/telefonu BURAYA GİRMEZ; onlar yalnız ortadaki
+    // alıcı kutusundadır (gerçek etiket sözleşmesi).
+    ...textField(72, 12, 22, `^FDSube: ${zplSafe(labelData.branchName, 24)}^FS`),
+    ...textField(72, 38, 29, `^FD${zplUpper(labelData.senderName ?? '', 34)}^FS`),
     `^FO72,70^A0N,18,18^FDMUST.IRS.NO: ${zplSafe(labelData.orderNumber, 42)}^FS`,
-    ...boldText(500, 18, `^A0N,22,22^FDT.No: ${zplSafe(trackingText, 30)}^FS`),
-    `^FO500,58^A0N,16,16^FDTEL: ${zplSafe(
-      maskPhone(labelData.recipientPhone),
-      20,
-    )}^FS`,
+    ...textField(500, 14, 22, `^FDT.No: ${zplSafe(trackingText, 30)}^FS`),
+    // Gönderici telefonu YALNIZ gerçekten varsa basılır (sahte numara YOK).
+    ...(senderPhone
+      ? [`^FO500,58^A0N,16,16^FDTEL: ${zplSafe(maskPhone(senderPhone), 20)}^FS`]
+      : []),
 
-    // Büyük yatay 1D barkod + altında okunabilir takip numarası (^BC ... ,Y,).
-    // PROVIDER İÇERİĞİ: barcodeValue aynen basılır, kalınlaştırma UYGULANMAZ.
+    // ── Büyük yatay 1D barkod + altında okunabilir takip no (^BC ... ,Y,).
+    // PROVIDER İÇERİĞİ: barcodeValue aynen; kalınlaştırma UYGULANMAZ.
     `^FO88,104^BY3,2,120^BCN,120,Y,N,N^FD${zplSafe(
       labelData.barcodeValue,
       60,
     )}^FS`,
 
-    // Alıcı bölümü.
+    // ── Alıcı kutusu: ad, açık adres, telefon; sağ altta il/ilçe (varış).
+    // routeCenter burada TEK KEZ görünür (ayrı sağ hücrede tekrar edilmez).
     '^FO68,250^GB720,180,1^FS',
-    '^FO568,250^GB1,180,1^FS',
-    ...boldText(80, 260, `^A0N,24,24^FD${zplUpper(labelData.recipientName, 38)}^FS`),
-    `^FO80,290^A0N,20,20^FB468,3,4,L,0^FD${zplUpper(
-      labelData.address,
-      150,
-    )}^FS`,
-    ...boldText(80, 375, `^A0N,22,22^FD${zplUpper(labelData.routeCenter, 42)}^FS`),
-    `^FO80,408^A0N,18,18^FDTEL: ${zplSafe(
+    ...textField(80, 260, 24, `^FD${zplUpper(labelData.recipientName, 38)}^FS`),
+    `^FO80,292^A0N,20,20^FB700,4,4,L,0^FD${zplUpper(labelData.address, 220)}^FS`,
+    `^FO80,398^A0N,18,18^FDTEL: ${zplSafe(
       maskPhone(labelData.recipientPhone),
       24,
     )}^FS`,
-    ...boldText(
-      586,
-      335,
-      `^A0N,27,27^FB188,2,4,C,0^FD${zplUpper(labelData.routeCenter, 38)}^FS`,
-    ),
+    `^FO420,398^A0N,20,20^FB360,1,0,R,0^FD${zplUpper(
+      labelData.routeCenter,
+      42,
+    )}^FS`,
 
-    // Gönderi özeti: ödeme tipi / birim / desi-kg.
+    // ── Gönderi özeti: OdemeTipi / Birim / Top Ds/Kg (foto oranları).
     '^FO58,440^GB247,80,1^FS',
     '^FO305,440^GB247,80,1^FS',
     '^FO552,440^GB247,80,1^FS',
     '^FO74,450^A0N,17,17^FDOdemeTipi^FS',
     '^FO318,450^A0N,17,17^FDBirim^FS',
     '^FO566,450^A0N,17,17^FDTop Ds/Kg^FS',
-    ...boldText(74, 478, '^A0N,35,35^FDPOCH^FS'),
-    ...boldText(318, 478, '^A0N,35,35^FDKOLI^FS'),
-    ...boldText(566, 478, `^A0N,35,35^FD${desiKg}^FS`),
+    ...textField(74, 478, 35, '^FDPOCH^FS'),
+    ...textField(318, 478, 35, '^FDKOLI^FS'),
+    ...textField(566, 478, 35, `^FD${desiKg}^FS`),
 
-    // QR (provider referans içeriği AYNEN; boyut/quiet-zone değişmez).
+    // ── Yönlendirme bandı: sol büyük QR, Parca Adedi / Adrese Teslim,
+    // altında iki KALIN satır (varış şubesi + aktarma merkezi), sağda küçük QR.
+    // QR payload'ları provider içeriğidir; AYNEN korunur.
     `^FO74,538^BQN,2,7^FDLA,${zplSafe(
       `${labelData.orderNumber}|${labelData.barcodeValue}`,
       90,
     )}^FS`,
     '^FO222,528^A0N,20,20^FDParca Adedi^FS',
-    ...boldText(222, 556, '^A0N,38,38^FD1 / 1^FS'),
-    ...boldText(344, 528, '^A0N,36,36^FDAdrese Teslim^FS'),
-    // Büyük yönlendirme alanı: uzaktan okunabilir, kalın.
-    ...boldText(
-      222,
-      598,
-      `^A0N,49,49^FB430,1,0,L,0^FD${zplUpper(labelData.routeCenter, 32)}^FS`,
-    ),
-    ...boldText(
-      222,
-      648,
-      `^A0N,50,50^FB430,1,0,L,0^FD${zplUpper(labelData.transferCenter, 32)}^FS`,
+    ...textField(222, 556, 38, '^FD1 / 1^FS'),
+    ...textField(344, 528, 36, '^FDAdrese Teslim^FS'),
+    // Uzun metin KESİLMEZ: sığan en iri punto seçilir, gerekirse ^FB ile en
+    // fazla 2 satıra sarılır. Genişlik küçük QR'ın (x=696) solunda biter →
+    // QR alanına taşma yok.
+    ...routingRows.flatMap((row) =>
+      textField(
+        222,
+        row.y,
+        row.font,
+        `^FB${ROUTE_WIDTH},${row.lines},0,L,0^FD${row.text}^FS`,
+      ),
     ),
     `^FO696,540^BQN,2,4^FDLA,${zplSafe(labelData.barcodeValue, 60)}^FS`,
 

@@ -96,16 +96,18 @@ function truncate(text: string, maxChars: number): string {
   return `${text.slice(0, safeMax - 1)}…`
 }
 
-// Bir ürünün meta satırı: Renk · Beden · (diğer varyant) · SKU/Barkod.
-// Boş alanlar tamamen atlanır (asla "Renk: undefined" yazılmaz).
+// Bir ürünün meta satırı — GERÇEK Sürat etiketindeki biçim:
+//   "(Renk: Lacivert, Beden: 40) [ttzeyna44]"
+// Boş alanlar tamamen atlanır (asla "Renk: undefined" yazılmaz); hiçbir alan
+// yoksa meta satırı hiç üretilmez.
 function buildMeta(item: LabelProductSource, maxChars: number): string {
   const color = clean(item.color) || readVariant(item, ['Renk', 'Color'])
   const size =
     clean(item.size) || readVariant(item, ['Beden', 'Size', 'Numara'])
-  const parts: string[] = []
-  if (color) parts.push(`Renk: ${color}`)
-  if (size) parts.push(`Beden: ${size}`)
-  // Renk/Beden dışındaki anlamlı varyantlar (ör. Model) — en fazla 1 tane.
+  const attrs: string[] = []
+  if (color) attrs.push(`Renk: ${color}`)
+  if (size) attrs.push(`Beden: ${size}`)
+  // Renk/Beden dışındaki anlamlı varyant (ör. Model) — en fazla 1 tane.
   const extra = (item.variantAttributes ?? []).find((attribute) => {
     const name = clean(attribute?.name)
     const normalized = name.toLocaleLowerCase('tr-TR')
@@ -115,12 +117,13 @@ function buildMeta(item: LabelProductSource, maxChars: number): string {
       !['renk', 'color', 'beden', 'size', 'numara'].includes(normalized)
     )
   })
-  if (extra) parts.push(`${clean(extra.name)}: ${clean(extra.value)}`)
-  const sku = clean(item.sku || item.merchantSku || item.stockCode)
-  const barcode = clean(item.barcode)
-  if (sku) parts.push(`SKU: ${sku}`)
-  else if (barcode) parts.push(`Barkod: ${barcode}`)
-  return truncate(parts.join(' · '), maxChars)
+  if (extra) attrs.push(`${clean(extra.name)}: ${clean(extra.value)}`)
+
+  const code = clean(item.sku || item.merchantSku || item.stockCode || item.barcode)
+  const parts: string[] = []
+  if (attrs.length > 0) parts.push(`(${attrs.join(', ')})`)
+  if (code) parts.push(`[${code}]`)
+  return parts.length > 0 ? truncate(parts.join(' '), maxChars) : ''
 }
 
 // Deterministik ürün bölümü satırları. Sığmayan ürünler "+X ürün daha".
