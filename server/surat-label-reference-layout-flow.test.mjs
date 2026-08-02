@@ -78,9 +78,10 @@ async function html(items) {
 
 test('REF-1: 1D barkod yatayda sağa/sola yayılır (dar sıkışık kalmaz)', async () => {
   const out = await html(SINGLE)
-  // Kapsayıcı yan boşluğu yalnız fiziksel kenar payıdır; ISO 10X sessiz alan
-  // SVG viewBox'ının İÇİNDE taşınır (bkz. REF-16).
-  assert.match(out, /\.surat-barcode \{[^}]*padding: \.4mm 1mm 0/)
+  // Kapsayıcı YAN boşluğu (1mm) yalnız fiziksel kenar payıdır; ISO 10X sessiz
+  // alan SVG viewBox'ının İÇİNDE taşınır (bkz. REF-16). ALT boşluk (2.3mm)
+  // insan-okunur sayı ile ayırıcı çizgi arasındaki güvenli alandır (PM-10).
+  assert.match(out, /\.surat-barcode \{[^}]*padding: \.4mm 1mm 2\.3mm/)
   assert.equal(/padding: \.5mm 6mm 0/.test(out), false, 'eski dar yerleşim kalmadı')
   // SVG kutusu tam genişlik.
   assert.match(out, /\.surat-barcode svg \{ width: 100%/)

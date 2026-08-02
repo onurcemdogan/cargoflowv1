@@ -2601,12 +2601,15 @@ button:disabled {
   font-size: 15px;
 }
 
-/* Referans: 1D barkod gövde kenarlarına kadar yayılır; yan boşluk minimum. */
+/* Referans: 1D barkod gövde kenarlarına kadar yayılır; yan boşluk minimum.
+   Alt boşluk (6px) insan-okunur numara ile bölüm ayırıcı çizgisi arasında
+   net beyaz alan bırakır (baskı tarafındaki 2mm ile aynı sözleşme). */
 .surat-barcode-section {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 6px 1px;
+  padding: 2px 6px 6px;
+  overflow: visible;
 }
 
 .surat-main-barcode {

@@ -1,3 +1,4 @@
+import { resolveLabelProductMetadata } from './labelProductMetadata'
 import type {
   CargoOrder,
   LabelTemplate,
@@ -596,17 +597,32 @@ function selectMainBarcodeValue(
 }
 
 function normalizeItems(items: OrderItem[]): LabelDataItem[] {
-  return items.map((item) => ({
-    productName: String(item.productName ?? '').trim(),
-    barcode: String(item.barcode ?? '').trim(),
-    sku: String(item.merchantSku || item.sku || item.stockCode || '').trim(),
-    merchantSku: String(item.merchantSku || '').trim(),
-    stockCode: String(item.stockCode || '').trim(),
-    color: String(item.color || readVariant(item.variantAttributes, 'Renk')).trim(),
-    size: String(item.size || readVariant(item.variantAttributes, 'Beden')).trim(),
-    quantity: Number(item.quantity ?? 0),
-    variantAttributes: item.variantAttributes ?? [],
-  }))
+  return items.map((item) => {
+    // Renk / beden / SKU ve temiz urun adi TEK dogrulanmis cozumleyiciden
+    // gelir: placeholder ("merchantSku"), serbest metin ("tasli") ve baslik
+    // sonundaki "KOD, BEDEN" eki burada elenir (labelProductMetadata.ts).
+    const resolved = resolveLabelProductMetadata({
+      productName: item.productName,
+      color: item.color,
+      size: item.size,
+      sku: item.sku,
+      merchantSku: item.merchantSku,
+      stockCode: item.stockCode,
+      productCode: item.productCode,
+      variantAttributes: item.variantAttributes,
+    })
+    return {
+      productName: resolved.productName,
+      barcode: String(item.barcode ?? '').trim(),
+      sku: resolved.sku,
+      merchantSku: String(item.merchantSku || '').trim(),
+      stockCode: String(item.stockCode || '').trim(),
+      color: resolved.color,
+      size: resolved.size,
+      quantity: Number(item.quantity ?? 0),
+      variantAttributes: item.variantAttributes ?? [],
+    }
+  })
 }
 
 function resolveRawSuratResponse(shipment?: Shipment): unknown {
@@ -660,18 +676,6 @@ function resolveTransferCenter(city?: string, district?: string): string {
   return `${fallback} AKTARMA`
 }
 
-function readVariant(
-  attributes: OrderVariantAttribute[] | undefined,
-  name: string,
-): string {
-  const normalized = name.toLocaleLowerCase('tr-TR')
-  return (
-    attributes?.find(
-      (attribute) =>
-        attribute.name.toLocaleLowerCase('tr-TR') === normalized,
-    )?.value ?? ''
-  )
-}
 
 function firstField(sources: unknown[], keys: string[]): string {
   for (const source of sources) {
