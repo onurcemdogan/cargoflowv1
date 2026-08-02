@@ -9,6 +9,10 @@ import type {
 import { buildLabelData, type LabelData, type LabelDataItem } from '../utils/labelData'
 import { formatDesi } from '../utils/desi'
 import { BarcodePreview } from './BarcodePreview'
+import {
+  PRODUCT_OVERFLOW_MESSAGE,
+  resolveProductFit,
+} from '../utils/labelProductFit'
 import { QrCodeSvg } from './QrCodeSvg'
 
 interface LabelHtmlPreviewProps {
@@ -57,6 +61,18 @@ export function LabelHtmlPreview({
     'Ürün bilgisi yok'
   const productMeta =
     overrides?.productMeta ?? formatProductMeta(primaryItem)
+  // Onizleme, baski ile AYNI sigdirma hesabini kullanir (preview == print).
+  const productFit = resolveProductFit({
+    items: (data.items ?? []).map((line) => ({
+      productName: String(line.productName ?? ''),
+      quantity: Number(line.quantity) || 1,
+      color: line.color,
+      size: line.size,
+      sku: line.sku,
+    })),
+    availableWidthMm: 89,
+    availableHeightMm: 9.4,
+  })
   const branchName = overrides?.branchName || data.branchName
   const recipientName = overrides?.recipientName || data.recipientName
   const barcodeValue = data.barcodeValue
@@ -87,18 +103,11 @@ export function LabelHtmlPreview({
       22,
       14,
     )}px`,
-    '--label-product-title-size': `${fitFont(
-      typography.productTitle,
-      productTitle,
-      56,
-      9,
-    )}px`,
-    '--label-product-meta-size': `${fitFont(
-      typography.productMeta,
-      productMeta,
-      62,
-      8,
-    )}px`,
+    // Baski yoluyla AYNI sigdirma sozlesmesi (resolveProductFit): once normal
+    // punto, sigmazsa minimuma kadar kademeli kucultme. Kirpma YOK.
+    '--label-product-title-size': `${productFit.tier.titlePt}pt`,
+    '--label-product-meta-size': `${productFit.tier.metaPt}pt`,
+    '--label-product-line-height': `${productFit.tier.lineHeight}`,
   } as CSSProperties
 
   return (
@@ -148,10 +157,13 @@ export function LabelHtmlPreview({
               {addressLines.map((line, index) => (
                 <span key={`${line}-${index}`}>{line}</span>
               ))}
-              <strong>{routeCenter}</strong>
-              <span>TEL: {maskPhone(data.recipientPhone)}</span>
+              <div className="surat-address-footer">
+                <span className="surat-address-phone">
+                  TEL: {maskPhone(data.recipientPhone)}
+                </span>
+                <strong className="surat-address-region">{routeCenter}</strong>
+              </div>
             </div>
-            <div className="surat-address-route">{routeCenter}</div>
           </section>
 
           <section className="surat-section surat-cargo-section">
@@ -165,7 +177,7 @@ export function LabelHtmlPreview({
             </div>
             <div>
               <span>Top Ds/Kg</span>
-              <strong>{formatDesi(desi)}</strong>
+              <strong>{formatDesi(desi).replace('.', ',')}</strong>
             </div>
           </section>
 
@@ -190,8 +202,16 @@ export function LabelHtmlPreview({
           </section>
 
           <footer className="surat-section surat-product-section">
-            <strong>{productTitle}</strong>
-            <span>{productMeta}</span>
+            {productFit.fits ? (
+              <>
+                <strong>{productTitle}</strong>
+                <span>{productMeta}</span>
+              </>
+            ) : (
+              <strong className="surat-product-overflow">
+                {PRODUCT_OVERFLOW_MESSAGE}
+              </strong>
+            )}
           </footer>
         </div>
       </article>
@@ -204,15 +224,18 @@ function formatProductTitle(item?: LabelDataItem): string {
   return `${item.quantity || 1} x ${item.productName}`.trim()
 }
 
+// Referans etiketteki biçim: "(Renk: X, Beden: Y) [sku/varyant/model kodu]".
+// Eksik alanlar atlanır; boş parantez veya boş köşeli parantez BASILMAZ.
+// Yazdırma tarafındaki buildReferenceProductMeta ile AYNI sözleşmedir.
 function formatProductMeta(item?: LabelDataItem): string {
   if (!item) return ''
-  return [
+  const attrs = [
     item.color ? `Renk: ${item.color}` : '',
     item.size ? `Beden: ${item.size}` : '',
-    item.sku ? `SKU: ${item.sku}` : '',
-  ]
-    .filter(Boolean)
-    .join(' | ')
+  ].filter(Boolean)
+  const grouped = attrs.length > 0 ? `(${attrs.join(', ')})` : ''
+  const code = item.sku ? `[${item.sku}]` : ''
+  return [grouped, code].filter(Boolean).join(' ')
 }
 
 function splitAddress(address: string): string[] {

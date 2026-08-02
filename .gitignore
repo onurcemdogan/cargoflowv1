@@ -33,3 +33,6 @@ order-backfill-*.json
 *.njsproj
 *.sln
 *.sw?
+
+# Gecici gorsel dogrulama ciktilari
+.tmp-preview/

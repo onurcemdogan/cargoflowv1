@@ -1,4 +1,5 @@
 import JsBarcode from 'jsbarcode'
+import { applyScalableQuietZone } from '../utils/barcodeQuietZone'
 import { useEffect, useRef } from 'react'
 
 interface BarcodePreviewProps {
@@ -16,7 +17,9 @@ export function BarcodePreview({
   height = 92,
   displayValue = true,
   width = 2,
-  margin = 8,
+  // Sessiz alan JsBarcode margin'i ile DEĞİL viewBox ile verilir; aksi hâlde
+  // kapsayıcıya esnetildiğinde 10X oranı bozulur.
+  margin = 0,
   fontSize = 16,
   className,
 }: BarcodePreviewProps) {
@@ -35,6 +38,8 @@ export function BarcodePreview({
         fontSize,
         textMargin: 4,
       })
+      // Baskı yoluyla AYNI sessiz alan kuralı (tek kaynak).
+      applyScalableQuietZone(svgRef.current, width)
     } catch {
       svgRef.current.replaceChildren()
     }

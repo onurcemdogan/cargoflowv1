@@ -1,4 +1,8 @@
 import JsBarcode from 'jsbarcode'
+import {
+  applyScalableQuietZone,
+  CODE128_QUIET_ZONE_MODULES,
+} from './barcodeQuietZone'
 import qrcode from 'qrcode-generator'
 import type {
   CargoOrder,
@@ -11,6 +15,12 @@ import {
   resolveSuratPrintEligibility,
 } from './suratPrintEligibility'
 import { formatDesi } from './desi'
+import {
+  buildProductMetaText,
+  buildProductTitleText,
+  PRODUCT_OVERFLOW_MESSAGE,
+  resolveProductFit,
+} from './labelProductFit'
 
 // Her etiket sayfası kendi bağımsız (immutable) modelini kullanır; bir
 // siparişin kodları başka siparişe sızamaz.
@@ -642,7 +652,7 @@ export function buildCleanLabelHtml(
       height: ${heightMm}mm;
       overflow: hidden;
       display: grid;
-      grid-template-columns: 8.5mm minmax(0, 1fr);
+      grid-template-columns: 7mm minmax(0, 1fr);
       border: .35mm solid #000;
       break-after: page;
       page-break-after: always;
@@ -667,7 +677,7 @@ export function buildCleanLabelHtml(
     .surat-rail span { max-height: 96%; font-size: 8pt; font-weight: 900; }
     .surat-body {
       display: grid;
-      grid-template-rows: 11.5mm 20mm 24mm 10mm 21mm 1fr;
+      grid-template-rows: 11.5mm 21.5mm 23mm 10mm 21mm 1fr;
       min-width: 0;
       min-height: 0;
     }
@@ -694,21 +704,39 @@ export function buildCleanLabelHtml(
     .surat-header span { font-size: 7pt; font-weight: 800; }
     .surat-header b { font-size: 10pt; font-weight: 900; text-transform: uppercase; }
     .surat-header-right { text-align: right; }
+    /* Çubuklar geniş alana yayılır; ISO 10X sessiz alan SVG viewBox'ı içinde
+       taşınır (barcodeQuietZone.ts). Buradaki 1mm yalnız fiziksel kenar
+       payıdır, sessiz alanın YERİNE geçmez. */
     .surat-barcode {
       display: grid;
-      place-items: center;
-      padding: .5mm 6mm 0;
+      place-items: stretch;
+      padding: .4mm 1mm 0;
     }
-    .surat-barcode svg { width: 100%; height: 19mm; display: block; }
+    .surat-barcode svg { width: 100%; height: 20.5mm; display: block; }
+    /* Referans: adres kutusu TEK bölmedir; sağda ayrı kutu YOKTUR.
+       Alt satırda solda alıcı telefonu, sağda il/ilçe bulunur. */
     .surat-address {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 35mm;
+      grid-template-columns: minmax(0, 1fr);
     }
     .surat-address-copy {
       min-width: 0;
       overflow: hidden;
-      padding: 1.8mm 2mm;
-      border-right: .35mm solid #000;
+      padding: 1.6mm 2mm;
+    }
+    .surat-address-footer {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 2mm;
+      margin-top: .6mm;
+    }
+    .surat-address-footer .surat-address-phone { flex: 0 0 auto; }
+    .surat-address-footer .surat-address-region {
+      flex: 1 1 auto;
+      text-align: right;
+      font-size: 7.5pt;
+      font-weight: 900;
     }
     .surat-address-copy b,
     .surat-address-copy span,
@@ -730,26 +758,16 @@ export function buildCleanLabelHtml(
     .surat-address-xlong .surat-address-line { font-size: 5.6pt; line-height: 1.1; }
     .surat-address-xlong .surat-recipient-name { font-size: 7pt; }
     .surat-address-xlong .surat-address-phone { font-size: 5.6pt; }
-    .surat-route {
-      display: grid;
-      place-items: center;
-      padding: 1.5mm;
-      font-size: 10pt;
-      font-weight: 900;
-      text-align: center;
-      text-transform: uppercase;
-    }
+    /* Referans: tek satırlık sade blok; hücreler arasında dikey ayraç YOK. */
     .surat-cargo {
       display: grid;
-      grid-template-columns: 1fr 1fr 1.2fr;
+      grid-template-columns: 22mm 22mm minmax(0, 1fr);
     }
     .surat-cargo div {
       display: grid;
       align-content: center;
-      padding: .8mm 2mm;
-      border-right: .35mm solid #000;
+      padding: .6mm 0 .6mm 2mm;
     }
-    .surat-cargo div:last-child { border-right: 0; }
     .surat-cargo span { font-size: 7pt; font-weight: 800; }
     .surat-cargo strong { font-size: 13pt; font-weight: 900; }
     .surat-delivery {
@@ -795,34 +813,44 @@ export function buildCleanLabelHtml(
     .surat-destination-normal { font-size: 9.5pt; }
     .surat-destination-small { font-size: 7.5pt; }
     .surat-transfer { font-size: 8.5pt !important; }
+    /* Urun alani: SESSIZ KIRPMA YOK. Metin sarilir; sigmazsa punto
+       resolveProductFit ile kademeli kucultulur (--product-* degiskenleri).
+       Hicbir kademede sigmazsa render ACIK hata verir. */
     .surat-product {
-      padding: 1.5mm 2mm;
+      padding: 1.2mm 2mm;
+      overflow: visible;
     }
     .surat-product strong,
     .surat-product span {
       display: block;
-      overflow: hidden;
       font-weight: 900;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: break-word;
+      word-break: normal;
+      line-height: var(--product-line-height, 1.15);
     }
-    .surat-product strong { font-size: 8pt; }
-    .surat-product span { font-size: 7pt; margin-top: .5mm; }
-    /* Çoklu ürün: satırlar kayıpsız sarılır, alan taşarsa gizlenir ki
-       etiket TEK sayfada kalsın. Tekli kurallar yukarıda aynen durur. */
-    .surat-product-multi { overflow: hidden; }
+    .surat-product strong { font-size: var(--product-title-size, 8pt); }
+    .surat-product span {
+      font-size: var(--product-meta-size, 7pt);
+      margin-top: .3mm;
+    }
+    /* Coklu urun: satirlar kayipsiz sarilir. overflow:hidden KALDIRILDI —
+       icerik sessizce gizlenmez; sigdirma punto kademesiyle yapilir. */
+    .surat-product-multi { overflow: visible; }
     .surat-product-multi .surat-product-line { margin-top: .4mm; }
     .surat-product-multi .surat-product-line:first-child { margin-top: 0; }
     .surat-product-multi strong,
     .surat-product-multi span {
       white-space: normal;
-      text-overflow: clip;
       overflow-wrap: break-word;
       word-break: normal;
-      line-height: 1.05;
+      line-height: var(--product-line-height, 1.05);
     }
-    .surat-product-multi strong { font-size: 6.5pt; }
-    .surat-product-multi span { font-size: 6pt; margin-top: 0; }
+    .surat-product-multi strong { font-size: var(--product-title-size, 6.5pt); }
+    .surat-product-multi span {
+      font-size: var(--product-meta-size, 6pt);
+      margin-top: 0;
+    }
     @media print {
       html, body {
         width: ${widthMm}mm;
@@ -864,16 +892,32 @@ export function renderPrintableLabelHtml(data: LabelData): string {
     routeCenter.length > 24
       ? 'surat-destination-small'
       : 'surat-destination-normal'
-  const productTitle = item
-    ? `${item.quantity || 1} x ${item.productName}`
-    : 'Ürün bilgisi yok'
-  const productMeta = [
-    item?.color ? `Renk: ${item.color}` : '',
-    item?.size ? `Beden: ${item.size}` : '',
-    item?.sku ? `SKU: ${item.sku}` : '',
-  ]
-    .filter(Boolean)
-    .join(' | ')
+  const productTitle = item ? buildProductTitleText(item) : 'Ürün bilgisi yok'
+  const productMeta = buildProductMetaText(item ?? {
+    productName: '',
+    quantity: 1,
+  })
+  // Alt urun alanina sigdirma: govde 93mm, urun satiri icin kullanilabilir
+  // yukseklik ~9.4mm (100mm etiket - sabit satirlar - padding). Sigmazsa
+  // punto kademeli kucultulur; hicbir kademede sigmazsa ACIK hata.
+  const productFit = resolveProductFit({
+    items: (data.items ?? []).map((line) => ({
+      productName: String(line.productName ?? ''),
+      quantity: Number(line.quantity) || 1,
+      color: line.color,
+      size: line.size,
+      sku: line.sku,
+    })),
+    availableWidthMm: 89,
+    availableHeightMm: 9.4,
+  })
+  if (!productFit.fits) {
+    throw new Error(PRODUCT_OVERFLOW_MESSAGE)
+  }
+  const productStyle =
+    `--product-title-size:${productFit.tier.titlePt}pt;` +
+    `--product-meta-size:${productFit.tier.metaPt}pt;` +
+    `--product-line-height:${productFit.tier.lineHeight}`
   // Çoklu ürün: tüm satırlar footer'da listelenir (kayıpsız, sarmalı).
   // Tekli sipariş markup'ı regression baseline'dır ve birebir korunur.
   const multipleItems = data.items.length > 1
@@ -881,12 +925,15 @@ export function renderPrintableLabelHtml(data: LabelData): string {
     ? `<footer class="surat-section surat-product surat-product-multi">
             ${data.items
               .map((line) => {
-                const lineMeta = [
-                  line.color ? `Renk: ${line.color}` : '',
-                  line.size ? `Beden: ${line.size}` : '',
-                ]
-                  .filter(Boolean)
-                  .join(' | ')
+                // Çoklu üründe de ÖZET DEĞİL tam detay: ad + adet + renk +
+                // beden + sku. "+X ürün daha" ÜRETİLMEZ.
+                const lineMeta = buildProductMetaText({
+                  productName: String(line.productName ?? ''),
+                  quantity: Number(line.quantity) || 1,
+                  color: line.color,
+                  size: line.size,
+                  sku: line.sku,
+                })
                 return `<div class="surat-product-line"><strong>${escapeHtml(
                   `${line.quantity || 1} x ${line.productName}`,
                 )}</strong>${
@@ -901,7 +948,7 @@ export function renderPrintableLabelHtml(data: LabelData): string {
           </footer>`
 
   return `
-      <article class="label-page">
+      <article class="label-page" style="${productStyle}">
         <aside class="surat-rail">
           <strong>SURAT KARGO</strong>
           <span>Siparis No: ${escapeHtml(leftReference)}</span>
@@ -923,15 +970,16 @@ export function renderPrintableLabelHtml(data: LabelData): string {
             <div class="surat-address-copy">
               <b class="surat-recipient-name">${escapeHtml(data.recipientName)}</b>
               ${addressLines.map((line) => `<span class="surat-address-line">${escapeHtml(line)}</span>`).join('')}
-              <strong>${escapeHtml(routeCenter)}</strong>
-              <span class="surat-address-phone">TEL: ${escapeHtml(phoneDisplay)}</span>
+              <div class="surat-address-footer">
+                <span class="surat-address-phone">TEL: ${escapeHtml(phoneDisplay)}</span>
+                <strong class="surat-address-region">${escapeHtml(routeCenter)}</strong>
+              </div>
             </div>
-            <div class="surat-route">${escapeHtml(routeCenter)}</div>
           </section>
           <section class="surat-section surat-cargo">
             <div><span>OdemeTipi</span><strong>POCH</strong></div>
             <div><span>Birim</span><strong>KOLI</strong></div>
-            <div><span>Top Ds/Kg</span><strong>${formatDesi(data.desi)}</strong></div>
+            <div><span>Top Ds/Kg</span><strong>${escapeHtml(formatDesi(data.desi).replace('.', ','))}</strong></div>
           </section>
           <section class="surat-section surat-delivery">
             ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-large')}
@@ -1007,12 +1055,16 @@ function failPrint(
   throw new BrowserLabelPrintError(message, debug)
 }
 
+// JsBarcode'a verilen modül (dar çubuk) genişliği — intrinsic birim.
+// Sessiz alan bu değerden türetilir: 10 modül = 10 * BARCODE_MODULE_WIDTH.
+const BARCODE_MODULE_WIDTH = 2.2
+
 function renderBarcodeSvg(value: string): string {
   if (
     typeof document === 'undefined' ||
     typeof document.createElementNS !== 'function'
   ) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" data-barcode-value="${escapeHtml(
+    return `<svg xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" data-quiet-zone-modules="${CODE128_QUIET_ZONE_MODULES}" data-barcode-value="${escapeHtml(
       value,
     )}" aria-label="${escapeHtml(value)}"></svg>`
   }
@@ -1020,12 +1072,21 @@ function renderBarcodeSvg(value: string): string {
   JsBarcode(svg, value, {
     format: 'CODE128',
     height: 72,
-    width: 2.2,
+    width: BARCODE_MODULE_WIDTH,
+    // margin: 0 — sessiz alan JsBarcode margin'i ile DEĞİL, viewBox ile
+    // verilir; böylece kapsayıcıya esnetildiğinde 10X oranı korunur.
     margin: 0,
     displayValue: true,
     fontSize: 16,
     textMargin: 3,
   })
+  // Çubuklar gövdeye yayılır AMA her iki yanda 10X sessiz alan korunur.
+  // Sessiz alan viewBox'a gömüldüğü için çubuklarla AYNI katsayıyla ölçeklenir
+  // (bkz. barcodeQuietZone.ts). PAYLOAD DEĞİŞMEZ.
+  const quiet = applyScalableQuietZone(svg, BARCODE_MODULE_WIDTH)
+  if (quiet.applied) {
+    svg.setAttribute('data-quiet-zone-units', String(quiet.quietZoneUnits))
+  }
   svg.setAttribute('data-barcode-value', value)
   return svg.outerHTML
 }
