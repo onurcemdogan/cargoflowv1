@@ -106,13 +106,19 @@ export async function findOrders(
   const pageSize = resolvePageSize(filters.pageSize)
   const page = Math.max(1, Math.trunc(Number(filters.page ?? 1)) || 1)
   const where = buildWhere(organizationId, filters, marketplaceAccountId)
+  // Sayfalama icin DETERMINISTIK siralama: yalniz orderDate ile ayni
+  // timestamp'li kayitlarin sirasi belirsizdir ve sayfalar arasinda kayit
+  // kaymasi/tekrari olusabilir. Ikincil anahtar (id) yalniz ESITLIK
+  // durumunu cozer; kullanicinin gordugu tarih sirasi DEGISMEZ.
   const orderBy =
-    filters.sort === 'orderDateAsc' ? asc(orders.orderDate) : desc(orders.orderDate)
+    filters.sort === 'orderDateAsc'
+      ? [asc(orders.orderDate), asc(orders.id)]
+      : [desc(orders.orderDate), desc(orders.id)]
   const rows = await db
     .select()
     .from(orders)
     .where(where)
-    .orderBy(orderBy)
+    .orderBy(...orderBy)
     .limit(pageSize)
     .offset((page - 1) * pageSize)
   const totalRows = await db

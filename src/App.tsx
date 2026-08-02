@@ -195,8 +195,12 @@ function App() {
       // LOCAL-FIRST + PARALEL: siparişler ürün kataloğunu (auth modda ~binlerce
       // varyant, çok sayfalı) BEKLEMEZ. İkisi bağımsız yüklenir; hangisi önce
       // gelirse görseller doğru zenginleşir. Provider sync bu yolu bloklamaz.
+      // KISMI BASARI YASAK: sayfalardan biri bile gelmezse null doner ve
+      // mevcut (basarili) siparis listesi BOSALTILMAZ.
       const ordersPromise = authMode
-        ? workflowService.loadOrdersFromServer().catch(() => [] as CargoOrder[])
+        ? workflowService
+            .loadOrdersFromServer()
+            .catch(() => null as CargoOrder[] | null)
         : Promise.resolve(workflowService.loadOrders())
       const catalogPromise = workflowService
         .hydrateProductCatalog()
@@ -204,6 +208,12 @@ function App() {
 
       void ordersPromise.then((baseOrders) => {
         if (!isFresh()) return
+        if (baseOrders === null) {
+          // Yukleme eksik kaldi: yalniz yukleniyor durumunu bitir, mevcut
+          // listeyi KORU (eksik liste "tam liste" gibi gosterilmez).
+          setOrdersState((current) => ({ ...current, ordersLoading: false }))
+          return
+        }
         setOrdersState({
           orders: workflowService.enrichOrderImages(
             baseOrders,
@@ -540,11 +550,21 @@ function App() {
 
       // LOCAL-FIRST + PARALEL: yeni hesabın siparişleri ürün kataloğunu BEKLEMEZ.
       const authMode = integrationConfigService.isAuthMode()
+      // KISMI BASARI YASAK: sayfalardan biri bile gelmezse null doner ve
+      // mevcut (basarili) siparis listesi BOSALTILMAZ.
       const ordersPromise = authMode
-        ? workflowService.loadOrdersFromServer().catch(() => [] as CargoOrder[])
+        ? workflowService
+            .loadOrdersFromServer()
+            .catch(() => null as CargoOrder[] | null)
         : Promise.resolve(workflowService.loadOrders())
       void ordersPromise.then((baseOrders) => {
         if (!isFresh()) return
+        if (baseOrders === null) {
+          // Yukleme eksik kaldi: yalniz yukleniyor durumunu bitir, mevcut
+          // listeyi KORU (eksik liste "tam liste" gibi gosterilmez).
+          setOrdersState((current) => ({ ...current, ordersLoading: false }))
+          return
+        }
         setOrdersState({
           orders: workflowService.enrichOrderImages(
             baseOrders,
