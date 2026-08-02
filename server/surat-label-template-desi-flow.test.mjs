@@ -106,10 +106,10 @@ async function renderZpl(order) {
 test('SLT-1/2: provider takip barkodu ve QR içeriği DEĞİŞMEZ', async () => {
   const { zplContent } = await renderZpl(labelOrder())
   // 1D barkod: provider barkod değeri aynen, insan-okur satır açık (,Y,).
-  assert.match(zplContent, /\^BCN,120,Y,N,N\^FD01231201025\^FS/)
+  assert.match(zplContent, /\^BCN,\d+,Y,N,N\^FD01231201025\^FS/, '1D barkod İÇERİĞİ değişmez')
   // QR payload'ları aynen (sipariş no|barkod ve barkod).
-  assert.ok(zplContent.includes(`^BQN,2,7^FDLA,${ORDER_NO}|${BARCODE}^FS`), 'QR1 içeriği korunur')
-  assert.ok(zplContent.includes(`^BQN,2,4^FDLA,${BARCODE}^FS`), 'QR2 içeriği korunur')
+  assert.ok(zplContent.includes(`^FDLA,${ORDER_NO}|${BARCODE}^FS`), 'QR1 payload korunur')
+  assert.ok(zplContent.includes(`^FDLA,${BARCODE}^FS`), 'QR2 payload korunur')
   // T.No provider değeri.
   assert.ok(zplContent.includes(`T.No: ${TNO}`), 'T.No korunur')
 })
@@ -173,10 +173,21 @@ test('SLT-5b: uzun varış/aktarma metni KESİLMEZ, güvenli küçültülür ve 
   )
   const routing = [
     ...zplContent.matchAll(
-      /\^FO222,(\d+)\^A0N,(\d+),\d+\^FB(\d+),(\d+),0,L,0\^FD([^^]*)\^FS/g,
+      /\^FO(\d+),(\d+)\^A0N,(\d+),\d+\^FB(\d+),(\d+),0,L,0\^FD([^^]*)\^FS/g,
     ),
-  ].map((m) => ({ y: +m[1], font: +m[2], width: +m[3], maxLines: +m[4], text: m[5] }))
+  ]
+    .map((m) => ({
+      x: +m[1], y: +m[2], font: +m[3], width: +m[4], maxLines: +m[5], text: m[6],
+    }))
+    // Yalnız rota bandı satırları (iri punto); faux-bold çiftleri tekilleştirilir.
+    .filter((row) => row.font >= 20)
+    .filter(
+      (row, index, all) =>
+        all.findIndex((other) => other.y === row.y && other.text === row.text) === index,
+    )
   assert.equal(routing.length, 2, 'iki satır: varış şubesi + aktarma merkezi')
+  // Sağ QR'ın sol kenarı (ZPL'den okunur) — rota metni buraya taşmamalı.
+  const rightQrX = Number(zplContent.match(/\^FO(\d+),\d+\^BQN,2,\d\^FDLA,\d+\^FS/)[1])
   for (const row of routing) {
     // Kesme yok: '…' veya kırpılmış metin olmamalı.
     assert.equal(row.text.includes('…'), false, 'metin kesilmedi: ' + row.text)
@@ -185,13 +196,12 @@ test('SLT-5b: uzun varış/aktarma metni KESİLMEZ, güvenli küçültülür ve 
       Math.floor(row.width / (row.font * 0.58)) * row.maxLines
     assert.ok(row.text.length <= capacity, 'punto/satır sığacak şekilde ayarlandı')
     assert.ok(row.maxLines <= 2, 'en fazla 2 satıra sarılır')
-    // Küçük QR (x=696) alanına taşmaz.
-    assert.ok(222 + row.width <= 696, 'rota bandı QR alanına girmez')
+    assert.ok(row.x + row.width <= rightQrX, 'rota bandı sağ QR alanına girmez')
   }
   assert.ok(routing[1].y > routing[0].y, 'aktarma satırı varış satırının altında')
   const last = routing[1]
   assert.ok(
-    last.y + last.font * last.maxLines <= 696,
+    last.y + last.font * last.maxLines <= 690,
     'rota bandı ürün çizgisini aşmaz',
   )
 })
@@ -219,10 +229,12 @@ test('SLT-6b: ÜST BLOK gönderici, alıcı YALNIZ orta kutuda (gerçek etiket a
   assert.match(headerText, /HASAN/, 'gönderici adı üst blokta')
   assert.equal(/TEST ALICI/.test(headerText), false, 'alıcı adı üst blokta OLMAZ')
   // Gönderici telefonu veri modelinde yok → TEL satırı basılmaz (uydurma yok).
-  assert.equal(/\^FO500,58/.test(zplContent), false, 'gönderici TEL uydurulmaz')
+  assert.equal(/\^FDTEL: -\^FS/.test(zplContent), false, 'gönderici TEL uydurulmaz')
   // Alıcı adı/telefonu/il-ilçesi orta kutuda.
-  assert.ok(zplContent.includes('^FO80,260^A0N,24,24^FDTEST ALICI^FS'), 'alıcı orta kutuda')
-  assert.match(zplContent, /\^FO80,398\^A0N,18,18\^FDTEL: /, 'alıcı telefonu orta kutuda')
+  assert.match(zplContent, /\^FO\d+,2\d\d\^A0N,\d+,\d+\^FDTEST ALICI\^FS/, 'alıcı orta kutuda')
+  assert.match(zplContent, /\^FO\d+,3\d\d\^A0N,\d+,\d+\^FDTEL: /, 'alıcı telefonu orta kutuda')
+  // Sağ adres BÖLMESİ (dikey ayraç) OLMAMALI.
+  assert.equal(/\^FO568,250\^GB1,180/.test(zplContent), false, 'sağ adres bölmesi yok')
   // routeCenter gereksiz TEKRAR etmez: orta kutuda 1 + büyük rota alanında 1.
   const routeHits = zplContent.split('\n').filter((l) => l.includes('KASTAMONU / ARAC'))
   const distinctY = new Set(routeHits.map((l) => l.match(/\^FO\d+,(\d+)/)[1]))
@@ -309,8 +321,8 @@ test('SLT-9c: DEVAM etiketi kargo barkodu/QR/T.No üretmez; desi ve parça adedi
   const [main, ...continuations] = pages
   assert.ok(continuations.length >= 1, 'en az bir devam etiketi')
   // Ana etiket: provider alanları korunur.
-  assert.ok(main.includes(`^BCN,120,Y,N,N^FD${BARCODE}^FS`), 'ana 1D barkod korunur')
-  assert.ok(main.includes(`^BQN,2,7^FDLA,${ORDER_NO}|${BARCODE}^FS`), 'ana QR korunur')
+  assert.match(main, /\^BCN,\d+,Y,N,N\^FD01231201025\^FS/, 'ana 1D barkod korunur')
+  assert.ok(main.includes(`^FDLA,${ORDER_NO}|${BARCODE}^FS`), 'ana QR korunur')
   // Devam etiketleri: barkod/QR/T.No YOK, yeni gönderi YOK.
   for (const page of continuations) {
     assert.equal(/\^BC|\^BQ/.test(page), false, 'devam etiketinde barkod/QR OLMAZ')
@@ -512,6 +524,96 @@ test('SLT-19: çıkış butonu görünür sidebar footer içindedir', () => {
   assert.match(css, /\.sidebar-signout:focus-visible/)
   // Mobil (<=1100px) mevcut davranış korunur.
   assert.match(css, /@media \(max-width: 1100px\)[\s\S]*?\.sidebar\s*\{[^}]*position:\s*sticky/)
+})
+
+// ═══ Desi girişi kaldırıldı: yalnız Ayarlar varsayılanı ═══════════════════
+
+test('SLT-21: hiçbir sipariş ekranında "Desi Gir" butonu / manuel desi girişi YOK', () => {
+  const screens = [
+    'src/components/OrdersTable.tsx',
+    'src/components/OrderDetailDrawer.tsx',
+    'src/components/LabelPreviewModal.tsx',
+    'src/pages/OrdersPage.tsx',
+    'src/pages/CargoOperationsPage.tsx',
+  ]
+  for (const rel of screens) {
+    const src = readFileSync(join(here, '..', rel), 'utf8')
+    assert.equal(/>\s*Desi Gir\s*</.test(src), false, `"Desi Gir" butonu kaldı: ${rel}`)
+    // Manuel desi yazılabilir alan (number input + desi etiketi) kalmamalı.
+    assert.equal(
+      /placeholder="Desi girin"/.test(src),
+      false,
+      `manuel desi girişi kaldı: ${rel}`,
+    )
+    assert.equal(
+      /aria-label=\{?[`'"][^`'"]*Toplam koli desisi/.test(src),
+      false,
+      `desi giriş alanı kaldı: ${rel}`,
+    )
+  }
+})
+
+test('SLT-22: yeni etiket desisi Ayarlar varsayılanından; yoksa Ayarlar\'a yönlendiren hata', async () => {
+  const { resolveEffectiveLabelDesi, DEFAULT_DESI_MISSING_MESSAGE } = await load(
+    '/src/utils/labelDesi.ts',
+  )
+  const order = {
+    items: [{ id: 'l1', productName: 'Ü', quantity: 1, barcode: 'B' }],
+  }
+  // Ayarlar varsayılanı KULLANILIR (adet çarpanı korunur).
+  assert.equal(resolveEffectiveLabelDesi(order, undefined, [], { defaultUnitDesi: 2 }).desi, 2)
+  assert.equal(
+    resolveEffectiveLabelDesi(
+      { items: [{ id: 'l1', productName: 'Ü', quantity: 2, barcode: 'B' }] },
+      undefined, [], { defaultUnitDesi: 2 },
+    ).desi,
+    4,
+    'quantity çarpanı korunur',
+  )
+  // Varsayılan yoksa BLOKLA + Ayarlar mesajı.
+  const blocked = resolveEffectiveLabelDesi(order, undefined, [], { defaultUnitDesi: null })
+  assert.equal(blocked.desi, null)
+  assert.equal(blocked.requiresSettings, true)
+  assert.equal(blocked.blockedReason, DEFAULT_DESI_MISSING_MESSAGE)
+  assert.match(blocked.blockedReason, /Ayarlar/, 'kullanıcı Ayarlar\'a yönlendirilir')
+
+  // Etiket üretimi de aynı mesajla bloklanır.
+  const { ZebraZplLabelProvider } = await load(
+    '/src/providers/labels/ZebraZplLabelProvider.ts',
+  )
+  const fresh = labelOrder({ desi: null, desiSource: null })
+  fresh.shipment.desi = null
+  await assert.rejects(
+    () => new ZebraZplLabelProvider().generateSingle({
+      order: fresh, shipment: fresh.shipment, template: { id: 't' },
+      desiConfig: { defaultUnitDesi: null },
+    }),
+    /Ayarlar/,
+  )
+})
+
+test('SLT-23: geçmiş manuel desi override KORUNUR; kayıtlı etiket reprint değişmez', async () => {
+  const { resolveEffectiveLabelDesi } = await load('/src/utils/labelDesi.ts')
+  // Geçmişte girilmiş manuel toplam desi Ayarlar varsayılanını EZER.
+  assert.equal(
+    resolveEffectiveLabelDesi(
+      { desi: 7, desiSource: 'manual_total', items: [{ id: 'l1', quantity: 3, barcode: 'B' }] },
+      undefined, [], { defaultUnitDesi: 2 },
+    ).desi,
+    7,
+  )
+  // Kayıtlı taşıyıcı ZPL varsa desi hiç sorulmaz ve etiket aynen basılır.
+  const { ZebraZplLabelProvider } = await load(
+    '/src/providers/labels/ZebraZplLabelProvider.ts',
+  )
+  const reprint = labelOrder({ desi: null, desiSource: null })
+  reprint.shipment.desi = null
+  reprint.shipment.barcodeRaw = '^XA^FDKAYITLI^FS^XZ'
+  const label = await new ZebraZplLabelProvider().generateSingle({
+    order: reprint, shipment: reprint.shipment, template: { id: 't' },
+    desiConfig: { defaultUnitDesi: null },
+  })
+  assert.ok(label.zplContent.includes(BARCODE), 'reprint canonical barkodu korur')
 })
 
 // ═══ 20: geriye dönük uyumluluk ═══════════════════════════════════════════

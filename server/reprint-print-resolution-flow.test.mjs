@@ -110,7 +110,10 @@ test('REP-2: generateSingle kayıtlı ZPL YOK + desi=null → desi hatası (fres
         template: defaultLabelTemplate,
         mappingConfig: {},
       }),
-    /Desi bilgisi eksik/,
+    // Desi artık sipariş bazında GİRİLMEZ; kaynak Ayarlar'daki "Varsayılan
+    // Gönderi Desisi"dir. Tanımlı değilse fresh-create BLOKLANIR ve kullanıcı
+    // Ayarlar'a yönlendirilir (fresh-create koruması aynen sürüyor).
+    /Ayarlar/,
   )
 })
 
