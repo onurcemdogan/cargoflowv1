@@ -238,6 +238,13 @@ export class IntegrationConfigService {
         const suratEnv = String(payload.surat?.environment ?? '')
         return normalizeIntegrationConfig({
           ...defaultIntegrationConfig,
+          // Gönderi varsayılanları secret DEĞİLDİR: sunucudan (organization_
+          // settings) KALICI olarak gelir. Böylece Ayarlar'daki "Varsayılan
+          // Gönderi Desisi" sayfa yenilemesinde/oturumda korunur.
+          desi: normalizeTenantDesiConfig({
+            ...DEFAULT_TENANT_DESI_CONFIG,
+            defaultUnitDesi: payload.desi?.defaultUnitDesi ?? null,
+          }),
           trendyol: {
             ...defaultIntegrationConfig.trendyol,
             sellerId: String(payload.trendyol?.sellerId ?? ''),

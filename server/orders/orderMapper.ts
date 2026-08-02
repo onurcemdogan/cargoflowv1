@@ -1,10 +1,84 @@
 // Normalized Trendyol siparişi ↔ DB satır eşlemesi. MARKETPLACE alanları
 // (fresh sync günceller) ile OPERASYONEL alanlar (operation_status, archived —
 // korunur) AÇIKÇA ayrılır. PII/adres ve raw payload şifreli tutulur.
+import { createHash } from 'node:crypto'
 import { encryptOrderPayload, decryptOrderPayload } from './orderEncryption.ts'
 
 function str(value: unknown): string {
   return String(value ?? '').trim()
+}
+
+// Frontend ile AYNI ön ek stripleme: normal sync satır id'sini `ty_line_<rawId>`
+// olarak üretir (index.mjs), historical backfill ise `<rawId>` üretir. AYNI
+// Trendyol satırı iki farklı externalLineId'ye düşerse (kohort vs backfill) satır
+// DUPLICATE olur. Ön eki soyarak iki yol AYNI canonical anahtara iner.
+const TY_LINE_PREFIX = 'ty_line_'
+function stripLinePrefix(id: string): string {
+  return id.startsWith(TY_LINE_PREFIX) ? id.slice(TY_LINE_PREFIX.length) : id
+}
+
+// variantAttributes → deterministik string (sıralı; hem dizi hem nesne biçimi).
+function stableVariant(value: unknown): string {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        const attribute = entry as Record<string, unknown> | null
+        return `${str(attribute?.name ?? attribute?.key)}=${str(attribute?.value)}`
+      })
+      .sort()
+      .join(',')
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value as Record<string, unknown>)
+      .map(([key, val]) => `${key}=${str(val)}`)
+      .sort()
+      .join(',')
+  }
+  return str(value)
+}
+
+// CANONICAL, YOL-BAĞIMSIZ satır kimliği. Öncelik: gerçek provider satır id'si
+// (ty_line_ ön eki soyulmuş item.id / orderLineId) → yoksa içerik hash'i
+// (productId|sku|barcode|unitPrice|variant|index). YALNIZ barcode'a göre
+// deduplike ETMEZ (aynı üründen iki gerçek satır index ile ayrışır → korunur).
+// Aynı provider satırı hangi yoldan gelirse gelsin AYNI anahtara iner → idempotent.
+export function canonicalLineKey(
+  item: Record<string, unknown>,
+  index: number,
+): string {
+  const providerId = stripLinePrefix(str(item.id) || str(item.orderLineId))
+  if (providerId) return providerId
+  const basis = [
+    str(item.productContentId ?? item.productCode ?? item.productId),
+    str(item.merchantSku ?? item.sku ?? item.stockCode),
+    str(item.barcode),
+    str(item.price ?? item.unitPrice),
+    stableVariant(item.variantAttributes),
+    String(index),
+  ].join('|')
+  return `ck_${createHash('sha256').update(basis).digest('hex').slice(0, 24)}`
+}
+
+// Bir DB satırından canonical anahtar (repair grubu için). externalLineId ön eki
+// soyulur; ck_ / gerçek provider id doğrudan kullanılır.
+export function canonicalLineKeyFromRow(row: {
+  externalLineId?: unknown
+  productId?: unknown
+  merchantSku?: unknown
+  barcode?: unknown
+  unitPrice?: unknown
+  variantAttributes?: unknown
+}): string {
+  const stripped = stripLinePrefix(str(row.externalLineId))
+  if (stripped) return stripped
+  const basis = [
+    str(row.productId),
+    str(row.merchantSku),
+    str(row.barcode),
+    str(row.unitPrice),
+    stableVariant(row.variantAttributes),
+  ].join('|')
+  return `ck_${createHash('sha256').update(basis).digest('hex').slice(0, 24)}`
 }
 function num(value: unknown): string | null {
   const parsed = Number(value)
@@ -105,8 +179,10 @@ export function toLineInsertValues(
     return {
       organizationId,
       orderId,
-      externalLineId:
-        str(item.id) || str(item.orderLineId) || str(item.barcode) || `line-${index}`,
+      // CANONICAL yol-bağımsız anahtar (ty_line_ ön eki soyulur; yoksa içerik
+      // hash'i). Aynı provider satırı normal sync ve backfill'de AYNI anahtara
+      // iner → cross-path duplicate önlenir.
+      externalLineId: canonicalLineKey(item, index),
       productId: str(item.productContentId ?? item.productCode) || null,
       merchantSku: str(item.merchantSku ?? item.sku ?? item.stockCode) || null,
       barcode: str(item.barcode) || null,

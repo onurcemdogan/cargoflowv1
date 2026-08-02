@@ -74,26 +74,30 @@ export function AppShell({
           })}
         </nav>
 
-        {sessionUser ? (
-          <div className="sidebar-session" aria-label="Oturum bilgisi">
-            <div className="sidebar-session-identity">
-              <strong>{sessionUser.organization.name}</strong>
-              <span>{sessionUser.username}</span>
+        {/* Sabit alt blok: menü listesi kaysa bile oturum/çıkış GÖRÜNÜR kalır ve
+            sayfanın en altına düşmez (sidebar viewport yüksekliğinde sabitlenir). */}
+        <div className="sidebar-footer">
+          {sessionUser ? (
+            <div className="sidebar-session" aria-label="Oturum bilgisi">
+              <div className="sidebar-session-identity">
+                <strong>{sessionUser.organization.name}</strong>
+                <span>{sessionUser.username}</span>
+              </div>
+              <button
+                type="button"
+                className="sidebar-signout"
+                onClick={() => void auth?.signOut()}
+              >
+                <LogOut size={15} />
+                Çıkış Yap
+              </button>
             </div>
-            <button
-              type="button"
-              className="sidebar-signout"
-              onClick={() => void auth?.signOut()}
-            >
-              <LogOut size={15} />
-              Çıkış Yap
-            </button>
-          </div>
-        ) : null}
+          ) : null}
 
-        <div className="sidebar-note">
-          <ScrollText size={16} />
-          <span>Canlı pazaryeri ve kargo operasyon akışı.</span>
+          <div className="sidebar-note">
+            <ScrollText size={16} />
+            <span>Canlı pazaryeri ve kargo operasyon akışı.</span>
+          </div>
         </div>
       </aside>
       <main className="main-panel">{children}</main>

@@ -150,8 +150,12 @@ export function normalizeHistoricalPackage(
     orderDate: toIso(item.orderDate) ?? new Date(0).toISOString(),
     lastModifiedDate: toIso(item.lastModifiedDate),
     rawOrder: item,
-    items: lines.map((line, index) => ({
-      id: String(line.id ?? line.orderLineId ?? `${packageId}-${index}`),
+    // Satır id: yalnız GERÇEK provider satır id'si (line.id/orderLineId). Sentetik
+    // `${packageId}-${index}` fallback KULLANILMAZ — id yoksa persistence
+    // (canonicalLineKey) yol-bağımsız içerik hash'ine düşer; normal sync ile AYNI
+    // canonical anahtar üretilir (cross-path duplicate önlenir).
+    items: lines.map((line) => ({
+      id: String(line.id ?? line.orderLineId ?? ''),
       barcode: String(line.barcode ?? ''),
       merchantSku: String(line.merchantSku ?? line.sku ?? ''),
       productId: String(line.productContentId ?? line.productCode ?? ''),

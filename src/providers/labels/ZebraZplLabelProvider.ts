@@ -1,6 +1,7 @@
 import type { Label } from '../../types/cargoflow'
 import { createId } from '../../utils/ids'
 import { buildLabelData, type LabelData, type LabelDataItem } from '../../utils/labelData'
+import { buildLabelProductLines } from '../../utils/labelProductLines'
 import { verifySuratShipment } from '../../utils/suratVerification'
 import { resolveSuratPrintEligibility } from '../../utils/suratPrintEligibility'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
@@ -16,6 +17,29 @@ import type { GenerateLabelInput, LabelProvider } from './LabelProvider'
 const LABEL_WIDTH_DOTS = 799
 const LABEL_HEIGHT_DOTS = 799
 const RAIL_WIDTH = 58
+
+// ── Ürün bölümü (etiket ALT şeridi) — sabit, deterministik yerleşim ─────────
+// Etiketin fiziksel yüksekliği (^LL799) DEĞİŞMEZ. Son yatay çizgi y=696'da,
+// dış çerçeve 799'da biter; ürün şeridi bu aralıkta kalır ve barkod/QR
+// alanlarına ASLA taşmaz.
+const PRODUCT_START_Y = 701
+const PRODUCT_LINE_HEIGHT = 18
+const PRODUCT_MAX_LINES = 5
+const PRODUCT_X = 72
+const PRODUCT_TITLE_FONT = 17
+const PRODUCT_META_FONT = 15
+// Font genişliği ~0.58×yükseklik; x=72'den 795'e ≈ 723 nokta kullanılabilir.
+const PRODUCT_TITLE_MAX_CHARS = 66
+const PRODUCT_META_MAX_CHARS = 74
+
+// ZPL'de yerleşik "bold" komutu YOKTUR. Termal baskıda metni koyulaştırmanın
+// güvenli yolu aynı METİN alanını 1 nokta kaydırarak iki kez basmaktır
+// (double-strike / faux bold). Bu teknik YALNIZ metin (^A0/^FD) alanlarına
+// uygulanır; ^BC (1D barkod) ve ^BQ (QR) alanlarına ASLA dokunulmaz ve genel
+// baskı koyuluğu (^MD/~SD) DEĞİŞTİRİLMEZ → barkod taranabilirliği korunur.
+function boldText(x: number, y: number, body: string): string[] {
+  return [`^FO${x},${y}${body}`, `^FO${x + 1},${y}${body}`]
+}
 
 function zplSafe(value: string | number, maxLength = 160): string {
   return String(value ?? '')
@@ -35,20 +59,25 @@ function maskPhone(phone: string): string {
   return `${normalized.slice(0, 3)}*****${normalized.slice(-2)}`
 }
 
-function productTitle(item?: LabelDataItem): string {
-  if (!item) return 'Ürün bilgisi yok'
-  return `${item.quantity || 1} x ${item.productName}`
-}
-
-function productMeta(item?: LabelDataItem): string {
-  if (!item) return ''
-  return [
-    item.color ? `Renk: ${item.color}` : '',
-    item.size ? `Beden: ${item.size}` : '',
-    item.sku ? `SKU: ${item.sku}` : '',
-  ]
-    .filter(Boolean)
-    .join(' | ')
+// Etiket alt şeridi: TÜM ürün satırları (yalnız ilki değil). Adet, ürün/model
+// adı, renk, beden, diğer varyant ve SKU/barkod deterministik olarak yerleşir;
+// sığmayan ürünler "+X ürün daha" ile özetlenir.
+function productZplLines(items: LabelDataItem[]): string[] {
+  const lines = buildLabelProductLines(items ?? [], {
+    maxLines: PRODUCT_MAX_LINES,
+    titleMaxChars: PRODUCT_TITLE_MAX_CHARS,
+    metaMaxChars: PRODUCT_META_MAX_CHARS,
+  })
+  return lines.flatMap((line, index) => {
+    const y = PRODUCT_START_Y + index * PRODUCT_LINE_HEIGHT
+    const font = line.kind === 'title' ? PRODUCT_TITLE_FONT : PRODUCT_META_FONT
+    const body = `^A0N,${font},${font}^FD${zplSafe(line.text, 160)}^FS`
+    // Başlık satırları koyu (faux bold); meta satırı normal kalır ki küçük
+    // punto okunaklılığı bozulmasın.
+    return line.kind === 'title'
+      ? boldText(PRODUCT_X, y, body)
+      : [`^FO${PRODUCT_X},${y}${body}`]
+  })
 }
 
 function buildZpl(labelData: LabelData): string {
@@ -57,7 +86,6 @@ function buildZpl(labelData: LabelData): string {
     labelData.leftVerticalReference ||
     labelData.shipmentReference ||
     labelData.orderNumber
-  const primaryItem = labelData.items[0]
   const desiKg = formatDesi(labelData.desi)
 
   return [
@@ -74,81 +102,83 @@ function buildZpl(labelData: LabelData): string {
     '^FO58,520^GB741,2,2^FS',
     '^FO58,696^GB741,2,2^FS',
 
-    '^FO14,92^A0B,24,24^FDSURAT KARGO^FS',
-    `^FO16,560^A0B,17,17^FDRef No: ${zplSafe(
-      leftReference,
-      48,
-    )}^FS`,
+    // Sol dikey ray (marka + referans).
+    ...boldText(14, 92, '^A0B,24,24^FDSURAT KARGO^FS'),
+    `^FO16,560^A0B,17,17^FDRef No: ${zplSafe(leftReference, 48)}^FS`,
 
-    `^FO72,12^A0N,22,22^FDSube: ${zplSafe(labelData.branchName, 24)}^FS`,
-    `^FO72,38^A0N,29,29^FD${zplUpper(labelData.recipientName, 34)}^FS`,
-    `^FO72,70^A0N,18,18^FDMUST.IRS.NO: ${zplSafe(
-      labelData.orderNumber,
-      42,
-    )}^FS`,
-    `^FO500,18^A0N,22,22^FDT.No: ${zplSafe(trackingText, 30)}^FS`,
+    // Üst bölüm: şube / gönderici / müşteri irsaliye + T.No.
+    ...boldText(72, 12, `^A0N,22,22^FDSube: ${zplSafe(labelData.branchName, 24)}^FS`),
+    // NOT: üst bölüm ad/telefon kaynağı MEVCUT sözleşmedir (HTML önizleme ile
+    // aynı: recipientName/recipientPhone). Bu tur yalnız okunabilirlik
+    // (kalınlaştırma) değiştirir; alan kaynakları DEĞİŞMEZ.
+    ...boldText(72, 38, `^A0N,29,29^FD${zplUpper(labelData.recipientName, 34)}^FS`),
+    `^FO72,70^A0N,18,18^FDMUST.IRS.NO: ${zplSafe(labelData.orderNumber, 42)}^FS`,
+    ...boldText(500, 18, `^A0N,22,22^FDT.No: ${zplSafe(trackingText, 30)}^FS`),
     `^FO500,58^A0N,16,16^FDTEL: ${zplSafe(
       maskPhone(labelData.recipientPhone),
       20,
     )}^FS`,
 
+    // Büyük yatay 1D barkod + altında okunabilir takip numarası (^BC ... ,Y,).
+    // PROVIDER İÇERİĞİ: barcodeValue aynen basılır, kalınlaştırma UYGULANMAZ.
     `^FO88,104^BY3,2,120^BCN,120,Y,N,N^FD${zplSafe(
       labelData.barcodeValue,
       60,
     )}^FS`,
 
+    // Alıcı bölümü.
     '^FO68,250^GB720,180,1^FS',
     '^FO568,250^GB1,180,1^FS',
-    `^FO80,260^A0N,24,24^FD${zplUpper(labelData.recipientName, 38)}^FS`,
+    ...boldText(80, 260, `^A0N,24,24^FD${zplUpper(labelData.recipientName, 38)}^FS`),
     `^FO80,290^A0N,20,20^FB468,3,4,L,0^FD${zplUpper(
       labelData.address,
       150,
     )}^FS`,
-    `^FO80,375^A0N,22,22^FD${zplUpper(labelData.routeCenter, 42)}^FS`,
+    ...boldText(80, 375, `^A0N,22,22^FD${zplUpper(labelData.routeCenter, 42)}^FS`),
     `^FO80,408^A0N,18,18^FDTEL: ${zplSafe(
       maskPhone(labelData.recipientPhone),
       24,
     )}^FS`,
-    `^FO586,335^A0N,27,27^FB188,2,4,C,0^FD${zplUpper(
-      labelData.routeCenter,
-      38,
-    )}^FS`,
+    ...boldText(
+      586,
+      335,
+      `^A0N,27,27^FB188,2,4,C,0^FD${zplUpper(labelData.routeCenter, 38)}^FS`,
+    ),
 
+    // Gönderi özeti: ödeme tipi / birim / desi-kg.
     '^FO58,440^GB247,80,1^FS',
     '^FO305,440^GB247,80,1^FS',
     '^FO552,440^GB247,80,1^FS',
     '^FO74,450^A0N,17,17^FDOdemeTipi^FS',
     '^FO318,450^A0N,17,17^FDBirim^FS',
     '^FO566,450^A0N,17,17^FDTop Ds/Kg^FS',
-    '^FO74,478^A0N,35,35^FDPOCH^FS',
-    '^FO318,478^A0N,35,35^FDKOLI^FS',
-    `^FO566,478^A0N,35,35^FD${desiKg}^FS`,
+    ...boldText(74, 478, '^A0N,35,35^FDPOCH^FS'),
+    ...boldText(318, 478, '^A0N,35,35^FDKOLI^FS'),
+    ...boldText(566, 478, `^A0N,35,35^FD${desiKg}^FS`),
 
+    // QR (provider referans içeriği AYNEN; boyut/quiet-zone değişmez).
     `^FO74,538^BQN,2,7^FDLA,${zplSafe(
       `${labelData.orderNumber}|${labelData.barcodeValue}`,
       90,
     )}^FS`,
     '^FO222,528^A0N,20,20^FDParca Adedi^FS',
-    '^FO222,556^A0N,38,38^FD1 / 1^FS',
-    '^FO344,528^A0N,36,36^FDAdrese Teslim^FS',
-    `^FO222,598^A0N,49,49^FB430,1,0,L,0^FD${zplUpper(
-      labelData.routeCenter,
-      32,
-    )}^FS`,
-    `^FO222,648^A0N,50,50^FB430,1,0,L,0^FD${zplUpper(
-      labelData.transferCenter,
-      32,
-    )}^FS`,
+    ...boldText(222, 556, '^A0N,38,38^FD1 / 1^FS'),
+    ...boldText(344, 528, '^A0N,36,36^FDAdrese Teslim^FS'),
+    // Büyük yönlendirme alanı: uzaktan okunabilir, kalın.
+    ...boldText(
+      222,
+      598,
+      `^A0N,49,49^FB430,1,0,L,0^FD${zplUpper(labelData.routeCenter, 32)}^FS`,
+    ),
+    ...boldText(
+      222,
+      648,
+      `^A0N,50,50^FB430,1,0,L,0^FD${zplUpper(labelData.transferCenter, 32)}^FS`,
+    ),
     `^FO696,540^BQN,2,4^FDLA,${zplSafe(labelData.barcodeValue, 60)}^FS`,
 
-    `^FO72,708^A0N,20,20^FB704,2,4,L,0^FD${zplSafe(
-      productTitle(primaryItem),
-      120,
-    )}^FS`,
-    `^FO72,754^A0N,17,17^FB704,2,4,L,0^FD${zplSafe(
-      productMeta(primaryItem),
-      150,
-    )}^FS`,
+    // En alt: ürün/model, renk, beden, varyant, SKU (tüm satırlar).
+    ...productZplLines(labelData.items),
     '^XZ',
   ].join('\n')
 }

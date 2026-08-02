@@ -1022,11 +1022,11 @@ function SuratSettingsPanel({
             <DetailSectionHeader
               icon={<FileText size={18} />}
               title="Etiket"
-              description="Mevcut tenant desi varsayılanı."
+              description="Varsayılan gönderi desisi ve tenant desi varsayılanı."
             />
             <div className="integration-field-grid">
               <label>
-                <span>Varsayılan birim desi</span>
+                <span>Varsayılan Gönderi Desisi</span>
                 <input
                   type="number"
                   min="0.01"
@@ -1052,8 +1052,14 @@ function SuratSettingsPanel({
               </label>
             </div>
             <p className="integration-field-note">
-              Mevcut ürün, varyant, kategori ve tenant desi önceliği aynen
-              korunur.
+              Bu değer BİRİM desidir ve sunucuda (organization) kalıcı saklanır.
+              Sipariş satırlarının adediyle çarpılır: varsayılan 2 iken tek adet
+              ürün 2 desi, aynı pakette toplam iki adet 4 desi olur. Sipariş
+              satırında veya üründe desi varsa ya da manuel toplam desi
+              girildiyse ONLAR önceliklidir. Mevcut ürün, varyant, kategori ve
+              tenant desi önceliği aynen korunur. Değişiklik yalnız bundan sonra
+              oluşturulacak etiketleri etkiler; kayıtlı etiketler ve tekrar
+              yazdırma değişmez.
             </p>
           </>
         ) : null}

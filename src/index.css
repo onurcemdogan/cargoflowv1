@@ -128,8 +128,19 @@ button:disabled {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.sidebar-note {
+/* Sidebar alt bloğu (oturum + çıkış + not): menü uzasa/kaysa bile viewport
+   içinde GÖRÜNÜR kalır, sayfanın en altına düşmez. */
+.sidebar-footer {
   margin-top: auto;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  /* Alt kenara yapışmasın: biraz yukarıda dursun + mobil safe-area. */
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+
+.sidebar-note {
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 8px;
   padding: 12px;
@@ -138,6 +149,26 @@ button:disabled {
   color: #d8e0e4;
   font-size: 13px;
   line-height: 1.4;
+}
+
+/* Masaüstü: sidebar viewport yüksekliğinde sabitlenir; YALNIZ menü listesi
+   kayar. Böylece "Çıkış Yap" uzun sayfalarda sayfa sonuna düşüp kaybolmaz. */
+@media (min-width: 1101px) {
+  .sidebar {
+    position: sticky;
+    top: 0;
+    align-self: start;
+    height: 100vh;
+    height: 100dvh;
+    overflow: hidden;
+  }
+
+  .nav-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
 }
 
 .main-panel {
@@ -5986,8 +6017,8 @@ button:disabled {
 }
 
 /* --- Sidebar oturum bloğu -------------------------------------------- */
+/* Konumlandırma .sidebar-footer'a taşındı (margin-top:auto orada). */
 .sidebar-session {
-  margin-top: auto;
   display: grid;
   gap: 8px;
   padding: 10px 12px;
@@ -6001,6 +6032,7 @@ button:disabled {
 .sidebar-signout {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   border: 1px solid rgba(148, 163, 184, 0.35);
   border-radius: 8px;
@@ -6008,6 +6040,20 @@ button:disabled {
   color: inherit;
   padding: 6px 10px;
   font-size: 12px;
+  /* Dokunmatik/klavye erişimi için makul hedef yüksekliği. */
+  min-height: 34px;
+  cursor: pointer;
+}
+
+.sidebar-signout:hover {
+  border-color: rgba(148, 163, 184, 0.6);
+  background: rgba(148, 163, 184, 0.12);
+}
+
+/* Klavye ile erişilebilirlik: odak halkası görünür olmalı. */
+.sidebar-signout:focus-visible {
+  outline: 2px solid #38bdf8;
+  outline-offset: 2px;
 }
 
 .dashboard-analytics-warning {
