@@ -123,13 +123,18 @@ test('OCR-3: sipariş listesi artık TÜM sayfaları yükler (25 tavanı kalktı
 
   // Yükleyici artık sayfa boyutunu AÇIKÇA verir ve tüm sayfaları dolaşır.
   assert.match(src, /const ORDERS_LOAD_PAGE_SIZE = 100/)
-  assert.match(src, /Math\.ceil\(total \/ effectivePageSize\)/, 'totalPages türetilir')
+  assert.match(src, /resolveTotalPages\(total, effectivePageSize\)/, 'totalPages türetilir')
   assert.match(src, /const MAX_ORDER_PAGES = /, 'sonsuz döngü koruması')
   assert.match(src, /params\.set\('pageSize', String\(pageSize\)\)/)
 
-  // Kısmi başarı yasak: hata fırlatılır, kısmi liste döndürülmez.
-  assert.match(src, /sayfalama bilgisi tutarsiz/)
-  assert.match(src, /gecersiz toplam kayit/)
+  // Kısmi başarı yasak + snapshot doğrulaması ortak saf modülde.
+  assert.match(src, /validateOrderPageMeta/)
+  assert.match(src, /validatePaginationSnapshot/)
+  const helper = readFileSync(
+    join(here, '..', 'src/utils/orderPagination.ts'), 'utf8',
+  )
+  assert.match(helper, /geçersiz toplam kayıt/)
+  assert.match(helper, /kayıt kümesi değişti/)
 
   // Eşzamanlılık koruması: stale yanıt cache'i ezmez.
   assert.match(src, /ordersLoadGeneration/)

@@ -50,6 +50,11 @@ import {
 import type { AuditLogService } from './auditLogService'
 import { apiDebugService } from './apiDebugService'
 import { dedupeOrdersByPackageIdentity } from '../utils/orderCounts'
+import {
+  resolveTotalPages,
+  validateOrderPageMeta,
+  validatePaginationSnapshot,
+} from '../utils/orderPagination'
 
 // /api/orders sozlesmesi: istek {page,pageSize}, yanit
 // {ok,orders,total,page,pageSize}. totalPages DONDURULMEZ; ceil(total/
@@ -335,12 +340,18 @@ export class OrderWorkflowService {
     // 2) Sayfa sayisi TURETILIR: /api/orders totalPages DONDURMEZ; sozlesme
     //    {orders,total,page,pageSize}. Tutarsiz metadata SESSIZCE basari
     //    sayilmaz.
-    if (!Number.isFinite(total) || total < 0) {
-      throw new Error(
-        'Siparisler yuklenemedi: sunucu gecersiz toplam kayit sayisi bildirdi.',
-      )
-    }
-    const totalPages = total === 0 ? 1 : Math.ceil(total / effectivePageSize)
+    const totalPages = resolveTotalPages(total, effectivePageSize)
+    // Ilk sayfanin metadata'si da dogrulanir (yanlis page/pageSize sessizce
+    // kabul edilmez).
+    validateOrderPageMeta(
+      {
+        orderCount: first.orders.length,
+        total: first.total,
+        page: first.page,
+        pageSize: first.pageSize,
+      },
+      { page: 1, pageSize: effectivePageSize, expectedTotal: total, totalPages },
+    )
     if (totalPages > MAX_ORDER_PAGES) {
       throw new Error(
         'Siparisler yuklenemedi: sayfa sayisi guvenlik sinirini asti ' +
@@ -368,14 +379,23 @@ export class OrderWorkflowService {
         ),
       )
       for (const [index, result] of batch.entries()) {
-        // Son sayfa disindaki BOS sayfa metadata tutarsizligidir; sessizce
-        // "tamamlandi" sayilmaz.
-        if (result.orders.length === 0 && pageNumbers[index] < totalPages) {
-          throw new Error(
-            'Siparisler yuklenemedi: sunucu sayfalama bilgisi tutarsiz ' +
-              '(beklenen sayfa bos dondu).',
-          )
-        }
+        // Her sayfanin page/pageSize/total/kayit sayisi dogrulanir. Tutarsizlik
+        // (yanlis sayfa, degisen total, beklenmeyen kayit sayisi) SESSIZCE
+        // basari sayilmaz.
+        validateOrderPageMeta(
+          {
+            orderCount: result.orders.length,
+            total: result.total,
+            page: result.page,
+            pageSize: result.pageSize,
+          },
+          {
+            page: pageNumbers[index],
+            pageSize: effectivePageSize,
+            expectedTotal: total,
+            totalPages,
+          },
+        )
         collected.push(result.orders)
       }
     }
@@ -383,7 +403,16 @@ export class OrderWorkflowService {
     // 4) Sayfalar arasi canonical tekillestirme (ayni paket iki sayfada
     //    gorunebilir; or. sayfalar arasinda yeni kayit eklenmisse). Backend
     //    siralamasi (orderDateDesc) KORUNUR: ilk gorulen kayit kalir.
-    const orders = dedupeOrdersByPackageIdentity(collected.flat())
+    const collectedRows = collected.flat()
+    const orders = dedupeOrdersByPackageIdentity(collectedRows)
+    // Toplanan satir sayisi total ile eslesmeli ve dedupe HICBIR kaydi
+    // dusurmemelidir (endpoint kapsaminda paket kimligi tekildir). Aksi hal
+    // sayfalar arasinda pencerenin kaydigini gosterir.
+    validatePaginationSnapshot({
+      collectedRowCount: collectedRows.length,
+      distinctCount: orders.length,
+      expectedTotal: total,
+    })
 
     // 5) Yalniz EN GUNCEL nesil cache/meta yazar (stale yanit ezmesin).
     if (generation === this.ordersLoadGeneration) {

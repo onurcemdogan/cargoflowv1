@@ -198,14 +198,24 @@ test('PAG-6: totalPages 0/1 sınır davranışı', async () => {
 
 // ── tekilleştirme + sıralama ──────────────────────────────────────────────
 
-test('PAG-7: aynı paket iki sayfada gelirse tekilleştirilir, sıra korunur', async () => {
+test('PAG-7: aynı paket iki sayfada gelirse SESSİZCE başarı sayılmaz', async () => {
+  // Pencere kayması: 2. sayfa 1. sayfadaki kaydı tekrar gönderiyor. Canonical
+  // dedupe çalışır ama dedupe sonrası sayı total'den KÜÇÜK kalır → açık hata.
   installFetch({ total: 200, duplicateOnPage2: true })
-  const orders = await (await makeService()).loadOrdersFromServer()
-  const ids = orders.map((o) => o.packageId)
-  assert.equal(new Set(ids).size, ids.length, 'duplicate yok')
-  // Backend sırası (orderDateDesc → sayfa sırası) korunur: ilk görülen kalır.
-  assert.equal(ids[0], 'PKG-0')
-  assert.ok(ids.indexOf('PKG-1') < ids.indexOf('PKG-2'), 'sıra deterministik')
+  await assert.rejects(
+    () => makeService().then((s) => s.loadOrdersFromServer()),
+    /kayıt kümesi değişti/,
+    'duplicate sessizce yutulmaz',
+  )
+})
+
+test('PAG-7b: canonical dedupe yardımcısı tekrarları düşürmeye devam eder', async () => {
+  const { dedupeOrdersByPackageIdentity } = await load('/src/utils/orderCounts.ts')
+  const rows = [makeOrder(0), makeOrder(1), makeOrder(0), makeOrder(2)]
+  const deduped = dedupeOrdersByPackageIdentity(rows)
+  assert.equal(deduped.length, 3, 'tekrar düşer')
+  // Sıra korunur: ilk görülen kalır.
+  assert.deepEqual(deduped.map((o) => o.packageId), ['PKG-0', 'PKG-1', 'PKG-2'])
 })
 
 // ── kısmi başarı yasak ────────────────────────────────────────────────────
@@ -254,13 +264,13 @@ test('PAG-10: bozuk/tutarsız sayfalama metadata\'sı sessizce başarı sayılma
   installFetch({ total: 10, totalOverride: -5 })
   await assert.rejects(
     () => makeService().then((s) => s.loadOrdersFromServer()),
-    /gecersiz toplam kayit/,
+    /geçersiz toplam kayıt/,
   )
   // Beklenen dolu sayfa BOŞ dönerse.
   installFetch({ total: 300, emptyPages: new Set([2]) })
   await assert.rejects(
     () => makeService().then((s) => s.loadOrdersFromServer()),
-    /sayfalama bilgisi tutarsiz/,
+    /kayıt kümesi değişti/,
   )
 })
 
@@ -315,7 +325,9 @@ test('PAG-14: sabit büyük limit (1000 vb.) KULLANILMAZ; sayfa döngüsü vard�
     join(here, '..', 'src/services/orderWorkflowService.ts'), 'utf8')
   assert.match(src, /const ORDERS_LOAD_PAGE_SIZE = 100/)
   assert.match(src, /const MAX_ORDER_PAGES = /, 'güvenlik sınırı tanımlı')
-  assert.match(src, /Math\.ceil\(total \/ effectivePageSize\)/, 'totalPages türetilir')
+  assert.match(src, /resolveTotalPages\(total, effectivePageSize\)/, 'totalPages türetilir')
+  const helper = readFileSync(join(here, '..', 'src/utils/orderPagination.ts'), 'utf8')
+  assert.match(helper, /Math\.ceil\(total \/ pageSize\)/)
   assert.equal(
     /pageSize:\s*'?1000|pageSize=1000/.test(src), false,
     'sabit 1000 limiti yok',
@@ -380,4 +392,165 @@ test('PAG-17: yükleme günlüğü PII veya ham sipariş verisi TAŞIMAZ', () =>
   }
   assert.match(perf, /itemCount/)
   assert.match(perf, /pageCount/)
+})
+
+// ── sertleştirme: eşzamanlılık sınırı, snapshot, stabil sıralama ──────────
+
+test('PAG-18: 6 sayfada eşzamanlı istek sayısı hiçbir an 4\'ü AŞMAZ', async () => {
+  let inFlight = 0
+  let peak = 0
+  const total = 600 // 100'lük sayfa → 6 sayfa
+  globalThis.fetch = async (url) => {
+    inFlight += 1
+    peak = Math.max(peak, inFlight)
+    await new Promise((r) => setTimeout(r, 15))
+    const parsed = new URL(String(url), 'http://localhost')
+    const page = Number(parsed.searchParams.get('page') ?? 1)
+    const pageSize = Number(parsed.searchParams.get('pageSize') ?? PAGE_SIZE)
+    const start = (page - 1) * pageSize
+    const orders = Array.from(
+      { length: Math.max(0, Math.min(pageSize, total - start)) },
+      (_, k) => makeOrder(start + k),
+    )
+    inFlight -= 1
+    return {
+      ok: true, status: 200,
+      json: async () => ({ ok: true, orders, total, page, pageSize }),
+    }
+  }
+  const orders = await (await makeService()).loadOrdersFromServer()
+  assert.equal(orders.length, 600)
+  assert.ok(peak <= 4, `eşzamanlı istek zirvesi ${peak} (<= 4 olmalı)`)
+  assert.ok(peak > 1, 'yine de paralel çalışıyor')
+})
+
+test('PAG-19: sonraki sayfada total DEĞİŞİRSE açık hata verilir', async () => {
+  let call = 0
+  globalThis.fetch = async (url) => {
+    call += 1
+    const parsed = new URL(String(url), 'http://localhost')
+    const page = Number(parsed.searchParams.get('page') ?? 1)
+    const pageSize = Number(parsed.searchParams.get('pageSize') ?? PAGE_SIZE)
+    // 1. sayfa total=200; sonraki sayfalarda kayıt kümesi büyüdü (total=201).
+    const total = call === 1 ? 200 : 201
+    const start = (page - 1) * pageSize
+    const orders = Array.from(
+      { length: Math.max(0, Math.min(pageSize, 200 - start)) },
+      (_, k) => makeOrder(start + k),
+    )
+    return {
+      ok: true, status: 200,
+      json: async () => ({ ok: true, orders, total, page, pageSize }),
+    }
+  }
+  await assert.rejects(
+    () => makeService().then((s) => s.loadOrdersFromServer()),
+    /Sipariş listesi yüklenirken kayıt kümesi değişti; yeniden deneyin/,
+  )
+})
+
+test('PAG-20: yanlış page metadata\'sı açık hata verir', async () => {
+  globalThis.fetch = async (url) => {
+    const parsed = new URL(String(url), 'http://localhost')
+    const page = Number(parsed.searchParams.get('page') ?? 1)
+    const pageSize = Number(parsed.searchParams.get('pageSize') ?? PAGE_SIZE)
+    const start = (page - 1) * pageSize
+    return {
+      ok: true, status: 200,
+      json: async () => ({
+        ok: true,
+        orders: Array.from(
+          { length: Math.max(0, Math.min(pageSize, 200 - start)) },
+          (_, k) => makeOrder(start + k),
+        ),
+        total: 200,
+        // Sunucu YANLIŞ sayfa numarası bildiriyor.
+        page: page === 2 ? 5 : page,
+        pageSize,
+      }),
+    }
+  }
+  await assert.rejects(
+    () => makeService().then((s) => s.loadOrdersFromServer()),
+    /2\. sayfa yerine 5\. sayfayı döndürdü/,
+  )
+})
+
+test('PAG-21: geçersiz pageSize (0 / backend maksimumu üstü) reddedilir', async () => {
+  const { validateOrderPageMeta, ORDERS_BACKEND_MAX_PAGE_SIZE } = await load(
+    '/src/utils/orderPagination.ts')
+  const expected = { page: 1, pageSize: 100, expectedTotal: 10, totalPages: 1 }
+  assert.equal(ORDERS_BACKEND_MAX_PAGE_SIZE, 100)
+  assert.throws(
+    () => validateOrderPageMeta(
+      { orderCount: 10, total: 10, page: 1, pageSize: 0 }, expected),
+    /geçersiz sayfa boyutu/,
+  )
+  assert.throws(
+    () => validateOrderPageMeta(
+      { orderCount: 10, total: 10, page: 1, pageSize: 500 }, expected),
+    /geçersiz sayfa boyutu/,
+  )
+  // Sayfa boyutundan FAZLA kayıt döndürmek de reddedilir.
+  assert.throws(
+    () => validateOrderPageMeta(
+      { orderCount: 150, total: 10, page: 1, pageSize: 100 }, expected),
+    /sayfa boyutundan fazla kayıt/,
+  )
+})
+
+test('PAG-22: son sayfa kısmi olabilir, ara sayfalar TAM dolu olmalı', async () => {
+  const { validateOrderPageMeta } = await load('/src/utils/orderPagination.ts')
+  // total=250, pageSize=100 → 3 sayfa; son sayfa 50 kayıt.
+  const base = { pageSize: 100, expectedTotal: 250, totalPages: 3 }
+  validateOrderPageMeta(
+    { orderCount: 50, total: 250, page: 3, pageSize: 100 },
+    { ...base, page: 3 },
+  )
+  validateOrderPageMeta(
+    { orderCount: 100, total: 250, page: 2, pageSize: 100 },
+    { ...base, page: 2 },
+  )
+  // Ara sayfa eksik dolu → snapshot kaymış.
+  assert.throws(
+    () => validateOrderPageMeta(
+      { orderCount: 80, total: 250, page: 2, pageSize: 100 },
+      { ...base, page: 2 }),
+    /kayıt kümesi değişti/,
+  )
+})
+
+test('PAG-23: aynı timestamp\'li kayıtlar için backend sıralaması DETERMİNİSTİK', () => {
+  const repo = readFileSync(
+    join(here, '..', 'server/orders/orderRepository.ts'), 'utf8')
+  // İkincil anahtar (id) yalnız eşitlik durumunu çözer.
+  assert.match(repo, /desc\(orders\.orderDate\), desc\(orders\.id\)/)
+  assert.match(repo, /asc\(orders\.orderDate\), asc\(orders\.id\)/)
+  assert.match(repo, /\.orderBy\(\.\.\.orderBy\)/)
+  // Kullanıcının gördüğü birincil sıra DEĞİŞMEDİ (hâlâ orderDate).
+  assert.match(repo, /filters\.sort === 'orderDateAsc'/)
+})
+
+test('PAG-24: 35/36/36 sonucu sertleştirmeden SONRA da korunur', async () => {
+  installFetch({
+    total: 35,
+    makeItems: (i) =>
+      i === 0
+        ? {
+            ...makeOrder(0),
+            items: [
+              { id: 'l-0', productName: 'Ürün', quantity: 1, barcode: 'B0' },
+              { id: 'l-0b', productName: 'Ürün 2', quantity: 1, barcode: 'B0b' },
+            ],
+          }
+        : makeOrder(i),
+  })
+  const orders = await (await makeService()).loadOrdersFromServer()
+  assert.equal(orders.length, 35, 'paket')
+  assert.equal(
+    orders.reduce((t, o) => t + (o.items?.length ?? 0), 0), 36, 'kalem')
+  assert.equal(
+    orders.reduce(
+      (t, o) => t + (o.items ?? []).reduce((q, l) => q + (l.quantity ?? 0), 0), 0),
+    36, 'adet')
 })
