@@ -1,4 +1,8 @@
 import JsBarcode from 'jsbarcode'
+import {
+  applyScalableQuietZone,
+  CODE128_QUIET_ZONE_MODULES,
+} from './barcodeQuietZone'
 import qrcode from 'qrcode-generator'
 import type {
   CargoOrder,
@@ -694,12 +698,13 @@ export function buildCleanLabelHtml(
     .surat-header span { font-size: 7pt; font-weight: 800; }
     .surat-header b { font-size: 10pt; font-weight: 900; text-transform: uppercase; }
     .surat-header-right { text-align: right; }
-    /* Referans: barkod gövde kenarlarına kadar yayılır. Yan boşluk minimum
-       tutulur ki çubuklar sağa/sola genişlesin ve okuyucu rahat okusun. */
+    /* Çubuklar geniş alana yayılır; ISO 10X sessiz alan SVG viewBox'ı içinde
+       taşınır (barcodeQuietZone.ts). Buradaki 1mm yalnız fiziksel kenar
+       payıdır, sessiz alanın YERİNE geçmez. */
     .surat-barcode {
       display: grid;
       place-items: stretch;
-      padding: .4mm 1.5mm 0;
+      padding: .4mm 1mm 0;
     }
     .surat-barcode svg { width: 100%; height: 20.5mm; display: block; }
     /* Referans: adres kutusu TEK bölmedir; sağda ayrı kutu YOKTUR.
@@ -1025,12 +1030,16 @@ function failPrint(
   throw new BrowserLabelPrintError(message, debug)
 }
 
+// JsBarcode'a verilen modül (dar çubuk) genişliği — intrinsic birim.
+// Sessiz alan bu değerden türetilir: 10 modül = 10 * BARCODE_MODULE_WIDTH.
+const BARCODE_MODULE_WIDTH = 2.2
+
 function renderBarcodeSvg(value: string): string {
   if (
     typeof document === 'undefined' ||
     typeof document.createElementNS !== 'function'
   ) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" data-barcode-value="${escapeHtml(
+    return `<svg xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" data-quiet-zone-modules="${CODE128_QUIET_ZONE_MODULES}" data-barcode-value="${escapeHtml(
       value,
     )}" aria-label="${escapeHtml(value)}"></svg>`
   }
@@ -1038,26 +1047,20 @@ function renderBarcodeSvg(value: string): string {
   JsBarcode(svg, value, {
     format: 'CODE128',
     height: 72,
-    width: 2.2,
+    width: BARCODE_MODULE_WIDTH,
+    // margin: 0 — sessiz alan JsBarcode margin'i ile DEĞİL, viewBox ile
+    // verilir; böylece kapsayıcıya esnetildiğinde 10X oranı korunur.
     margin: 0,
     displayValue: true,
     fontSize: 16,
     textMargin: 3,
   })
-  // Referans etikette 1D barkod, gövdenin SOL ve SAĞ kenarına kadar yayılır.
-  // JsBarcode sabit width/height attribute'u yazar; viewBox olmadan CSS
-  // `width:100%` yalnız SVG kutusunu büyütür, ÇUBUKLARI yaymaz. Intrinsic
-  // ölçüyü viewBox'a taşıyıp width/height attribute'larını kaldırıyoruz ve
-  // preserveAspectRatio='none' ile çubuklar yatayda tam genişliğe yayılıyor.
-  // PAYLOAD DEĞİŞMEZ: JsBarcode aynı değeri aynı Code128 modülleriyle üretir;
-  // yalnız ölçekleme yapılır (modül oranları korunur, okunabilirlik artar).
-  const intrinsicWidth = Number(svg.getAttribute('width')) || 0
-  const intrinsicHeight = Number(svg.getAttribute('height')) || 0
-  if (intrinsicWidth > 0 && intrinsicHeight > 0) {
-    svg.setAttribute('viewBox', `0 0 ${intrinsicWidth} ${intrinsicHeight}`)
-    svg.setAttribute('preserveAspectRatio', 'none')
-    svg.removeAttribute('width')
-    svg.removeAttribute('height')
+  // Çubuklar gövdeye yayılır AMA her iki yanda 10X sessiz alan korunur.
+  // Sessiz alan viewBox'a gömüldüğü için çubuklarla AYNI katsayıyla ölçeklenir
+  // (bkz. barcodeQuietZone.ts). PAYLOAD DEĞİŞMEZ.
+  const quiet = applyScalableQuietZone(svg, BARCODE_MODULE_WIDTH)
+  if (quiet.applied) {
+    svg.setAttribute('data-quiet-zone-units', String(quiet.quietZoneUnits))
   }
   svg.setAttribute('data-barcode-value', value)
   return svg.outerHTML

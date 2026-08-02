@@ -78,8 +78,9 @@ async function html(items) {
 
 test('REF-1: 1D barkod yatayda sağa/sola yayılır (dar sıkışık kalmaz)', async () => {
   const out = await html(SINGLE)
-  // Yan boşluk daraltıldı: barkod gövde kenarlarına yaklaşır.
-  assert.match(out, /\.surat-barcode \{[^}]*padding: \.4mm 1\.5mm 0/)
+  // Kapsayıcı yan boşluğu yalnız fiziksel kenar payıdır; ISO 10X sessiz alan
+  // SVG viewBox'ının İÇİNDE taşınır (bkz. REF-16).
+  assert.match(out, /\.surat-barcode \{[^}]*padding: \.4mm 1mm 0/)
   assert.equal(/padding: \.5mm 6mm 0/.test(out), false, 'eski dar yerleşim kalmadı')
   // SVG kutusu tam genişlik.
   assert.match(out, /\.surat-barcode svg \{ width: 100%/)
@@ -92,11 +93,15 @@ test('REF-2: barkod SVG esnek ölçeklenir (viewBox + preserveAspectRatio=none)'
   const out = renderPrintableLabelHtml({ ...data, barcodeValue: BARCODE })
   // DOM yokken stub üretilir; sözleşme (esnek ölçekleme) yine de görünür olmalı.
   assert.match(out, /preserveAspectRatio="none"/)
-  // JsBarcode yolunda width/height attribute'ları viewBox'a taşınır.
+  // Esnek ölçekleme + sessiz alan ORTAK yardımcıda tanımlıdır.
   const src = readFileSync(join(here, '..', 'src/utils/browserLabelPrint.ts'), 'utf8')
-  assert.match(src, /svg\.setAttribute\('viewBox'/)
-  assert.match(src, /svg\.removeAttribute\('width'\)/)
-  assert.match(src, /svg\.setAttribute\('preserveAspectRatio', 'none'\)/)
+  assert.match(src, /applyScalableQuietZone\(svg, BARCODE_MODULE_WIDTH\)/)
+  const helper = readFileSync(join(here, '..', 'src/utils/barcodeQuietZone.ts'), 'utf8')
+  assert.match(helper, /svg\.setAttribute\('viewBox', viewBox\)/)
+  assert.match(helper, /svg\.removeAttribute\('width'\)/)
+  assert.match(helper, /svg\.setAttribute\('preserveAspectRatio', 'none'\)/)
+  // Number() birimli "247px" değerinde NaN verir — parseFloat ZORUNLU.
+  assert.match(helper, /Number\.parseFloat/)
 })
 
 test('REF-3: barkod/QR/T.No payload DEĞİŞMEZ (yalnız geometri değişti)', async () => {
@@ -256,4 +261,69 @@ test('REF-15: Sürat resmî ZPL yolu bu değişiklikten ETKİLENMEZ', async () =
   assert.equal((label.zplContent.match(/\^XA/g) ?? []).length, 1)
   // HTML tarafındaki referans biçimi ZPL'e SIZMAZ.
   assert.equal(/Renk:/.test(label.zplContent), false)
+})
+
+// ── sessiz alan (quiet zone) — ISO/IEC 15417 Code128 ──────────────────────
+
+test('REF-16: sessiz alan viewBox\'a gömülür ve 10X oranı ölçekten BAĞIMSIZ korunur', async () => {
+  const { applyScalableQuietZone, CODE128_QUIET_ZONE_MODULES, describeQuietZone } =
+    await load('/src/utils/barcodeQuietZone.ts')
+  assert.equal(CODE128_QUIET_ZONE_MODULES, 10)
+
+  // JsBarcode'un GERÇEK davranışı: width/height BİRİMLİ ("247px") yazılır ve
+  // kendi viewBox'ı da bulunur. Number() bunu NaN yapar → parseFloat şart.
+  const attrs = new Map([['width', '247px'], ['height', '91px'], ['viewBox', '0 0 247 91']])
+  const svg = {
+    getAttribute: (k) => (attrs.has(k) ? attrs.get(k) : null),
+    setAttribute: (k, v) => attrs.set(k, String(v)),
+    removeAttribute: (k) => attrs.delete(k),
+  }
+  const res = applyScalableQuietZone(svg, 2.2)
+  assert.equal(res.applied, true, 'birimli width ile de uygulanmalı')
+  assert.equal(res.quietZoneUnits, 22, '10 modül x 2.2 birim')
+  assert.equal(attrs.get('viewBox'), '-22 0 291 91')
+  assert.equal(attrs.get('preserveAspectRatio'), 'none')
+  assert.equal(attrs.has('width'), false, 'sabit width kaldırılmalı')
+  assert.equal(attrs.has('height'), false)
+
+  // Birimsiz width + viewBox yokken de çalışmalı.
+  const bare = new Map([['width', '247'], ['height', '91']])
+  const svg2 = {
+    getAttribute: (k) => (bare.has(k) ? bare.get(k) : null),
+    setAttribute: (k, v) => bare.set(k, String(v)),
+    removeAttribute: (k) => bare.delete(k),
+  }
+  assert.equal(applyScalableQuietZone(svg2, 2.2).applied, true)
+  assert.equal(bare.get('viewBox'), '-22 0 291 91')
+
+  // Ölçüm: 90mm kapsayıcıda 112 modül → 10X sessiz alan.
+  const d = describeQuietZone(90, 112)
+  assert.ok(Math.abs(d.quietZoneMm - 10 * d.moduleMm) < 1e-9, 'tam 10X')
+  assert.ok(d.moduleDots > 4 && d.moduleDots < 7, `X=${d.moduleDots} nokta makul`)
+  // Sessiz alan barkod uzunluğundan bağımsız olarak 10X kalır.
+  for (const modules of [90, 112, 134]) {
+    const x = describeQuietZone(90, modules)
+    assert.ok(Math.abs(x.quietZoneMm / x.moduleMm - 10) < 1e-9, `${modules} modül`)
+  }
+})
+
+test('REF-17: sabit mm yan boşluk 10X sessiz alanı SAĞLAMAZ (regresyon kilidi)', async () => {
+  const { describeQuietZone } = await load('/src/utils/barcodeQuietZone.ts')
+  // Gövde 93mm. Sabit 1.5mm boşlukla çubuk alanı 90mm → 112 modülde X=0.804mm,
+  // gereken sessiz alan 8.04mm. 1.5mm yalnız 1.9X eder → YETERSİZ.
+  const barsOnlyX = 90 / 112
+  assert.ok(1.5 / barsOnlyX < 2, 'sabit 1.5mm ~1.9X kalır')
+  // viewBox'a gömülü modelde aynı 90mm kapsayıcıda oran tam 10X'tir.
+  const d = describeQuietZone(90, 112)
+  assert.ok(d.quietZoneMm > 6 && d.quietZoneMm < 8, `${d.quietZoneMm.toFixed(2)}mm`)
+  assert.ok(d.barsMm > 70, 'çubuklar yine de geniş alana yayılır')
+})
+
+test('REF-18: önizleme ve baskı AYNI sessiz alan yardımcısını kullanır', () => {
+  const print = readFileSync(join(here, '..', 'src/utils/browserLabelPrint.ts'), 'utf8')
+  const preview = readFileSync(join(here, '..', 'src/components/BarcodePreview.tsx'), 'utf8')
+  for (const [name, src] of [['baskı', print], ['önizleme', preview]]) {
+    assert.match(src, /applyScalableQuietZone/, `${name} ortak yardımcıyı kullanmalı`)
+    assert.match(src, /margin: 0|margin = 0/, `${name}: JsBarcode margin'i devre dışı`)
+  }
 })
