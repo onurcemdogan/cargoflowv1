@@ -642,7 +642,7 @@ export function buildCleanLabelHtml(
       height: ${heightMm}mm;
       overflow: hidden;
       display: grid;
-      grid-template-columns: 8.5mm minmax(0, 1fr);
+      grid-template-columns: 7mm minmax(0, 1fr);
       border: .35mm solid #000;
       break-after: page;
       page-break-after: always;
@@ -667,7 +667,7 @@ export function buildCleanLabelHtml(
     .surat-rail span { max-height: 96%; font-size: 8pt; font-weight: 900; }
     .surat-body {
       display: grid;
-      grid-template-rows: 11.5mm 20mm 24mm 10mm 21mm 1fr;
+      grid-template-rows: 11.5mm 21.5mm 23mm 10mm 21mm 1fr;
       min-width: 0;
       min-height: 0;
     }
@@ -694,21 +694,38 @@ export function buildCleanLabelHtml(
     .surat-header span { font-size: 7pt; font-weight: 800; }
     .surat-header b { font-size: 10pt; font-weight: 900; text-transform: uppercase; }
     .surat-header-right { text-align: right; }
+    /* Referans: barkod gövde kenarlarına kadar yayılır. Yan boşluk minimum
+       tutulur ki çubuklar sağa/sola genişlesin ve okuyucu rahat okusun. */
     .surat-barcode {
       display: grid;
-      place-items: center;
-      padding: .5mm 6mm 0;
+      place-items: stretch;
+      padding: .4mm 1.5mm 0;
     }
-    .surat-barcode svg { width: 100%; height: 19mm; display: block; }
+    .surat-barcode svg { width: 100%; height: 20.5mm; display: block; }
+    /* Referans: adres kutusu TEK bölmedir; sağda ayrı kutu YOKTUR.
+       Alt satırda solda alıcı telefonu, sağda il/ilçe bulunur. */
     .surat-address {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 35mm;
+      grid-template-columns: minmax(0, 1fr);
     }
     .surat-address-copy {
       min-width: 0;
       overflow: hidden;
-      padding: 1.8mm 2mm;
-      border-right: .35mm solid #000;
+      padding: 1.6mm 2mm;
+    }
+    .surat-address-footer {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 2mm;
+      margin-top: .6mm;
+    }
+    .surat-address-footer .surat-address-phone { flex: 0 0 auto; }
+    .surat-address-footer .surat-address-region {
+      flex: 1 1 auto;
+      text-align: right;
+      font-size: 7.5pt;
+      font-weight: 900;
     }
     .surat-address-copy b,
     .surat-address-copy span,
@@ -730,26 +747,16 @@ export function buildCleanLabelHtml(
     .surat-address-xlong .surat-address-line { font-size: 5.6pt; line-height: 1.1; }
     .surat-address-xlong .surat-recipient-name { font-size: 7pt; }
     .surat-address-xlong .surat-address-phone { font-size: 5.6pt; }
-    .surat-route {
-      display: grid;
-      place-items: center;
-      padding: 1.5mm;
-      font-size: 10pt;
-      font-weight: 900;
-      text-align: center;
-      text-transform: uppercase;
-    }
+    /* Referans: tek satırlık sade blok; hücreler arasında dikey ayraç YOK. */
     .surat-cargo {
       display: grid;
-      grid-template-columns: 1fr 1fr 1.2fr;
+      grid-template-columns: 22mm 22mm minmax(0, 1fr);
     }
     .surat-cargo div {
       display: grid;
       align-content: center;
-      padding: .8mm 2mm;
-      border-right: .35mm solid #000;
+      padding: .6mm 0 .6mm 2mm;
     }
-    .surat-cargo div:last-child { border-right: 0; }
     .surat-cargo span { font-size: 7pt; font-weight: 800; }
     .surat-cargo strong { font-size: 13pt; font-weight: 900; }
     .surat-delivery {
@@ -839,6 +846,25 @@ export function buildCleanLabelHtml(
 </html>`
 }
 
+// Referans etiketteki alt ürün meta biçimi:
+//   "(Renk: {renk}, Beden: {beden}) [{sku/varyant/model kodu}]"
+// Eksik alanlar sessizce atlanır; hiçbiri yoksa boş string döner (boş parantez
+// veya boş köşeli parantez BASILMAZ).
+function buildReferenceProductMeta(item?: {
+  color?: string
+  size?: string
+  sku?: string
+}): string {
+  if (!item) return ''
+  const attrs = [
+    item.color ? `Renk: ${item.color}` : '',
+    item.size ? `Beden: ${item.size}` : '',
+  ].filter(Boolean)
+  const grouped = attrs.length > 0 ? `(${attrs.join(', ')})` : ''
+  const code = item.sku ? `[${item.sku}]` : ''
+  return [grouped, code].filter(Boolean).join(' ')
+}
+
 export function renderPrintableLabelHtml(data: LabelData): string {
   const barcodeSvg = renderBarcodeSvg(data.barcodeValue)
   const item = data.items[0]
@@ -867,13 +893,7 @@ export function renderPrintableLabelHtml(data: LabelData): string {
   const productTitle = item
     ? `${item.quantity || 1} x ${item.productName}`
     : 'Ürün bilgisi yok'
-  const productMeta = [
-    item?.color ? `Renk: ${item.color}` : '',
-    item?.size ? `Beden: ${item.size}` : '',
-    item?.sku ? `SKU: ${item.sku}` : '',
-  ]
-    .filter(Boolean)
-    .join(' | ')
+  const productMeta = buildReferenceProductMeta(item)
   // Çoklu ürün: tüm satırlar footer'da listelenir (kayıpsız, sarmalı).
   // Tekli sipariş markup'ı regression baseline'dır ve birebir korunur.
   const multipleItems = data.items.length > 1
@@ -881,12 +901,9 @@ export function renderPrintableLabelHtml(data: LabelData): string {
     ? `<footer class="surat-section surat-product surat-product-multi">
             ${data.items
               .map((line) => {
-                const lineMeta = [
-                  line.color ? `Renk: ${line.color}` : '',
-                  line.size ? `Beden: ${line.size}` : '',
-                ]
-                  .filter(Boolean)
-                  .join(' | ')
+                // Çoklu üründe de ÖZET DEĞİL tam detay: ad + adet + renk +
+                // beden + sku. "+X ürün daha" ÜRETİLMEZ.
+                const lineMeta = buildReferenceProductMeta(line)
                 return `<div class="surat-product-line"><strong>${escapeHtml(
                   `${line.quantity || 1} x ${line.productName}`,
                 )}</strong>${
@@ -923,15 +940,16 @@ export function renderPrintableLabelHtml(data: LabelData): string {
             <div class="surat-address-copy">
               <b class="surat-recipient-name">${escapeHtml(data.recipientName)}</b>
               ${addressLines.map((line) => `<span class="surat-address-line">${escapeHtml(line)}</span>`).join('')}
-              <strong>${escapeHtml(routeCenter)}</strong>
-              <span class="surat-address-phone">TEL: ${escapeHtml(phoneDisplay)}</span>
+              <div class="surat-address-footer">
+                <span class="surat-address-phone">TEL: ${escapeHtml(phoneDisplay)}</span>
+                <strong class="surat-address-region">${escapeHtml(routeCenter)}</strong>
+              </div>
             </div>
-            <div class="surat-route">${escapeHtml(routeCenter)}</div>
           </section>
           <section class="surat-section surat-cargo">
             <div><span>OdemeTipi</span><strong>POCH</strong></div>
             <div><span>Birim</span><strong>KOLI</strong></div>
-            <div><span>Top Ds/Kg</span><strong>${formatDesi(data.desi)}</strong></div>
+            <div><span>Top Ds/Kg</span><strong>${escapeHtml(formatDesi(data.desi).replace('.', ','))}</strong></div>
           </section>
           <section class="surat-section surat-delivery">
             ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-large')}
@@ -1012,7 +1030,7 @@ function renderBarcodeSvg(value: string): string {
     typeof document === 'undefined' ||
     typeof document.createElementNS !== 'function'
   ) {
-    return `<svg xmlns="http://www.w3.org/2000/svg" data-barcode-value="${escapeHtml(
+    return `<svg xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none" data-barcode-value="${escapeHtml(
       value,
     )}" aria-label="${escapeHtml(value)}"></svg>`
   }
@@ -1026,6 +1044,21 @@ function renderBarcodeSvg(value: string): string {
     fontSize: 16,
     textMargin: 3,
   })
+  // Referans etikette 1D barkod, gövdenin SOL ve SAĞ kenarına kadar yayılır.
+  // JsBarcode sabit width/height attribute'u yazar; viewBox olmadan CSS
+  // `width:100%` yalnız SVG kutusunu büyütür, ÇUBUKLARI yaymaz. Intrinsic
+  // ölçüyü viewBox'a taşıyıp width/height attribute'larını kaldırıyoruz ve
+  // preserveAspectRatio='none' ile çubuklar yatayda tam genişliğe yayılıyor.
+  // PAYLOAD DEĞİŞMEZ: JsBarcode aynı değeri aynı Code128 modülleriyle üretir;
+  // yalnız ölçekleme yapılır (modül oranları korunur, okunabilirlik artar).
+  const intrinsicWidth = Number(svg.getAttribute('width')) || 0
+  const intrinsicHeight = Number(svg.getAttribute('height')) || 0
+  if (intrinsicWidth > 0 && intrinsicHeight > 0) {
+    svg.setAttribute('viewBox', `0 0 ${intrinsicWidth} ${intrinsicHeight}`)
+    svg.setAttribute('preserveAspectRatio', 'none')
+    svg.removeAttribute('width')
+    svg.removeAttribute('height')
+  }
   svg.setAttribute('data-barcode-value', value)
   return svg.outerHTML
 }

@@ -148,10 +148,13 @@ export function LabelHtmlPreview({
               {addressLines.map((line, index) => (
                 <span key={`${line}-${index}`}>{line}</span>
               ))}
-              <strong>{routeCenter}</strong>
-              <span>TEL: {maskPhone(data.recipientPhone)}</span>
+              <div className="surat-address-footer">
+                <span className="surat-address-phone">
+                  TEL: {maskPhone(data.recipientPhone)}
+                </span>
+                <strong className="surat-address-region">{routeCenter}</strong>
+              </div>
             </div>
-            <div className="surat-address-route">{routeCenter}</div>
           </section>
 
           <section className="surat-section surat-cargo-section">
@@ -165,7 +168,7 @@ export function LabelHtmlPreview({
             </div>
             <div>
               <span>Top Ds/Kg</span>
-              <strong>{formatDesi(desi)}</strong>
+              <strong>{formatDesi(desi).replace('.', ',')}</strong>
             </div>
           </section>
 
@@ -204,15 +207,18 @@ function formatProductTitle(item?: LabelDataItem): string {
   return `${item.quantity || 1} x ${item.productName}`.trim()
 }
 
+// Referans etiketteki biçim: "(Renk: X, Beden: Y) [sku/varyant/model kodu]".
+// Eksik alanlar atlanır; boş parantez veya boş köşeli parantez BASILMAZ.
+// Yazdırma tarafındaki buildReferenceProductMeta ile AYNI sözleşmedir.
 function formatProductMeta(item?: LabelDataItem): string {
   if (!item) return ''
-  return [
+  const attrs = [
     item.color ? `Renk: ${item.color}` : '',
     item.size ? `Beden: ${item.size}` : '',
-    item.sku ? `SKU: ${item.sku}` : '',
-  ]
-    .filter(Boolean)
-    .join(' | ')
+  ].filter(Boolean)
+  const grouped = attrs.length > 0 ? `(${attrs.join(', ')})` : ''
+  const code = item.sku ? `[${item.sku}]` : ''
+  return [grouped, code].filter(Boolean).join(' ')
 }
 
 function splitAddress(address: string): string[] {

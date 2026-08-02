@@ -121,16 +121,18 @@ test('Tekli sipariş print akışı baseline olarak değişmez', async (t) => {
     resolveSuratPrintableSelection,
   } = await vite.ssrLoadModule('/src/utils/browserLabelPrint.ts')
 
-  // 1) Renderer: tekli footer bire bir aynı markup.
+  // 1) Renderer: tekli footer YAPISI aynı (tek <footer>, başlık + meta).
+  // Meta METNİ referans Sürat etiketine hizalandı:
+  //   "(Renk: X, Beden: Y) [sku]"  (eski biçim: "Renk: X | Beden: Y | SKU: Z")
   const html = renderPrintableLabelHtml(buildLabelData())
   assert.ok(
     html.includes(
       `<footer class="surat-section surat-product">
             <strong>1 x Tişört Basic</strong>
-            <span>Renk: Siyah | Beden: M | SKU: SKU-1</span>
+            <span>(Renk: Siyah, Beden: M) [SKU-1]</span>
           </footer>`,
     ),
-    'tekli footer markup değişmemeli',
+    'tekli footer markup referans biçiminde',
   )
   assert.equal((html.match(/surat-product-multi/g) ?? []).length, 0)
 
@@ -249,7 +251,8 @@ test('Çoklu ürünlü sipariş yazdırılabilir model ve etiket üretir', async
   assert.ok(
     multiHtml.includes('1 x Scuba Seçil Detaylı Tesettür Bordo Elbise'),
   )
-  assert.ok(multiHtml.includes('Renk: Bordo | Beden: 38'))
+  // Referans biçimi; çoklu satırlarda da aynı sözleşme.
+  assert.ok(multiHtml.includes('(Renk: Bordo, Beden: 38)'))
   assert.equal((multiHtml.match(/<article class="label-page">/g) ?? []).length, 1)
 
   // Legacy kayıt (11425963017 birebir): raw ZPL yok, canonical alanlar tam.
