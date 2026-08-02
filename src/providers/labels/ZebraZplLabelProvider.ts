@@ -1,7 +1,11 @@
 import type { Label } from '../../types/cargoflow'
 import { createId } from '../../utils/ids'
 import { buildLabelData, type LabelData, type LabelDataItem } from '../../utils/labelData'
-import { buildLabelProductLines } from '../../utils/labelProductLines'
+import {
+  buildProductItemBlocks,
+  paginateProductBlocks,
+  type LabelProductLine,
+} from '../../utils/labelProductLines'
 import { verifySuratShipment } from '../../utils/suratVerification'
 import { resolveSuratPrintEligibility } from '../../utils/suratPrintEligibility'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
@@ -22,17 +26,30 @@ const RAIL_WIDTH = 58
 // Etiketin fiziksel yüksekliği (^LL799) DEĞİŞMEZ. Son yatay çizgi y=696'da,
 // dış çerçeve 799'da biter; ürün şeridi bu aralıkta kalır ve barkod/QR
 // alanlarına ASLA taşmaz.
-// Gerçek Sürat etiketinde ürün bloğu 2-3 satırdır (miktar × ad, sonra
-// "(Renk: X, Beden: Y) [SKU]"). Son yatay çizgi y=696; dış çerçeve 799.
+// Ana etiketin ALT ürün şeridi. Son yatay çizgi y=696; dış çerçeve 799.
+// 5 satır: y = 703,722,741,760,779 → en alt 779+17 = 796 ≤ 797 (taşma yok).
 const PRODUCT_START_Y = 703
-const PRODUCT_LINE_HEIGHT = 21
-const PRODUCT_MAX_LINES = 3
+const PRODUCT_LINE_HEIGHT = 19
+const PRODUCT_MAX_LINES = 5
 const PRODUCT_X = 72
 const PRODUCT_TITLE_FONT = 19
-const PRODUCT_META_FONT = 18
+const PRODUCT_META_FONT = 17
 // Font genişliği ≈0.58×yükseklik; x=72'den 793'e ≈ 721 nokta kullanılabilir.
 const PRODUCT_TITLE_MAX_CHARS = 64
-const PRODUCT_META_MAX_CHARS = 68
+const PRODUCT_META_MAX_CHARS = 72
+
+// ── DEVAM (continuation) ürün etiketi ───────────────────────────────────────
+// Ana etikete sığmayan ürünler için ek SAYFA(lar). Kargo barkodu/QR/T.No
+// İÇERMEZ, yeni gönderi OLUŞTURMAZ, desi/parça adedini DEĞİŞTİRMEZ; yalnız
+// ürün detayı taşır. Aynı ^PW/^LL (10×10 cm) kullanılır.
+const CONT_START_Y = 122
+const CONT_LINE_HEIGHT = 21
+const CONT_TITLE_FONT = 20
+const CONT_META_FONT = 18
+const CONT_TITLE_MAX_CHARS = 60
+const CONT_META_MAX_CHARS = 66
+// y = 122 + n*21 ≤ 742 (alt not için yer bırakılır) → 30 satır.
+const CONT_MAX_LINES = 30
 
 // Ortalama ^A0 (scalable) glif genişliği / yükseklik oranı. Metnin verilen
 // piksel genişliğine sığıp sığmadığını kestirmek için kullanılır.
@@ -132,19 +149,62 @@ function maskPhone(phone: string): string {
 // Etiket alt şeridi: TÜM ürün satırları (yalnız ilki değil). Adet, ürün/model
 // adı, renk, beden, diğer varyant ve SKU/barkod deterministik olarak yerleşir;
 // sığmayan ürünler "+X ürün daha" ile özetlenir.
-function productZplLines(items: LabelDataItem[]): string[] {
-  const lines = buildLabelProductLines(items ?? [], {
-    maxLines: PRODUCT_MAX_LINES,
+// Ürünleri sayfalara böler: [0] = ana etiketin alt şeridi, [1..] = DEVAM
+// etiketleri. Hiçbir ürün özetlenmez/gizlenmez.
+function paginateProducts(items: LabelDataItem[]): LabelProductLine[][] {
+  const source = items ?? []
+  if (source.length === 0) {
+    return [[{ text: 'Ürün bilgisi yok', kind: 'title' }]]
+  }
+  const blocks = buildProductItemBlocks(source, {
     titleMaxChars: PRODUCT_TITLE_MAX_CHARS,
     metaMaxChars: PRODUCT_META_MAX_CHARS,
   })
-  // Ürün satırları küçük puntodur → tek geçiş (net). Gerçek etikette de bu
-  // bölüm normal kalınlıktadır.
-  return lines.flatMap((line, index) => {
+  return paginateProductBlocks(blocks, {
+    firstPageLines: PRODUCT_MAX_LINES,
+    continuationPageLines: CONT_MAX_LINES,
+  })
+}
+
+// Ana etiketin alt şeridi (ilk sayfa). Küçük punto → tek geçiş (net).
+function productZplLines(page: LabelProductLine[]): string[] {
+  return page.flatMap((line, index) => {
     const y = PRODUCT_START_Y + index * PRODUCT_LINE_HEIGHT
     const font = line.kind === 'title' ? PRODUCT_TITLE_FONT : PRODUCT_META_FONT
     return textField(PRODUCT_X, y, font, `^FD${zplSafe(line.text, 160)}^FS`)
   })
+}
+
+// DEVAM ürün etiketi. Sürat takip barkodu (^BC), QR (^BQ), T.No veya yeni
+// gönderi YOKTUR; yalnız sipariş no + ürün detayı. Deterministiktir.
+function buildContinuationZpl(
+  labelData: LabelData,
+  page: LabelProductLine[],
+  pageIndex: number,
+  pageTotal: number,
+): string {
+  return [
+    '^XA',
+    '^CI28',
+    `^PW${LABEL_WIDTH_DOTS}`,
+    `^LL${LABEL_HEIGHT_DOTS}`,
+    '^LH0,0',
+    '^FO0,0^GB799,799,2^FS',
+    '^FO30,104^GB739,2,2^FS',
+    ...textField(30, 26, 30, '^FDSIPARIS URUNLERI - DEVAM^FS'),
+    `^FO30,68^A0N,22,22^FDSiparis No: ${zplSafe(labelData.orderNumber, 42)}^FS`,
+    `^FO520,68^A0N,20,20^FB249,1,0,R,0^FDSayfa ${pageIndex} / ${pageTotal}^FS`,
+    ...page.flatMap((line, index) => {
+      const y = CONT_START_Y + index * CONT_LINE_HEIGHT
+      const font = line.kind === 'title' ? CONT_TITLE_FONT : CONT_META_FONT
+      const maxChars =
+        line.kind === 'title' ? CONT_TITLE_MAX_CHARS : CONT_META_MAX_CHARS
+      return textField(30, y, font, `^FD${zplSafe(line.text, maxChars + 20)}^FS`)
+    }),
+    // Bu sayfanın kargo etiketi OLMADIĞI açıkça yazılır (yanlış okutma önlenir).
+    '^FO30,760^A0N,17,17^FDBu sayfa kargo etiketi degildir; kargo barkodu ve QR icermez.^FS',
+    '^XZ',
+  ].join('\n')
 }
 
 // Yönlendirme bandı metin genişliği: x=222'den küçük QR'ın (x=696) soluna.
@@ -163,6 +223,8 @@ function buildZpl(labelData: LabelData): string {
     labelData.orderNumber
   const desiKg = formatDesi(labelData.desi)
   const senderPhone = String(labelData.senderPhone ?? '').trim()
+  // TÜM ürünler sayfalanır: [0] ana etiket şeridi, [1..] DEVAM etiketleri.
+  const productPages = paginateProducts(labelData.items)
   // Varış şubesi + aktarma merkezi: KESİLMEZ. Sığacak en iri punto seçilir,
   // gerekirse en fazla 2 satıra sarılır; band bütçesine (598..694) uyar.
   const routingRows = layoutRoutingRows(
@@ -260,9 +322,21 @@ function buildZpl(labelData: LabelData): string {
     ),
     `^FO696,540^BQN,2,4^FDLA,${zplSafe(labelData.barcodeValue, 60)}^FS`,
 
-    // En alt: ürün/model, renk, beden, varyant, SKU (tüm satırlar).
-    ...productZplLines(labelData.items),
+    // En alt: ürün/model, renk, beden, varyant, SKU, barkod (ilk sayfa).
+    ...productZplLines(productPages[0] ?? []),
     '^XZ',
+    // Sığmayan ürünler için DEVAM etiketleri (aynı ZPL akışında ayrı sayfalar).
+    // Kargo barkodu/QR/T.No YOK; desi ve parça adedi DEĞİŞMEZ.
+    ...productPages
+      .slice(1)
+      .map((page, index) =>
+        buildContinuationZpl(
+          labelData,
+          page,
+          index + 2,
+          productPages.length,
+        ),
+      ),
   ].join('\n')
 }
 

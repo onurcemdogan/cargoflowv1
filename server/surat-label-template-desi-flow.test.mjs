@@ -198,11 +198,14 @@ test('SLT-5b: uzun varış/aktarma metni KESİLMEZ, güvenli küçültülür ve 
 
 // ═══ 6-9: ürün detayları ══════════════════════════════════════════════════
 
-test('SLT-6/7: tek ürün detayları GERÇEK etiket biçiminde basılır', async () => {
+test('SLT-6/7: tek ürün TAM detayla basılır (adet, ad, renk, beden, SKU, barkod)', async () => {
   const { zplContent } = await renderZpl(labelOrder())
   assert.ok(zplContent.includes('1 x Test Elbise'), 'adet + ürün adı')
-  // Foto biçimi: "(Renk: Lacivert, Beden: 40) [SKU-1]"
-  assert.ok(zplContent.includes('(Renk: Lacivert, Beden: 40) [SKU-1]'), 'varyant + kod')
+  assert.ok(zplContent.includes('Renk: Lacivert'), 'renk')
+  assert.ok(zplContent.includes('Beden: 40'), 'beden')
+  assert.ok(zplContent.includes('SKU: SKU-1'), 'SKU')
+  assert.ok(zplContent.includes('Barkod: B1'), 'ürün barkodu')
+  assert.equal(/ürün daha/.test(zplContent), false, '"+X ürün daha" KULLANILMAZ')
 })
 
 test('SLT-6b: ÜST BLOK gönderici, alıcı YALNIZ orta kutuda (gerçek etiket ayrımı)', async () => {
@@ -227,19 +230,23 @@ test('SLT-6b: ÜST BLOK gönderici, alıcı YALNIZ orta kutuda (gerçek etiket a
 })
 
 test('SLT-7b: renk/beden variantAttributes içinden çözülür', async () => {
-  const { buildLabelProductLines } = await load('/src/utils/labelProductLines.ts')
-  const [, meta] = buildLabelProductLines(
+  const { buildProductItemBlocks } = await load('/src/utils/labelProductLines.ts')
+  const [block] = buildProductItemBlocks(
     [{
-      productName: 'Ürün', quantity: 1,
+      productName: 'Ürün', quantity: 1, sku: 'S1', barcode: 'B1',
       variantAttributes: [
         { name: 'Renk', value: 'Kırmızı' },
         { name: 'Beden', value: 'M' },
         { name: 'Model', value: 'Slim' },
       ],
     }],
-    { maxLines: 3, titleMaxChars: 64, metaMaxChars: 68 },
+    { titleMaxChars: 64, metaMaxChars: 72 },
   )
-  assert.equal(meta.text, '(Renk: Kırmızı, Beden: M, Model: Slim)')
+  assert.deepEqual(block.map((l) => l.text), [
+    '1 x Ürün',
+    'Renk: Kırmızı · Beden: M · Varyant: Model=Slim',
+    'SKU: S1 · Barkod: B1',
+  ])
 })
 
 test('SLT-8: eksik varyant alanları güvenli atlanır (undefined/null yazılmaz)', async () => {
@@ -250,26 +257,88 @@ test('SLT-8: eksik varyant alanları güvenli atlanır (undefined/null yazılmaz
   )
   assert.equal(/undefined|null/.test(zplContent), false, 'undefined/null basılmaz')
   assert.equal(zplContent.includes('Renk:'), false, 'boş renk yazılmaz')
-  assert.ok(zplContent.includes('[869123]'), 'SKU yoksa barkod fallback')
+  assert.equal(zplContent.includes('Beden:'), false, 'boş beden yazılmaz')
+  assert.equal(zplContent.includes('SKU:'), false, 'boş SKU yazılmaz')
+  assert.ok(zplContent.includes('Barkod: 869123'), 'mevcut barkod basılır')
 })
 
-test('SLT-9: çok ürün taşmadan basılır ve fazlası özetlenir', async () => {
-  const { buildLabelProductLines } = await load('/src/utils/labelProductLines.ts')
-  const items = [1, 2, 3, 4, 5].map((i) => ({
-    productName: `Ürün ${i}`, quantity: 1, color: `R${i}`, size: `${i}`, sku: `S${i}`,
-  }))
-  const lines = buildLabelProductLines(items, {
-    maxLines: 3, titleMaxChars: 64, metaMaxChars: 68,
-  })
-  assert.ok(lines.length <= 3, 'satır bütçesi (2-3 satır) aşılmaz')
-  assert.equal(lines.at(-1).kind, 'more')
-  assert.match(lines.at(-1).text, /^\+\d+ ürün daha$/)
-  // Uzun ad sarılır, kesilse bile '…' ile işaretlenir.
-  const long = buildLabelProductLines(
-    [{ productName: 'A'.repeat(400), quantity: 1 }],
-    { maxLines: 3, titleMaxChars: 64, metaMaxChars: 68 },
+test('SLT-9: İKİ farklı ürünün İKİSİ de tam detaylı basılır (özet YOK)', async () => {
+  const { zplContent } = await renderZpl(
+    labelOrder({
+      items: [
+        { id: 'l1', productName: 'Elbise Güneş', quantity: 1, color: 'Kırmızı', size: '38', merchantSku: 'SKU-A', barcode: 'BA' },
+        { id: 'l2', productName: 'Pantolon Çiğdem', quantity: 3, color: 'Mavi', size: '40', merchantSku: 'SKU-B', barcode: 'BB' },
+      ],
+    }),
   )
-  assert.ok(long.every((l) => l.text.length <= 65), 'satır genişliği aşılmaz')
+  assert.equal(/ürün daha/.test(zplContent), false, '"+X ürün daha" YOK')
+  for (const expected of [
+    '1 x Elbise Güneş', 'Renk: Kırmızı', 'Beden: 38', 'SKU: SKU-A', 'Barkod: BA',
+    '3 x Pantolon Çiğdem', 'Renk: Mavi', 'Beden: 40', 'SKU: SKU-B', 'Barkod: BB',
+  ]) {
+    assert.ok(zplContent.includes(expected), 'eksik detay: ' + expected)
+  }
+})
+
+test('SLT-9b: BEŞ ürünün TAMAMI basılır; taşanlar DEVAM etiketine gider', async () => {
+  const items = [1, 2, 3, 4, 5].map((i) => ({
+    id: `l${i}`, productName: `Ürün ${i} Şık Model`, quantity: i,
+    color: `Renk${i}`, size: `${36 + i}`, merchantSku: `SKU-${i}`, barcode: `8690${i}`,
+  }))
+  const { zplContent } = await renderZpl(labelOrder({ items }))
+  const pages = zplContent.split('^XZ').filter((p) => p.includes('^XA'))
+  assert.ok(pages.length >= 2, 'taşan ürünler için devam etiketi üretilir')
+  assert.equal(/ürün daha/.test(zplContent), false, '"+X ürün daha" YOK')
+  // HER ürünün TÜM alanları çıktıda olmalı (hiçbiri gizlenmez).
+  for (const item of items) {
+    assert.ok(zplContent.includes(`${item.quantity} x ${item.productName}`), 'adet+ad: ' + item.productName)
+    assert.ok(zplContent.includes(`Renk: ${item.color}`), 'renk: ' + item.color)
+    assert.ok(zplContent.includes(`Beden: ${item.size}`), 'beden: ' + item.size)
+    assert.ok(zplContent.includes(`SKU: ${item.merchantSku}`), 'sku: ' + item.merchantSku)
+    assert.ok(zplContent.includes(`Barkod: ${item.barcode}`), 'barkod: ' + item.barcode)
+  }
+})
+
+test('SLT-9c: DEVAM etiketi kargo barkodu/QR/T.No üretmez; desi ve parça adedi değişmez', async () => {
+  const items = [1, 2, 3, 4, 5].map((i) => ({
+    id: `l${i}`, productName: `Ürün ${i}`, quantity: 1,
+    color: `R${i}`, size: `${i}`, merchantSku: `S${i}`, barcode: `B${i}`,
+  }))
+  const { zplContent } = await renderZpl(labelOrder({ items }))
+  const pages = zplContent.split('^XZ').filter((p) => p.includes('^XA'))
+  const [main, ...continuations] = pages
+  assert.ok(continuations.length >= 1, 'en az bir devam etiketi')
+  // Ana etiket: provider alanları korunur.
+  assert.ok(main.includes(`^BCN,120,Y,N,N^FD${BARCODE}^FS`), 'ana 1D barkod korunur')
+  assert.ok(main.includes(`^BQN,2,7^FDLA,${ORDER_NO}|${BARCODE}^FS`), 'ana QR korunur')
+  // Devam etiketleri: barkod/QR/T.No YOK, yeni gönderi YOK.
+  for (const page of continuations) {
+    assert.equal(/\^BC|\^BQ/.test(page), false, 'devam etiketinde barkod/QR OLMAZ')
+    assert.equal(/T\.No/.test(page), false, 'devam etiketinde T.No OLMAZ')
+    assert.ok(page.includes('SIPARIS URUNLERI - DEVAM'), 'devam başlığı')
+    assert.ok(page.includes(`Siparis No: ${ORDER_NO}`), 'devam sipariş no')
+    assert.match(page, /\^PW799/, 'aynı fiziksel boyut')
+  }
+  // Desi ve parça adedi ANA etikette değişmedi (devam etiketi artırmaz).
+  assert.ok(main.includes('^FD2.00^FS'), 'desi değişmedi')
+  assert.ok(main.includes('^FD1 / 1^FS'), 'parça adedi değişmedi')
+  assert.equal(
+    zplContent.split('^FD1 / 1^FS').length - 1,
+    2,
+    'parça adedi yalnız ana etikette (bold çifti = 2 satır)',
+  )
+})
+
+test('SLT-9d: reprint aynı ana etiket + aynı devam etiketlerini üretir (deterministik)', async () => {
+  const items = [1, 2, 3, 4, 5].map((i) => ({
+    id: `l${i}`, productName: `Ürün ${i}`, quantity: 1,
+    color: `R${i}`, size: `${i}`, merchantSku: `S${i}`, barcode: `B${i}`,
+  }))
+  const first = await renderZpl(labelOrder({ items }))
+  const second = await renderZpl(labelOrder({ items }))
+  assert.equal(first.zplContent, second.zplContent, 'çıktı birebir aynı')
+  const pageCount = (z) => z.split('^XZ').filter((p) => p.includes('^XA')).length
+  assert.equal(pageCount(first.zplContent), pageCount(second.zplContent), 'sayfa sayısı aynı')
 })
 
 // ═══ 10-11: quantity + duplicate ══════════════════════════════════════════

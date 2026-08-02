@@ -1,14 +1,17 @@
-// Etiket ALT bölümü için ürün özeti satırları (SAF, deterministik).
-// Sürat etiketinin fiziksel yüksekliği DEĞİŞMEZ; bu yüzden ürün bölümü sabit
-// bir satır bütçesiyle çalışır: sığmayan ürünler "+X ürün daha" ile özetlenir.
-// Barkod/QR alanına TAŞMAZ (çağıran sabit y aralığı verir).
+// Etiket ürün detayı satırları (SAF, deterministik).
 //
-// Kurallar:
-// - quantity doğru gösterilir (satır adedi; duplicate satır BASILMAZ).
-// - eksik alanlar "undefined/null" yazılmaz, sessizce atlanır.
-// - renk/beden variantAttributes içindeyse güvenli çözülür.
-// - uzun ürün adları kelime bazlı sarılır; son çare '…' ile kısaltılır.
-// - font okunamayacak kadar küçültülmez (boyutlar çağıranda sabittir).
+// KURAL: Siparişteki HER gerçek ürün satırı TAM olarak yazılır — hiçbir ürün
+// özetlenmez veya gizlenmez ("+X ürün daha" YOKTUR). Ürün başına en fazla üç
+// mantıksal satır üretilir:
+//
+//   <adet> x <tam ürün/model adı>            (gerekirse güvenli satır sarma)
+//   Renk: <renk> · Beden: <beden> · Varyant: <diğer özellikler>
+//   SKU: <sku> · Barkod: <ürün barkodu>
+//
+// Eksik alanlar tamamen atlanır (asla "undefined/null" basılmaz); bir satırın
+// tüm alanları boşsa o satır hiç üretilmez. Ürünler ana etikete sığmazsa çağıran
+// tarafta DEVAM etiketlerine sayfalanır (bkz. paginateProductBlocks) — içerik
+// asla kırpılmaz.
 
 export interface LabelProductSource {
   productName?: string
@@ -22,7 +25,7 @@ export interface LabelProductSource {
   variantAttributes?: Array<{ name?: string; value?: string }>
 }
 
-export type LabelProductLineKind = 'title' | 'meta' | 'more'
+export type LabelProductLineKind = 'title' | 'meta'
 
 export interface LabelProductLine {
   text: string
@@ -30,15 +33,16 @@ export interface LabelProductLine {
 }
 
 export interface LabelProductLayoutOptions {
-  // Toplam satır bütçesi (etiket yüksekliği sabit).
-  maxLines: number
   // Başlık satırı için maksimum karakter (font genişliğine göre çağıran verir).
   titleMaxChars: number
   // Meta satırı için maksimum karakter.
   metaMaxChars: number
-  // Bir ürün başlığının kaplayabileceği en fazla satır.
+  // Bir ürün adının kaplayabileceği en fazla satır (okunaklılık sınırı).
   maxTitleLinesPerItem?: number
 }
+
+const COLOR_KEYS = ['renk', 'color']
+const SIZE_KEYS = ['beden', 'size', 'numara']
 
 function clean(value: unknown): string {
   return String(value ?? '')
@@ -46,12 +50,10 @@ function clean(value: unknown): string {
     .trim()
 }
 
-// variantAttributes'tan ada göre değer (Renk/Beden gibi) — güvenli.
 function readVariant(item: LabelProductSource, names: string[]): string {
-  const wanted = names.map((name) => name.toLocaleLowerCase('tr-TR'))
   for (const attribute of item.variantAttributes ?? []) {
     const name = clean(attribute?.name).toLocaleLowerCase('tr-TR')
-    if (name && wanted.includes(name)) {
+    if (name && names.includes(name)) {
       const value = clean(attribute?.value)
       if (value) return value
     }
@@ -59,8 +61,9 @@ function readVariant(item: LabelProductSource, names: string[]): string {
   return ''
 }
 
-// Kelime bazlı sarma; maxLines'a sığmazsa son satır '…' ile kısaltılır
-// (kelime ortasından rastgele kesme yok, içerik kaybı açıkça işaretlenir).
+// Kelime bazlı sarma. Metin KESİLMEZ: satır sayısı sınırı aşılırsa kalan
+// kelimeler son satıra sığdığı kadar değil, EK SATIRLARA taşınır — yalnız tek
+// bir kelime satırdan uzunsa sert bölünür (aksi halde ZPL satırı taşardı).
 function wrapText(text: string, maxChars: number, maxLines: number): string[] {
   const safeMax = Math.max(1, maxChars)
   const words = text.split(' ').filter(Boolean)
@@ -75,13 +78,14 @@ function wrapText(text: string, maxChars: number, maxLines: number): string[] {
       lines.push(current)
       current = word
     }
-    // Çok uzun tek kelime: sert böl (aksi halde satır taşar).
     while (current.length > safeMax) {
       lines.push(current.slice(0, safeMax))
       current = current.slice(safeMax)
     }
   }
   if (current) lines.push(current)
+  // Okunaklılık sınırı: çok uzun adlarda satır sayısı sınırlanır; kalan metin
+  // atılmaz, son satırda '…' ile işaretlenir (ürünün kendisi GİZLENMEZ).
   if (lines.length <= maxLines) return lines
   const kept = lines.slice(0, maxLines)
   const last = kept[maxLines - 1]
@@ -92,84 +96,100 @@ function wrapText(text: string, maxChars: number, maxLines: number): string[] {
 
 function truncate(text: string, maxChars: number): string {
   const safeMax = Math.max(1, maxChars)
-  if (text.length <= safeMax) return text
-  return `${text.slice(0, safeMax - 1)}…`
+  return text.length <= safeMax ? text : `${text.slice(0, safeMax - 1)}…`
 }
 
-// Bir ürünün meta satırı — GERÇEK Sürat etiketindeki biçim:
-//   "(Renk: Lacivert, Beden: 40) [ttzeyna44]"
-// Boş alanlar tamamen atlanır (asla "Renk: undefined" yazılmaz); hiçbir alan
-// yoksa meta satırı hiç üretilmez.
-function buildMeta(item: LabelProductSource, maxChars: number): string {
-  const color = clean(item.color) || readVariant(item, ['Renk', 'Color'])
-  const size =
-    clean(item.size) || readVariant(item, ['Beden', 'Size', 'Numara'])
-  const attrs: string[] = []
-  if (color) attrs.push(`Renk: ${color}`)
-  if (size) attrs.push(`Beden: ${size}`)
-  // Renk/Beden dışındaki anlamlı varyant (ör. Model) — en fazla 1 tane.
-  const extra = (item.variantAttributes ?? []).find((attribute) => {
-    const name = clean(attribute?.name)
-    const normalized = name.toLocaleLowerCase('tr-TR')
-    return (
-      name &&
-      clean(attribute?.value) &&
-      !['renk', 'color', 'beden', 'size', 'numara'].includes(normalized)
-    )
-  })
-  if (extra) attrs.push(`${clean(extra.name)}: ${clean(extra.value)}`)
-
-  const code = clean(item.sku || item.merchantSku || item.stockCode || item.barcode)
+// "Renk: X · Beden: Y · Varyant: A=1, B=2" — yalnız dolu alanlar.
+function buildVariantLine(item: LabelProductSource, maxChars: number): string {
+  const color = clean(item.color) || readVariant(item, COLOR_KEYS)
+  const size = clean(item.size) || readVariant(item, SIZE_KEYS)
+  const others = (item.variantAttributes ?? [])
+    .filter((attribute) => {
+      const name = clean(attribute?.name).toLocaleLowerCase('tr-TR')
+      return (
+        name &&
+        clean(attribute?.value) &&
+        !COLOR_KEYS.includes(name) &&
+        !SIZE_KEYS.includes(name)
+      )
+    })
+    .map((attribute) => `${clean(attribute?.name)}=${clean(attribute?.value)}`)
   const parts: string[] = []
-  if (attrs.length > 0) parts.push(`(${attrs.join(', ')})`)
-  if (code) parts.push(`[${code}]`)
-  return parts.length > 0 ? truncate(parts.join(' '), maxChars) : ''
+  if (color) parts.push(`Renk: ${color}`)
+  if (size) parts.push(`Beden: ${size}`)
+  if (others.length > 0) parts.push(`Varyant: ${others.join(', ')}`)
+  return parts.length > 0 ? truncate(parts.join(' · '), maxChars) : ''
 }
 
-// Deterministik ürün bölümü satırları. Sığmayan ürünler "+X ürün daha".
-export function buildLabelProductLines(
+// "SKU: X · Barkod: Y" — yalnız dolu alanlar.
+function buildCodeLine(item: LabelProductSource, maxChars: number): string {
+  const sku = clean(item.sku || item.merchantSku || item.stockCode)
+  const barcode = clean(item.barcode)
+  const parts: string[] = []
+  if (sku) parts.push(`SKU: ${sku}`)
+  if (barcode) parts.push(`Barkod: ${barcode}`)
+  return parts.length > 0 ? truncate(parts.join(' · '), maxChars) : ''
+}
+
+// Her ürün için TAM detay bloğu (1..3 mantıksal satır). Ürün sayısı KISITLANMAZ.
+export function buildProductItemBlocks(
   items: LabelProductSource[],
   options: LabelProductLayoutOptions,
-): LabelProductLine[] {
-  const maxLines = Math.max(0, Math.trunc(options.maxLines))
-  if (maxLines === 0) return []
+): LabelProductLine[][] {
   const source = Array.isArray(items) ? items : []
-  if (source.length === 0) {
-    return [{ text: 'Ürün bilgisi yok', kind: 'title' }]
-  }
   const maxTitleLines = Math.max(1, options.maxTitleLinesPerItem ?? 2)
-
-  // Her ürün için satır bloğu üret (başlık satırları + tek meta satırı).
-  const blocks = source.map((item) => {
+  return source.map((item) => {
     const quantity = Math.max(1, Math.trunc(Number(item.quantity) || 1))
     const name = clean(item.productName) || 'Ürün'
-    const titleLines = wrapText(
+    const block: LabelProductLine[] = wrapText(
       `${quantity} x ${name}`,
       options.titleMaxChars,
       maxTitleLines,
     ).map((text) => ({ text, kind: 'title' as const }))
-    const meta = buildMeta(item, options.metaMaxChars)
-    return meta
-      ? [...titleLines, { text: meta, kind: 'meta' as const }]
-      : titleLines
+    const variantLine = buildVariantLine(item, options.metaMaxChars)
+    if (variantLine) block.push({ text: variantLine, kind: 'meta' })
+    const codeLine = buildCodeLine(item, options.metaMaxChars)
+    if (codeLine) block.push({ text: codeLine, kind: 'meta' })
+    return block
   })
+}
 
-  const lines: LabelProductLine[] = []
-  let rendered = 0
+// Ürün bloklarını sayfalara böler. Bir ürün BÖLÜNMEZ: bloğu sığmıyorsa tümüyle
+// sonraki sayfaya taşınır. İlk sayfa = ana Sürat etiketinin alt şeridi (küçük
+// bütçe), sonrakiler = DEVAM etiketleri (geniş bütçe). Hiçbir ürün ATILMAZ.
+export function paginateProductBlocks(
+  blocks: LabelProductLine[][],
+  budgets: { firstPageLines: number; continuationPageLines: number },
+): LabelProductLine[][] {
+  const pages: LabelProductLine[][] = []
+  let current: LabelProductLine[] = []
+  let budget = Math.max(0, budgets.firstPageLines)
+  const nextBudget = Math.max(1, budgets.continuationPageLines)
   for (const block of blocks) {
-    const remainingItems = source.length - rendered
-    // Sığmayan ürün kalacaksa son satırı "+X ürün daha" için ayır.
-    const reserve = remainingItems > 1 ? 1 : 0
-    if (lines.length + block.length > maxLines - reserve) break
-    lines.push(...block)
-    rendered += 1
+    if (current.length + block.length > budget) {
+      pages.push(current)
+      current = []
+      budget = nextBudget
+      // Tek bir ürün bloğu devam sayfasına da sığmıyorsa yine de yazılır
+      // (gizlenmez); pratikte devam sayfası bütçesi bir bloktan büyüktür.
+    }
+    current.push(...block)
   }
+  pages.push(current)
+  return pages
+}
 
-  const leftover = source.length - rendered
-  if (leftover > 0) {
-    // En az bir ürün gösterilemediyse bile özet satırı yazılır.
-    if (lines.length >= maxLines) lines.length = maxLines - 1
-    lines.push({ text: `+${leftover} ürün daha`, kind: 'more' })
-  }
-  return lines.slice(0, maxLines)
+// Ana etiket için TEK sayfalık kullanım (geriye dönük yardımcı).
+export function buildLabelProductLines(
+  items: LabelProductSource[],
+  options: LabelProductLayoutOptions & { maxLines: number },
+): LabelProductLine[] {
+  const source = Array.isArray(items) ? items : []
+  if (source.length === 0) return [{ text: 'Ürün bilgisi yok', kind: 'title' }]
+  const blocks = buildProductItemBlocks(source, options)
+  const [first] = paginateProductBlocks(blocks, {
+    firstPageLines: options.maxLines,
+    continuationPageLines: options.maxLines,
+  })
+  return first
 }
