@@ -29,7 +29,9 @@ interface LabelPreviewModalProps {
     orderId: string,
     overrides: LabelPreviewOverrides,
   ) => void
-  onDesiChange: (
+  // Manuel desi girişi KALDIRILDI; prop geriye dönük uyumluluk için kabul
+  // edilir ama KULLANILMAZ (desi Ayarlar varsayılanından hesaplanır).
+  onDesiChange?: (
     orderId: string,
     desi: number | null,
     desiSource: CargoOrder['desiSource'],
@@ -47,7 +49,6 @@ export function LabelPreviewModal({
   onClose,
   onMappingConfigChange,
   onPreviewOverridesChange,
-  onDesiChange,
   onDownloadZpl,
   onPrint,
 }: LabelPreviewModalProps) {
@@ -156,6 +157,9 @@ export function LabelPreviewModal({
           </div>
         ) : null}
 
+        {/* Desi GİRİŞİ KALDIRILDI: yeni etiketlerin desisi Ayarlar →
+            "Varsayılan Gönderi Desisi" değerinden (adet çarpanıyla) hesaplanır.
+            Burada yalnız SALT OKUNUR gösterim yapılır. */}
         <section className="label-inline-editor desi-editor">
           <header>
             <div>
@@ -166,71 +170,10 @@ export function LabelPreviewModal({
               Kaynak: {desiSourceLabel(normalizedDesi.desiSource)}
             </span>
           </header>
-          <div className="label-editor-grid">
-            <label>
-              <span>Toplam koli desisi</span>
-              <input
-                type="number"
-                min="0.01"
-                step="0.01"
-                value={normalizedDesi.desi ?? ''}
-                placeholder="Desi girin"
-                onChange={(event) => {
-                  if (!order) return
-                  const value = parseDesiInput(event.target.value)
-                  onDesiChange(
-                    order.id,
-                    value,
-                    value == null ? null : 'manual_total',
-                  )
-                }}
-              />
-            </label>
-            <div className="label-preview-edit-actions">
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={normalizedDesi.productDesi == null}
-                onClick={() =>
-                  order &&
-                  onDesiChange(
-                    order.id,
-                    normalizedDesi.productDesi,
-                    'product',
-                  )
-                }
-              >
-                Üründen al
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                disabled={normalizedDesi.calculatedDesi == null}
-                onClick={() =>
-                  order &&
-                  onDesiChange(
-                    order.id,
-                    normalizedDesi.calculatedDesi,
-                    'calculated',
-                  )
-                }
-              >
-                Hesapla
-              </button>
-              <button
-                type="button"
-                className="secondary-button"
-                onClick={() =>
-                  order && onDesiChange(order.id, null, null)
-                }
-              >
-                Temizle
-              </button>
-            </div>
-          </div>
           <p>
-            Önizleme, Sürat isteği ve indirilen ZPL aynı normalize desiyi
-            kullanır. Mevcut değer: {formatDesi(normalizedDesi.desi)}
+            Desi Ayarlar’daki “Varsayılan Gönderi Desisi” değerinden otomatik
+            hesaplanır; sipariş bazında elle girilmez. Mevcut değer:{' '}
+            {formatDesi(normalizedDesi.desi)}
           </p>
         </section>
 
@@ -741,12 +684,6 @@ export function LabelPreviewModal({
       [key]: value,
     })
   }
-}
-
-function parseDesiInput(value: string): number | null {
-  if (!value.trim()) return null
-  const parsed = Number(value.replace(',', '.'))
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
 }
 
 function desiSourceLabel(

@@ -89,6 +89,12 @@ function App() {
   )
   const [integrationHydrated, setIntegrationHydrated] = useState(false)
   const [integrationConfigRevision, setIntegrationConfigRevision] = useState(0)
+  // Yeni etiketlerin desisi YALNIZ Ayarlar'daki "Varsayılan Gönderi Desisi"nden
+  // gelir (sipariş bazında desi girişi YOK). Ayar değiştikçe workflow servisine
+  // aktarılır; kayıtlı etiketler ve reprint bundan ETKİLENMEZ.
+  useEffect(() => {
+    workflowService.setDesiConfig(integrationConfig.desi)
+  }, [integrationConfig.desi])
   const [maskedIntegrationStatus, setMaskedIntegrationStatus] =
     useState<MaskedIntegrationStatus | null>(null)
   // Yazıcı Ayarları SAYFASI kaldırıldı; ayarlar kayıtlıdan yüklenir ve print

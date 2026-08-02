@@ -10,6 +10,10 @@ import { verifySuratShipment } from '../../utils/suratVerification'
 import { resolveSuratPrintEligibility } from '../../utils/suratPrintEligibility'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
 import {
+  DEFAULT_DESI_MISSING_MESSAGE,
+  resolveEffectiveLabelDesi,
+} from '../../utils/labelDesi'
+import {
   buildDesiDebug,
   desiValuesDiffer,
   extractZplDesi,
@@ -345,7 +349,21 @@ export class ZebraZplLabelProvider implements LabelProvider {
     const { order, shipment, template, mappingConfig } = input
     const labelData = buildLabelData(order, shipment, template, mappingConfig)
     const verification = verifySuratShipment(order, shipment)
-    const normalizedDesi = resolveNormalizedDesi(order, shipment)
+    // Efektif desi: kayıtlı/geçmiş değer varsa o; yoksa Ayarlar'daki
+    // "Varsayılan Gönderi Desisi" × adet (mevcut çarpan sözleşmesi).
+    // Kullanıcı sipariş bazında desi GİRMEZ.
+    const effectiveDesi = resolveEffectiveLabelDesi(
+      order,
+      shipment,
+      input.products ?? [],
+      input.desiConfig,
+    )
+    const baseDesi = resolveNormalizedDesi(order, shipment)
+    const normalizedDesi = {
+      ...baseDesi,
+      desi: effectiveDesi.desi ?? baseDesi.desi,
+      desiSource: effectiveDesi.desiSource ?? baseDesi.desiSource,
+    }
     // Render ve click AYNI eligibility helper'ını kullanır: VERIFIED veya
     // LABEL_READY_AWAITING_ACCEPTANCE + T.No + barkod etiket üretebilir.
     // Eski verifiedShipment / dispatchRegistrationConfirmed / Serendip
@@ -374,10 +392,13 @@ export class ZebraZplLabelProvider implements LabelProvider {
     // CargoFlow'un üreteceği (kayıtlı ZPL yok — fresh create / legacy HTML)
     // durumda çalışır. Böylece daha önce basılmış (LABEL_PRINTED) siparişte
     // "Etiketi Yazdır" desi istemeden kayıtlı etiketi yeniden basar.
+    // Kayıtlı taşıyıcı ZPL (reprint) varsa desi GEREKMEZ; eski etiket aynen
+    // basılır. Yalnız YENİ etiket üretiminde efektif desi zorunludur ve
+    // kaynağı Ayarlar'daki varsayılandır (per-order desi girişi YOK).
     const hasPersistedZpl = Boolean(apiBarcodeRaw)
     if (!hasPersistedZpl && normalizedDesi.desi == null) {
       throw new Error(
-        'Desi bilgisi eksik. Etiket oluşturmadan önce sipariş desisini girin.',
+        effectiveDesi.blockedReason ?? DEFAULT_DESI_MISSING_MESSAGE,
       )
     }
     const officialSource = eligibility.verified
@@ -385,6 +406,10 @@ export class ZebraZplLabelProvider implements LabelProvider {
       : 'surat.create.preassignedBarkod'
     const liveLabelData: LabelData = {
       ...labelData,
+      // Etikette basılan desi EFEKTİF desidir (Ayarlar varsayılanı × adet ya da
+      // kayıtlı/geçmiş değer); sipariş bazında girilen desi YOKTUR.
+      desi: normalizedDesi.desi,
+      desiSource: normalizedDesi.desiSource,
       tNo: eligibility.trackingNumber,
       trackingNumber: eligibility.trackingNumber,
       barcodeValue: eligibility.barcode,
