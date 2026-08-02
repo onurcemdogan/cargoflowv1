@@ -113,36 +113,26 @@ test('OCR-2: Yeni Siparişler / Etiket Hazır tanımları gerçek classifier\'da
 
 // ── KÖK NEDEN: sayfa sınırı ───────────────────────────────────────────────
 
-test('OCR-3: sipariş listesi hiç pageSize göndermez → backend varsayılanı 25', async () => {
+test('OCR-3: sipariş listesi artık TÜM sayfaları yükler (25 tavanı kalktı)', async () => {
   const src = readFileSync(
     join(here, '..', 'src/services/orderWorkflowService.ts'), 'utf8',
   )
-  // loadOrdersFromServer TÜM çağrı yerlerinde argümansızdır.
-  const app = readFileSync(join(here, '..', 'src/App.tsx'), 'utf8')
-  // Bildirim satırını (async loadOrdersFromServer(...)) hariç tut; yalnız
-  // ÇAĞRI yerlerine bak.
-  const calls = [...src.matchAll(/loadOrdersFromServer\(([^)]*)\)/g)]
-    .filter((m) => !src.slice(Math.max(0, m.index - 6), m.index).includes('async'))
-    .concat([...app.matchAll(/loadOrdersFromServer\(([^)]*)\)/g)])
-    .map((m) => m[1].trim())
-    .filter((a) => a !== '')
-  assert.deepEqual(calls, [], 'hiçbir çağrı pageSize/sayfa GÖNDERMİYOR')
-
+  // Endpoint varsayılanı (25) KORUNUR; düzeltme istemci tarafındadır.
   const { resolvePageSize } = await import('./orders/orderRepository.ts')
-  assert.equal(resolvePageSize(undefined), 25, 'backend varsayılan sayfa boyutu')
-  assert.equal(resolvePageSize(''), 25)
+  assert.equal(resolvePageSize(undefined), 25, 'backend varsayılanı değişmedi')
 
-  // Karşılaştırma: ürün kataloğu sayfaları DOLAŞIR, siparişler dolaşmaz.
-  assert.match(src, /loadProductsFromServer/)
-  assert.match(src, /totalPages/, 'ürün tarafında sayfa döngüsü var')
-  const orderLoad = src.slice(
-    src.indexOf('async loadOrdersFromServer'),
-    src.indexOf('async loadProductsFromServer'),
-  )
-  assert.equal(
-    /totalPages|while \(|for \(let p/.test(orderLoad), false,
-    'sipariş yükleyicisinde sayfa döngüsü YOK',
-  )
+  // Yükleyici artık sayfa boyutunu AÇIKÇA verir ve tüm sayfaları dolaşır.
+  assert.match(src, /const ORDERS_LOAD_PAGE_SIZE = 100/)
+  assert.match(src, /Math\.ceil\(total \/ effectivePageSize\)/, 'totalPages türetilir')
+  assert.match(src, /const MAX_ORDER_PAGES = /, 'sonsuz döngü koruması')
+  assert.match(src, /params\.set\('pageSize', String\(pageSize\)\)/)
+
+  // Kısmi başarı yasak: hata fırlatılır, kısmi liste döndürülmez.
+  assert.match(src, /sayfalama bilgisi tutarsiz/)
+  assert.match(src, /gecersiz toplam kayit/)
+
+  // Eşzamanlılık koruması: stale yanıt cache'i ezmez.
+  assert.match(src, /ordersLoadGeneration/)
 })
 
 test('OCR-4: karar mantığı — sayfa kesilmesi UI_FILTER_BUG verir, veri kaybı DEĞİL', () => {

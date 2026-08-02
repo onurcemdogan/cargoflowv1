@@ -49,6 +49,17 @@ import {
 } from '../utils/buildRevision'
 import type { AuditLogService } from './auditLogService'
 import { apiDebugService } from './apiDebugService'
+import { dedupeOrdersByPackageIdentity } from '../utils/orderCounts'
+
+// /api/orders sozlesmesi: istek {page,pageSize}, yanit
+// {ok,orders,total,page,pageSize}. totalPages DONDURULMEZ; ceil(total/
+// pageSize) ile turetilir. Backend MAX_PAGE_SIZE = 100'dur; daha buyuk
+// istek sessizce 100'e kirpilir, bu yuzden tam olarak 100 kullanilir.
+const ORDERS_LOAD_PAGE_SIZE = 100
+// Sonsuz sayfalama korumasi: asilirsa ACIK hata verilir (sessiz kirpma YOK).
+const MAX_ORDER_PAGES = 200
+// Sunucuyu bogmayan kontrollu escszamanlilik (urun katalogu ile ayni).
+const ORDERS_LOAD_CONCURRENCY = 4
 import {
   loadPersistedProductCatalog,
   savePersistedProductCatalog,
@@ -215,6 +226,9 @@ export class OrderWorkflowService {
   // bayrak kapalıdır ve tüm localStorage akışı DEĞİŞMEDEN çalışır.
   private authMode = false
   private authOrdersCache: CargoOrder[] = []
+  // Escszamanli siparis yuklemelerinde son yazan kazanir (stale yanit ezmesin).
+  private ordersLoadGeneration = 0
+
   private authOrdersMeta: { total: number; page: number; pageSize: number } = {
     total: 0,
     page: 1,
@@ -306,12 +320,124 @@ export class OrderWorkflowService {
     const query = params.toString()
     const startedAt =
       typeof performance !== 'undefined' ? performance.now() : Date.now()
-    const response = await fetch(
-      `/api/orders${query ? `?${query}` : ''}`,
-      { credentials: 'include' },
-    )
+    // Bu yukleme icin nesil damgasi: escszamanli ("Simdi Yenile" + ilk acilis +
+    // yeniden dogrulama) cagrilarda YAVAS olan ESKI istek, hizli biten YENI
+    // istegin sonucunu EZMEZ. Yalniz en guncel nesil cache'e yazar.
+    this.ordersLoadGeneration += 1
+    const generation = this.ordersLoadGeneration
+
+    // 1) Ilk sayfa: toplam kayit sayisini ve gercek sayfa boyutunu verir.
+    const first = await this.fetchOrdersPage(query, 1, ORDERS_LOAD_PAGE_SIZE)
+    const effectivePageSize =
+      first.pageSize > 0 ? first.pageSize : ORDERS_LOAD_PAGE_SIZE
+    const total = first.total
+
+    // 2) Sayfa sayisi TURETILIR: /api/orders totalPages DONDURMEZ; sozlesme
+    //    {orders,total,page,pageSize}. Tutarsiz metadata SESSIZCE basari
+    //    sayilmaz.
+    if (!Number.isFinite(total) || total < 0) {
+      throw new Error(
+        'Siparisler yuklenemedi: sunucu gecersiz toplam kayit sayisi bildirdi.',
+      )
+    }
+    const totalPages = total === 0 ? 1 : Math.ceil(total / effectivePageSize)
+    if (totalPages > MAX_ORDER_PAGES) {
+      throw new Error(
+        'Siparisler yuklenemedi: sayfa sayisi guvenlik sinirini asti ' +
+          `(${totalPages} > ${MAX_ORDER_PAGES}). Lutfen tarih/durum filtresi ` +
+          'uygulayin.',
+      )
+    }
+
+    // 3) Kalan sayfalar KONTROLLU escszamanlilikla. Herhangi bir sayfa
+    //    basarisiz olursa Promise.all reddeder ve HICBIR kismi sonuc state'e
+    //    veya cache'e YAZILMAZ (kismi basari yasak).
+    const collected: CargoOrder[][] = [first.orders]
+    for (let start = 2; start <= totalPages; start += ORDERS_LOAD_CONCURRENCY) {
+      const pageNumbers: number[] = []
+      for (
+        let page = start;
+        page < start + ORDERS_LOAD_CONCURRENCY && page <= totalPages;
+        page += 1
+      ) {
+        pageNumbers.push(page)
+      }
+      const batch = await Promise.all(
+        pageNumbers.map((page) =>
+          this.fetchOrdersPage(query, page, effectivePageSize),
+        ),
+      )
+      for (const [index, result] of batch.entries()) {
+        // Son sayfa disindaki BOS sayfa metadata tutarsizligidir; sessizce
+        // "tamamlandi" sayilmaz.
+        if (result.orders.length === 0 && pageNumbers[index] < totalPages) {
+          throw new Error(
+            'Siparisler yuklenemedi: sunucu sayfalama bilgisi tutarsiz ' +
+              '(beklenen sayfa bos dondu).',
+          )
+        }
+        collected.push(result.orders)
+      }
+    }
+
+    // 4) Sayfalar arasi canonical tekillestirme (ayni paket iki sayfada
+    //    gorunebilir; or. sayfalar arasinda yeni kayit eklenmisse). Backend
+    //    siralamasi (orderDateDesc) KORUNUR: ilk gorulen kayit kalir.
+    const orders = dedupeOrdersByPackageIdentity(collected.flat())
+
+    // 5) Yalniz EN GUNCEL nesil cache/meta yazar (stale yanit ezmesin).
+    if (generation === this.ordersLoadGeneration) {
+      this.authOrdersCache = orders
+      this.authOrdersMeta = {
+        total: Number(total ?? orders.length),
+        page: 1,
+        pageSize: effectivePageSize,
+      }
+      // Yalniz filtresiz (varsayilan) liste SWR cache'ine yazilir; filtreli
+      // sorgular onbelleklenmez (kombinasyon patlamasini onler).
+      if (query === '') this.writeOrdersCache('default', orders)
+    }
+    // Guvenli timing metadata (yalniz DEV): ham org/account id, PII, raw order,
+    // ZPL, credential veya secret LOGLANMAZ - yalniz sure/sayi/varlik bayragi.
+    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+      const now =
+        typeof performance !== 'undefined' ? performance.now() : Date.now()
+      console.debug('PERF_ORDERS_LOAD', {
+        route: 'orders',
+        marketplaceAccountScopePresent: this.marketplaceAccountScope !== '',
+        totalDurationMs: Math.round(now - startedAt),
+        cacheHit: false,
+        itemCount: orders.length,
+        pageCount: totalPages,
+        stale: generation !== this.ordersLoadGeneration,
+        filtered: query !== '',
+      })
+    }
+    return orders
+  }
+
+  // TEK sayfa ceker. Hesap/organization kapsami BACKEND'de cozulur; istemci
+  // marketplaceAccountId GONDERMEZ (guvenilmez kabul edilir).
+  private async fetchOrdersPage(
+    query: string,
+    page: number,
+    pageSize: number,
+  ): Promise<{
+    orders: CargoOrder[]
+    total: number
+    page: number
+    pageSize: number
+  }> {
+    const params = new URLSearchParams(query)
+    params.set('page', String(page))
+    params.set('pageSize', String(pageSize))
+    const response = await fetch(`/api/orders?${params.toString()}`, {
+      credentials: 'include',
+    })
     if (!response.ok) {
-      throw new Error(`Siparişler yüklenemedi (${response.status}).`)
+      throw new Error(
+        `Siparisler yuklenemedi (sayfa ${page}, HTTP ${response.status}).`,
+      )
     }
     const payload = (await response.json()) as {
       orders?: CargoOrder[]
@@ -322,30 +448,12 @@ export class OrderWorkflowService {
     const orders = Array.isArray(payload.orders)
       ? payload.orders.map((order) => withDerivedOperationStatus(order))
       : []
-    this.authOrdersCache = orders
-    this.authOrdersMeta = {
+    return {
+      orders,
       total: Number(payload.total ?? orders.length),
-      page: Number(payload.page ?? 1),
+      page: Number(payload.page ?? page),
       pageSize: Number(payload.pageSize ?? orders.length),
     }
-    // Yalnız filtresiz (varsayılan) liste SWR cache'ine yazılır; filtreli
-    // sorgular önbelleklenmez (kombinasyon patlamasını önler).
-    if (query === '') this.writeOrdersCache('default', orders)
-    // Güvenli timing metadata (yalnız DEV): ham org/account id, PII, raw order,
-    // ZPL, credential veya secret LOGLANMAZ — yalnız süre/sayı/varlık bayrağı.
-    if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
-      const now =
-        typeof performance !== 'undefined' ? performance.now() : Date.now()
-      console.debug('PERF_ORDERS_LOAD', {
-        route: 'orders',
-        marketplaceAccountScopePresent: this.marketplaceAccountScope !== '',
-        totalDurationMs: Math.round(now - startedAt),
-        cacheHit: false,
-        itemCount: orders.length,
-        filtered: query !== '',
-      })
-    }
-    return orders
   }
 
   // REPRINT için KAYITLI etiket artifact'ini (ham ZPL) tenant-scoped uçtan
