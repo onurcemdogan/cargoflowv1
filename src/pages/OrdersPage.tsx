@@ -890,7 +890,7 @@ export function OrdersPage({
             className="secondary-button"
             onClick={onMarkPrinted}
             title={printableDisabledReason}
-            disabled={busy || selectedIds.length === 0 || !hasPrintableSelection}
+            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0 || !hasPrintableSelection}
           >
             <Barcode size={18} />
             Barkod Bas
@@ -918,7 +918,7 @@ export function OrdersPage({
                   ? 'Önce en az bir sipariş seçin.'
                   : undefined
             }
-            disabled={busy || selectedIds.length === 0}
+            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0}
           >
             <RefreshCcw size={18} />
             Seçilenleri Yenile / Doğrula
@@ -940,7 +940,7 @@ export function OrdersPage({
             className="secondary-button"
             onClick={onMarkPrinted}
             title={printableDisabledReason}
-            disabled={busy || selectedIds.length === 0 || !hasPrintableSelection}
+            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0 || !hasPrintableSelection}
           >
             <Stamp size={18} />
             Yazdır / Tekrar Yazdır
@@ -950,7 +950,7 @@ export function OrdersPage({
             className="secondary-button"
             onClick={onMarkHandedToCargo}
             title={handedDisabledReason}
-            disabled={busy || selectedIds.length === 0 || !hasHandedToCargoSelection}
+            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0 || !hasHandedToCargoSelection}
           >
             <PackagePlus size={18} />
             Kargoya Verildi Yap

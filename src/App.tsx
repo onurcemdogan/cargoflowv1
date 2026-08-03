@@ -31,6 +31,12 @@ import {
   buildPrintAdapter,
 } from './services/suratOrchestratorDeps'
 import { resolveSelectionAfterBatch } from './utils/selectedOrderSnapshot'
+import {
+  hasPendingServerOperation,
+  isOperationInFlight,
+  runExclusiveOperation,
+} from './services/suratOperationRegistry'
+import { orderPackageIdentity } from './utils/orderCounts'
 import { resolveEffectiveLabelDesi } from './utils/labelDesi'
 import { resolveProductFit } from './utils/labelProductFit'
 import { PRODUCT_OVERFLOW_MESSAGE } from './utils/labelProductFit'
@@ -909,11 +915,27 @@ function App() {
             Boolean(resolvePersistedLabelArtifact(order).hasPrintableLabel),
           isPrinted: (order) =>
             order.labelStatus === 'PRINTED' && Boolean(order.label?.printedAt),
-          isInFlight: () => false,
+          // GERCEK in-flight: (1) canonical sunucu sinyali
+          // (operationStatus SHIPMENT_PENDING/CREATE_IN_PROGRESS) veya
+          // (2) ayni paket kimligi icin devam eden istemci create Promise'i.
+          isInFlight: (order) =>
+            hasPendingServerOperation(order) ||
+            isOperationInFlight(orderPackageIdentity(order)),
         },
         createShipments: buildCreateAdapter({
-          callCreate: (list, createIds) =>
-            workflowService.createShipments(list, createIds, integrationConfig),
+          // Ayni paket kimligi icin IKINCI istek acilmaz; devam eden Promise
+          // yeniden kullanilir. Sunucu idempotency'si AYRICA korunur.
+          callCreate: (list, createIds) => {
+            const identity = createIds
+              .map((id) => {
+                const found = list.find((item) => String(item.id) === String(id))
+                return found ? orderPackageIdentity(found) : String(id)
+              })
+              .join('|')
+            return runExclusiveOperation(identity, () =>
+              workflowService.createShipments(list, createIds, integrationConfig),
+            )
+          },
           hasPrintableLabel: (order) =>
             Boolean(resolvePersistedLabelArtifact(order).hasPrintableLabel),
         }),
