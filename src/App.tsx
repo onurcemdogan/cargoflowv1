@@ -24,6 +24,16 @@ import {
   suratPrintTrace,
 } from './utils/browserLabelPrint'
 import { resolveSuratPrintEligibility } from './utils/suratPrintEligibility'
+import { runSuratCreateAndPrint } from './services/suratCreateAndPrintOrchestrator'
+import type { OrchestratorProgress, OrchestratorResult } from './services/suratCreateAndPrintOrchestrator'
+import {
+  buildCreateAdapter,
+  buildPrintAdapter,
+} from './services/suratOrchestratorDeps'
+import { resolveSelectionAfterBatch } from './utils/selectedOrderSnapshot'
+import { resolveEffectiveLabelDesi } from './utils/labelDesi'
+import { resolveProductFit } from './utils/labelProductFit'
+import { PRODUCT_OVERFLOW_MESSAGE } from './utils/labelProductFit'
 import {
   injectPersistedZpl,
   isReprintEligible,
@@ -118,6 +128,22 @@ function App() {
     apiDebugService.load(),
   )
   const [selectedIds, setSelectedIds] = useState<string[]>([])
+  // Tek-buton akisi: calisma durumu, asama ilerlemesi ve sonuc paneli.
+  const [suratRunning, setSuratRunning] = useState(false)
+  const [suratProgress, setSuratProgress] =
+    useState<OrchestratorProgress | undefined>(undefined)
+  const [suratResult, setSuratResult] =
+    useState<OrchestratorResult | undefined>(undefined)
+  // Ayni anda ikinci run YOK; eski yavas run yeni sonucu EZEMEZ.
+  const suratRunGeneration = useRef(0)
+  const suratRunActive = useRef(false)
+  const mounted = useRef(true)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
   const [lastResult, setLastResult] = useState<WorkflowResult>()
   const [trendyolTest, setTrendyolTest] = useState<IntegrationTestResult>()
   const [suratTest, setSuratTest] = useState<IntegrationTestResult>()
@@ -834,6 +860,113 @@ function App() {
   // Tekli ve toplu yazdırma aynı doğrudan akışı kullanır: ara önizleme
   // modalı açılmaz, Chrome print dialogu bir kez açılır ve otomatik
   // kapatılmaz.
+  // TEK BUTON: on kontrol -> (gerekiyorsa) create -> baski. Yeni create/print
+  // is mantigi YOK; mevcut workflowService yollari adaptorlerle kullanilir.
+  // BASARI YALNIZ printResult.jobs[].ok'tan gelir (orchestrator + adaptor).
+  async function handleSuratCreateAndPrintForIds(ids: string[]) {
+    if (ids.length === 0 || suratRunActive.current) return
+    suratRunActive.current = true
+    suratRunGeneration.current += 1
+    const generation = suratRunGeneration.current
+    const isCurrent = () =>
+      mounted.current && generation === suratRunGeneration.current
+
+    // Islem boyunca DEGISMEYEN secim snapshot'i.
+    const snapshotIds = [...ids]
+    const snapshotOrders = orders.filter((order) => snapshotIds.includes(order.id))
+
+    setSuratRunning(true)
+    setSuratProgress(undefined)
+    setSuratResult(undefined)
+    try {
+      const outcome = await runSuratCreateAndPrint(snapshotOrders, orders, {
+        preflight: {
+          isSuratOrder: (order) =>
+            !order.cargoProviderName ||
+            /surat|sürat/i.test(String(order.cargoProviderName)),
+          resolveDataBlock: (order) =>
+            String(order.address ?? '').trim() && String(order.customerName ?? '').trim()
+              ? null
+              : 'Alıcı adı veya açık adres eksik.',
+          resolveDesiBlock: (order) =>
+            resolveEffectiveLabelDesi(order, order.shipment, products, integrationConfig.desi)
+              .blockedReason ?? null,
+          resolveFitBlock: (order) =>
+            resolveProductFit({
+              items: (order.items ?? []).map((line) => ({
+                productName: String(line.productName ?? ''),
+                quantity: Number(line.quantity) || 1,
+                color: line.color,
+                size: line.size,
+                sku: line.merchantSku || line.sku,
+              })),
+              availableWidthMm: 89,
+              availableHeightMm: 9.4,
+            }).fits
+              ? null
+              : PRODUCT_OVERFLOW_MESSAGE,
+          hasPrintableLabel: (order) =>
+            Boolean(resolvePersistedLabelArtifact(order).hasPrintableLabel),
+          isPrinted: (order) =>
+            order.labelStatus === 'PRINTED' && Boolean(order.label?.printedAt),
+          isInFlight: () => false,
+        },
+        createShipments: buildCreateAdapter({
+          callCreate: (list, createIds) =>
+            workflowService.createShipments(list, createIds, integrationConfig),
+          hasPrintableLabel: (order) =>
+            Boolean(resolvePersistedLabelArtifact(order).hasPrintableLabel),
+        }),
+        printLabels: buildPrintAdapter({
+          callPrint: async (_list, printIds) => {
+            const { effectiveOrders } = await hydratePersistedLabels(printIds)
+            return workflowService.printLabels(
+              effectiveOrders,
+              printIds,
+              { ...printerSettings, mode: 'browser-print' as const },
+              labelTemplate,
+              {},
+              { confirmedAt: new Date().toISOString(), printedBy: 'local user' },
+            )
+          },
+        }),
+        onProgress: (progress) => {
+          if (!isCurrent()) return
+          setSuratProgress(progress)
+        },
+      })
+
+      if (!isCurrent()) return
+      setSuratResult(outcome)
+      // YALNIZ baskisi DOGRULANAN siparisler secimden cikar; blocked/failed/
+      // iptal edilenler SECILI KALIR.
+      setSelectedIds((current) =>
+        resolveSelectionAfterBatch(current, outcome.printedOrderIds),
+      )
+      setOrdersState((current) => ({
+        ...current,
+        orders: outcome.orders,
+      }))
+    } catch (error) {
+      if (!isCurrent()) return
+      setOrdersState((current) => ({
+        ...current,
+        ordersMessage: {
+          level: 'error',
+          message:
+            error instanceof Error
+              ? error.message
+              : 'Sürat etiket işlemi tamamlanamadı.',
+        },
+      }))
+    } finally {
+      suratRunActive.current = false
+      if (mounted.current && generation === suratRunGeneration.current) {
+        setSuratRunning(false)
+      }
+    }
+  }
+
   async function handlePrintLabelsForIds(orderIds: string[]) {
     if (orderIds.length === 0) {
       setOrdersState((current) => ({
@@ -1148,6 +1281,12 @@ function App() {
           onMarkPrinted={handleMarkPrinted}
           onMarkPrintedForOrder={handleMarkPrintedForOrder}
           onMarkHandedToCargo={handleMarkHandedToCargo}
+          onSuratCreateAndPrint={() =>
+            handleSuratCreateAndPrintForIds(selectedIds)
+          }
+          suratCreatePrintRunning={suratRunning}
+          suratCreatePrintProgress={suratProgress}
+          suratCreatePrintResult={suratResult}
         />
       ) : null}
 

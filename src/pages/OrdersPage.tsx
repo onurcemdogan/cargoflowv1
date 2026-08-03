@@ -65,6 +65,22 @@ interface OrdersPageProps {
   orders: CargoOrder[]
   products: CargoProduct[]
   selectedIds: string[]
+  onSuratCreateAndPrint?: () => void
+  suratCreatePrintRunning?: boolean
+  suratCreatePrintProgress?: {
+    phase: 'preflight' | 'create' | 'prepare' | 'print' | 'done'
+    completed: number
+    total: number
+  }
+  suratCreatePrintResult?: {
+    selectedCount: number
+    created: number
+    existingReady: number
+    reprinted: number
+    printed: number
+    skipped: Array<{ orderNumber: string; reason: string }>
+    failed: Array<{ orderNumber: string; reason: string }>
+  }
   lastResult?: WorkflowResult
   syncDebug?: TrendyolOrderDebug
   busy: boolean
@@ -174,6 +190,10 @@ export function OrdersPage({
   orders,
   products,
   selectedIds,
+  onSuratCreateAndPrint,
+  suratCreatePrintRunning = false,
+  suratCreatePrintProgress,
+  suratCreatePrintResult,
   lastResult,
   busy,
   lastSyncAt,
@@ -427,6 +447,21 @@ export function OrdersPage({
     () => buildSelectedOrderSnapshot(orders, selectedIds, filteredOrders),
     [orders, selectedIds, filteredOrders],
   )
+  // Asama metni: yuzde UYDURULMAZ, orchestrator'dan gelen gercek
+  // completed/total degerleri kullanilir.
+  const suratPhaseText = (() => {
+    if (!suratCreatePrintRunning) return ''
+    const p = suratCreatePrintProgress
+    if (!p) return 'Ön kontrol yapılıyor…'
+    if (p.phase === 'preflight') return 'Ön kontrol yapılıyor…'
+    if (p.phase === 'create')
+      return `Sürat etiketleri oluşturuluyor: ${p.completed}/${p.total}`
+    if (p.phase === 'prepare')
+      return `Etiketler hazırlanıyor: ${p.completed}/${p.total}`
+    if (p.phase === 'print') return 'Yazdırma bekleniyor…'
+    return 'Sonuçlar işleniyor…'
+  })()
+
   // Seçim varsa özet SEÇİMDEN, yoksa (mevcut davranış) listeden gelir.
   const selectionCounts =
     selectedIds.length > 0 ? selectionSnapshot : listedCounts
@@ -777,6 +812,48 @@ export function OrdersPage({
         </button>
       ) : null}
 
+      {suratCreatePrintResult ? (
+        <section className="surat-batch-result">
+          <strong>
+            {suratCreatePrintResult.failed.length === 0 &&
+            suratCreatePrintResult.skipped.length === 0
+              ? 'Tamamlandı'
+              : suratCreatePrintResult.printed > 0
+                ? 'Kısmi başarı'
+                : 'İşlem tamamlanamadı'}
+          </strong>
+          <span>Seçilen: {suratCreatePrintResult.selectedCount}</span>
+          <span>Yeni oluşturulan: {suratCreatePrintResult.created}</span>
+          <span>Hazır etiket: {suratCreatePrintResult.existingReady}</span>
+          <span>Tekrar baskı: {suratCreatePrintResult.reprinted}</span>
+          <span>Yazdırılan: {suratCreatePrintResult.printed}</span>
+          <span>Atlanan: {suratCreatePrintResult.skipped.length}</span>
+          <span>Başarısız: {suratCreatePrintResult.failed.length}</span>
+          {suratCreatePrintResult.skipped.length +
+            suratCreatePrintResult.failed.length >
+          0 ? (
+            <details>
+              <summary>Detaylar</summary>
+              <ul>
+                {[
+                  ...suratCreatePrintResult.skipped.map((item) => ({
+                    ...item, stage: 'Atlandı',
+                  })),
+                  ...suratCreatePrintResult.failed.map((item) => ({
+                    ...item, stage: 'Başarısız',
+                  })),
+                ].map((item) => (
+                  <li key={`${item.stage}-${item.orderNumber}`}>
+                    <code>{item.orderNumber}</code> — {item.stage} —{' '}
+                    {item.reason}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="toolbar">
         <div>
           <strong>{selectionText}</strong>
@@ -788,6 +865,26 @@ export function OrdersPage({
           ) : null}
         </div>
         <div className="toolbar-actions">
+          <button
+            type="button"
+            className="primary-button surat-one-click-button"
+            onClick={onSuratCreateAndPrint}
+            disabled={
+              busy ||
+              suratCreatePrintRunning ||
+              selectedIds.length === 0 ||
+              !onSuratCreateAndPrint
+            }
+            title={
+              selectedIds.length === 0
+                ? 'Önce en az bir sipariş seçin.'
+                : 'Seçili siparişler için Sürat etiketi oluşturur ve yazdırır.'
+            }
+          >
+            {suratCreatePrintRunning
+              ? suratPhaseText || 'İşleniyor…'
+              : 'Sürat Etiketi Oluştur ve Yazdır'}
+          </button>
           <button
             type="button"
             className="secondary-button"
