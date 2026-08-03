@@ -6471,3 +6471,47 @@ button:disabled {
   justify-content: flex-end;
   gap: 0.6rem;
 }
+
+/* Tek-buton Sürat akışı: birincil aksiyon + kompakt sonuç paneli. */
+.surat-one-click-button {
+  font-weight: 700;
+}
+
+.surat-batch-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #d5dae2);
+  border-radius: 8px;
+  background: var(--surface, #f7f9fc);
+  font-size: 13px;
+}
+
+.surat-batch-result strong {
+  font-size: 14px;
+}
+
+.surat-batch-result details {
+  flex-basis: 100%;
+}
+
+.surat-batch-result summary {
+  cursor: pointer;
+}
+
+.surat-batch-result ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.surat-batch-result li {
+  margin: 2px 0;
+}
+
+.toolbar-note {
+  opacity: 0.8;
+  font-style: italic;
+}

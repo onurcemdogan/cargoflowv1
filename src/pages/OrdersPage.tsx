@@ -1,14 +1,10 @@
 import {
-  Barcode,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Download,
   Filter,
-  PackagePlus,
   RefreshCcw,
-  Stamp,
 } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { ActionResult } from '../components/ActionResult'
@@ -56,11 +52,28 @@ import type {
 } from '../utils/ordersNavigation'
 import { buildOrderCountSummary } from '../utils/orderCounts'
 import { buildOrdersDateRange } from '../utils/orderDateRange'
+import { SuratCreatePrintControls } from '../components/SuratCreatePrintControls'
 
 interface OrdersPageProps {
   orders: CargoOrder[]
   products: CargoProduct[]
   selectedIds: string[]
+  onSuratCreateAndPrint?: () => void
+  suratCreatePrintRunning?: boolean
+  suratCreatePrintProgress?: {
+    phase: 'preflight' | 'create' | 'prepare' | 'print' | 'done'
+    completed: number
+    total: number
+  }
+  suratCreatePrintResult?: {
+    selectedCount: number
+    created: number
+    existingReady: number
+    reprinted: number
+    printed: number
+    skipped: Array<{ orderNumber: string; reason: string }>
+    failed: Array<{ orderNumber: string; reason: string }>
+  }
   lastResult?: WorkflowResult
   syncDebug?: TrendyolOrderDebug
   busy: boolean
@@ -170,6 +183,10 @@ export function OrdersPage({
   orders,
   products,
   selectedIds,
+  onSuratCreateAndPrint,
+  suratCreatePrintRunning = false,
+  suratCreatePrintProgress,
+  suratCreatePrintResult,
   lastResult,
   busy,
   lastSyncAt,
@@ -408,14 +425,14 @@ export function OrdersPage({
   )
 
 
-  const selectionText =
-    selectedIds.length === 0
-      ? 'Seçili sipariş yok'
-      : `${selectedIds.length} sipariş seçildi`
+  // Seçim özeti + tek-buton bölümü SuratCreatePrintControls'e taşındı
+  // (davranış aynı). listedCounts burada KALIR: alt sayfalama metni de kullanır.
   const listedCounts = useMemo(
     () => buildOrderCountSummary(filteredOrders),
     [filteredOrders],
   )
+  const activeTabLabel =
+    quickTabs.find((tab) => tab.key === activeQuickTab)?.label ?? 'başka'
 
   function refreshForTab(tab: QuickTab) {
     setActiveQuickTab(tab)
@@ -759,86 +776,31 @@ export function OrdersPage({
         </button>
       ) : null}
 
-      <section className="toolbar">
-        <div>
-          <strong>{selectionText}</strong>
-          <span>{listedCounts.packageCount} paket</span>
-          <span>{listedCounts.lineCount} kalem</span>
-          <span>{listedCounts.quantityTotal} ürün</span>
-        </div>
-        <div className="toolbar-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onMarkPrinted}
-            title={printableDisabledReason}
-            disabled={busy || selectedIds.length === 0 || !hasPrintableSelection}
-          >
-            <Barcode size={18} />
-            Barkod Bas
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onCreateShipments}
-            title={createDisabledReason}
-            disabled={
-              busy || selectedIds.length === 0 || !hasShipmentCreatableSelection
-            }
-          >
-            <PackagePlus size={18} />
-            Ortak Barkod Oluştur / Tamamla
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onTrackShipments}
-            title={
-              busy
-                ? 'İşlem devam ediyor.'
-                : selectedIds.length === 0
-                  ? 'Önce en az bir sipariş seçin.'
-                  : undefined
-            }
-            disabled={busy || selectedIds.length === 0}
-          >
-            <RefreshCcw size={18} />
-            Seçilenleri Yenile / Doğrula
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={onDownloadZpl}
-            title={zplDisabledReason}
-            disabled={
-              busy || selectedIds.length === 0 || !hasZplDownloadableSelection
-            }
-          >
-            <Download size={18} />
-            ZPL İndir
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onMarkPrinted}
-            title={printableDisabledReason}
-            disabled={busy || selectedIds.length === 0 || !hasPrintableSelection}
-          >
-            <Stamp size={18} />
-            Yazdır / Tekrar Yazdır
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onMarkHandedToCargo}
-            title={handedDisabledReason}
-            disabled={busy || selectedIds.length === 0 || !hasHandedToCargoSelection}
-          >
-            <PackagePlus size={18} />
-            Kargoya Verildi Yap
-          </button>
-        </div>
-      </section>
+      <SuratCreatePrintControls
+        orders={orders}
+        visibleOrders={filteredOrders}
+        selectedIds={selectedIds}
+        listedCounts={listedCounts}
+        activeTabLabel={activeTabLabel}
+        busy={busy}
+        suratCreatePrintRunning={suratCreatePrintRunning}
+        suratCreatePrintProgress={suratCreatePrintProgress}
+        suratCreatePrintResult={suratCreatePrintResult}
+        onSuratCreateAndPrint={onSuratCreateAndPrint}
+        onMarkPrinted={onMarkPrinted}
+        onCreateShipments={onCreateShipments}
+        onTrackShipments={onTrackShipments}
+        onDownloadZpl={onDownloadZpl}
+        onMarkHandedToCargo={onMarkHandedToCargo}
+        hasPrintableSelection={hasPrintableSelection}
+        hasShipmentCreatableSelection={hasShipmentCreatableSelection}
+        hasZplDownloadableSelection={hasZplDownloadableSelection}
+        hasHandedToCargoSelection={hasHandedToCargoSelection}
+        printableDisabledReason={printableDisabledReason}
+        createDisabledReason={createDisabledReason}
+        zplDisabledReason={zplDisabledReason}
+        handedDisabledReason={handedDisabledReason}
+      />
 
       <ActionResult result={lastResult} />
 

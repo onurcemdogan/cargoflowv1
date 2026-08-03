@@ -298,12 +298,19 @@ export async function printSuratLabels(
       template,
       mappingConfig,
     )
+    // Belgeye giren siparisler basarili; render'da atlananlar skipped'a eklenir.
+    // Bir siparisin hatasi DIGERLERINI basarisiz gostermez.
+    const renderedNumbers = new Set(debug.printedOrderNumbers ?? [])
+    const printedModels = selection.printable
+      .map((item) => item.model)
+      .filter((model) => renderedNumbers.size === 0
+        || renderedNumbers.has(model.orderNumber))
     return {
-      printedOrderNumbers: selection.printable.map(
-        (item) => item.model.orderNumber,
-      ),
-      models: selection.printable.map((item) => item.model),
-      skipped: selection.skipped,
+      printedOrderNumbers: debug.printCalled
+        ? printedModels.map((model) => model.orderNumber)
+        : [],
+      models: printedModels,
+      skipped: [...selection.skipped, ...(debug.skipped ?? [])],
       printCalled: debug.printCalled,
       debug,
     }
@@ -330,6 +337,10 @@ export async function printSuratLabels(
 }
 
 export interface BrowserLabelPrintDebug {
+  /** Render asamasinda atlanan siparisler (siparis numarasi + sebep). */
+  skipped?: SuratPrintSkip[]
+  /** Belgeye GERCEKTEN giren siparis numaralari. */
+  printedOrderNumbers?: string[]
   printRequested: boolean
   printMode: 'chrome-html' | 'zpl-native' | 'test-label'
   labelHtmlGenerated: boolean
@@ -485,7 +496,14 @@ export async function printCleanLabelDocument(
   activePrintExecution = executionId
   try {
     suratPrintTrace('HTML_BUILD_START', { executionId, orderNumbers })
-    const printHtml = buildCleanLabelHtml(orders, template, mappingConfig)
+    // SIPARIS BAZINDA izolasyon: render edilemeyen siparis BUTUN batch'i
+    // dusurmez; yalniz kendisi atlanir ve sebebi debug.skipped'a yazilir.
+    const document_ = buildCleanLabelDocument(orders, template, mappingConfig)
+    const printHtml = document_.html
+    debug.skipped = document_.skipped
+    debug.printedOrderNumbers = document_.printable.map(
+      (item) => item.model.orderNumber,
+    )
     debug.labelHtmlGenerated = Boolean(printHtml.trim())
     debug.labelHtmlLength = printHtml.length
     debug.barcodeValue = firstString(
@@ -599,39 +617,69 @@ export async function printCleanLabelDocument(
   }
 }
 
-export function buildCleanLabelHtml(
+// Toplu baski belgesi: HER SIPARIS KENDI try/catch'inde render edilir.
+// KOK NEDEN (canli): eskiden `selection.printable.map(...)` korumasizdi; TEK
+// bir siparisin product-fit hatasi ("Urun bilgileri tek etikete sigmiyor")
+// map'ten disari firlayip BUTUN toplu baskiyi iptal ediyordu. Hata Zebra'ya
+// gonderim ONCESINDE olustugu icin printCalled=false kaliyor, 40 siparisin
+// 40'i da basilmamis sayiliyordu ve hangi siparisin suclu oldugu KAYBOLUYORDU.
+export interface CleanLabelDocument {
+  html: string
+  printable: Array<{ order: CargoOrder; model: SuratPrintPageModel }>
+  skipped: SuratPrintSkip[]
+}
+
+export function buildCleanLabelDocument(
   orders: CargoOrder[],
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
-): string {
+): CleanLabelDocument {
   const widthMm = template.widthMm || 100
   const heightMm = template.heightMm || 100
   const selection = resolveSuratPrintableSelection(orders)
-  if (selection.printable.length === 0) {
-    const reasons = selection.skipped
+  const skipped: SuratPrintSkip[] = [...selection.skipped]
+  const printable: Array<{ order: CargoOrder; model: SuratPrintPageModel }> = []
+  const pages: string[] = []
+
+  for (const entry of selection.printable) {
+    const { order, model } = entry
+    try {
+      const data = buildLabelData(order, order.shipment, template, mappingConfig)
+      pages.push(
+        renderPrintableLabelHtml({
+          ...data,
+          tNo: model.trackingNumber,
+          trackingNumber: model.trackingNumber,
+          kargoTakipNo: model.trackingNumber,
+          barcodeValue: model.barcodeNumber,
+          mainBarcodeValue: model.barcodeNumber,
+          barcode: model.barcodeNumber,
+          qrPayload: model.ozelKargoTakipNo,
+        }),
+      )
+      printable.push(entry)
+    } catch (error) {
+      // Bu siparis atlanir; DIGERLERI etkilenmez. Sebep siparis numarasiyla
+      // birlikte tasinir (PII yok).
+      const reason =
+        error instanceof Error ? error.message : 'Etiket olusturulamadi.'
+      suratPrintTrace('PRINT_SKIPPED_REASON', {
+        orderNumber: model.orderNumber,
+        reason,
+        stage: 'label-render',
+      })
+      skipped.push({ orderNumber: model.orderNumber, reason })
+    }
+  }
+
+  if (pages.length === 0) {
+    const reasons = skipped
       .map((item) => `${item.orderNumber}: ${item.reason}`)
       .join(' | ')
     throw new Error(reasons || 'Yazdırılacak etiket içeriği oluşturulamadı.')
   }
-  const pages = selection.printable.map(({ order, model }) => {
-    const data = buildLabelData(order, order.shipment, template, mappingConfig)
-    return renderPrintableLabelHtml({
-      ...data,
-      tNo: model.trackingNumber,
-      trackingNumber: model.trackingNumber,
-      kargoTakipNo: model.trackingNumber,
-      barcodeValue: model.barcodeNumber,
-      mainBarcodeValue: model.barcodeNumber,
-      barcode: model.barcodeNumber,
-      qrPayload: model.ozelKargoTakipNo,
-    })
-  })
 
-  if (pages.length === 0 || !pages.join('').trim()) {
-    throw new Error('Yazdırılacak etiket içeriği oluşturulamadı.')
-  }
-
-  return `<!doctype html>
+  const html = `<!doctype html>
 <html lang="tr">
 <head>
   <meta charset="utf-8">
@@ -873,6 +921,17 @@ export function buildCleanLabelHtml(
 </head>
 <body>${pages.join('')}</body>
 </html>`
+  return { html, printable, skipped }
+}
+
+// Geriye donuk sozlesme: yalnizca HTML dondurur. Hicbir etiket
+// olusturulamazsa (eskisi gibi) hata firlatir.
+export function buildCleanLabelHtml(
+  orders: CargoOrder[],
+  template: LabelTemplate,
+  mappingConfig: SuratLabelMappingConfig = {},
+): string {
+  return buildCleanLabelDocument(orders, template, mappingConfig).html
 }
 
 export function renderPrintableLabelHtml(data: LabelData): string {
