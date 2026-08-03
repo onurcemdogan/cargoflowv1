@@ -55,6 +55,10 @@ import type {
   OrdersNavigationFilters,
 } from '../utils/ordersNavigation'
 import { buildOrderCountSummary } from '../utils/orderCounts'
+import {
+  buildSelectedOrderSnapshot,
+  describeSelectionOutsideView,
+} from '../utils/selectedOrderSnapshot'
 import { buildOrdersDateRange } from '../utils/orderDateRange'
 
 interface OrdersPageProps {
@@ -416,6 +420,20 @@ export function OrdersPage({
     () => buildOrderCountSummary(filteredOrders),
     [filteredOrders],
   )
+  // Seçim özeti GÖRÜNÜR listeden hesaplanmaz: sekme/filtre değişince (ör.
+  // create sonrası siparişler Etiket Hazır'a geçince) 0 paket/0 kalem/0 ürün'e
+  // düşüyordu. Seçim TÜM yüklenmiş siparişler üzerinden çözülür.
+  const selectionSnapshot = useMemo(
+    () => buildSelectedOrderSnapshot(orders, selectedIds, filteredOrders),
+    [orders, selectedIds, filteredOrders],
+  )
+  // Seçim varsa özet SEÇİMDEN, yoksa (mevcut davranış) listeden gelir.
+  const selectionCounts =
+    selectedIds.length > 0 ? selectionSnapshot : listedCounts
+  const selectionOutsideNote = describeSelectionOutsideView(
+    selectionSnapshot,
+    quickTabs.find((tab) => tab.key === activeQuickTab)?.label ?? 'başka',
+  )
 
   function refreshForTab(tab: QuickTab) {
     setActiveQuickTab(tab)
@@ -762,9 +780,12 @@ export function OrdersPage({
       <section className="toolbar">
         <div>
           <strong>{selectionText}</strong>
-          <span>{listedCounts.packageCount} paket</span>
-          <span>{listedCounts.lineCount} kalem</span>
-          <span>{listedCounts.quantityTotal} ürün</span>
+          <span>{selectionCounts.packageCount} paket</span>
+          <span>{selectionCounts.lineCount} kalem</span>
+          <span>{selectionCounts.quantityTotal} ürün</span>
+          {selectionOutsideNote ? (
+            <span className="toolbar-note">{selectionOutsideNote}</span>
+          ) : null}
         </div>
         <div className="toolbar-actions">
           <button
