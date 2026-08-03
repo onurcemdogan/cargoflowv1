@@ -15,6 +15,7 @@ import {
   resolveSuratPrintEligibility,
 } from './suratPrintEligibility'
 import { formatDesi } from './desi'
+import { PRINT_HOST_UNAVAILABLE_MESSAGE } from './suratPrintFailureReasons'
 import {
   buildProductMetaText,
   buildProductTitleText,
@@ -423,6 +424,77 @@ function ensurePersistentPrintFrame(executionId: string): HTMLIFrameElement {
     mode: 'persistent-iframe',
   })
   return iframe
+}
+
+// ---------------------------------------------------------------------------
+// PRINT HOST'U İLK CLICK STACK'İNDE HAZIRLA
+//
+// Bu projede baskı motoru KALICI GİZLİ IFRAME'dir; window.open KULLANILMAZ,
+// bu yüzden klasik popup engeli SÖZ KONUSU DEĞİLDİR. Yine de host'un gerçekten
+// oluşturulabildiği, create mutasyonuna BAŞLAMADAN ÖNCE ve ilk await'ten ÖNCE
+// senkron olarak doğrulanır: host kurulamıyorsa Sürat gönderisi OLUŞTURULMAZ,
+// hiçbir statü/sayaç değişmez.
+//
+// Aynı iframe daha sonra printCleanLabelDocument tarafından YENİDEN KULLANILIR;
+// ikinci bir pencere/iframe AÇILMAZ.
+// ---------------------------------------------------------------------------
+export interface SuratPrintHost {
+  /** Host hazır mı? false ise create BAŞLATILMAMALIDIR. */
+  ready: boolean
+  /** Güvenli kullanıcı mesajı (PII/ZPL içermez). */
+  reason?: string
+  /** Baskı yapılmadan çıkılırsa host içeriğini temizler. */
+  release: () => void
+}
+
+const PRINT_HOST_PLACEHOLDER =
+  '<!doctype html><html lang="tr"><head><meta charset="utf-8">' +
+  '<title>Etiketler hazırlanıyor…</title></head>' +
+  '<body><p>Etiketler hazırlanıyor…</p></body></html>'
+
+export function prepareSuratPrintHostSynchronously(): SuratPrintHost {
+  const noop = () => {}
+  if (typeof document === 'undefined') {
+    suratPrintTrace('PRINT_HOST_UNAVAILABLE', { reason: 'no-document' })
+    return {
+      ready: false,
+      reason: PRINT_HOST_UNAVAILABLE_MESSAGE,
+      release: noop,
+    }
+  }
+  try {
+    const iframe = ensurePersistentPrintFrame('host-prepare')
+    const frameDocument = iframe.contentDocument
+    if (!frameDocument) {
+      suratPrintTrace('PRINT_HOST_UNAVAILABLE', { reason: 'no-content-document' })
+      return {
+        ready: false,
+        reason: PRINT_HOST_UNAVAILABLE_MESSAGE,
+        release: noop,
+      }
+    }
+    writePrintDocument(frameDocument, PRINT_HOST_PLACEHOLDER)
+    suratPrintTrace('PRINT_HOST_READY', { mode: 'persistent-iframe' })
+    return {
+      ready: true,
+      release: () => {
+        try {
+          const target = iframe.contentDocument
+          if (target) writePrintDocument(target, PRINT_HOST_PLACEHOLDER)
+          suratPrintTrace('PRINT_HOST_RELEASED', { printed: false })
+        } catch {
+          // temizlenemezse akışı bozma
+        }
+      },
+    }
+  } catch {
+    suratPrintTrace('PRINT_HOST_UNAVAILABLE', { reason: 'iframe-create-failed' })
+    return {
+      ready: false,
+      reason: PRINT_HOST_UNAVAILABLE_MESSAGE,
+      release: noop,
+    }
+  }
 }
 
 // Geriye dönük uyumluluk: popup rezervasyonu kaldırıldı. Bu fonksiyonlar

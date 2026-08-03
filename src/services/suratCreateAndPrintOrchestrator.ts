@@ -66,6 +66,12 @@ export interface OrchestratorDeps {
     skipped?: Array<{ orderNumber: string; reason: string }>
   }>
   onProgress?: (progress: OrchestratorProgress) => void
+  /**
+   * Create aşaması bittiğinde GÜNCEL sipariş listesi. Kullanıcı manuel
+   * "Seçilenleri Yenile" yapmak zorunda kalmasın diye UI aynı run içinde
+   * tazelenir. Seçim snapshot'ı BU AŞAMADA DEĞİŞTİRİLMEZ.
+   */
+  onOrdersUpdated?: (orders: CargoOrder[]) => void
 }
 
 // Kontrollü eşzamanlılık: en fazla `limit` iş aynı anda. Bir işin hatası
@@ -181,6 +187,10 @@ export async function runSuratCreateAndPrint(
       }
     }
   }
+
+  // Create bitti: UI aynı run içinde canonical duruma (Etiket Hazır, T.No)
+  // taşınır. Seçim ve sonuç paneli baskı kesinleşene kadar DEĞİŞMEZ.
+  if (plan.needsCreate.length > 0) deps.onOrdersUpdated?.(workingOrders)
 
   // E — basılabilir küme: yeni oluşturulanlar + hazır + reprint.
   const printableIds = [

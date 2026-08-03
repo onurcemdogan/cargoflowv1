@@ -13,10 +13,22 @@
 //    gelir. jobs yoksa mevcut servisin kendi kuralı uygulanır (printResult.ok
 //    ise hepsi, değilse hiçbiri). printCalled/dialog açılması başarı DEĞİLDİR.
 import type { CargoOrder } from '../types/cargoflow'
+import {
+  LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE,
+  NOT_IN_PRINT_DOCUMENT_MESSAGE,
+} from '../utils/suratPrintFailureReasons'
 
 export interface PrintResultLike {
   ok?: boolean
-  jobs?: Array<{ orderNumber?: string; ok?: boolean; error?: string }>
+  // KOK NEDEN (canli): gercek PrintResult job'lari sebebi `errorMessage`
+  // alaninda tasir; burada YALNIZ `error` okunuyordu ve her sebep generic
+  // "Baski dogrulanmadi" mesajina dusuyordu. Iki alan da kabul edilir.
+  jobs?: Array<{
+    orderNumber?: string
+    ok?: boolean
+    error?: string
+    errorMessage?: string
+  }>
 }
 
 // printResult -> başarıyla basıldığı DOĞRULANAN sipariş numaraları.
@@ -45,7 +57,9 @@ export function resolvePrintSkips(
     .filter((job) => job?.ok !== true)
     .map((job) => ({
       orderNumber: String(job?.orderNumber ?? ''),
-      reason: String(job?.error ?? 'Baskı doğrulanmadı; durum değiştirilmedi.'),
+      reason: String(
+        job?.errorMessage ?? job?.error ?? NOT_IN_PRINT_DOCUMENT_MESSAGE,
+      ),
     }))
     .filter((item) => item.orderNumber)
 }
@@ -57,22 +71,45 @@ export interface CreateAdapterInput {
   ) => Promise<{ orders: CargoOrder[] }>
   /** Create SONRASI basılabilir etiket oluştu mu (gözlemlenebilir başarı). */
   hasPrintableLabel: (order: CargoOrder) => boolean
+  /**
+   * Create yanıtı etiketi HENÜZ göstermiyorsa çalıştırılan SINIRLI ve
+   * kontrollü doğrulama (mevcut güvenli okuma yolu). Sabit sleep ile başarı
+   * VARSAYILMAZ; yalnız bir kez denenir ve provider'a ÇIKILMAZ.
+   * Güncel sipariş listesini döndürür.
+   */
+  verifyAfterCreate?: (
+    orders: CargoOrder[],
+    ids: string[],
+  ) => Promise<CargoOrder[]>
 }
 
 // createShipments adaptörü: başarıyı sonuçtan TÜRETİR, varsaymaz.
 export function buildCreateAdapter(input: CreateAdapterInput) {
+  const missing = (list: CargoOrder[], ids: string[]) =>
+    ids.filter((id) => {
+      const order = list.find((item) => String(item.id) === String(id))
+      return !order || !input.hasPrintableLabel(order)
+    })
+
   return async (orders: CargoOrder[], ids: string[]) => {
     const outcome = await input.callCreate(orders, ids)
-    const next = outcome.orders ?? orders
+    let next = outcome.orders ?? orders
+    let pending = missing(next, ids)
+    // Create yanıtı etiketi henüz göstermiyorsa TEK ve sınırlı doğrulama.
+    // Sabit bekleme YOK; doğrulama da başarısızsa sipariş failed sayılır.
+    if (pending.length > 0 && input.verifyAfterCreate) {
+      try {
+        next = (await input.verifyAfterCreate(next, pending)) ?? next
+      } catch {
+        // Doğrulama başarısızsa create başarı SAYILMAZ.
+      }
+      pending = missing(next, ids)
+    }
     const failedIds: string[] = []
     const reasons: Record<string, string> = {}
-    for (const id of ids) {
-      const order = next.find((item) => String(item.id) === String(id))
-      if (!order || !input.hasPrintableLabel(order)) {
-        failedIds.push(id)
-        reasons[id] =
-          'Sürat gönderisi oluşturuldu sayılmadı; yazdırılabilir etiket doğrulanamadı.'
-      }
+    for (const id of pending) {
+      failedIds.push(id)
+      reasons[id] = LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE
     }
     return { orders: next, failedIds, reasons }
   }
