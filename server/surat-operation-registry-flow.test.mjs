@@ -120,14 +120,23 @@ test('REG-7: App handler GERÇEK in-flight kaynağını kullanır (sabit false Y
 })
 
 test('REG-8: çakışan mutasyon/baskı butonları run sırasında DISABLED', () => {
-  const page = readFileSync(join(here, '..', 'src/pages/OrdersPage.tsx'), 'utf8')
-  const actions = page.slice(
-    page.indexOf('<div className="toolbar-actions">'),
-    page.indexOf('</section>', page.indexOf('<div className="toolbar-actions">')),
+  const controls = readFileSync(join(here, '..', 'src/components/SuratCreatePrintControls.tsx'), 'utf8')
+  const actions = controls.slice(
+    controls.indexOf('<div className="toolbar-actions">'),
+    controls.indexOf(
+      '</section>', controls.indexOf('<div className="toolbar-actions">'),
+    ),
   )
   // Ana buton + eski mutasyon butonları run sırasında kilitlenir.
+  // Ana buton + eski aksiyonların HEPSİ run sırasında kilitlenir.
   const guarded = (actions.match(/suratCreatePrintRunning/g) ?? []).length
-  assert.ok(guarded >= 5, `run guard'ı yetersiz (${guarded})`)
+  assert.ok(guarded >= 7, `run guard'ı yetersiz (${guarded})`)
+  for (const label of [
+    'Barkod Bas', 'Ortak Barkod Oluştur / Tamamla', 'ZPL İndir',
+    'Kargoya Verildi Yap',
+  ]) {
+    assert.ok(actions.includes(label), `${label} korunmalı`)
+  }
   // Butonlar KALDIRILMADI, handler'lar DEĞİŞMEDİ.
   for (const handler of [
     'onMarkPrinted', 'onCreateShipments', 'onDownloadZpl', 'onMarkHandedToCargo',

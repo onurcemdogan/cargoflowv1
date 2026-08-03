@@ -1,14 +1,10 @@
 import {
-  Barcode,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
-  Download,
   Filter,
-  PackagePlus,
   RefreshCcw,
-  Stamp,
 } from 'lucide-react'
 import { Fragment, useMemo, useState } from 'react'
 import { ActionResult } from '../components/ActionResult'
@@ -55,11 +51,8 @@ import type {
   OrdersNavigationFilters,
 } from '../utils/ordersNavigation'
 import { buildOrderCountSummary } from '../utils/orderCounts'
-import {
-  buildSelectedOrderSnapshot,
-  describeSelectionOutsideView,
-} from '../utils/selectedOrderSnapshot'
 import { buildOrdersDateRange } from '../utils/orderDateRange'
+import { SuratCreatePrintControls } from '../components/SuratCreatePrintControls'
 
 interface OrdersPageProps {
   orders: CargoOrder[]
@@ -432,43 +425,14 @@ export function OrdersPage({
   )
 
 
-  const selectionText =
-    selectedIds.length === 0
-      ? 'Seçili sipariş yok'
-      : `${selectedIds.length} sipariş seçildi`
+  // Seçim özeti + tek-buton bölümü SuratCreatePrintControls'e taşındı
+  // (davranış aynı). listedCounts burada KALIR: alt sayfalama metni de kullanır.
   const listedCounts = useMemo(
     () => buildOrderCountSummary(filteredOrders),
     [filteredOrders],
   )
-  // Seçim özeti GÖRÜNÜR listeden hesaplanmaz: sekme/filtre değişince (ör.
-  // create sonrası siparişler Etiket Hazır'a geçince) 0 paket/0 kalem/0 ürün'e
-  // düşüyordu. Seçim TÜM yüklenmiş siparişler üzerinden çözülür.
-  const selectionSnapshot = useMemo(
-    () => buildSelectedOrderSnapshot(orders, selectedIds, filteredOrders),
-    [orders, selectedIds, filteredOrders],
-  )
-  // Asama metni: yuzde UYDURULMAZ, orchestrator'dan gelen gercek
-  // completed/total degerleri kullanilir.
-  const suratPhaseText = (() => {
-    if (!suratCreatePrintRunning) return ''
-    const p = suratCreatePrintProgress
-    if (!p) return 'Ön kontrol yapılıyor…'
-    if (p.phase === 'preflight') return 'Ön kontrol yapılıyor…'
-    if (p.phase === 'create')
-      return `Sürat etiketleri oluşturuluyor: ${p.completed}/${p.total}`
-    if (p.phase === 'prepare')
-      return `Etiketler hazırlanıyor: ${p.completed}/${p.total}`
-    if (p.phase === 'print') return 'Yazdırma bekleniyor…'
-    return 'Sonuçlar işleniyor…'
-  })()
-
-  // Seçim varsa özet SEÇİMDEN, yoksa (mevcut davranış) listeden gelir.
-  const selectionCounts =
-    selectedIds.length > 0 ? selectionSnapshot : listedCounts
-  const selectionOutsideNote = describeSelectionOutsideView(
-    selectionSnapshot,
-    quickTabs.find((tab) => tab.key === activeQuickTab)?.label ?? 'başka',
-  )
+  const activeTabLabel =
+    quickTabs.find((tab) => tab.key === activeQuickTab)?.label ?? 'başka'
 
   function refreshForTab(tab: QuickTab) {
     setActiveQuickTab(tab)
@@ -812,151 +776,31 @@ export function OrdersPage({
         </button>
       ) : null}
 
-      {suratCreatePrintResult ? (
-        <section className="surat-batch-result">
-          <strong>
-            {suratCreatePrintResult.failed.length === 0 &&
-            suratCreatePrintResult.skipped.length === 0
-              ? 'Tamamlandı'
-              : suratCreatePrintResult.printed > 0
-                ? 'Kısmi başarı'
-                : 'İşlem tamamlanamadı'}
-          </strong>
-          <span>Seçilen: {suratCreatePrintResult.selectedCount}</span>
-          <span>Yeni oluşturulan: {suratCreatePrintResult.created}</span>
-          <span>Hazır etiket: {suratCreatePrintResult.existingReady}</span>
-          <span>Tekrar baskı: {suratCreatePrintResult.reprinted}</span>
-          <span>Yazdırılan: {suratCreatePrintResult.printed}</span>
-          <span>Atlanan: {suratCreatePrintResult.skipped.length}</span>
-          <span>Başarısız: {suratCreatePrintResult.failed.length}</span>
-          {suratCreatePrintResult.skipped.length +
-            suratCreatePrintResult.failed.length >
-          0 ? (
-            <details>
-              <summary>Detaylar</summary>
-              <ul>
-                {[
-                  ...suratCreatePrintResult.skipped.map((item) => ({
-                    ...item, stage: 'Atlandı',
-                  })),
-                  ...suratCreatePrintResult.failed.map((item) => ({
-                    ...item, stage: 'Başarısız',
-                  })),
-                ].map((item) => (
-                  <li key={`${item.stage}-${item.orderNumber}`}>
-                    <code>{item.orderNumber}</code> — {item.stage} —{' '}
-                    {item.reason}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : null}
-        </section>
-      ) : null}
-
-      <section className="toolbar">
-        <div>
-          <strong>{selectionText}</strong>
-          <span>{selectionCounts.packageCount} paket</span>
-          <span>{selectionCounts.lineCount} kalem</span>
-          <span>{selectionCounts.quantityTotal} ürün</span>
-          {selectionOutsideNote ? (
-            <span className="toolbar-note">{selectionOutsideNote}</span>
-          ) : null}
-        </div>
-        <div className="toolbar-actions">
-          <button
-            type="button"
-            className="primary-button surat-one-click-button"
-            onClick={onSuratCreateAndPrint}
-            disabled={
-              busy ||
-              suratCreatePrintRunning ||
-              selectedIds.length === 0 ||
-              !onSuratCreateAndPrint
-            }
-            title={
-              selectedIds.length === 0
-                ? 'Önce en az bir sipariş seçin.'
-                : 'Seçili siparişler için Sürat etiketi oluşturur ve yazdırır.'
-            }
-          >
-            {suratCreatePrintRunning
-              ? suratPhaseText || 'İşleniyor…'
-              : 'Sürat Etiketi Oluştur ve Yazdır'}
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onMarkPrinted}
-            title={printableDisabledReason}
-            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0 || !hasPrintableSelection}
-          >
-            <Barcode size={18} />
-            Barkod Bas
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onCreateShipments}
-            title={createDisabledReason}
-            disabled={
-              busy || selectedIds.length === 0 || !hasShipmentCreatableSelection
-            }
-          >
-            <PackagePlus size={18} />
-            Ortak Barkod Oluştur / Tamamla
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onTrackShipments}
-            title={
-              busy
-                ? 'İşlem devam ediyor.'
-                : selectedIds.length === 0
-                  ? 'Önce en az bir sipariş seçin.'
-                  : undefined
-            }
-            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0}
-          >
-            <RefreshCcw size={18} />
-            Seçilenleri Yenile / Doğrula
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={onDownloadZpl}
-            title={zplDisabledReason}
-            disabled={
-              busy || selectedIds.length === 0 || !hasZplDownloadableSelection
-            }
-          >
-            <Download size={18} />
-            ZPL İndir
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onMarkPrinted}
-            title={printableDisabledReason}
-            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0 || !hasPrintableSelection}
-          >
-            <Stamp size={18} />
-            Yazdır / Tekrar Yazdır
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onMarkHandedToCargo}
-            title={handedDisabledReason}
-            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0 || !hasHandedToCargoSelection}
-          >
-            <PackagePlus size={18} />
-            Kargoya Verildi Yap
-          </button>
-        </div>
-      </section>
+      <SuratCreatePrintControls
+        orders={orders}
+        visibleOrders={filteredOrders}
+        selectedIds={selectedIds}
+        listedCounts={listedCounts}
+        activeTabLabel={activeTabLabel}
+        busy={busy}
+        suratCreatePrintRunning={suratCreatePrintRunning}
+        suratCreatePrintProgress={suratCreatePrintProgress}
+        suratCreatePrintResult={suratCreatePrintResult}
+        onSuratCreateAndPrint={onSuratCreateAndPrint}
+        onMarkPrinted={onMarkPrinted}
+        onCreateShipments={onCreateShipments}
+        onTrackShipments={onTrackShipments}
+        onDownloadZpl={onDownloadZpl}
+        onMarkHandedToCargo={onMarkHandedToCargo}
+        hasPrintableSelection={hasPrintableSelection}
+        hasShipmentCreatableSelection={hasShipmentCreatableSelection}
+        hasZplDownloadableSelection={hasZplDownloadableSelection}
+        hasHandedToCargoSelection={hasHandedToCargoSelection}
+        printableDisabledReason={printableDisabledReason}
+        createDisabledReason={createDisabledReason}
+        zplDisabledReason={zplDisabledReason}
+        handedDisabledReason={handedDisabledReason}
+      />
 
       <ActionResult result={lastResult} />
 

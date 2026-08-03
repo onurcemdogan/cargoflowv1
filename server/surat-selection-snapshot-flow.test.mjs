@@ -129,7 +129,7 @@ test('SEL-7: snapshot PII TAŞIMAZ', async () => {
 })
 
 test('SEL-8: OrdersPage seçim özetini SEÇİMDEN alır (regresyon kilidi)', () => {
-  const src = readFileSync(join(here, '..', 'src/pages/OrdersPage.tsx'), 'utf8')
+  const src = readFileSync(join(here, '..', 'src/components/SuratCreatePrintControls.tsx'), 'utf8')
   // Toolbar artık listedCounts değil selectionCounts kullanır.
   assert.match(src, /selectionCounts\.packageCount/)
   assert.match(src, /selectionCounts\.lineCount/)

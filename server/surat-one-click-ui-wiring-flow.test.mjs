@@ -10,11 +10,17 @@ import test from 'node:test'
 const here = dirname(fileURLToPath(import.meta.url))
 const app = readFileSync(join(here, '..', 'src/App.tsx'), 'utf8')
 const page = readFileSync(join(here, '..', 'src/pages/OrdersPage.tsx'), 'utf8')
+// Tek-buton bolumu davranis degistirmeden ayri bilesene tasindi; kaynak
+// sozlesmesi ORADA kilitlenir (gercek DOM testi: src/test/*.dom.test.tsx).
+const controls = readFileSync(join(here, '..', 'src/components/SuratCreatePrintControls.tsx'), 'utf8')
+// Asama metni saf yardimciya ayrildi (react-refresh: bilesen dosyasi yalniz
+// bilesen export eder).
+const phaseText = readFileSync(join(here, '..', 'src/utils/suratPhaseText.ts'), 'utf8')
 
 test('UI-1: buton seçim yokken ve işlem sürerken DISABLED', () => {
-  const block = page.slice(
-    page.indexOf('surat-one-click-button'),
-    page.indexOf('onClick={onMarkPrinted}'),
+  const block = controls.slice(
+    controls.indexOf('surat-one-click-button'),
+    controls.indexOf('onClick={onMarkPrinted}'),
   )
   assert.match(block, /disabled=\{/)
   assert.match(block, /suratCreatePrintRunning/, 'işlem sürerken disabled')
@@ -97,15 +103,23 @@ test('UI-7: unmount ve eski run korumaları var', () => {
 })
 
 test('UI-8: progress GERÇEK completed/total kullanır, yüzde uydurulmaz', () => {
-  assert.match(page, /Ön kontrol yapılıyor…/)
-  assert.match(page, /Sürat etiketleri oluşturuluyor: \$\{p\.completed\}\/\$\{p\.total\}/)
-  assert.match(page, /Etiketler hazırlanıyor: \$\{p\.completed\}\/\$\{p\.total\}/)
-  assert.match(page, /Yazdırma bekleniyor…/)
-  assert.match(page, /Sonuçlar işleniyor…/)
-  assert.equal(/Math\.round\([^)]*100\)/.test(page.slice(
-    page.indexOf('suratPhaseText'),
-    page.indexOf('const listedCounts'),
-  )), false, 'yüzde hesaplanmıyor')
+  assert.match(phaseText, /Ön kontrol yapılıyor…/)
+  assert.match(
+    phaseText,
+    /Sürat etiketleri oluşturuluyor: \$\{progress\.completed\}\/\$\{progress\.total\}/,
+  )
+  assert.match(
+    phaseText,
+    /Etiketler hazırlanıyor: \$\{progress\.completed\}\/\$\{progress\.total\}/,
+  )
+  assert.match(phaseText, /Yazdırma bekleniyor…/)
+  assert.match(phaseText, /Sonuçlar işleniyor…/)
+  assert.equal(
+    /Math\.round\([^)]*100\)/.test(phaseText + controls), false,
+    'yüzde hesaplanmıyor',
+  )
+  // Bileşen metni KOPYALAMAZ, saf yardımcıyı çağırır.
+  assert.match(controls, /resolveSuratPhaseText\(/)
 })
 
 test('UI-9: yeni run progress ve sonucu SIFIRLAR', () => {
@@ -118,9 +132,9 @@ test('UI-9: yeni run progress ve sonucu SIFIRLAR', () => {
 })
 
 test('UI-10: sonuç paneli aggregate alanlarını gösterir', () => {
-  const panel = page.slice(
-    page.indexOf('surat-batch-result'),
-    page.indexOf('<section className="toolbar">'),
+  const panel = controls.slice(
+    controls.indexOf('surat-batch-result'),
+    controls.indexOf('<section className="toolbar">'),
   )
   for (const label of [
     'Seçilen:', 'Yeni oluşturulan:', 'Hazır etiket:', 'Tekrar baskı:',
@@ -135,9 +149,9 @@ test('UI-10: sonuç paneli aggregate alanlarını gösterir', () => {
 })
 
 test('UI-11: sonuç detayında PII alanı GÖSTERİLMEZ', () => {
-  const panel = page.slice(
-    page.indexOf('surat-batch-result'),
-    page.indexOf('<section className="toolbar">'),
+  const panel = controls.slice(
+    controls.indexOf('surat-batch-result'),
+    controls.indexOf('<section className="toolbar">'),
   )
   for (const pii of [
     'customerName', 'address', 'customerPhone', 'barcodeRaw',
@@ -163,14 +177,19 @@ test('UI-12: ESKİ butonlar korunur ve ESKİ handler\'larına bağlıdır', () =
       app.includes(`${prop}={${handler}}`),
       `${prop} → ${handler} bağlantısı korunmalı`,
     )
-    assert.ok(page.includes(prop), `${prop} OrdersPage'de kullanılmalı`)
+    assert.ok(
+      page.includes(prop) || controls.includes(prop),
+      `${prop} orders yüzeyinde kullanılmalı`,
+    )
   }
 })
 
 test('UI-13: ana buton eski butonları KALDIRMADAN eklenmiş', () => {
-  const actions = page.slice(
-    page.indexOf('<div className="toolbar-actions">'),
-    page.indexOf('</section>', page.indexOf('<div className="toolbar-actions">')),
+  const actions = controls.slice(
+    controls.indexOf('<div className="toolbar-actions">'),
+    controls.indexOf(
+      '</section>', controls.indexOf('<div className="toolbar-actions">'),
+    ),
   )
   assert.match(actions, /surat-one-click-button/, 'yeni buton var')
   assert.match(actions, /onClick=\{onMarkPrinted\}/, 'eski buton duruyor')
@@ -178,9 +197,12 @@ test('UI-13: ana buton eski butonları KALDIRMADAN eklenmiş', () => {
 })
 
 test('UI-14: seçim özeti snapshot\'tan gelir (0/0/0 regresyonu kapalı)', () => {
-  assert.match(page, /selectionCounts\.packageCount/)
-  assert.match(page, /buildSelectedOrderSnapshot\(orders, selectedIds/)
-  assert.match(page, /describeSelectionOutsideView/)
+  assert.match(controls, /selectionCounts\.packageCount/)
+  assert.match(controls, /buildSelectedOrderSnapshot\(orders, selectedIds/)
+  assert.match(controls, /describeSelectionOutsideView/)
+  // OrdersPage bileşeni GERÇEK seçim ve tüm siparişlerle besler.
+  assert.match(page, /orders=\{orders\}/)
+  assert.match(page, /selectedIds=\{selectedIds\}/)
 })
 
 test('UI-15: preflight gerçek yardımcılardan beslenir', () => {
