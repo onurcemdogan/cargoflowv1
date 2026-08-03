@@ -31,6 +31,8 @@ import {
   buildPrintAdapter,
 } from './services/suratOrchestratorDeps'
 import { resolveSelectionAfterBatch } from './utils/selectedOrderSnapshot'
+import { prepareSuratPrintHostSynchronously } from './utils/browserLabelPrint'
+import { PRINT_HOST_UNAVAILABLE_MESSAGE } from './utils/suratPrintFailureReasons'
 import {
   hasPendingServerOperation,
   isOperationInFlight,
@@ -803,14 +805,20 @@ function App() {
   // Provider create ÇAĞRILMAZ, desi İSTENMEZ, yeni shipment/barkod OLUŞTURULMAZ.
   // "ZPL İndir" ve "Etiketi Yazdır" bu ortak yolu kullanır. ZPL gerçekten
   // getirilemezse sipariş `unresolved` olarak işaretlenir (kontrollü mesaj).
+  // `sourceOrders` VERILMEZSE App state'i kullanilir (mevcut davranis).
+  // KOK NEDEN (canli): tek-buton akisinda create SONRASI guncel siparis
+  // listesi React state'e HENUZ yazilmamis oluyordu; bu fonksiyon closure'daki
+  // ESKI `orders` uzerinden calisip yeni olusan etiketi GOREMIYORDU.
   async function hydratePersistedLabels(
     orderIds: string[],
+    sourceOrders?: CargoOrder[],
   ): Promise<{ effectiveOrders: CargoOrder[]; unresolved: string[] }> {
+    const baseOrders = sourceOrders ?? orders
     const idSet = new Set(orderIds)
     const patchById = new Map<string, { zpl?: string; desi?: number }>()
     const unresolved: string[] = []
     await Promise.all(
-      orders
+      baseOrders
         .filter((order) => idSet.has(order.id) && isReprintEligible(order))
         .map(async (order) => {
           const artifact = resolvePersistedLabelArtifact(order)
@@ -843,8 +851,8 @@ function App() {
     )
     const effectiveOrders =
       patchById.size === 0
-        ? orders
-        : orders.map((order) => {
+        ? baseOrders
+        : baseOrders.map((order) => {
             const patch = patchById.get(order.id)
             if (!patch) return order
             // Var olan ham ZPL KORUNUR; yalnız eksik alan (ZPL ve/veya desi)
@@ -871,6 +879,23 @@ function App() {
   // BASARI YALNIZ printResult.jobs[].ok'tan gelir (orchestrator + adaptor).
   async function handleSuratCreateAndPrintForIds(ids: string[]) {
     if (ids.length === 0 || suratRunActive.current) return
+    // ILK AWAIT'TEN ONCE, kullanici click stack'i icinde: baski host'u hazirla.
+    // Host kurulamiyorsa Surat gonderisi OLUSTURULMAZ, hicbir statu/sayac
+    // degismez. Zebra/native yolunda host GEREKMEZ.
+    const needsBrowserHost = printerSettings.mode === 'browser-print'
+    const printHost = needsBrowserHost
+      ? prepareSuratPrintHostSynchronously()
+      : null
+    if (printHost && !printHost.ready) {
+      setOrdersState((current) => ({
+        ...current,
+        ordersMessage: {
+          level: 'error',
+          message: printHost.reason ?? PRINT_HOST_UNAVAILABLE_MESSAGE,
+        },
+      }))
+      return
+    }
     suratRunActive.current = true
     suratRunGeneration.current += 1
     const generation = suratRunGeneration.current
@@ -938,10 +963,28 @@ function App() {
           },
           hasPrintableLabel: (order) =>
             Boolean(resolvePersistedLabelArtifact(order).hasPrintableLabel),
+          // Create yaniti etiketi henuz gostermiyorsa SINIRLI ve kontrollu
+          // dogrulama: mevcut tenant-scoped kayitli etiket okuma yolu (GET
+          // /api/orders/:id/label). Provider'a CIKILMAZ, sabit sleep YOK.
+          verifyAfterCreate: async (list, pendingIds) => {
+            const { effectiveOrders } = await hydratePersistedLabels(
+              pendingIds,
+              list,
+            )
+            return effectiveOrders
+          },
         }),
         printLabels: buildPrintAdapter({
-          callPrint: async (_list, printIds) => {
-            const { effectiveOrders } = await hydratePersistedLabels(printIds)
+          // KRITIK: `list` orkestratorun create SONRASI guncel listesidir.
+          // Eski secim snapshot'i veya henuz tazelenmemis React state
+          // KULLANILMAZ; aksi hâlde yeni olusan etiket goze carpmadan
+          // "Barkod Bekliyor" siparis basiliyormus gibi gonderiliyordu ve
+          // printLabels hicbir aday bulamadigi icin printResult URETMIYORDU.
+          callPrint: async (list, printIds) => {
+            const { effectiveOrders } = await hydratePersistedLabels(
+              printIds,
+              list,
+            )
             return workflowService.printLabels(
               effectiveOrders,
               printIds,
@@ -956,9 +999,18 @@ function App() {
           if (!isCurrent()) return
           setSuratProgress(progress)
         },
+        // Create biter bitmez satir canonical duruma (Etiket Hazir / T.No)
+        // gecer; kullanici "Secilenleri Yenile" yapmak ZORUNDA kalmaz.
+        // Secim ve sonuc paneli baski kesinlesene kadar DEGISMEZ.
+        onOrdersUpdated: (updated) => {
+          if (!isCurrent()) return
+          setOrdersState((current) => ({ ...current, orders: updated }))
+        },
       })
 
       if (!isCurrent()) return
+      // Hicbir siparis basilmadiysa host icerigi temizlenir (bos belge kalmaz).
+      if (outcome.printed === 0) printHost?.release()
       setSuratResult(outcome)
       // YALNIZ baskisi DOGRULANAN siparisler secimden cikar; blocked/failed/
       // iptal edilenler SECILI KALIR.
@@ -970,6 +1022,7 @@ function App() {
         orders: outcome.orders,
       }))
     } catch (error) {
+      printHost?.release()
       if (!isCurrent()) return
       setOrdersState((current) => ({
         ...current,

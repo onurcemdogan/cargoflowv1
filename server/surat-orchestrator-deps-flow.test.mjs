@@ -51,12 +51,18 @@ test('DEP-3: başarısız işlerin sebepleri güvenli biçimde taşınır', asyn
     jobs: [
       { orderNumber: 'A', ok: true },
       { orderNumber: 'B', ok: false, error: 'Zebra endpoint hatası.' },
-      { orderNumber: 'C', ok: false },
+      // GERÇEK PrintResult job'ı sebebi `errorMessage` alanında taşır.
+      { orderNumber: 'C', ok: false, errorMessage: 'Kullanıcı baskıyı doğrulamadı.' },
+      { orderNumber: 'D', ok: false },
     ],
   })
-  assert.equal(skips.length, 2)
+  assert.equal(skips.length, 3)
   assert.deepEqual(skips[0], { orderNumber: 'B', reason: 'Zebra endpoint hatası.' })
-  assert.match(skips[1].reason, /doğrulanmadı/)
+  assert.deepEqual(skips[1], {
+    orderNumber: 'C', reason: 'Kullanıcı baskıyı doğrulamadı.',
+  })
+  // Sebep hiç yoksa AŞAMAYA ÖZGÜ güvenli metin (generic "doğrulanmadı" değil).
+  assert.match(skips[2].reason, /baskı belgesine girmedi/)
 })
 
 test('DEP-4: create başarısı SONUÇTAN türetilir, varsayılmaz', async () => {
