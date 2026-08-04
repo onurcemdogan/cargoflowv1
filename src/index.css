@@ -5759,6 +5759,16 @@ button:disabled {
   line-height: 1.55;
 }
 
+/* Sağlayıcıdan bağımsız organizasyon geneli gönderi varsayılanları bloğu.
+   Kategori sekmelerinin ÜSTÜNDE, her kategoride görünür. */
+.shipment-defaults-panel {
+  margin-bottom: 18px;
+}
+
+.shipment-defaults-panel .integration-detail-footer {
+  margin-top: 18px;
+}
+
 /* Organizasyon ayarı anahtarı (ör. "Ürün adedine göre desiyi çarp"). */
 .integration-toggle-row {
   display: flex;

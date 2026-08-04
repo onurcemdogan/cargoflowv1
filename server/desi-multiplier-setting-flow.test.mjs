@@ -515,3 +515,40 @@ test('DM-34: kayıtlı desi YOKSA ayar yeni gönderiyi etkiler', async () => {
   assert.equal(resolveEffectiveLabelDesi(ORDER_B(), undefined, [], ON).desi, 6)
   assert.equal(resolveEffectiveLabelDesi(ORDER_B(), undefined, [], OFF).desi, 2)
 })
+
+// ═══ 35-37: UI KONUMU — SAĞLAYICIDAN BAĞIMSIZ ORTAK BÖLÜM ══════════════════
+
+test('DM-35: anahtar sağlayıcı panelinin DIŞINDA, ortak bileşende tanımlıdır', () => {
+  const shared = settingsSource.indexOf('function ShipmentDefaultsSection(')
+  const carrier = settingsSource.indexOf('function SuratSettingsPanel(')
+  const toggle = settingsSource.indexOf('id="desi-multiply-by-item-quantity"')
+  assert.ok(shared > 0, 'ortak bölüm bileşeni var')
+  assert.ok(toggle > shared, 'anahtar ortak bileşen içinde')
+  // Sürat paneli anahtardan ÖNCE biter: gövdesinde desi alanı kalmamıştır.
+  const carrierBody = settingsSource.slice(
+    carrier,
+    settingsSource.indexOf('interface ShipmentDefaultsSectionProps'),
+  )
+  assert.equal(
+    /multiplyByItemQuantity|Varsayılan Gönderi Desisi/.test(carrierBody),
+    false,
+    'sağlayıcı panelinde gönderi varsayılanı kalmamalı',
+  )
+})
+
+test('DM-36: sağlayıcı sekme listesinde artık "Etiket" sekmesi YOK', () => {
+  const workspace = readFileSync(
+    join(here, '..', 'src', 'utils', 'integrationWorkspace.ts'),
+    'utf8',
+  )
+  assert.equal(/key: 'label'/.test(workspace), false)
+  assert.equal(/'label'\s*\n\s*\| 'sync'/.test(workspace), false)
+})
+
+test('DM-37: ortak bölüm başlığı ve açıklamasında sağlayıcı adı YOK', () => {
+  const start = settingsSource.indexOf('aria-label="Kargo ve Etiket Varsayılanları"')
+  assert.ok(start > 0, 'ortak bölüm etiketlenmiş')
+  const header = settingsSource.slice(start, start + 400)
+  assert.match(header, /title="Kargo ve Etiket Varsayılanları"/)
+  assert.equal(/sürat|surat|zebra|yurtiçi|aras|mng/i.test(header), false)
+})

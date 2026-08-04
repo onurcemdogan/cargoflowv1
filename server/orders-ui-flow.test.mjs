@@ -81,7 +81,8 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
       'Hesap',
       'Anlaşmalı Kargo',
       'Ortak Barkod',
-      'Etiket',
+      // 'Etiket' sekmesi kaldırıldı: gönderi varsayılanları sağlayıcıdan
+      // bağımsız ortak bölüme taşındı.
       'Senkronizasyon',
       'Loglar',
     ],

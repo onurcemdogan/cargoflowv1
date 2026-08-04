@@ -23,8 +23,8 @@ import { calculateOrderDesi } from './orderDesi'
 // Ayarlarda varsayılan desi yoksa etiket üretimi BLOKLANIR ve kullanıcı
 // Ayarlar'a yönlendirilir (sessiz/yanlış desi ile gönderi oluşturulmaz).
 export const DEFAULT_DESI_MISSING_MESSAGE =
-  'Varsayılan Gönderi Desisi tanımlı değil. Ayarlar → Entegrasyonlar / Ayarlar ' +
-  '→ Etiket bölümünden "Varsayılan Gönderi Desisi" belirleyin.'
+  'Varsayılan Gönderi Desisi tanımlı değil. Entegrasyonlar / Ayarlar → ' +
+  '"Kargo ve Etiket Varsayılanları" bölümünden belirleyin.'
 
 export interface EffectiveLabelDesi {
   desi: number | null

@@ -138,6 +138,15 @@ export function IntegrationsPage({
 
       <ActionResult result={result} />
 
+      {/*
+        SAĞLAYICIDAN BAĞIMSIZ ORTAK BÖLÜM.
+        Gönderi varsayılanları organizasyon geneline aittir ve ileride
+        eklenecek TÜM kargo firmaları için geçerlidir; bu yüzden hiçbir kargo
+        kartının veya sağlayıcı sekmesinin ÇOCUĞU DEĞİLDİR. Seçili kategori ne
+        olursa olsun görünür ve sağlayıcı hesabı tanımlı olmasa da erişilebilir.
+      */}
+      <ShipmentDefaultsSection form={form} setForm={setForm} busy={busy} onSave={onSave} />
+
       <nav className="integration-category-tabs" aria-label="Entegrasyon kategorileri">
         {integrationCategoryTabs.map((tab) => (
           <button
@@ -255,6 +264,124 @@ export function IntegrationsPage({
         ) : null}
       </form>
     </div>
+  )
+}
+
+interface ShipmentDefaultsSectionProps {
+  form: IntegrationConfig
+  setForm: React.Dispatch<React.SetStateAction<IntegrationConfig>>
+  busy: boolean
+  onSave: (config: IntegrationConfig) => void
+}
+
+// Organizasyon geneli gönderi varsayılanları. SAĞLAYICIDAN BAĞIMSIZDIR:
+// başlıkta, açıklamada ve alanlarda hiçbir kargo firması adı GEÇMEZ.
+// Kaydetme mevcut GET/PUT zincirini kullanır (onSave -> saveIntegrationConfig);
+// hata durumunda çağıran katman efektif ayarı GÜNCELLEMEZ (rollback korunur).
+function ShipmentDefaultsSection({
+  form,
+  setForm,
+  busy,
+  onSave,
+}: ShipmentDefaultsSectionProps) {
+  // Ekrandaki örnek GERÇEK hesaptan gelir (elle yazılmış rakam yok).
+  const example = describeDesiMultiplierExample(form.desi?.defaultUnitDesi)
+
+  function updateDesi(patch: Partial<NonNullable<IntegrationConfig['desi']>>) {
+    setForm((current) => ({
+      ...current,
+      desi: {
+        ...(current.desi ?? {
+          defaultUnitDesi: null,
+          categoryDefaults: {},
+          productOverrides: {},
+          variantOverrides: {},
+        }),
+        ...patch,
+      },
+    }))
+  }
+
+  return (
+    <section
+      className="integration-detail-panel shipment-defaults-panel"
+      aria-label="Kargo ve Etiket Varsayılanları"
+    >
+      <DetailSectionHeader
+        icon={<PackageSearch size={18} />}
+        title="Kargo ve Etiket Varsayılanları"
+        description="Tüm kargo firmaları için geçerli organizasyon varsayılanları."
+      />
+      <div className="integration-field-grid">
+        <label>
+          <span>Varsayılan Gönderi Desisi</span>
+          <input
+            type="number"
+            min="0.01"
+            step="0.01"
+            value={form.desi?.defaultUnitDesi ?? ''}
+            placeholder="Boş = eksik desili sipariş engellenir"
+            disabled={busy}
+            onChange={(event) => {
+              const value = Number(event.target.value.replace(',', '.'))
+              updateDesi({
+                defaultUnitDesi:
+                  Number.isFinite(value) && value > 0 ? value : null,
+              })
+            }}
+          />
+        </label>
+      </div>
+      <p className="integration-field-note">
+        Bu değer BİRİM desidir ve sunucuda (organization) kalıcı saklanır.
+        Sipariş satırında veya üründe desi varsa ya da manuel toplam desi
+        girildiyse ONLAR önceliklidir. Mevcut ürün, varyant, kategori ve tenant
+        desi önceliği aynen korunur. Değişiklik yalnız bundan sonra
+        oluşturulacak etiketleri etkiler; kayıtlı etiketler ve tekrar yazdırma
+        değişmez.
+      </p>
+      <div className="integration-toggle-row">
+        <input
+          id="desi-multiply-by-item-quantity"
+          type="checkbox"
+          role="switch"
+          checked={form.desi?.multiplyByItemQuantity !== false}
+          disabled={busy}
+          onChange={(event) =>
+            updateDesi({ multiplyByItemQuantity: event.target.checked })
+          }
+        />
+        <span className="integration-toggle-text">
+          <label
+            className="integration-toggle-title"
+            htmlFor="desi-multiply-by-item-quantity"
+          >
+            Ürün adedine göre desiyi çarp
+          </label>
+          <span className="integration-toggle-description">
+            Açık olduğunda varsayılan gönderi desisi siparişteki toplam ürün
+            adediyle çarpılır. Kapalı olduğunda paket için varsayılan desi
+            yalnız bir kez kullanılır.
+          </span>
+          <span className="integration-toggle-example">
+            Örnek — varsayılan {example.defaultUnitDesi} desi, {example.quantity}{' '}
+            adet tek ürün: açık → {example.enabledDesi ?? '—'} desi, kapalı →{' '}
+            {example.disabledDesi ?? '—'} desi.
+          </span>
+        </span>
+      </div>
+      <div className="integration-detail-footer">
+        <button
+          type="button"
+          className="primary-button"
+          onClick={() => onSave(form)}
+          disabled={busy}
+        >
+          <Save size={17} />
+          Varsayılanları Kaydet
+        </button>
+      </div>
+    </section>
   )
 }
 
@@ -650,11 +777,6 @@ function SuratSettingsPanel({
     }))
   }
 
-  // Ekrandaki örnek GERÇEK hesaptan gelir (elle yazılmış rakam yok).
-  const desiMultiplierExample = describeDesiMultiplierExample(
-    form.desi?.defaultUnitDesi,
-  )
-
   return (
     <section className="integration-detail-panel" aria-label="Sürat Kargo ayarları">
       <div className="integration-detail-heading">
@@ -1020,97 +1142,6 @@ function SuratSettingsPanel({
               Bu seçimler yalnızca Sürat API response alanlarını eşler; mevcut
               doğrulama kuralları değişmez.
             </p>
-          </>
-        ) : null}
-
-        {activeTab === 'label' ? (
-          <>
-            <DetailSectionHeader
-              icon={<FileText size={18} />}
-              title="Etiket"
-              description="Varsayılan gönderi desisi ve tenant desi varsayılanı."
-            />
-            <div className="integration-field-grid">
-              <label>
-                <span>Varsayılan Gönderi Desisi</span>
-                <input
-                  type="number"
-                  min="0.01"
-                  step="0.01"
-                  value={form.desi?.defaultUnitDesi ?? ''}
-                  placeholder="Boş = eksik desili sipariş engellenir"
-                  onChange={(event) => {
-                    const value = Number(event.target.value.replace(',', '.'))
-                    setForm((current) => ({
-                      ...current,
-                      desi: {
-                        ...(current.desi ?? {
-                          categoryDefaults: {},
-                          productOverrides: {},
-                          variantOverrides: {},
-                        }),
-                        defaultUnitDesi:
-                          Number.isFinite(value) && value > 0 ? value : null,
-                      },
-                    }))
-                  }}
-                />
-              </label>
-            </div>
-            <p className="integration-field-note">
-              Bu değer BİRİM desidir ve sunucuda (organization) kalıcı saklanır.
-              Sipariş satırında veya üründe desi varsa ya da manuel toplam desi
-              girildiyse ONLAR önceliklidir. Mevcut ürün, varyant, kategori ve
-              tenant desi önceliği aynen korunur. Değişiklik yalnız bundan sonra
-              oluşturulacak etiketleri etkiler; kayıtlı etiketler ve tekrar
-              yazdırma değişmez.
-            </p>
-            <div className="integration-toggle-row">
-              <input
-                id="desi-multiply-by-item-quantity"
-                type="checkbox"
-                role="switch"
-                checked={form.desi?.multiplyByItemQuantity !== false}
-                disabled={busy}
-                onChange={(event) => {
-                  const next = event.target.checked
-                  setForm((current) => ({
-                    ...current,
-                    desi: {
-                      ...(current.desi ?? {
-                        defaultUnitDesi: null,
-                        categoryDefaults: {},
-                        productOverrides: {},
-                        variantOverrides: {},
-                      }),
-                      multiplyByItemQuantity: next,
-                    },
-                  }))
-                }}
-              />
-              <span className="integration-toggle-text">
-                <label
-                  className="integration-toggle-title"
-                  htmlFor="desi-multiply-by-item-quantity"
-                >
-                  Ürün adedine göre desiyi çarp
-                </label>
-                <span className="integration-toggle-description">
-                  Açık (varsayılan): varsayılan gönderi desisi paketteki ürün
-                  adediyle çarpılır. Kapalı: varsayılan desi paket için yalnız
-                  bir kez uygulanır, adet toplamı artırmaz. Ayar yalnız
-                  varsayılan desiden hesaplanan YENİ gönderileri etkiler; ürün
-                  veya satır bazlı gerçek desi ile manuel toplam desi
-                  değişmez, kayıtlı etiketler ve tekrar yazdırma etkilenmez.
-                </span>
-                <span className="integration-toggle-example">
-                  Örnek — varsayılan {desiMultiplierExample.defaultUnitDesi}{' '}
-                  desi, {desiMultiplierExample.quantity} adet tek ürün: açık →{' '}
-                  {desiMultiplierExample.enabledDesi ?? '—'} desi, kapalı →{' '}
-                  {desiMultiplierExample.disabledDesi ?? '—'} desi.
-                </span>
-              </span>
-            </div>
           </>
         ) : null}
 
