@@ -2505,13 +2505,16 @@ button:disabled {
   width: min(100%, 500px);
   aspect-ratio: 1 / 1;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-columns: 28px minmax(0, 1fr);
   overflow: hidden;
-  border: 2px solid #111;
-  border-radius: 3px;
+  border: 3px solid #111;
+  border-radius: 0;
   background: #fff;
   color: #111;
-  font-family: "Courier New", monospace;
+  /* Baskı çıktısıyla AYNI tipografi sözleşmesi. */
+  --label-mono: "Courier New", "DejaVu Sans Mono", monospace;
+  --label-display: "Arial Black", "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--label-mono);
   line-height: 1.08;
 }
 
@@ -2545,7 +2548,8 @@ button:disabled {
 
 .surat-label-body {
   display: grid;
-  grid-template-rows: 12fr 18fr 25fr 10fr 22fr 13fr;
+  /* Baskı satır yükseklikleriyle aynı oran: 12 / 20.5 / 21.5 / 10 / 23 / 13 */
+  grid-template-rows: 12fr 20.5fr 21.5fr 10fr 23fr 13fr;
   min-width: 0;
   min-height: 0;
 }
@@ -2553,7 +2557,7 @@ button:disabled {
 .surat-section {
   min-width: 0;
   overflow: hidden;
-  border-bottom: 2px solid #111;
+  border-bottom: 3px solid #111;
 }
 
 .surat-section:last-child {
@@ -2586,7 +2590,7 @@ button:disabled {
 
 .surat-header-left b {
   overflow: hidden;
-  font-size: var(--label-header-name-size, 14px);
+  font-size: var(--label-header-name-size, 17px);
   font-weight: 900;
   text-overflow: ellipsis;
   text-transform: uppercase;
@@ -2598,7 +2602,8 @@ button:disabled {
 }
 
 .surat-header-right strong {
-  font-size: 15px;
+  font-size: 13px;
+  font-weight: 900;
 }
 
 /* Referans: 1D barkod gövde kenarlarına kadar yayılır; yan boşluk minimum.
@@ -2653,7 +2658,7 @@ button:disabled {
 .surat-address-copy b,
 .surat-address-copy strong {
   overflow: hidden;
-  font-size: var(--label-route-size, 14px);
+  font-size: var(--label-route-size, 15px);
   font-weight: 900;
   text-overflow: ellipsis;
   text-transform: uppercase;
@@ -2716,20 +2721,30 @@ button:disabled {
 
 .surat-cargo-section strong {
   overflow: hidden;
-  margin-top: 3px;
-  font-size: var(--label-cargo-value-size, 19px);
+  margin-top: 2px;
+  font-family: var(--label-display);
+  font-size: var(--label-cargo-value-size, 22px);
   font-weight: 900;
+  letter-spacing: -.3px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .surat-delivery-section {
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr) 70px;
+  grid-template-columns: 105px minmax(0, 1fr) 63px;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   min-height: 0;
-  padding: 8px 9px;
+  padding: 6px 9px;
+}
+
+/* Referans: "1 / 1" ile "Adrese Teslim" AYNI satırda. */
+.surat-parcel-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
 }
 
 .surat-large-qr,
@@ -2737,7 +2752,7 @@ button:disabled {
   display: block;
   width: 100%;
   aspect-ratio: 1 / 1;
-  border: 4px solid #111;
+  border: 3px solid #111;
   background: #fff;
 }
 
@@ -2764,7 +2779,8 @@ button:disabled {
 
 .surat-delivery-copy b {
   overflow: hidden;
-  font-size: 25px;
+  flex: 0 0 auto;
+  font-size: 22px;
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2786,9 +2802,11 @@ button:disabled {
 .surat-delivery-copy em {
   display: -webkit-box;
   overflow: hidden;
-  font-size: var(--label-delivery-route-size, 18px);
+  font-family: var(--label-display);
+  font-size: var(--label-delivery-route-size, 27px);
   font-style: normal;
   font-weight: 900;
+  letter-spacing: -.4px;
   line-height: 1.02;
   overflow-wrap: anywhere;
   text-transform: uppercase;
@@ -2798,7 +2816,10 @@ button:disabled {
 }
 
 .surat-delivery-copy .surat-transfer {
-  font-size: var(--label-transfer-size, 16px);
+  font-family: var(--label-display);
+  font-size: var(--label-transfer-size, 23px);
+  font-weight: 900;
+  letter-spacing: -.4px;
   line-height: 1.02;
   text-transform: uppercase;
 }

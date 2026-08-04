@@ -189,8 +189,11 @@ export function LabelHtmlPreview({
             />
             <div className="surat-delivery-copy">
               <span>Parca Adedi</span>
-              <b>1 / 1</b>
-              <strong>Adrese Teslim</strong>
+              {/* Referans: "1 / 1" ile "Adrese Teslim" AYNI satırda. */}
+              <div className="surat-parcel-row">
+                <b>1 / 1</b>
+                <strong>Adrese Teslim</strong>
+              </div>
               <em>{routeCenter}</em>
               <strong className="surat-transfer">{transferCenter}</strong>
             </div>

@@ -116,7 +116,8 @@ test('REF-3: barkod/QR/T.No payload DEĞİŞMEZ (yalnız geometri değişti)', a
 
 test('REF-4: sol dikey kolon dar ve kompakt', async () => {
   const out = await html(SINGLE)
-  assert.match(out, /grid-template-columns: 7mm minmax\(0, 1fr\)/)
+  // Referans etikete gore sol kolon daraltildi (7mm -> 5.6mm).
+  assert.match(out, /grid-template-columns: 5\.6mm minmax\(0, 1fr\)/)
   assert.match(out, /<strong>SURAT KARGO<\/strong>/)
   assert.match(out, /Siparis No: 7270032941525232/)
 })

@@ -767,16 +767,22 @@ export function buildCleanLabelDocument(
       background: #fff;
     }
     body { font-family: Arial, Helvetica, sans-serif; color: #000; }
+    /* Referans termal etiket: sert, yüksek kontrast, yuvarlatma YOK.
+       --label-mono  : yapısal/küçük bilgiler (daktilo hissi)
+       --label-display: en baskın bloklar (rota, ödeme değerleri) — referansta
+       bu satırlar ağır grotesk görünür. */
     .label-page {
+      --label-mono: "Courier New", "DejaVu Sans Mono", monospace;
+      --label-display: "Arial Black", "Helvetica Neue", Arial, sans-serif;
       width: ${widthMm}mm;
       height: ${heightMm}mm;
       overflow: hidden;
       display: grid;
-      grid-template-columns: 7mm minmax(0, 1fr);
-      border: .35mm solid #000;
+      grid-template-columns: 5.6mm minmax(0, 1fr);
+      border: .5mm solid #000;
       break-after: page;
       page-break-after: always;
-      font-family: "Courier New", monospace;
+      font-family: var(--label-mono);
       line-height: 1.05;
     }
     .label-page:last-child { break-after: auto; page-break-after: auto; }
@@ -785,7 +791,7 @@ export function buildCleanLabelDocument(
       grid-template-rows: 1fr 1fr;
       place-items: center;
       overflow: hidden;
-      border-right: .35mm solid #000;
+      border-right: .5mm solid #000;
     }
     .surat-rail strong,
     .surat-rail span {
@@ -793,18 +799,21 @@ export function buildCleanLabelDocument(
       transform: rotate(180deg);
       white-space: nowrap;
     }
-    .surat-rail strong { font-size: 11pt; font-weight: 900; letter-spacing: .4mm; }
-    .surat-rail span { max-height: 96%; font-size: 8pt; font-weight: 900; }
+    .surat-rail strong { font-size: 10pt; font-weight: 900; letter-spacing: .35mm; }
+    .surat-rail span { max-height: 96%; font-size: 7.2pt; font-weight: 900; }
+    /* Satır dağılımı referansa göre yeniden dengelendi. SABİT satır TOPLAMI
+       87mm OLARAK KORUNUR; böylece alt ürün alanının yüksekliği ve
+       resolveProductFit'in 9.4mm varsayımı DEĞİŞMEZ. */
     .surat-body {
       display: grid;
-      grid-template-rows: 11.5mm 21.5mm 23mm 10mm 21mm 1fr;
+      grid-template-rows: 12mm 20.5mm 21.5mm 10mm 23mm 1fr;
       min-width: 0;
       min-height: 0;
     }
     .surat-section {
       min-width: 0;
       overflow: hidden;
-      border-bottom: .35mm solid #000;
+      border-bottom: .5mm solid #000;
     }
     .surat-section:last-child { border-bottom: 0; }
     .surat-header {
@@ -821,9 +830,12 @@ export function buildCleanLabelDocument(
       text-overflow: ellipsis;
       white-space: nowrap;
     }
-    .surat-header span { font-size: 7pt; font-weight: 800; }
-    .surat-header b { font-size: 10pt; font-weight: 900; text-transform: uppercase; }
+    .surat-header span { font-size: 6.8pt; font-weight: 800; }
+    /* Gönderici adı üst bloğun EN baskın metnidir. */
+    .surat-header b { font-size: 11.5pt; font-weight: 900; text-transform: uppercase; }
     .surat-header-right { text-align: right; }
+    /* T.No değeri net ve kalın (orta güçlü kademe). */
+    .surat-header-right span strong { font-size: 8.6pt; font-weight: 900; }
     /* Çubuklar geniş alana yayılır; ISO 10X sessiz alan SVG viewBox'ı içinde
        taşınır (barcodeQuietZone.ts). Buradaki 1mm yalnız fiziksel kenar
        payıdır, sessiz alanın YERİNE geçmez. */
@@ -840,7 +852,7 @@ export function buildCleanLabelDocument(
     /* Yukseklik 20.5 -> 18.5mm: alt bosluk eklendigi icin satir yuksekligi
        (21.5mm) asilmaz. YATAY geometri (cubuk genisligi, 10X sessiz alan)
        preserveAspectRatio='none' sayesinde bundan ETKILENMEZ. */
-    .surat-barcode svg { width: 100%; height: 18.2mm; display: block; }
+    .surat-barcode svg { width: 100%; height: 17.2mm; display: block; }
     /* Referans: adres kutusu TEK bölmedir; sağda ayrı kutu YOKTUR.
        Alt satırda solda alıcı telefonu, sağda il/ilçe bulunur. */
     .surat-address {
@@ -863,7 +875,7 @@ export function buildCleanLabelDocument(
     .surat-address-footer .surat-address-region {
       flex: 1 1 auto;
       text-align: right;
-      font-size: 7.5pt;
+      font-size: 8pt;
       font-weight: 900;
     }
     .surat-address-copy b,
@@ -875,8 +887,9 @@ export function buildCleanLabelDocument(
       word-break: normal;
       overflow-wrap: break-word;
     }
+    /* Alıcı adı adres satırlarından BASKIN (orta güçlü kademe). */
     .surat-address-copy b,
-    .surat-address-copy strong { font-size: 8.5pt; font-weight: 900; line-height: 1.15; }
+    .surat-address-copy strong { font-size: 9.2pt; font-weight: 900; line-height: 1.15; }
     .surat-address-copy span { font-size: 7pt; font-weight: 800; line-height: 1.15; }
     /* Adres kayıpsız sarılır; uzunluk arttıkça font kademeli küçülür.
        Ellipsis/kesme YOKTUR. */
@@ -896,21 +909,27 @@ export function buildCleanLabelDocument(
       align-content: center;
       padding: .6mm 0 .6mm 2mm;
     }
-    .surat-cargo span { font-size: 7pt; font-weight: 800; }
-    .surat-cargo strong { font-size: 13pt; font-weight: 900; }
+    .surat-cargo span { font-size: 6.6pt; font-weight: 800; }
+    /* POCH / KOLI / desi referansta en güçlü kademededir. */
+    .surat-cargo strong {
+      font-family: var(--label-display);
+      font-size: 14.5pt;
+      font-weight: 900;
+      letter-spacing: -.05mm;
+    }
     .surat-delivery {
       display: grid;
-      grid-template-columns: 23mm minmax(0, 1fr) 15mm;
+      grid-template-columns: 21mm minmax(0, 1fr) 12.5mm;
       align-items: center;
-      gap: 2mm;
-      padding: 1.2mm 2mm;
+      gap: 1.8mm;
+      padding: 1mm 2mm;
     }
     .surat-qr-large,
     .surat-qr-small {
       width: 100%;
       aspect-ratio: 1 / 1;
       display: block;
-      border: .35mm solid #000;
+      border: .5mm solid #000;
     }
     /* Parça adedi bloğu: her bilgi AYRI satırda, sabit line-height ile.
        Metinler üst üste binmez, QR/DataMatrix alanına taşmaz. */
@@ -934,13 +953,26 @@ export function buildCleanLabelDocument(
       overflow-wrap: break-word;
       line-height: 1.05;
     }
-    .surat-parcel-label { font-size: 6.5pt; }
-    .surat-parcel-count { font-size: 11pt; }
+    /* Referans: "1 / 1" ile "Adrese Teslim" AYNI satırdadır. */
+    .surat-parcel-row {
+      display: flex;
+      align-items: baseline;
+      gap: 2.5mm;
+      min-width: 0;
+    }
+    .surat-parcel-label { font-size: 6.2pt; }
+    .surat-parcel-count { font-size: 12pt; flex: 0 0 auto; }
     .surat-delivery-type { font-size: 9.5pt; }
-    .surat-destination { font-style: normal; }
-    .surat-destination-normal { font-size: 9.5pt; }
-    .surat-destination-small { font-size: 7.5pt; }
-    .surat-transfer { font-size: 8.5pt !important; }
+    /* EN GÜÇLÜ görsel vurgu: rota / aktarma satırları. */
+    .surat-destination,
+    .surat-transfer {
+      font-family: var(--label-display);
+      font-style: normal;
+      letter-spacing: -.08mm;
+    }
+    .surat-destination-normal { font-size: 15pt; }
+    .surat-destination-small { font-size: 11.5pt; }
+    .surat-transfer { font-size: 13pt !important; }
     /* Urun alani: SESSIZ KIRPMA YOK. Metin sarilir; sigmazsa punto
        resolveProductFit ile kademeli kucultulur (--product-* degiskenleri).
        Hicbir kademede sigmazsa render ACIK hata verir. */
@@ -1124,8 +1156,10 @@ export function renderPrintableLabelHtml(data: LabelData): string {
             ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-large')}
             <div class="surat-delivery-copy">
               <span class="surat-parcel-label">Parca Adedi</span>
-              <b class="surat-parcel-count">1 / 1</b>
-              <strong class="surat-delivery-type">Adrese Teslim</strong>
+              <div class="surat-parcel-row">
+                <b class="surat-parcel-count">1 / 1</b>
+                <strong class="surat-delivery-type">Adrese Teslim</strong>
+              </div>
               <em class="surat-destination ${destinationScaleClass}">${escapeHtml(routeCenter)}</em>
               <strong class="surat-transfer">${escapeHtml(transferCenter)}</strong>
             </div>
