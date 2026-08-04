@@ -19,15 +19,8 @@ import { PRINT_HOST_UNAVAILABLE_MESSAGE } from './suratPrintFailureReasons'
 import {
   buildProductMetaText,
   buildProductTitleText,
-  PRODUCT_OVERFLOW_MESSAGE,
-  resolveProductFit,
 } from './labelProductFit'
-import { ROUTE_OVERFLOW_MESSAGE, resolveRouteFit } from './labelRouteFit'
-import {
-  LABEL_LAYOUT_PROFILES,
-  resolveProductAreaHeightMm,
-  type LabelLayoutProfile,
-} from './labelLayoutProfile'
+import { resolveLabelLayout } from './labelLayoutResolver'
 
 // Her etiket sayfası kendi bağımsız (immutable) modelini kullanır; bir
 // siparişin kodları başka siparişe sızamaz.
@@ -1084,52 +1077,30 @@ export function renderPrintableLabelHtml(data: LabelData): string {
   // parça-adedi etiketi + "1/1 Adrese Teslim" satırı ve satır boşlukları
   // düşülür. Sütun genişliği: gövde 93.9 - yatay padding 4 - büyük QR 21 -
   // küçük QR 12.5 - iki boşluk 3.6 = 52.8mm (kötümser 52mm).
-  // Profil secimi DETERMINISTIK: sabit sirali listede ILK sigan profil.
-  // Ayni girdi -> ayni profil, reprint AYNI sonucu uretir.
-  const fitItems = (data.items ?? []).map((line) => ({
-    productName: String(line.productName ?? ''),
-    quantity: Number(line.quantity) || 1,
-    color: line.color,
-    size: line.size,
-    sku: line.sku,
-  }))
-  let selectedProfile: LabelLayoutProfile | null = null
-  let selectedProductFit: ReturnType<typeof resolveProductFit> | null = null
-  let selectedRouteFit: ReturnType<typeof resolveRouteFit> | null = null
-  let lastRouteFits = false
-  for (const profile of LABEL_LAYOUT_PROFILES) {
-    const candidateRoute = resolveRouteFit({
-      destination: routeCenter,
-      transfer: transferCenter,
-      availableWidthMm: 52,
-      availableHeightMm: profile.routeBudgetMm,
-    })
-    lastRouteFits = lastRouteFits || candidateRoute.fits
-    if (!candidateRoute.fits) continue
-    const candidateProduct = resolveProductFit({
-      items: fitItems,
-      availableWidthMm: 89,
-      availableHeightMm: resolveProductAreaHeightMm(profile),
-    })
-    if (!candidateProduct.fits) continue
-    selectedProfile = profile
-    selectedProductFit = candidateProduct
-    selectedRouteFit = candidateRoute
-    break
-  }
-  if (!selectedProfile || !selectedProductFit || !selectedRouteFit) {
+  // Profil secimi ON KONTROL ile AYNI cozumleyiciden gelir (tek kaynak).
+  const layout = resolveLabelLayout({
+    items: (data.items ?? []).map((line) => ({
+      productName: String(line.productName ?? ''),
+      quantity: Number(line.quantity) || 1,
+      color: line.color,
+      size: line.size,
+      sku: line.sku,
+    })),
+    destination: routeCenter,
+    transfer: transferCenter,
+  })
+  if (!layout.ok) {
     // Sessiz kirpma YOK: hicbir guvenli profil sigdiramadi.
-    throw new Error(
-      lastRouteFits ? PRODUCT_OVERFLOW_MESSAGE : ROUTE_OVERFLOW_MESSAGE,
-    )
+    throw new Error(layout.reason)
   }
-  const routeFit = selectedRouteFit
+  const selectedProfile = layout.profile
+  const routeFit = layout.routeFit
   const productTitle = item ? buildProductTitleText(item) : 'Ürün bilgisi yok'
   const productMeta = buildProductMetaText(item ?? {
     productName: '',
     quantity: 1,
   })
-  const productFit = selectedProductFit
+  const productFit = layout.productFit
   const productStyle =
     `--layout-address-row:${selectedProfile.addressRowMm}mm;` +
     `--layout-delivery-row:${selectedProfile.deliveryRowMm}mm;` +
