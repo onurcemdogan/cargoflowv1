@@ -142,16 +142,19 @@ test('UI-10: sonuç paneli aggregate alanlarını gösterir', () => {
   ]) {
     assert.ok(panel.includes(label), `${label} gösterilmeli`)
   }
-  // Başlıklar PROVIDER-BAĞIMSIZ; "doğrulanmadı" ayrı kategoridir.
+  // Başlıklar PROVIDER-BAĞIMSIZ. Baskı doğrulaması KALDIRILDI: "doğrulanmadı"
+  // kategorisi ve onay bekleyen panel ARTIK YOK.
   for (const status of [
     'Kargo etiketi işlemi tamamlandı',
     'Kargo etiketi işlemi kısmen tamamlandı',
     'Kargo etiketi işlemi tamamlanamadı',
-    'Baskı doğrulanmadı',
   ]) {
     assert.ok(panel.includes(status), `${status} durumu`)
   }
-  assert.ok(panel.includes('Yeniden yazdırılabilir:'), 'doğrulanmayanlar ayrı')
+  assert.equal(panel.includes('Baskı doğrulanmadı'), false)
+  assert.equal(panel.includes('Yeniden yazdırılabilir:'), false)
+  assert.equal(controls.includes('Evet, çıktı'), false)
+  assert.equal(controls.includes('Hayır, çıkmadı'), false)
   assert.match(panel, /<details>/, 'detaylar açılır bölümde')
 })
 

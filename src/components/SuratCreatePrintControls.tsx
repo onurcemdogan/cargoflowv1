@@ -9,10 +9,6 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CargoOrder } from '../types/cargoflow'
 import type { OrderCountSummary } from '../utils/orderCounts'
 import {
-  partitionPrintOutcome,
-  type PendingPrintConfirmation,
-} from '../utils/printConfirmationModel'
-import {
   buildSelectedOrderSnapshot,
   describeSelectionOutsideView,
 } from '../utils/selectedOrderSnapshot'
@@ -62,9 +58,8 @@ export interface SuratCreatePrintControlsProps {
   createDisabledReason?: string
   zplDisabledReason?: string
   handedDisabledReason?: string
-  /** Bekleyen (BLOKLAMAYAN) baski dogrulamasi; popup DEGIL. */
-  pendingPrintConfirmation?: PendingPrintConfirmation
-  onAnswerPrintConfirmation?: (confirmed: boolean) => void
+  /** Kısa, geçici bilgi satırı (kullanıcı müdahalesi İSTEMEZ). */
+  suratPrintNotice?: string
 }
 
 export function SuratCreatePrintControls({
@@ -91,15 +86,14 @@ export function SuratCreatePrintControls({
   createDisabledReason,
   zplDisabledReason,
   handedDisabledReason,
-  pendingPrintConfirmation,
-  onAnswerPrintConfirmation,
+  suratPrintNotice,
 }: SuratCreatePrintControlsProps) {
   // Gelismis Islemler menusu: yalniz GORSEL gruplama. Hicbir islem kaldirilmadi,
   // hicbir handler degistirilmedi.
   const [advancedOpen, setAdvancedOpen] = useState(false)
   const advancedRef = useRef<HTMLDivElement | null>(null)
-  const awaitingConfirmation = Boolean(pendingPrintConfirmation)
-  const actionsLocked = suratCreatePrintRunning || awaitingConfirmation
+  // Kilit YALNIZ işlem süresince; baskı doğrulaması BEKLENMEZ.
+  const actionsLocked = suratCreatePrintRunning
   // Menü görünürlüğü TÜRETİLİR: işlem sürerken veya baskı doğrulaması
   // beklerken menü kapalıdır (effect içinde setState YOK).
   const menuOpen = advancedOpen && !actionsLocked
@@ -145,76 +139,33 @@ export function SuratCreatePrintControls({
 
   return (
     <>
-      {pendingPrintConfirmation ? (
-        <section
-          className="surat-print-confirmation"
+      {suratPrintNotice ? (
+        <p
+          className="surat-print-notice"
           aria-live="polite"
-          data-testid="print-confirmation"
+          data-testid="print-notice"
         >
-          <strong>Baskı sonucu bekleniyor</strong>
-          <span>
-            {pendingPrintConfirmation.documentOrderNumbers.length} etiket
-            yazdırma penceresine gönderildi.
-          </span>
-          {pendingPrintConfirmation.skipped.length > 0 ? (
-            <span>
-              {pendingPrintConfirmation.skipped.length} etiket atlandı:{' '}
-              {pendingPrintConfirmation.skipped[0].reason}
-            </span>
-          ) : null}
-          <p>Etiketler yazıcıdan doğru şekilde çıktı mı?</p>
-          <div className="surat-print-confirmation-actions">
-            <button
-              type="button"
-              className="primary-button"
-              onClick={() => onAnswerPrintConfirmation?.(true)}
-            >
-              Evet, çıktı
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={() => onAnswerPrintConfirmation?.(false)}
-            >
-              Hayır, çıkmadı
-            </button>
-          </div>
-        </section>
+          {suratPrintNotice}
+        </p>
       ) : null}
 
-      {suratCreatePrintResult && !pendingPrintConfirmation ? (
+      {suratCreatePrintResult ? (
         <section className="surat-batch-result">
           <strong>
-            {(() => {
-              const parts = partitionPrintOutcome(suratCreatePrintResult)
-              if (parts.failed.length === 0 && parts.skipped.length === 0) {
-                return parts.notConfirmed.length > 0
-                  ? 'Baskı doğrulanmadı'
-                  : 'Kargo etiketi işlemi tamamlandı'
-              }
-              return suratCreatePrintResult.printed > 0
+            {suratCreatePrintResult.failed.length === 0 &&
+            suratCreatePrintResult.skipped.length === 0
+              ? 'Kargo etiketi işlemi tamamlandı'
+              : suratCreatePrintResult.printed > 0
                 ? 'Kargo etiketi işlemi kısmen tamamlandı'
-                : 'Kargo etiketi işlemi tamamlanamadı'
-            })()}
+                : 'Kargo etiketi işlemi tamamlanamadı'}
           </strong>
           <span>Seçilen: {suratCreatePrintResult.selectedCount}</span>
           <span>Yeni oluşturulan: {suratCreatePrintResult.created}</span>
           <span>Hazır etiket: {suratCreatePrintResult.existingReady}</span>
           <span>Tekrar baskı: {suratCreatePrintResult.reprinted}</span>
           <span>Yazdırılan: {suratCreatePrintResult.printed}</span>
-          <span>
-            Atlanan: {partitionPrintOutcome(suratCreatePrintResult).skipped.length}
-          </span>
-          <span>
-            Başarısız: {partitionPrintOutcome(suratCreatePrintResult).failed.length}
-          </span>
-          {partitionPrintOutcome(suratCreatePrintResult).notConfirmed.length >
-          0 ? (
-            <span>
-              Yeniden yazdırılabilir:{' '}
-              {partitionPrintOutcome(suratCreatePrintResult).notConfirmed.length}
-            </span>
-          ) : null}
+          <span>Atlanan: {suratCreatePrintResult.skipped.length}</span>
+          <span>Başarısız: {suratCreatePrintResult.failed.length}</span>
           {suratCreatePrintResult.skipped.length +
             suratCreatePrintResult.failed.length >
           0 ? (
@@ -267,11 +218,9 @@ export function SuratCreatePrintControls({
                 : 'Seçili siparişler için kargo etiketi oluşturur ve yazdırır.'
             }
           >
-            {awaitingConfirmation
-              ? 'Baskı doğrulaması bekleniyor'
-              : suratCreatePrintRunning
-                ? suratPhaseText || 'İşleniyor…'
-                : 'Kargo Etiketi Oluştur ve Yazdır'}
+            {suratCreatePrintRunning
+              ? suratPhaseText || 'İşleniyor…'
+              : 'Kargo Etiketi Oluştur ve Yazdır'}
           </button>
           <div className="surat-advanced-actions" ref={advancedRef}>
             <button

@@ -1,6 +1,6 @@
 import type { LabelProvider } from '../providers/labels/LabelProvider'
 import type { MarketplaceProvider } from '../providers/marketplace/MarketplaceProvider'
-import type { PrintInput, PrintProvider, PrintResult } from '../providers/printing/PrintProvider'
+import type { PrintProvider, PrintResult } from '../providers/printing/PrintProvider'
 import type { ShippingProvider } from '../providers/shipping/ShippingProvider'
 import type {
   CargoOrder,
@@ -2144,9 +2144,6 @@ export class OrderWorkflowService {
       confirmedAt: string
       printedBy?: string
       includePreviouslyPrinted?: boolean
-      // Browser-print baskı doğrulaması (BLOKLAYAN dialog DEĞİL, inline panel).
-      // Verilmezse onay alınmamış sayılır; sessiz başarı YOKTUR.
-      confirmBrowserPrint?: PrintInput['confirmBrowserPrint']
     },
   ): Promise<{
     orders: CargoOrder[]
@@ -2242,7 +2239,6 @@ export class OrderWorkflowService {
       confirmedAt: options.confirmedAt,
       labelTemplate: template,
       mappingConfig,
-      confirmBrowserPrint: options.confirmBrowserPrint,
     })
 
     const successfulOrderNumbers = new Set(
