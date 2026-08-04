@@ -116,8 +116,10 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     html.indexOf('Yazı Boyutları') <
       html.indexOf('Etikette Görünecek Alanlar'),
   )
-  assert.match(html, /--label-delivery-route-size:1[3-8]px/)
-  assert.match(html, /--label-transfer-size:1[2-6]px/)
+  // Rota puntosu artik resolveRouteFit kademesinden gelir (pt) ve editordeki
+  // deger yalniz DAHA KUCUKSE uygulanir; tasma imkansiz.
+  assert.match(html, /--label-delivery-route-size:(9|10|11|12|13|13\.5)pt/)
+  assert.match(html, /--label-transfer-size:(8|9|10|10\.5|11|11\.5|12)pt/)
 
   const { OrderWorkflowService } = await vite.ssrLoadModule(
     '/src/services/orderWorkflowService.ts',

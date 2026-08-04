@@ -537,7 +537,9 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   )
   assert.match(editablePreviewHtml, /Düzenlenmiş Alıcı/)
   assert.match(editablePreviewHtml, /Etiketi Düzenle/)
-  assert.match(editablePreviewHtml, /--label-delivery-route-size:15px/)
+  // Uzun teslimat bolgesinde kademe devreye girer: punto (pt) duser, metin
+  // kirpilmaz ve urun footer'ina tasmaz.
+  assert.match(editablePreviewHtml, /--label-delivery-route-size:(9|10|11|12)pt/)
 
   const singleReprintHtml = renderToStaticMarkup(
     createElement(PrintPreviewModal, {

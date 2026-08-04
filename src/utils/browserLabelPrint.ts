@@ -22,6 +22,7 @@ import {
   PRODUCT_OVERFLOW_MESSAGE,
   resolveProductFit,
 } from './labelProductFit'
+import { ROUTE_OVERFLOW_MESSAGE, resolveRouteFit } from './labelRouteFit'
 
 // Her etiket sayfası kendi bağımsız (immutable) modelini kullanır; bir
 // siparişin kodları başka siparişe sızamaz.
@@ -970,9 +971,18 @@ export function buildCleanLabelDocument(
       font-style: normal;
       letter-spacing: -.08mm;
     }
-    .surat-destination-normal { font-size: 15pt; }
-    .surat-destination-small { font-size: 11.5pt; }
-    .surat-transfer { font-size: 13pt !important; }
+    /* Punto resolveRouteFit'ten gelir; SESSIZ KIRPMA YOK. Gucu once
+       font-weight saglar, punto yalniz gerektigi kadar duser. */
+    .surat-destination {
+      font-size: var(--route-destination-size, 13pt);
+      line-height: var(--route-line-height, 1);
+    }
+    .surat-transfer {
+      font-size: var(--route-transfer-size, 11.5pt) !important;
+      line-height: var(--route-line-height, 1);
+    }
+    /* Rota blogu kendi bolumunde kalir: komsulara TASMAZ. */
+    .surat-delivery-copy { min-height: 0; }
     /* Urun alani: SESSIZ KIRPMA YOK. Metin sarilir; sigmazsa punto
        resolveProductFit ile kademeli kucultulur (--product-* degiskenleri).
        Hicbir kademede sigmazsa render ACIK hata verir. */
@@ -1059,10 +1069,19 @@ export function renderPrintableLabelHtml(data: LabelData): string {
   const phoneDisplay = data.recipientPhone
     ? maskPhone(data.recipientPhone)
     : '-'
-  const destinationScaleClass =
-    routeCenter.length > 24
-      ? 'surat-destination-small'
-      : 'surat-destination-normal'
+  // Rota bloğunun GERÇEK bütçesi: delivery satırı 23mm, dikey padding 2mm,
+  // parça-adedi etiketi + "1/1 Adrese Teslim" satırı ve satır boşlukları
+  // düşülür. Sütun genişliği: gövde 93.9 - yatay padding 4 - büyük QR 21 -
+  // küçük QR 12.5 - iki boşluk 3.6 = 52.8mm (kötümser 52mm).
+  const routeFit = resolveRouteFit({
+    destination: routeCenter,
+    transfer: transferCenter,
+    availableWidthMm: 52,
+    availableHeightMm: 13.4,
+  })
+  if (!routeFit.fits) {
+    throw new Error(ROUTE_OVERFLOW_MESSAGE)
+  }
   const productTitle = item ? buildProductTitleText(item) : 'Ürün bilgisi yok'
   const productMeta = buildProductMetaText(item ?? {
     productName: '',
@@ -1088,7 +1107,10 @@ export function renderPrintableLabelHtml(data: LabelData): string {
   const productStyle =
     `--product-title-size:${productFit.tier.titlePt}pt;` +
     `--product-meta-size:${productFit.tier.metaPt}pt;` +
-    `--product-line-height:${productFit.tier.lineHeight}`
+    `--product-line-height:${productFit.tier.lineHeight};` +
+    `--route-destination-size:${routeFit.tier.destinationPt}pt;` +
+    `--route-transfer-size:${routeFit.tier.transferPt}pt;` +
+    `--route-line-height:${routeFit.tier.lineHeight}`
   // Çoklu ürün: tüm satırlar footer'da listelenir (kayıpsız, sarmalı).
   // Tekli sipariş markup'ı regression baseline'dır ve birebir korunur.
   const multipleItems = data.items.length > 1
@@ -1160,7 +1182,7 @@ export function renderPrintableLabelHtml(data: LabelData): string {
                 <b class="surat-parcel-count">1 / 1</b>
                 <strong class="surat-delivery-type">Adrese Teslim</strong>
               </div>
-              <em class="surat-destination ${destinationScaleClass}">${escapeHtml(routeCenter)}</em>
+              <em class="surat-destination">${escapeHtml(routeCenter)}</em>
               <strong class="surat-transfer">${escapeHtml(transferCenter)}</strong>
             </div>
             ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-small')}

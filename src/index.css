@@ -2765,7 +2765,7 @@ button:disabled {
   align-content: center;
   gap: 1px;
   min-width: 0;
-  overflow: hidden;
+  min-height: 0;
   text-align: left;
 }
 
@@ -2787,41 +2787,41 @@ button:disabled {
 }
 
 .surat-delivery-copy strong {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
   font-size: var(--label-delivery-title-size, 14px);
   font-style: normal;
   font-weight: 900;
   line-height: 1.05;
   overflow-wrap: anywhere;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
+/* EN GÜÇLÜ görsel vurgu: rota / aktarma satırları.
+   SESSİZ KIRPMA YOK: -webkit-line-clamp KALDIRILDI. Sığdırma resolveRouteFit
+   punto kademesiyle yapılır — baskı ile AYNI sözleşme. */
 .surat-delivery-copy em {
-  display: -webkit-box;
-  overflow: hidden;
+  display: block;
   font-family: var(--label-display);
-  font-size: var(--label-delivery-route-size, 27px);
+  font-size: var(--label-delivery-route-size, 13pt);
   font-style: normal;
   font-weight: 900;
   letter-spacing: -.4px;
-  line-height: 1.02;
+  line-height: var(--label-route-line-height, 1);
   overflow-wrap: anywhere;
   text-transform: uppercase;
   white-space: normal;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
 }
 
 .surat-delivery-copy .surat-transfer {
+  display: block;
   font-family: var(--label-display);
-  font-size: var(--label-transfer-size, 23px);
+  font-size: var(--label-transfer-size, 11.5pt);
   font-weight: 900;
   letter-spacing: -.4px;
-  line-height: 1.02;
+  line-height: var(--label-route-line-height, 1);
+  overflow-wrap: anywhere;
   text-transform: uppercase;
+  white-space: normal;
 }
 
 .surat-product-section {

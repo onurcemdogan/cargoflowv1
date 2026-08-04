@@ -13,6 +13,7 @@ import {
   PRODUCT_OVERFLOW_MESSAGE,
   resolveProductFit,
 } from '../utils/labelProductFit'
+import { resolveRouteFit } from '../utils/labelRouteFit'
 import { QrCodeSvg } from './QrCodeSvg'
 
 interface LabelHtmlPreviewProps {
@@ -78,6 +79,13 @@ export function LabelHtmlPreview({
   const barcodeValue = data.barcodeValue
   const routeCenter = overrides?.routeCenter || data.routeCenter
   const transferCenter = overrides?.transferCenter || data.transferCenter
+  // Baskı ile AYNI bütçe/kademe: rota bloğu ürün footer'ına taşmaz.
+  const routeFit = resolveRouteFit({
+    destination: routeCenter,
+    transfer: transferCenter,
+    availableWidthMm: 52,
+    availableHeightMm: 13.4,
+  })
   const desi =
     overrides?.desi !== undefined ? overrides.desi : data.desi
   const addressLines = splitAddress(data.address)
@@ -91,23 +99,23 @@ export function LabelHtmlPreview({
     '--label-route-size': `${fitFont(typography.route, routeCenter, 20, 12)}px`,
     '--label-cargo-value-size': `${typography.cargoValue}px`,
     '--label-delivery-title-size': `${typography.deliveryTitle}px`,
-    '--label-delivery-route-size': `${fitFont(
-      typography.deliveryRoute,
-      routeCenter,
-      18,
-      15,
-    )}px`,
-    '--label-transfer-size': `${fitFont(
-      typography.transfer,
-      transferCenter,
-      22,
-      14,
-    )}px`,
     // Baski yoluyla AYNI sigdirma sozlesmesi (resolveProductFit): once normal
     // punto, sigmazsa minimuma kadar kademeli kucultme. Kirpma YOK.
     '--label-product-title-size': `${productFit.tier.titlePt}pt`,
     '--label-product-meta-size': `${productFit.tier.metaPt}pt`,
     '--label-product-line-height': `${productFit.tier.lineHeight}`,
+    // Rota puntosu: resolveRouteFit GÜVENLİ ÜST SINIRDIR (baskı ile aynı
+    // sözleşme). Şablon editöründeki değer daha KÜÇÜKSE o uygulanır; daha
+    // büyükse taşmayı önlemek için kademe kazanır.
+    '--label-delivery-route-size': `${Math.min(
+      routeFit.tier.destinationPt,
+      typography.deliveryRoute * 0.75,
+    )}pt`,
+    '--label-transfer-size': `${Math.min(
+      routeFit.tier.transferPt,
+      typography.transfer * 0.75,
+    )}pt`,
+    '--label-route-line-height': `${routeFit.tier.lineHeight}`,
   } as CSSProperties
 
   return (
