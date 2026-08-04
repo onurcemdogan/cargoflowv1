@@ -2260,11 +2260,21 @@ export class OrderWorkflowService {
         const failedJob = printResult.jobs?.find(
           (job) => job.orderNumber === order.orderNumber,
         )
+        // KOK NEDEN (canli debug): bu tani kaydi HER basari-sizlikta
+        // "/api/printing/zebra/raw" ve "Zebra Yazdir" olarak yaziliyordu.
+        // Tarayici baskisinda HICBIR HTTP cagrisi yapilmadigi halde debug
+        // bandinda gercek bir Zebra istegi varmis gibi gorunuyordu.
+        // Artik kayit GERCEK saglayiciya gore etiketlenir.
+        const isZebraPath = printerSettings.mode === 'local-agent'
         apiDebugService.append({
           provider: 'Sürat',
-          operation: 'Zebra Yazdır',
-          endpoint: '/api/printing/zebra/raw',
-          requestUrl: '/api/printing/zebra/raw',
+          operation: isZebraPath ? 'Zebra Yazdır' : 'Tarayıcı Baskısı',
+          endpoint: isZebraPath
+            ? '/api/printing/zebra/raw'
+            : 'browser-print (HTTP çağrısı yok)',
+          requestUrl: isZebraPath
+            ? '/api/printing/zebra/raw'
+            : 'browser-print (HTTP çağrısı yok)',
           responseStatus: 0,
           responseBody: printResult,
           status: 'ERROR',
@@ -2293,7 +2303,7 @@ export class OrderWorkflowService {
           errorMessage:
             failedJob?.errorMessage ||
             printResult.errorMessage ||
-            'Etiket Zebra yazıcıya gönderilemedi.',
+            'Etiket yazdırılamadı.',
           errorSource: 'Frontend',
         })
       }
@@ -2302,8 +2312,11 @@ export class OrderWorkflowService {
           orders,
           result: {
             level: 'error',
-            message: `Etiket Zebra yazıcıya gönderilemedi. Etiket durumu değiştirilmedi. ${
-              printResult.errorMessage ?? ''
+            // PROVIDER-BAGIMSIZ baslik + TEK sebep (tekrar yok).
+            message: `Etiket yazdırılamadı. Etiket durumu değiştirilmedi. ${
+              printResult.jobs?.find((job) => job.ok !== true)?.errorMessage ??
+              printResult.errorMessage ??
+              ''
             }`.trim(),
             bulkActionDebug: buildBulkActionDebug(
               'PRINT_LABELS',
