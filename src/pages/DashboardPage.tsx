@@ -67,6 +67,10 @@ interface DashboardPageProps {
   onDownloadOrder: (orderId: string) => void
   onPrintOrder: (orderId: string) => void
   onCreateShipment: (orderId: string) => void
+  /** Ortak tek-tus akisi (Siparisler sayfasiyla AYNI handler). */
+  onCreateAndPrintLabelForOrder?: (orderId: string) => void
+  isCarrierLabelActionBusy?: (orderId: string) => boolean
+  carrierLabelPhaseText?: string
   onTrackShipment: (orderId: string) => void
   onDesiChange: (
     orderId: string,
@@ -103,6 +107,9 @@ export function DashboardPage({
   onDownloadOrder,
   onPrintOrder,
   onCreateShipment,
+  onCreateAndPrintLabelForOrder,
+  isCarrierLabelActionBusy,
+  carrierLabelPhaseText,
   onTrackShipment,
   onDesiChange,
   desiConfig,
@@ -814,12 +821,23 @@ export function DashboardPage({
                           >
                             <Eye size={15} />
                           </button>
+                          {/* Ortak tek-tus akisi: etiket yoksa olusturur,
+                              varsa yazdirir, PRINTED ise reprint eder.
+                              "Barkod Bekliyor" siparis ARTIK disabled DEGIL —
+                              onkontrol sonucu tiklamadan sonra gosterilir. */}
                           <button
                             type="button"
-                            aria-label={`${operation.displayOrderNumber} etiketi yazdır`}
-                            title={operation.canPrint ? 'Etiketi yazdır' : operation.printDisabledReason}
-                            disabled={!operation.canPrint}
-                            onClick={() => onPrintOrder(operation.id)}
+                            aria-label={`${operation.displayOrderNumber} kargo etiketi oluştur ve yazdır`}
+                            title="Kargo etiketi oluştur ve yazdır"
+                            disabled={
+                              !operation.id ||
+                              Boolean(isCarrierLabelActionBusy?.(operation.id))
+                            }
+                            onClick={() =>
+                              (onCreateAndPrintLabelForOrder ?? onPrintOrder)(
+                                operation.id,
+                              )
+                            }
                           >
                             <Printer size={15} />
                           </button>
@@ -859,6 +877,11 @@ export function DashboardPage({
             setDashboardDetailError(undefined)
           }}
           onCreateShipment={onCreateShipment}
+          onCreateAndPrintLabel={onCreateAndPrintLabelForOrder}
+          createAndPrintBusy={Boolean(
+            isCarrierLabelActionBusy?.(activeDashboardOrder.id),
+          )}
+          createAndPrintPhaseText={carrierLabelPhaseText}
           onTrackShipment={onTrackShipment}
           onDownloadZpl={onDownloadOrder}
           onPrintLabel={onPrintOrder}
