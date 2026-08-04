@@ -32,6 +32,7 @@ import {
 } from './services/suratOrchestratorDeps'
 import { resolveSelectionAfterBatch } from './utils/selectedOrderSnapshot'
 import { prepareSuratPrintHostSynchronously } from './utils/browserLabelPrint'
+import { resolveSuratPhaseText } from './utils/suratPhaseText'
 import { PRINT_HOST_UNAVAILABLE_MESSAGE } from './utils/suratPrintFailureReasons'
 import {
   hasPendingServerOperation,
@@ -1076,6 +1077,33 @@ function App() {
     }
   }
 
+  // ORTAK GIRIS NOKTASI — Siparisler, Siparis Detayi ve Dashboard Son
+  // Operasyonlar AYNI akisi kullanir. Bu YALNIZ bir yonlendiricidir:
+  // orchestrator, adaptorler, operation registry, idempotency, post-create
+  // order handoff, persisted-label dogrulamasi ve browser/Zebra baski sonucu
+  // AYNEN mevcut yollardan gelir. Yeni endpoint/lifecycle/saglayici YOK.
+  function handleCreateAndPrintCarrierLabelsForIds(ids: string[]) {
+    void handleSuratCreateAndPrintForIds(ids)
+  }
+  function handleCreateAndPrintCarrierLabelForOrder(orderId: string) {
+    handleCreateAndPrintCarrierLabelsForIds([orderId])
+  }
+  // Bir ekranda baslayan run DIGER ekranlarda da busy gorunur; ayni paket
+  // kimligi icin ikinci create/print acilmaz.
+  function isCarrierLabelActionBusy(orderId: string): boolean {
+    if (suratRunning || suratRunActive.current) return true
+    const order = orders.find((item) => String(item.id) === String(orderId))
+    if (!order) return true
+    return (
+      hasPendingServerOperation(order) ||
+      isOperationInFlight(orderPackageIdentity(order))
+    )
+  }
+  const carrierLabelPhaseText = resolveSuratPhaseText(
+    suratRunning,
+    suratProgress,
+  )
+
   async function handlePrintLabelsForIds(orderIds: string[]) {
     if (orderIds.length === 0) {
       setOrdersState((current) => ({
@@ -1355,6 +1383,11 @@ function App() {
           onNavigateOrders={handleDashboardNavigateOrders}
           onDownloadOrder={handleDownloadZplForOrder}
           onPrintOrder={handleMarkPrintedForOrder}
+          onCreateAndPrintLabelForOrder={
+            handleCreateAndPrintCarrierLabelForOrder
+          }
+          isCarrierLabelActionBusy={isCarrierLabelActionBusy}
+          carrierLabelPhaseText={carrierLabelPhaseText}
           onCreateShipment={handleCreateShipmentForOrder}
           onTrackShipment={handleTrackShipmentForOrder}
           onDesiChange={handleOrderDesiChange}
@@ -1391,8 +1424,13 @@ function App() {
           onMarkPrintedForOrder={handleMarkPrintedForOrder}
           onMarkHandedToCargo={handleMarkHandedToCargo}
           onSuratCreateAndPrint={() =>
-            handleSuratCreateAndPrintForIds(selectedIds)
+            handleCreateAndPrintCarrierLabelsForIds(selectedIds)
           }
+          onCreateAndPrintLabelForOrder={
+            handleCreateAndPrintCarrierLabelForOrder
+          }
+          isCarrierLabelActionBusy={isCarrierLabelActionBusy}
+          carrierLabelPhaseText={carrierLabelPhaseText}
           suratCreatePrintRunning={suratRunning}
           suratCreatePrintProgress={suratProgress}
           suratCreatePrintResult={suratResult}

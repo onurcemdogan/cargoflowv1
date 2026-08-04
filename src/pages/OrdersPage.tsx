@@ -66,6 +66,9 @@ interface OrdersPageProps {
     total: number
   }
   suratPrintNotice?: string
+  onCreateAndPrintLabelForOrder?: (orderId: string) => void
+  isCarrierLabelActionBusy?: (orderId: string) => boolean
+  carrierLabelPhaseText?: string
   suratCreatePrintResult?: {
     selectedCount: number
     created: number
@@ -188,6 +191,9 @@ export function OrdersPage({
   suratCreatePrintRunning = false,
   suratCreatePrintProgress,
   suratPrintNotice,
+  onCreateAndPrintLabelForOrder,
+  isCarrierLabelActionBusy,
+  carrierLabelPhaseText,
   suratCreatePrintResult,
   lastResult,
   busy,
@@ -931,6 +937,11 @@ export function OrdersPage({
           busy={busy}
           onClose={() => setActiveOrderId(undefined)}
           onCreateShipment={onCreateShipmentForOrder}
+          onCreateAndPrintLabel={onCreateAndPrintLabelForOrder}
+          createAndPrintBusy={Boolean(
+            isCarrierLabelActionBusy?.(activeOrder.id),
+          )}
+          createAndPrintPhaseText={carrierLabelPhaseText}
           onTrackShipment={onTrackShipmentForOrder}
           onDownloadZpl={onDownloadZplForOrder}
           onPrintLabel={onMarkPrintedForOrder}

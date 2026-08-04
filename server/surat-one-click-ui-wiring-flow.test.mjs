@@ -29,7 +29,13 @@ test('UI-1: buton seçim yokken ve işlem sürerken DISABLED', () => {
 })
 
 test('UI-2: buton SEÇİM üzerinden çalışır, görünür listeden DEĞİL', () => {
-  assert.match(app, /handleSuratCreateAndPrintForIds\(selectedIds\)/)
+  // Ortak, provider-bagimsiz giris noktasi (Siparisler + Detay + Dashboard).
+  assert.match(app, /handleCreateAndPrintCarrierLabelsForIds\(selectedIds\)/)
+  assert.match(
+    app,
+    /function handleCreateAndPrintCarrierLabelsForIds[\s\S]*?handleSuratCreateAndPrintForIds\(ids\)/,
+    'wrapper mevcut akisa yonlendirir',
+  )
   const handler = app.slice(
     app.indexOf('async function handleSuratCreateAndPrintForIds'),
     app.indexOf('async function handlePrintLabelsForIds'),
