@@ -29,6 +29,7 @@ import type {
   WorkflowResult,
 } from '../types/cargoflow'
 import { formatDisplayDate, maskSecret } from '../utils/formatters'
+import { describeDesiMultiplierExample } from '../utils/orderDesi'
 import {
   resolveSuratConfigured,
   resolveTrendyolConfigured,
@@ -649,6 +650,11 @@ function SuratSettingsPanel({
     }))
   }
 
+  // Ekrandaki örnek GERÇEK hesaptan gelir (elle yazılmış rakam yok).
+  const desiMultiplierExample = describeDesiMultiplierExample(
+    form.desi?.defaultUnitDesi,
+  )
+
   return (
     <section className="integration-detail-panel" aria-label="Sürat Kargo ayarları">
       <div className="integration-detail-heading">
@@ -1053,14 +1059,58 @@ function SuratSettingsPanel({
             </div>
             <p className="integration-field-note">
               Bu değer BİRİM desidir ve sunucuda (organization) kalıcı saklanır.
-              Sipariş satırlarının adediyle çarpılır: varsayılan 2 iken tek adet
-              ürün 2 desi, aynı pakette toplam iki adet 4 desi olur. Sipariş
-              satırında veya üründe desi varsa ya da manuel toplam desi
+              Sipariş satırında veya üründe desi varsa ya da manuel toplam desi
               girildiyse ONLAR önceliklidir. Mevcut ürün, varyant, kategori ve
               tenant desi önceliği aynen korunur. Değişiklik yalnız bundan sonra
               oluşturulacak etiketleri etkiler; kayıtlı etiketler ve tekrar
               yazdırma değişmez.
             </p>
+            <div className="integration-toggle-row">
+              <input
+                id="desi-multiply-by-item-quantity"
+                type="checkbox"
+                role="switch"
+                checked={form.desi?.multiplyByItemQuantity !== false}
+                disabled={busy}
+                onChange={(event) => {
+                  const next = event.target.checked
+                  setForm((current) => ({
+                    ...current,
+                    desi: {
+                      ...(current.desi ?? {
+                        defaultUnitDesi: null,
+                        categoryDefaults: {},
+                        productOverrides: {},
+                        variantOverrides: {},
+                      }),
+                      multiplyByItemQuantity: next,
+                    },
+                  }))
+                }}
+              />
+              <span className="integration-toggle-text">
+                <label
+                  className="integration-toggle-title"
+                  htmlFor="desi-multiply-by-item-quantity"
+                >
+                  Ürün adedine göre desiyi çarp
+                </label>
+                <span className="integration-toggle-description">
+                  Açık (varsayılan): varsayılan gönderi desisi paketteki ürün
+                  adediyle çarpılır. Kapalı: varsayılan desi paket için yalnız
+                  bir kez uygulanır, adet toplamı artırmaz. Ayar yalnız
+                  varsayılan desiden hesaplanan YENİ gönderileri etkiler; ürün
+                  veya satır bazlı gerçek desi ile manuel toplam desi
+                  değişmez, kayıtlı etiketler ve tekrar yazdırma etkilenmez.
+                </span>
+                <span className="integration-toggle-example">
+                  Örnek — varsayılan {desiMultiplierExample.defaultUnitDesi}{' '}
+                  desi, {desiMultiplierExample.quantity} adet tek ürün: açık →{' '}
+                  {desiMultiplierExample.enabledDesi ?? '—'} desi, kapalı →{' '}
+                  {desiMultiplierExample.disabledDesi ?? '—'} desi.
+                </span>
+              </span>
+            </div>
           </>
         ) : null}
 

@@ -417,7 +417,10 @@ app.get('/api/local-config/integration', async (request, response) => {
           lastSyncStatus: ordersSyncState?.lastSyncStatus ?? null,
         },
         surat: status.surat,
-        desi: { defaultUnitDesi: shipmentDefaults.defaultUnitDesi },
+        desi: {
+          defaultUnitDesi: shipmentDefaults.defaultUnitDesi,
+          multiplyByItemQuantity: shipmentDefaults.multiplyByItemQuantity,
+        },
       })
     } catch {
       response.status(500).json({
@@ -529,6 +532,10 @@ app.put('/api/local-config/integration', async (request, response) => {
       if (incoming.desi && typeof incoming.desi === 'object') {
         shipmentDefaults = await saveShipmentDefaults(db, organizationId, {
           defaultUnitDesi: incoming.desi.defaultUnitDesi,
+          // Alan gonderilmezse MEVCUT deger korunur (kismi kayit guvenli).
+          multiplyByItemQuantity:
+            incoming.desi.multiplyByItemQuantity ??
+            shipmentDefaults.multiplyByItemQuantity,
         })
       }
       const status = await getMaskedIntegrationStatus(db, organizationId)
@@ -538,7 +545,10 @@ app.put('/api/local-config/integration', async (request, response) => {
         configured: status.trendyol.configured || status.surat.configured,
         trendyol: status.trendyol,
         surat: status.surat,
-        desi: { defaultUnitDesi: shipmentDefaults.defaultUnitDesi },
+        desi: {
+          defaultUnitDesi: shipmentDefaults.defaultUnitDesi,
+          multiplyByItemQuantity: shipmentDefaults.multiplyByItemQuantity,
+        },
         // Frontend bu bağlamı state reset için kullanır (hesap değişimi tespiti).
         activeMarketplaceAccount: activeAccount,
         message: 'Entegrasyon bilgileri organization için şifreli olarak saklandı.',

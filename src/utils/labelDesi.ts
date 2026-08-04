@@ -2,10 +2,11 @@
 //
 // SÖZLEŞME: Kullanıcı artık sipariş sipariş desi GİRMEZ. Yeni bir gönderi
 // etiketi üretilirken desi YALNIZ Ayarlar → "Varsayılan Gönderi Desisi"
-// değerinden, mevcut calculateOrderDesi çarpan sözleşmesiyle hesaplanır:
-//   defaultUnitDesi=2, quantity=1        → 2
-//   defaultUnitDesi=2, quantity=2        → 4
-//   defaultUnitDesi=2, iki gerçek satır  → 4
+// değerinden, mevcut calculateOrderDesi çarpan sözleşmesiyle hesaplanır.
+// Organizasyon ayarı multiplyByItemQuantity (VARSAYILAN true) bu çarpanı
+// yönetir; ayar YALNIZ aşağıdaki 2. adımı (varsayılandan hesap) etkiler:
+//   çarpan AÇIK  — defaultUnitDesi=2, quantity=1 → 2 | quantity=2 → 4
+//   çarpan KAPALI — defaultUnitDesi=2, quantity=1 → 2 | quantity=2 → 2
 // Manuel "toplam desi" override'ı ARTIK ÜRETİLMEZ; ancak GEÇMİŞTE kaydedilmiş
 // override'lar SİLİNMEZ ve hâlâ önceliklidir (eski siparişlerin/etiketlerin
 // davranışı değişmesin, reprint aynı kalsın).

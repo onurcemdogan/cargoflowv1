@@ -50,6 +50,7 @@ export interface OrderDesiCalculation {
 
 export const DEFAULT_TENANT_DESI_CONFIG: TenantDesiConfig = {
   defaultUnitDesi: null,
+  multiplyByItemQuantity: true,
   categoryDefaults: {},
   productOverrides: {},
   variantOverrides: {},
@@ -60,6 +61,8 @@ export function normalizeTenantDesiConfig(
 ): TenantDesiConfig {
   return {
     defaultUnitDesi: positiveNumber(value?.defaultUnitDesi),
+    // Eksik alan -> true (mevcut canli davranis korunur).
+    multiplyByItemQuantity: value?.multiplyByItemQuantity !== false,
     categoryDefaults: normalizeOverrideMap(value?.categoryDefaults),
     productOverrides: normalizeOverrideMap(value?.productOverrides),
     variantOverrides: normalizeOverrideMap(value?.variantOverrides),
@@ -133,6 +136,13 @@ export function resolveLineUnitDesi(
 // calculatedTotalDesi = sum(line.quantity × resolveLineUnitDesi(line))
 // Manuel "Toplam koli desisi" girildiyse (manual/manual_total) toplam
 // AYNEN kullanılır, quantity ile tekrar ÇARPILMAZ.
+//
+// ORGANIZASYON AYARI multiplyByItemQuantity=false iken: YALNIZ tenant
+// varsayılanından (tenant_default) gelen satırlar için varsayılan desi PAKET
+// BAŞINA BİR KEZ sayılır; adet ve satır sayısı toplamı ARTIRMAZ. Sipariş
+// satırı / ürün / varyant / eşleme / kategori kaynaklı GERÇEK birim desiler
+// fiziksel olarak doğru olduğu için adetle çarpılmaya DEVAM eder.
+// Ayar true iken (varsayılan) davranış BYTE-FOR-BYTE eskisi gibidir.
 export function calculateOrderDesi(
   order: CargoOrder,
   products: CargoProduct[],
@@ -176,14 +186,27 @@ export function calculateOrderDesi(
 
   const countedLines = lines.filter((line) => line.excludedReason == null)
   const missingLines = countedLines.filter((line) => line.unitDesi == null)
+  const usesTenantDefault = countedLines.some(
+    (line) => line.unitDesiSource === 'tenant_default',
+  )
   const calculatedTotalDesi =
     countedLines.length > 0 && missingLines.length === 0
-      ? round2(
-          countedLines.reduce(
-            (total, line) => total + (line.lineTotalDesi ?? 0),
-            0,
-          ),
-        )
+      ? config.multiplyByItemQuantity === false
+        ? round2(
+            countedLines.reduce(
+              (total, line) =>
+                line.unitDesiSource === 'tenant_default'
+                  ? total
+                  : total + (line.lineTotalDesi ?? 0),
+              0,
+            ) + (usesTenantDefault ? (config.defaultUnitDesi ?? 0) : 0),
+          )
+        : round2(
+            countedLines.reduce(
+              (total, line) => total + (line.lineTotalDesi ?? 0),
+              0,
+            ),
+          )
       : null
 
   const manualSource =
@@ -222,6 +245,43 @@ export function calculateOrderDesi(
     finalDesiSource,
     parcelCount: 1,
     blockedReason,
+  }
+}
+
+export interface DesiMultiplierExample {
+  defaultUnitDesi: number
+  quantity: number
+  /** Çarpan AÇIKKEN (varsayılan) hesaplanan toplam desi. */
+  enabledDesi: number | null
+  /** Çarpan KAPALIYKEN hesaplanan toplam desi. */
+  disabledDesi: number | null
+}
+
+// Ayarlar ekranındaki örnek GERÇEK calculateOrderDesi çağrısından üretilir.
+// Böylece ekrandaki metin ile canlı hesap birbirinden AYRIŞAMAZ (elle yazılmış
+// örnek rakam YOKTUR).
+export function describeDesiMultiplierExample(
+  defaultUnitDesi?: number | null,
+  quantity = 2,
+): DesiMultiplierExample {
+  const unit = Number(defaultUnitDesi) > 0 ? Number(defaultUnitDesi) : 2
+  const sampleOrder = {
+    id: 'desi-multiplier-example',
+    items: [
+      { id: 'desi-multiplier-example-line', quantity, productName: '' },
+    ],
+  } as unknown as CargoOrder
+  return {
+    defaultUnitDesi: unit,
+    quantity,
+    enabledDesi: calculateOrderDesi(sampleOrder, [], {
+      defaultUnitDesi: unit,
+      multiplyByItemQuantity: true,
+    }).finalDesi,
+    disabledDesi: calculateOrderDesi(sampleOrder, [], {
+      defaultUnitDesi: unit,
+      multiplyByItemQuantity: false,
+    }).finalDesi,
   }
 }
 

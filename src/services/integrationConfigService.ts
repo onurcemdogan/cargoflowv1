@@ -244,6 +244,10 @@ export class IntegrationConfigService {
           desi: normalizeTenantDesiConfig({
             ...DEFAULT_TENANT_DESI_CONFIG,
             defaultUnitDesi: payload.desi?.defaultUnitDesi ?? null,
+            // Alan gelmezse (eski sunucu / eski kayıt) true kalır: mevcut
+            // çarpan davranışı korunur.
+            multiplyByItemQuantity:
+              payload.desi?.multiplyByItemQuantity !== false,
           }),
           trendyol: {
             ...defaultIntegrationConfig.trendyol,

@@ -5759,6 +5759,56 @@ button:disabled {
   line-height: 1.55;
 }
 
+/* Organizasyon ayarı anahtarı (ör. "Ürün adedine göre desiyi çarp"). */
+.integration-toggle-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-top: 18px;
+  padding: 13px 14px;
+  border: 1px solid #dfe6ee;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.integration-toggle-row input[type='checkbox'] {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  accent-color: #1f6feb;
+  cursor: pointer;
+}
+
+.integration-toggle-row input[type='checkbox']:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.integration-toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.integration-toggle-title {
+  color: #1d2b3a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.integration-toggle-description {
+  color: #6d7e90;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.integration-toggle-example {
+  color: #4a5a6b;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
 .integration-inline-warning {
   margin: 14px 0 0;
   padding: 11px 12px;
