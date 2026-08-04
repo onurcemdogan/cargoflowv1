@@ -1,5 +1,5 @@
 import { Download, PackagePlus, Printer, Search, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   CargoOrder,
   CargoProduct,
@@ -16,7 +16,6 @@ import {
 } from '../utils/productImage'
 import { ProductImageThumb } from './ProductImageThumb'
 import {
-  canCreateShipment,
   canDownloadZpl,
   hasCarrierTracking,
   canMarkPrinted,
@@ -48,7 +47,15 @@ interface OrderDetailDrawerProps {
   products: CargoProduct[]
   busy: boolean
   onClose: () => void
+  // Ayrı "gönderi oluştur" aksiyonu ARTIK GÖSTERİLMEZ: ana buton create +
+  // print zincirini yönetir. Prop geriye dönük uyumluluk için kabul edilir.
   onCreateShipment: (orderId: string) => void
+  /** Ortak tek-tuş akışı (Siparişler sayfasıyla AYNI handler). */
+  onCreateAndPrintLabel?: (orderId: string) => void
+  /** Aynı sipariş için başka bir ekrandan başlamış olabilir. */
+  createAndPrintBusy?: boolean
+  /** Ortak akıştan gelen aşama metni (uydurulmaz). */
+  createAndPrintPhaseText?: string
   onTrackShipment: (orderId: string) => void
   onDownloadZpl: (orderId: string) => void
   onPrintLabel: (orderId: string) => void
@@ -69,12 +76,37 @@ export function OrderDetailDrawer({
   products,
   busy,
   onClose,
-  onCreateShipment,
+  onCreateAndPrintLabel,
+  createAndPrintBusy = false,
+  createAndPrintPhaseText,
   onTrackShipment,
   onDownloadZpl,
   onPrintLabel,
   desiConfig,
 }: OrderDetailDrawerProps) {
+  // Gelismis Islemler menusu: yalniz GORSEL gruplama. Islem surerken veya
+  // ayni siparis icin baska ekranda run varsa kapalidir.
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const advancedRef = useRef<HTMLDivElement | null>(null)
+  const actionsLocked = createAndPrintBusy
+  const menuOpen = advancedOpen && !actionsLocked
+  useEffect(() => {
+    if (!menuOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (!advancedRef.current?.contains(event.target as Node)) {
+        setAdvancedOpen(false)
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setAdvancedOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menuOpen])
   const suratVerification = verifySuratShipment(order)
   const printEligibility = resolveSuratPrintEligibility(order)
   const printSource = resolveSuratPrintSource(order)
@@ -693,54 +725,79 @@ export function OrderDetailDrawer({
           )}
         </div>
 
-        {/* I. Mevcut işlem butonları — davranış değişmedi, sticky footer */}
+        {/* I. Normal görünümde TEK ana aksiyon + Gelişmiş İşlemler.
+            Ana buton Siparişler sayfasıyla AYNI ortak akışı çağırır; create/
+            print iş mantığı buraya KOPYALANMAZ. Eski manuel işlemler menüde
+            fallback olarak KORUNUR (handler'ları değişmedi). */}
         <div className="drawer-actions order-drawer-footer">
           <button
             type="button"
-            className="secondary-button"
-            disabled={busy || !canCreateShipment(order)}
-            onClick={() => onCreateShipment(order.id)}
+            className="primary-button order-detail-create-print"
+            disabled={busy || actionsLocked || !onCreateAndPrintLabel}
+            title="Etiket yoksa oluşturur, varsa mevcut etiketi yazdırır."
+            onClick={() => onCreateAndPrintLabel?.(order.id)}
           >
             <PackagePlus size={18} />
-            Sürat Gönderisi Oluştur
+            {actionsLocked
+              ? createAndPrintPhaseText || 'İşleniyor…'
+              : 'Kargo Etiketi Oluştur ve Yazdır'}
           </button>
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={busy || !hasCarrierTracking(order)}
-            onClick={() => onTrackShipment(order.id)}
-          >
-            <Search size={18} />
-            Takip Sorgula
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            disabled={busy || !canDownloadZpl(order)}
-            title={
-              canDownloadZpl(order)
-                ? undefined
-                : printSource.source === 'canonical_html'
-                  ? 'Bu eski kayıtta taşıyıcının ham ZPL verisi bulunamadı.'
-                  : printEligibility.reason
-            }
-            onClick={() => onDownloadZpl(order.id)}
-          >
-            <Download size={18} />
-            ZPL İndir
-          </button>
-          <button
-            type="button"
-            className="secondary-button"
-            disabled={busy || !canMarkPrinted(order)}
-            title={printEligibility.reason}
-            onClick={() => onPrintLabel(order.id)}
-          >
-            <Printer size={18} />
-            {order.labelStatus === 'PRINTED'
-              ? 'Tekrar Yazdır'
-              : 'Etiketi Yazdır'}
-          </button>
+          <div className="order-detail-advanced" ref={advancedRef}>
+            <button
+              type="button"
+              className="secondary-button order-detail-advanced-toggle"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              disabled={busy || actionsLocked}
+              onClick={() => setAdvancedOpen((open) => !open)}
+            >
+              Gelişmiş İşlemler
+            </button>
+            {menuOpen ? (
+              <div className="order-detail-advanced-menu" role="menu">
+                <button
+                  type="button"
+                  className="secondary-button"
+                  role="menuitem"
+                  disabled={busy || actionsLocked || !hasCarrierTracking(order)}
+                  onClick={() => onTrackShipment(order.id)}
+                >
+                  <Search size={18} />
+                  Takip Sorgula
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  role="menuitem"
+                  disabled={busy || actionsLocked || !canDownloadZpl(order)}
+                  title={
+                    canDownloadZpl(order)
+                      ? undefined
+                      : printSource.source === 'canonical_html'
+                        ? 'Bu eski kayıtta taşıyıcının ham ZPL verisi bulunamadı.'
+                        : printEligibility.reason
+                  }
+                  onClick={() => onDownloadZpl(order.id)}
+                >
+                  <Download size={18} />
+                  ZPL İndir
+                </button>
+                <button
+                  type="button"
+                  className="secondary-button"
+                  role="menuitem"
+                  disabled={busy || actionsLocked || !canMarkPrinted(order)}
+                  title={printEligibility.reason}
+                  onClick={() => onPrintLabel(order.id)}
+                >
+                  <Printer size={18} />
+                  {order.labelStatus === 'PRINTED'
+                    ? 'Tekrar Yazdır'
+                    : 'Yazdır / Tekrar Yazdır'}
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </aside>
     </div>

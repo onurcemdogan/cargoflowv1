@@ -140,7 +140,11 @@ test('Sipariş detay paneli read-only sözleşmesi ve matris A-I', async (t) => 
   assert.match(htmlA, /ORDER-A/)
   assert.match(htmlA, /Scuba Seçil Detaylı Tesettür Bordo Elbise/)
   assert.equal(canCreateShipment(noShipment), true)
-  assert.match(htmlA, /Sürat Gönderisi Oluştur/)
+  // Ayri "gonderi olustur" aksiyonu KALDIRILDI: ana buton ortak create +
+  // print zincirini yonetir ve metin PROVIDER-BAGIMSIZ.
+  assert.equal(/Sürat Gönderisi Oluştur/.test(htmlA), false)
+  assert.match(htmlA, /Kargo Etiketi Oluştur ve Yazdır/)
+  assert.match(htmlA, /Gelişmiş İşlemler/)
   const timelineA = buildSuratShipmentTimeline(noShipment)
   assert.equal(timelineA[0].status, 'completed')
   assert.equal(
