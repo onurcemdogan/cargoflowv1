@@ -41,8 +41,7 @@ import {
 } from './services/suratOperationRegistry'
 import { orderPackageIdentity } from './utils/orderCounts'
 import { resolveEffectiveLabelDesi } from './utils/labelDesi'
-import { resolveProductFit } from './utils/labelProductFit'
-import { PRODUCT_OVERFLOW_MESSAGE } from './utils/labelProductFit'
+import { resolveLabelLayoutBlockReason } from './utils/labelLayoutResolver'
 import {
   injectPersistedZpl,
   isReprintEligible,
@@ -948,22 +947,32 @@ function App() {
           // HTML sigdirma kurali YALNIZ tarayici baskisi icindir. Zebra/
           // native yolda resmi ZPL byte-for-byte basilir; HTML footer tasmasi
           // o yolu ENGELLEMEZ.
+          //
+          // KOK NEDEN (canli, 7270035237446594): burada SABIT 9.4mm ile
+          // yalniz 'standard' profilin urun alani deneniyordu; adaptif
+          // profiller (compact-multi / dense-multi) YALNIZ renderer'da
+          // vardi. Iki kalemli siparis on kontrolde bloklanip renderer'a HIC
+          // ULASMIYORDU. Artik on kontrol de renderer ile AYNI cozumleyiciyi
+          // kullanir; profil secimi TEK yerdedir.
           resolveFitBlock: (order) =>
             printerSettings.mode !== 'browser-print'
               ? null
-              : resolveProductFit({
-              items: (order.items ?? []).map((line) => ({
-                productName: String(line.productName ?? ''),
-                quantity: Number(line.quantity) || 1,
-                color: line.color,
-                size: line.size,
-                sku: line.merchantSku || line.sku,
-              })),
-                  availableWidthMm: 89,
-                  availableHeightMm: 9.4,
-                }).fits
-                ? null
-                : PRODUCT_OVERFLOW_MESSAGE,
+              : resolveLabelLayoutBlockReason({
+                  items: (order.items ?? []).map((line) => ({
+                    productName: String(line.productName ?? ''),
+                    quantity: Number(line.quantity) || 1,
+                    color: line.color,
+                    size: line.size,
+                    sku: line.merchantSku || line.sku,
+                  })),
+                  // Rota metni buildLabelData ile AYNI kaynaktan turetilir.
+                  destination: [order.city, order.district]
+                    .filter(Boolean)
+                    .join(' / '),
+                  transfer: [order.city, order.district]
+                    .filter(Boolean)
+                    .join(' / '),
+                }),
           hasPrintableLabel: (order) =>
             Boolean(resolvePersistedLabelArtifact(order).hasPrintableLabel),
           isPrinted: (order) =>

@@ -227,7 +227,14 @@ test('UI-15: preflight gerçek yardımcılardan beslenir', () => {
     app.indexOf('async function handlePrintLabelsForIds'),
   )
   assert.match(handler, /resolveEffectiveLabelDesi\(/, 'desi mevcut yardımcıdan')
-  assert.match(handler, /resolveProductFit\(/, 'product-fit mevcut yardımcıdan')
+  // Product-fit artik TEK yerleşim cozumleyicisi uzerinden gelir; on kontrol
+  // ile renderer AYNI profili secer.
+  assert.match(handler, /resolveLabelLayoutBlockReason\(/, 'tek kaynak cozumleyici')
   assert.match(handler, /resolvePersistedLabelArtifact\(/, 'etiket mevcut resolver')
-  assert.match(handler, /PRODUCT_OVERFLOW_MESSAGE/)
+  // Tasma sebebi ARTIK cozumleyiciden gelir (App'te sabit metin yok);
+  // guvenli sebep sozlesmesi labelLayoutResolver'da kilitlidir.
+  const resolver = readFileSync(
+    join(here, '..', 'src/utils/labelLayoutResolver.ts'), 'utf8')
+  assert.match(resolver, /PRODUCT_OVERFLOW_MESSAGE/)
+  assert.match(resolver, /ROUTE_OVERFLOW_MESSAGE/)
 })

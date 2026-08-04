@@ -161,8 +161,9 @@ test('ROUTE-7: önizleme CSS\'i AYNI kademeyi kullanır (preview == print)', () 
   assert.equal(/-webkit-line-clamp/.test(zone), false, 'önizlemede de kırpma yok')
   assert.match(zone, /var\(--label-delivery-route-size/)
   assert.match(zone, /var\(--label-route-line-height/)
-  // Önizleme puntoyu baskı ile AYNI saf yardımcıdan alır.
-  assert.match(preview, /resolveRouteFit\(/)
+  // Onizleme puntoyu baski ile AYNI TEK cozumleyiciden alir
+  // (resolveLabelLayout -> profil + productFit + routeFit).
+  assert.match(preview, /resolveLabelLayout\(/)
   assert.match(preview, /routeFit\.tier\.destinationPt/)
   assert.match(preview, /routeFit\.tier\.transferPt/)
 })

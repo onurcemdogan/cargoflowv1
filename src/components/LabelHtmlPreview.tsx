@@ -10,10 +10,16 @@ import { buildLabelData, type LabelData, type LabelDataItem } from '../utils/lab
 import { formatDesi } from '../utils/desi'
 import { BarcodePreview } from './BarcodePreview'
 import {
+  PRODUCT_FIT_TIERS,
   PRODUCT_OVERFLOW_MESSAGE,
-  resolveProductFit,
 } from '../utils/labelProductFit'
-import { resolveRouteFit } from '../utils/labelRouteFit'
+import { ROUTE_FIT_TIERS } from '../utils/labelRouteFit'
+import { resolveLabelLayout } from '../utils/labelLayoutResolver'
+
+// Sigmayan durumda yalniz UYARI gosterilir; asagidaki kademe SADECE CSS
+// degiskenleri icin guvenli varsayilandir (etiket zaten basilmaz).
+const FALLBACK_PRODUCT_TIER = PRODUCT_FIT_TIERS[PRODUCT_FIT_TIERS.length - 1]
+const FALLBACK_ROUTE_TIER = ROUTE_FIT_TIERS[ROUTE_FIT_TIERS.length - 1]
 import { QrCodeSvg } from './QrCodeSvg'
 
 interface LabelHtmlPreviewProps {
@@ -62,8 +68,14 @@ export function LabelHtmlPreview({
     'Ürün bilgisi yok'
   const productMeta =
     overrides?.productMeta ?? formatProductMeta(primaryItem)
-  // Onizleme, baski ile AYNI sigdirma hesabini kullanir (preview == print).
-  const productFit = resolveProductFit({
+  const branchName = overrides?.branchName || data.branchName
+  const recipientName = overrides?.recipientName || data.recipientName
+  const barcodeValue = data.barcodeValue
+  const routeCenter = overrides?.routeCenter || data.routeCenter
+  const transferCenter = overrides?.transferCenter || data.transferCenter
+  // Onizleme, on kontrol ve baski AYNI cozumleyiciyi kullanir: ayni siparis
+  // icin farkli profil/karar CIKMAZ (preview == preflight == print).
+  const layout = resolveLabelLayout({
     items: (data.items ?? []).map((line) => ({
       productName: String(line.productName ?? ''),
       quantity: Number(line.quantity) || 1,
@@ -71,21 +83,15 @@ export function LabelHtmlPreview({
       size: line.size,
       sku: line.sku,
     })),
-    availableWidthMm: 89,
-    availableHeightMm: 9.4,
-  })
-  const branchName = overrides?.branchName || data.branchName
-  const recipientName = overrides?.recipientName || data.recipientName
-  const barcodeValue = data.barcodeValue
-  const routeCenter = overrides?.routeCenter || data.routeCenter
-  const transferCenter = overrides?.transferCenter || data.transferCenter
-  // Baskı ile AYNI bütçe/kademe: rota bloğu ürün footer'ına taşmaz.
-  const routeFit = resolveRouteFit({
     destination: routeCenter,
     transfer: transferCenter,
-    availableWidthMm: 52,
-    availableHeightMm: 13.4,
   })
+  const productFit = layout.ok
+    ? layout.productFit
+    : { fits: false, tier: FALLBACK_PRODUCT_TIER }
+  const routeFit = layout.ok
+    ? layout.routeFit
+    : { tier: FALLBACK_ROUTE_TIER }
   const desi =
     overrides?.desi !== undefined ? overrides.desi : data.desi
   const addressLines = splitAddress(data.address)
