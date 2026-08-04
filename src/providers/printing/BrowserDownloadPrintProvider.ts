@@ -6,18 +6,45 @@ import {
 } from '../../utils/browserLabelPrint'
 import {
   NOT_IN_PRINT_DOCUMENT_MESSAGE,
-  PRINT_CONFIRMATION_QUESTION,
   PRINT_NOT_CONFIRMED_MESSAGE,
 } from '../../utils/suratPrintFailureReasons'
 
-// Baskı onayı: browser-print yolunda print dialog kapandıktan SONRA sorulur.
-// Enjekte edilebilir olmasının tek nedeni testlerde gerçek dialog açmamaktır;
-// varsayılan davranış tarayıcının kendi onayıdır.
-export type PrintConfirmFn = (question: string) => boolean
-
+// Baskı onayı browser-print yolunda print dialogu kapandıktan SONRA istenir.
+// BLOKLAYAN window.confirm/alert KULLANILMAZ: onay, çağıran katmanın verdiği
+// asenkron bir söz (inline UI paneli) ile alınır. Onay sağlanmazsa baskı
+// BAŞARILI SAYILMAZ — sessiz "evet" YOKTUR.
 export interface BrowserPrintJobDecision {
   jobs: NonNullable<PrintResult['jobs']>
   confirmed: boolean
+}
+
+export interface BrowserPrintDebugLike {
+  printCalled?: boolean
+  printedOrderNumbers?: string[]
+  skipped?: Array<{ orderNumber: string; reason: string }>
+  rejectionReason?: string
+}
+
+// Onay YALNIZ gerçekten belgeye giren iş varsa istenir. Hiçbir sipariş belgeye
+// girmediyse kullanıcıya soru SORULMAZ (ve hiçbir şey başarılı olmaz).
+export function shouldRequestPrintConfirmation(
+  debug: BrowserPrintDebugLike | undefined,
+  orderNumbers: string[],
+): boolean {
+  const rendered = new Set(debug?.printedOrderNumbers ?? [])
+  return (
+    Boolean(debug?.printCalled) &&
+    orderNumbers.some((orderNumber) => rendered.has(orderNumber))
+  )
+}
+
+// Belgeye GERÇEKTEN giren sipariş numaraları (doğrulama grubu).
+export function resolvePrintDocumentOrderNumbers(
+  debug: BrowserPrintDebugLike | undefined,
+  orderNumbers: string[],
+): string[] {
+  const rendered = new Set(debug?.printedOrderNumbers ?? [])
+  return orderNumbers.filter((orderNumber) => rendered.has(orderNumber))
 }
 
 // Browser-print job sonuçları — SAF karar. Başarı üç koşulun HEPSİNİ ister:
@@ -25,27 +52,16 @@ export interface BrowserPrintJobDecision {
 //   (3) kullanıcı çıktıyı onayladı.
 // Dialog açılması / printCalled TEK BAŞINA başarı DEĞİLDİR.
 export function resolveBrowserPrintJobs(
-  debug:
-    | {
-        printCalled?: boolean
-        printedOrderNumbers?: string[]
-        skipped?: Array<{ orderNumber: string; reason: string }>
-        rejectionReason?: string
-      }
-    | undefined,
+  debug: BrowserPrintDebugLike | undefined,
   orderNumbers: string[],
-  confirm: PrintConfirmFn,
+  userConfirmed: boolean,
 ): BrowserPrintJobDecision {
   const rendered = new Set(debug?.printedOrderNumbers ?? [])
   const skipReason = new Map(
     (debug?.skipped ?? []).map((item) => [item.orderNumber, item.reason]),
   )
-  const anyRendered = orderNumbers.some((orderNumber) =>
-    rendered.has(orderNumber),
-  )
-  const confirmed = Boolean(debug?.printCalled) && anyRendered
-    ? confirm(PRINT_CONFIRMATION_QUESTION)
-    : false
+  const confirmed =
+    shouldRequestPrintConfirmation(debug, orderNumbers) && userConfirmed
   const jobs = orderNumbers.map((orderNumber) => {
     const inDocument = rendered.has(orderNumber)
     const ok = inDocument && confirmed
@@ -69,21 +85,7 @@ export function resolveBrowserPrintJobs(
   return { jobs, confirmed }
 }
 
-function defaultPrintConfirm(question: string): boolean {
-  if (typeof window === 'undefined' || typeof window.confirm !== 'function') {
-    // Onay soramıyorsak baskıyı BAŞARILI SAYMAYIZ.
-    return false
-  }
-  return window.confirm(question)
-}
-
 export class BrowserDownloadPrintProvider implements PrintProvider {
-  private readonly confirmPrint: PrintConfirmFn
-
-  constructor(confirmPrint: PrintConfirmFn = defaultPrintConfirm) {
-    this.confirmPrint = confirmPrint
-  }
-
   async print(input: PrintInput): Promise<PrintResult> {
     const printableOrders = input.orders.filter((order) => order.label)
     const content = printableOrders
@@ -112,10 +114,26 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
           input.labelTemplate ?? defaultLabelTemplate,
           input.mappingConfig,
         )
+        const orderNumbers = printableOrders.map((order) => order.orderNumber)
+        // Onay: BLOKLAMAYAN inline panel. Çağıran katman sağlamazsa onay
+        // ALINMAMIŞ sayılır; hiçbir sipariş sessizce PRINTED olmaz.
+        const userConfirmed =
+          shouldRequestPrintConfirmation(browserPrintDebug, orderNumbers) &&
+          typeof input.confirmBrowserPrint === 'function'
+            ? await input.confirmBrowserPrint({
+                provider: 'browser-print',
+                orderNumbers,
+                documentOrderNumbers: resolvePrintDocumentOrderNumbers(
+                  browserPrintDebug,
+                  orderNumbers,
+                ),
+                skipped: browserPrintDebug.skipped ?? [],
+              })
+            : false
         const decision = resolveBrowserPrintJobs(
           browserPrintDebug,
-          printableOrders.map((order) => order.orderNumber),
-          this.confirmPrint,
+          orderNumbers,
+          userConfirmed,
         )
         return {
           fileName,

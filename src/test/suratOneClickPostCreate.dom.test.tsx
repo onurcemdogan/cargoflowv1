@@ -143,7 +143,7 @@ function Harness({
                 const decision = resolveBrowserPrintJobs(
                   { printCalled: true, printedOrderNumbers: ['TESTORD-1'] },
                   ['TESTORD-1'],
-                  confirmPrint,
+                  confirmPrint(),
                 )
                 return {
                   orders: list,
@@ -182,7 +182,7 @@ const newTrace = (): Trace => ({
 })
 
 const mainButton = () =>
-  screen.getByRole('button', { name: /Sürat Etiketi Oluştur ve Yazdır/ })
+  screen.getByRole('button', { name: /Kargo Etiketi Oluştur ve Yazdır/ })
 
 test('PCPDOM-1: tıklama → host senkron, create, aşamalar, baskı (onay VAR)', async () => {
   const user = userEvent.setup()
@@ -191,7 +191,7 @@ test('PCPDOM-1: tıklama → host senkron, create, aşamalar, baskı (onay VAR)'
 
   expect(screen.getByTestId('row-state').textContent).toBe('Barkod Bekliyor')
   await user.click(mainButton())
-  await screen.findByText('Tamamlandı')
+  await screen.findByText('Kargo etiketi işlemi tamamlandı')
 
   // Host ilk await'ten ÖNCE, tek kez.
   expect(trace.hostPreparedBeforeAwait).toBe(true)
@@ -215,7 +215,7 @@ test('PCPDOM-2: onay OLUMSUZ → başarı yok, seçim ve sonuç paneli korunur',
   render(<Harness trace={trace} confirmPrint={() => false} />)
 
   await user.click(mainButton())
-  await screen.findByText('İşlem tamamlanamadı')
+  await screen.findByText('Baskı doğrulanmadı')
 
   expect(trace.printCalls).toEqual([['READY']])
   expect(screen.getByText('Yazdırılan: 0')).toBeTruthy()
@@ -243,7 +243,7 @@ test('PCPDOM-3: host hazır değilse create HİÇ çağrılmaz, açık mesaj gö
   )
   // Statü değişmedi.
   expect(screen.getByTestId('row-state').textContent).toBe('Barkod Bekliyor')
-  expect(screen.queryByText('Tamamlandı')).toBe(null)
+  expect(screen.queryByText('Kargo etiketi işlemi tamamlandı')).toBe(null)
 })
 
 test('PCPDOM-4: run SÜRERKEN ikinci tıklama → tek host, tek run', async () => {
@@ -266,7 +266,7 @@ test('PCPDOM-4: run SÜRERKEN ikinci tıklama → tek host, tek run', async () =
   expect(trace.createCalls).toEqual([['o-1']])
 
   release()
-  await screen.findByText('Tamamlandı')
+  await screen.findByText('Kargo etiketi işlemi tamamlandı')
   expect(trace.createCalls).toEqual([['o-1']])
   expect(trace.printCalls.length).toBe(1)
 })

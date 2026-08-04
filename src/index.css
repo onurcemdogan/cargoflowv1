@@ -6515,3 +6515,28 @@ button:disabled {
   opacity: 0.8;
   font-style: italic;
 }
+
+/* Baskı doğrulaması: sonuç alanının İÇİNDE, bloklamayan satır içi panel.
+   window.confirm/alert veya modal overlay KULLANILMAZ. */
+.surat-print-confirmation {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--warning-border, #f0c36d);
+  border-left: 4px solid var(--warning, #d98c00);
+  border-radius: 10px;
+  background: var(--warning-surface, #fff8e8);
+}
+
+.surat-print-confirmation p {
+  margin: 0;
+  flex-basis: 100%;
+}
+
+.surat-print-confirmation-actions {
+  display: flex;
+  gap: 8px;
+}

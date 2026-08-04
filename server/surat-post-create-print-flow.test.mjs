@@ -270,7 +270,7 @@ test('PCP-14: kullanıcı baskıyı doğrulamazsa job ok=false ve seçim korunur
   const decision = resolveBrowserPrintJobs(
     { printCalled: true, printedOrderNumbers: ['TESTORD-1'] },
     ['TESTORD-1'],
-    () => false, // kullanıcı "Hayır"/İptal
+    false, // kullanıcı "Hayır, çıkmadı" dedi
   )
   assert.equal(decision.confirmed, false)
   assert.equal(decision.jobs[0].ok, false)
@@ -281,16 +281,19 @@ test('PCP-14: kullanıcı baskıyı doğrulamazsa job ok=false ve seçim korunur
 })
 
 test('PCP-14b: printCalled TEK BAŞINA başarı değildir', async () => {
-  const { resolveBrowserPrintJobs } = await load(
-    '/src/providers/printing/BrowserDownloadPrintProvider.ts')
-  let asked = 0
+  const { resolveBrowserPrintJobs, shouldRequestPrintConfirmation } =
+    await load('/src/providers/printing/BrowserDownloadPrintProvider.ts')
   // print çağrıldı ama HİÇBİR sipariş belgeye girmedi: onay bile SORULMAZ.
+  assert.equal(
+    shouldRequestPrintConfirmation(
+      { printCalled: true, printedOrderNumbers: [] }, ['TESTORD-1']),
+    false,
+  )
   const decision = resolveBrowserPrintJobs(
     { printCalled: true, printedOrderNumbers: [] },
     ['TESTORD-1'],
-    () => { asked += 1; return true },
+    true, // onay verilse BİLE
   )
-  assert.equal(asked, 0)
   assert.equal(decision.confirmed, false)
   assert.equal(decision.jobs[0].ok, false)
 })
@@ -308,7 +311,7 @@ test('PCP-15: onay verilse bile YALNIZ belgeye giren işler başarılıdır', as
       ],
     },
     ['TESTORD-1', 'TESTORD-2'],
-    () => true,
+    true,
   )
   assert.equal(decision.confirmed, true)
   assert.equal(decision.jobs[0].ok, true)
@@ -320,7 +323,7 @@ test('PCP-15b: baskı motoru hata verirse her sipariş KENDİ sebebini alır', a
   const { BrowserDownloadPrintProvider } = await load(
     '/src/providers/printing/BrowserDownloadPrintProvider.ts')
   // Node'da document yok: printCleanLabelDocument başarısız olur.
-  const provider = new BrowserDownloadPrintProvider(() => true)
+  const provider = new BrowserDownloadPrintProvider()
   const result = await provider.print({
     orders: [{ orderNumber: 'TESTORD-1', label: { zplContent: 'X' } }],
     printerSettings: { mode: 'browser-print', printerName: 'test' },

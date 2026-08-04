@@ -12,6 +12,12 @@ import type { CargoOrder } from '../types/cargoflow'
 import { orderPackageIdentity } from './orderCounts'
 
 // Mevcut canonical aşamalarla hizalı; yeni statü UYDURULMAZ.
+// Desteklenmeyen tasiyici: mevcut akis ENGELLENMEZ, yalniz o siparis ayri
+// blocked sonucu olur. Yeni provider adaptoru eklendiginde ayni genel buton
+// korunur.
+export const UNSUPPORTED_CARRIER_MESSAGE =
+  'Bu kargo firması için tek adımda etiket oluşturma henüz desteklenmiyor.'
+
 export type SuratCreatePrintStage =
   | 'PREFLIGHT_BLOCKED'
   | 'CREATE_REQUIRED'
@@ -104,7 +110,7 @@ export function resolveSuratCreateAndPrintPlan(
     //    girmez; yalnız basılamıyorsa bloklanır.
     if (!input.isSuratOrder(order)) {
       plan.blocked.push(entryOf(order, 'PREFLIGHT_BLOCKED',
-        'Sipariş Sürat Kargo ile gönderilecek olarak işaretli değil.'))
+        UNSUPPORTED_CARRIER_MESSAGE))
       continue
     }
     const dataBlock = input.resolveDataBlock(order)

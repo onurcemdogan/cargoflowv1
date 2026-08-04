@@ -58,7 +58,7 @@ function baseProps(overrides: Partial<Props> = {}): Props {
 }
 
 const mainButton = () =>
-  screen.getByRole('button', { name: /Sürat Etiketi Oluştur ve Yazdır/ })
+  screen.getByRole('button', { name: /Kargo Etiketi Oluştur ve Yazdır/ })
 
 // ---------------------------------------------------------------- 1
 test('DOM-1: seçim yokken ana buton DOM\'da var ve DISABLED', () => {
@@ -145,7 +145,8 @@ const CONFLICTING = [
 ]
 
 // ---------------------------------------------------------------- 5
-test('DOM-5: run sırasında ana buton ve ÇAKIŞAN aksiyonlar disabled; bitince aktif', () => {
+test('DOM-5: run sırasında Gelişmiş İşlemler disabled; bitince aksiyonlar aktif', async () => {
+  const user = userEvent.setup()
   const orders = [makeOrder(1)]
   const props = baseProps({
     orders,
@@ -155,10 +156,10 @@ test('DOM-5: run sırasında ana buton ve ÇAKIŞAN aksiyonlar disabled; bitince
   const view = render(
     <SuratCreatePrintControls {...props} suratCreatePrintRunning={true} />,
   )
-  for (const label of CONFLICTING) {
-    const button = screen.getByRole('button', { name: label }) as HTMLButtonElement
-    expect(button.disabled, `${label} run sırasında disabled olmalı`).toBe(true)
-  }
+  // Eski aksiyonlar menüde; run sırasında menü açılamaz.
+  const toggle = () =>
+    screen.getByRole('button', { name: 'Gelişmiş İşlemler' }) as HTMLButtonElement
+  expect(toggle().disabled, 'run sırasında Gelişmiş İşlemler disabled').toBe(true)
   expect(
     (screen.getByRole('button', { name: /Ön kontrol yapılıyor…/ }) as HTMLButtonElement)
       .disabled,
@@ -168,8 +169,11 @@ test('DOM-5: run sırasında ana buton ve ÇAKIŞAN aksiyonlar disabled; bitince
   view.rerender(
     <SuratCreatePrintControls {...props} suratCreatePrintRunning={false} />,
   )
+  expect(toggle().disabled).toBe(false)
+  await user.click(toggle())
+  // Menü öğeleri ARIA menuitem'dır (menü içinde doğru rol).
   for (const label of CONFLICTING) {
-    const button = screen.getByRole('button', { name: label }) as HTMLButtonElement
+    const button = screen.getByRole('menuitem', { name: label }) as HTMLButtonElement
     expect(button.disabled, `${label} bitince aktif olmalı`).toBe(false)
   }
   expect((mainButton() as HTMLButtonElement).disabled).toBe(false)
@@ -189,7 +193,7 @@ test('DOM-6: aşama metinleri GERÇEK DOM\'da görünür', () => {
     [{ phase: 'preflight', completed: 0, total: 40 }, 'Ön kontrol yapılıyor…'],
     [
       { phase: 'create', completed: 12, total: 40 },
-      'Sürat etiketleri oluşturuluyor: 12/40',
+      'Kargo etiketleri oluşturuluyor: 12/40',
     ],
     [
       { phase: 'prepare', completed: 39, total: 40 },
@@ -271,7 +275,7 @@ test('DOM-9: kısmi başarı paneli gerçek sayılarla render edilir', () => {
       {...baseProps({ suratCreatePrintResult: PARTIAL })}
     />,
   )
-  expect(screen.getByText('Kısmi başarı')).toBeTruthy()
+  expect(screen.getByText('Kargo etiketi işlemi kısmen tamamlandı')).toBeTruthy()
   expect(screen.getByText('Yazdırılan: 38')).toBeTruthy()
   expect(screen.getByText('Atlanan: 1')).toBeTruthy()
   expect(screen.getByText('Başarısız: 1')).toBeTruthy()
@@ -389,7 +393,7 @@ test('DOM-12: printResult YOKSA hiçbir sipariş seçimden çıkarılmaz', async
     />,
   )
   await user.click(mainButton())
-  await screen.findByText('İşlem tamamlanamadı')
+  await screen.findByText('Kargo etiketi işlemi tamamlanamadı')
   expect(remaining).toEqual(['o-1', 'o-2'])
   expect(screen.getByText('Yazdırılan: 0')).toBeTruthy()
 })
@@ -411,7 +415,7 @@ test('DOM-13: YALNIZ per-job ok=true olanlar seçimden çıkar', async () => {
     />,
   )
   await user.click(mainButton())
-  await screen.findByText('Kısmi başarı')
+  await screen.findByText('Kargo etiketi işlemi kısmen tamamlandı')
   // Global ok=true olmasına RAĞMEN yalnız job ok=true olan çıkar.
   expect(remaining).toEqual(['o-2'])
   expect(screen.getByText('Yazdırılan: 1')).toBeTruthy()
@@ -452,7 +456,7 @@ test('DOM-14: hata sonrası running kapanır ve buton yeniden kullanılabilir', 
   render(<ErrorHarness />)
   await user.click(mainButton())
   const button = await screen.findByRole('button', {
-    name: /Sürat Etiketi Oluştur ve Yazdır/,
+    name: /Kargo Etiketi Oluştur ve Yazdır/,
   })
   expect((button as HTMLButtonElement).disabled).toBe(false)
   await user.click(button)

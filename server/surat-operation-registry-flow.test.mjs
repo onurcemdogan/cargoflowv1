@@ -127,10 +127,16 @@ test('REG-8: çakışan mutasyon/baskı butonları run sırasında DISABLED', ()
       '</section>', controls.indexOf('<div className="toolbar-actions">'),
     ),
   )
-  // Ana buton + eski mutasyon butonları run sırasında kilitlenir.
-  // Ana buton + eski aksiyonların HEPSİ run sırasında kilitlenir.
-  const guarded = (actions.match(/suratCreatePrintRunning/g) ?? []).length
+  // Ana buton + eski aksiyonların HEPSİ run sırasında kilitlenir. Kilit artık
+  // actionsLocked'tir: run SÜRERKEN veya baskı doğrulaması BEKLERKEN kapalı.
+  const guarded = (actions.match(/actionsLocked/g) ?? []).length
   assert.ok(guarded >= 7, `run guard'ı yetersiz (${guarded})`)
+  const controlsSrc = readFileSync(
+    join(here, '..', 'src/components/SuratCreatePrintControls.tsx'), 'utf8')
+  assert.match(
+    controlsSrc,
+    /const actionsLocked = suratCreatePrintRunning \|\| awaitingConfirmation/,
+  )
   for (const label of [
     'Barkod Bas', 'Ortak Barkod Oluştur / Tamamla', 'ZPL İndir',
     'Kargoya Verildi Yap',
