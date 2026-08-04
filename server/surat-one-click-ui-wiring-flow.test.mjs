@@ -106,7 +106,7 @@ test('UI-8: progress GERÇEK completed/total kullanır, yüzde uydurulmaz', () =
   assert.match(phaseText, /Ön kontrol yapılıyor…/)
   assert.match(
     phaseText,
-    /Sürat etiketleri oluşturuluyor: \$\{progress\.completed\}\/\$\{progress\.total\}/,
+    /Kargo etiketleri oluşturuluyor: \$\{progress\.completed\}\/\$\{progress\.total\}/,
   )
   assert.match(
     phaseText,
@@ -142,9 +142,16 @@ test('UI-10: sonuç paneli aggregate alanlarını gösterir', () => {
   ]) {
     assert.ok(panel.includes(label), `${label} gösterilmeli`)
   }
-  for (const status of ['Tamamlandı', 'Kısmi başarı', 'İşlem tamamlanamadı']) {
+  // Başlıklar PROVIDER-BAĞIMSIZ; "doğrulanmadı" ayrı kategoridir.
+  for (const status of [
+    'Kargo etiketi işlemi tamamlandı',
+    'Kargo etiketi işlemi kısmen tamamlandı',
+    'Kargo etiketi işlemi tamamlanamadı',
+    'Baskı doğrulanmadı',
+  ]) {
     assert.ok(panel.includes(status), `${status} durumu`)
   }
+  assert.ok(panel.includes('Yeniden yazdırılabilir:'), 'doğrulanmayanlar ayrı')
   assert.match(panel, /<details>/, 'detaylar açılır bölümde')
 })
 

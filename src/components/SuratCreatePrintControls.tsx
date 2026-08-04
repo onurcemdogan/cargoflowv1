@@ -5,9 +5,13 @@ import {
   RefreshCcw,
   Stamp,
 } from 'lucide-react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CargoOrder } from '../types/cargoflow'
 import type { OrderCountSummary } from '../utils/orderCounts'
+import {
+  partitionPrintOutcome,
+  type PendingPrintConfirmation,
+} from '../utils/printConfirmationModel'
 import {
   buildSelectedOrderSnapshot,
   describeSelectionOutsideView,
@@ -58,6 +62,9 @@ export interface SuratCreatePrintControlsProps {
   createDisabledReason?: string
   zplDisabledReason?: string
   handedDisabledReason?: string
+  /** Bekleyen (BLOKLAMAYAN) baski dogrulamasi; popup DEGIL. */
+  pendingPrintConfirmation?: PendingPrintConfirmation
+  onAnswerPrintConfirmation?: (confirmed: boolean) => void
 }
 
 export function SuratCreatePrintControls({
@@ -84,7 +91,35 @@ export function SuratCreatePrintControls({
   createDisabledReason,
   zplDisabledReason,
   handedDisabledReason,
+  pendingPrintConfirmation,
+  onAnswerPrintConfirmation,
 }: SuratCreatePrintControlsProps) {
+  // Gelismis Islemler menusu: yalniz GORSEL gruplama. Hicbir islem kaldirilmadi,
+  // hicbir handler degistirilmedi.
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const advancedRef = useRef<HTMLDivElement | null>(null)
+  const awaitingConfirmation = Boolean(pendingPrintConfirmation)
+  const actionsLocked = suratCreatePrintRunning || awaitingConfirmation
+  // Menü görünürlüğü TÜRETİLİR: işlem sürerken veya baskı doğrulaması
+  // beklerken menü kapalıdır (effect içinde setState YOK).
+  const menuOpen = advancedOpen && !actionsLocked
+  useEffect(() => {
+    if (!menuOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (!advancedRef.current?.contains(event.target as Node)) {
+        setAdvancedOpen(false)
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setAdvancedOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menuOpen])
   const selectionText =
     selectedIds.length === 0
       ? 'Seçili sipariş yok'
@@ -110,23 +145,76 @@ export function SuratCreatePrintControls({
 
   return (
     <>
-      {suratCreatePrintResult ? (
+      {pendingPrintConfirmation ? (
+        <section
+          className="surat-print-confirmation"
+          aria-live="polite"
+          data-testid="print-confirmation"
+        >
+          <strong>Baskı sonucu bekleniyor</strong>
+          <span>
+            {pendingPrintConfirmation.documentOrderNumbers.length} etiket
+            yazdırma penceresine gönderildi.
+          </span>
+          {pendingPrintConfirmation.skipped.length > 0 ? (
+            <span>
+              {pendingPrintConfirmation.skipped.length} etiket atlandı:{' '}
+              {pendingPrintConfirmation.skipped[0].reason}
+            </span>
+          ) : null}
+          <p>Etiketler yazıcıdan doğru şekilde çıktı mı?</p>
+          <div className="surat-print-confirmation-actions">
+            <button
+              type="button"
+              className="primary-button"
+              onClick={() => onAnswerPrintConfirmation?.(true)}
+            >
+              Evet, çıktı
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              onClick={() => onAnswerPrintConfirmation?.(false)}
+            >
+              Hayır, çıkmadı
+            </button>
+          </div>
+        </section>
+      ) : null}
+
+      {suratCreatePrintResult && !pendingPrintConfirmation ? (
         <section className="surat-batch-result">
           <strong>
-            {suratCreatePrintResult.failed.length === 0 &&
-            suratCreatePrintResult.skipped.length === 0
-              ? 'Tamamlandı'
-              : suratCreatePrintResult.printed > 0
-                ? 'Kısmi başarı'
-                : 'İşlem tamamlanamadı'}
+            {(() => {
+              const parts = partitionPrintOutcome(suratCreatePrintResult)
+              if (parts.failed.length === 0 && parts.skipped.length === 0) {
+                return parts.notConfirmed.length > 0
+                  ? 'Baskı doğrulanmadı'
+                  : 'Kargo etiketi işlemi tamamlandı'
+              }
+              return suratCreatePrintResult.printed > 0
+                ? 'Kargo etiketi işlemi kısmen tamamlandı'
+                : 'Kargo etiketi işlemi tamamlanamadı'
+            })()}
           </strong>
           <span>Seçilen: {suratCreatePrintResult.selectedCount}</span>
           <span>Yeni oluşturulan: {suratCreatePrintResult.created}</span>
           <span>Hazır etiket: {suratCreatePrintResult.existingReady}</span>
           <span>Tekrar baskı: {suratCreatePrintResult.reprinted}</span>
           <span>Yazdırılan: {suratCreatePrintResult.printed}</span>
-          <span>Atlanan: {suratCreatePrintResult.skipped.length}</span>
-          <span>Başarısız: {suratCreatePrintResult.failed.length}</span>
+          <span>
+            Atlanan: {partitionPrintOutcome(suratCreatePrintResult).skipped.length}
+          </span>
+          <span>
+            Başarısız: {partitionPrintOutcome(suratCreatePrintResult).failed.length}
+          </span>
+          {partitionPrintOutcome(suratCreatePrintResult).notConfirmed.length >
+          0 ? (
+            <span>
+              Yeniden yazdırılabilir:{' '}
+              {partitionPrintOutcome(suratCreatePrintResult).notConfirmed.length}
+            </span>
+          ) : null}
           {suratCreatePrintResult.skipped.length +
             suratCreatePrintResult.failed.length >
           0 ? (
@@ -169,26 +257,42 @@ export function SuratCreatePrintControls({
             onClick={onSuratCreateAndPrint}
             disabled={
               busy ||
-              suratCreatePrintRunning ||
+              actionsLocked ||
               selectedIds.length === 0 ||
               !onSuratCreateAndPrint
             }
             title={
               selectedIds.length === 0
                 ? 'Önce en az bir sipariş seçin.'
-                : 'Seçili siparişler için Sürat etiketi oluşturur ve yazdırır.'
+                : 'Seçili siparişler için kargo etiketi oluşturur ve yazdırır.'
             }
           >
-            {suratCreatePrintRunning
-              ? suratPhaseText || 'İşleniyor…'
-              : 'Sürat Etiketi Oluştur ve Yazdır'}
+            {awaitingConfirmation
+              ? 'Baskı doğrulaması bekleniyor'
+              : suratCreatePrintRunning
+                ? suratPhaseText || 'İşleniyor…'
+                : 'Kargo Etiketi Oluştur ve Yazdır'}
           </button>
+          <div className="surat-advanced-actions" ref={advancedRef}>
+            <button
+              type="button"
+              className="secondary-button surat-advanced-toggle"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              disabled={busy || actionsLocked}
+              onClick={() => setAdvancedOpen((open) => !open)}
+            >
+              Gelişmiş İşlemler
+            </button>
+            {menuOpen ? (
+              <div className="surat-advanced-menu" role="menu">
           <button
             type="button"
             className="secondary-button"
             onClick={onMarkPrinted}
             title={printableDisabledReason}
-            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0 || !hasPrintableSelection}
+            role="menuitem"
+            disabled={busy || actionsLocked || selectedIds.length === 0 || !hasPrintableSelection}
           >
             <Barcode size={18} />
             Barkod Bas
@@ -197,10 +301,11 @@ export function SuratCreatePrintControls({
             type="button"
             className="secondary-button"
             onClick={onCreateShipments}
+            role="menuitem"
             title={createDisabledReason}
             disabled={
               busy ||
-              suratCreatePrintRunning ||
+              actionsLocked ||
               selectedIds.length === 0 ||
               !hasShipmentCreatableSelection
             }
@@ -219,7 +324,8 @@ export function SuratCreatePrintControls({
                   ? 'Önce en az bir sipariş seçin.'
                   : undefined
             }
-            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0}
+            role="menuitem"
+            disabled={busy || actionsLocked || selectedIds.length === 0}
           >
             <RefreshCcw size={18} />
             Seçilenleri Yenile / Doğrula
@@ -228,10 +334,11 @@ export function SuratCreatePrintControls({
             type="button"
             className="primary-button"
             onClick={onDownloadZpl}
+            role="menuitem"
             title={zplDisabledReason}
             disabled={
               busy ||
-              suratCreatePrintRunning ||
+              actionsLocked ||
               selectedIds.length === 0 ||
               !hasZplDownloadableSelection
             }
@@ -244,7 +351,8 @@ export function SuratCreatePrintControls({
             className="secondary-button"
             onClick={onMarkPrinted}
             title={printableDisabledReason}
-            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0 || !hasPrintableSelection}
+            role="menuitem"
+            disabled={busy || actionsLocked || selectedIds.length === 0 || !hasPrintableSelection}
           >
             <Stamp size={18} />
             Yazdır / Tekrar Yazdır
@@ -254,11 +362,15 @@ export function SuratCreatePrintControls({
             className="secondary-button"
             onClick={onMarkHandedToCargo}
             title={handedDisabledReason}
-            disabled={busy || suratCreatePrintRunning || selectedIds.length === 0 || !hasHandedToCargoSelection}
+            role="menuitem"
+            disabled={busy || actionsLocked || selectedIds.length === 0 || !hasHandedToCargoSelection}
           >
             <PackagePlus size={18} />
             Kargoya Verildi Yap
           </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </section>
     </>

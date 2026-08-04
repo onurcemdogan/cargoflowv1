@@ -235,7 +235,7 @@ test('BP-11: duplicate seçim tekilleştirilir, sıra korunur', async () => {
   assert.deepEqual(plan.readyToPrint.map((x) => x.orderId), ['o-1', 'o-2'])
 })
 
-test('BP-12: Sürat dışı sipariş açık sebeple bloklanır', async () => {
+test('BP-12: desteklenmeyen kargo firması açık sebeple bloklanır', async () => {
   const { resolveSuratCreateAndPrintPlan } = await load(
     '/src/utils/suratCreatePrintPlan.ts')
   const plan = resolveSuratCreateAndPrintPlan(
@@ -243,7 +243,9 @@ test('BP-12: Sürat dışı sipariş açık sebeple bloklanır', async () => {
     planInput({ isSuratOrder: () => false }),
   )
   assert.equal(plan.blocked.length, 1)
-  assert.match(plan.blocked[0].reason, /Sürat Kargo/)
+  // Mesaj PROVIDER-BAĞIMSIZ: ileride yeni adaptör eklenince aynı metin kalır.
+  assert.match(plan.blocked[0].reason, /tek adımda etiket oluşturma henüz desteklenmiyor/)
+  assert.equal(/Sürat/.test(plan.blocked[0].reason), false, 'kullanıcı metninde provider adı YOK')
 })
 
 test('BP-13: sonuç özeti atlananları İSİMLE gösterir', async () => {

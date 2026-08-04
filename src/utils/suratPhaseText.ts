@@ -14,7 +14,7 @@ export function resolveSuratPhaseText(
   if (!progress) return 'Ön kontrol yapılıyor…'
   if (progress.phase === 'preflight') return 'Ön kontrol yapılıyor…'
   if (progress.phase === 'create')
-    return `Sürat etiketleri oluşturuluyor: ${progress.completed}/${progress.total}`
+    return `Kargo etiketleri oluşturuluyor: ${progress.completed}/${progress.total}`
   if (progress.phase === 'prepare')
     return `Etiketler hazırlanıyor: ${progress.completed}/${progress.total}`
   if (progress.phase === 'print') return 'Yazdırma bekleniyor…'
