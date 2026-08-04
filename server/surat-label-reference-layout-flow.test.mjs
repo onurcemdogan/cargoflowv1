@@ -369,7 +369,12 @@ test('REF-20: uzun ürün adı SESSİZCE kırpılmaz; kırpma CSS\'i kaldırıld
 
 test('REF-21: sığmayan içerik SESSİZCE basılmaz, açık hata verir', async () => {
   const { PRODUCT_OVERFLOW_MESSAGE } = await load('/src/utils/labelProductFit.ts')
-  const LONG = 'Zara Saten Tesettür Elbise Drapeli Uzun Abiye Elbise Dik Yaka Şık Özel Gün Elbisesi ttzeyna44.40'
+  // Adaptif profiller sonrasi iki uzun urun ARTIK SIGIYOR; bu test yalniz
+  // HICBIR guvenli profile sigmayan icerikte acik hata verildigini dogrular.
+  const LONG =
+    'Zara Saten Tesettür Elbise Drapeli Uzun Abiye Elbise Dik Yaka Şık Özel Gün Elbisesi ttzeyna44.40 '.repeat(
+      6,
+    )
   await assert.rejects(
     () => html([
       { id: 'l1', quantity: 1, productName: LONG, color: 'Lacivert', size: '40', sku: 'uzun1' },

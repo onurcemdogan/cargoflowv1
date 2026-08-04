@@ -23,6 +23,11 @@ import {
   resolveProductFit,
 } from './labelProductFit'
 import { ROUTE_OVERFLOW_MESSAGE, resolveRouteFit } from './labelRouteFit'
+import {
+  LABEL_LAYOUT_PROFILES,
+  resolveProductAreaHeightMm,
+  type LabelLayoutProfile,
+} from './labelLayoutProfile'
 
 // Her etiket sayfası kendi bağımsız (immutable) modelini kullanır; bir
 // siparişin kodları başka siparişe sızamaz.
@@ -805,9 +810,13 @@ export function buildCleanLabelDocument(
     /* Satır dağılımı referansa göre yeniden dengelendi. SABİT satır TOPLAMI
        87mm OLARAK KORUNUR; böylece alt ürün alanının yüksekliği ve
        resolveProductFit'in 9.4mm varsayımı DEĞİŞMEZ. */
+    /* Satir yukseklikleri PROFILDEN gelir; toplam etiket 100x100mm ve
+       barkod satiri (20.5mm) HER PROFILDE AYNI kalir. */
     .surat-body {
       display: grid;
-      grid-template-rows: 12mm 20.5mm 21.5mm 10mm 23mm 1fr;
+      grid-template-rows:
+        12mm 20.5mm var(--layout-address-row, 21.5mm) 10mm
+        var(--layout-delivery-row, 23mm) 1fr;
       min-width: 0;
       min-height: 0;
     }
@@ -920,7 +929,9 @@ export function buildCleanLabelDocument(
     }
     .surat-delivery {
       display: grid;
-      grid-template-columns: 21mm minmax(0, 1fr) 12.5mm;
+      grid-template-columns:
+        var(--layout-large-qr, 21mm) minmax(0, 1fr)
+        var(--layout-small-qr, 12.5mm);
       align-items: center;
       gap: 1.8mm;
       padding: 1mm 2mm;
@@ -987,7 +998,7 @@ export function buildCleanLabelDocument(
        resolveProductFit ile kademeli kucultulur (--product-* degiskenleri).
        Hicbir kademede sigmazsa render ACIK hata verir. */
     .surat-product {
-      padding: 1.2mm 2mm;
+      padding: var(--layout-product-padding, 1.2mm) 2mm;
       overflow: visible;
     }
     .surat-product strong,
@@ -1073,38 +1084,58 @@ export function renderPrintableLabelHtml(data: LabelData): string {
   // parça-adedi etiketi + "1/1 Adrese Teslim" satırı ve satır boşlukları
   // düşülür. Sütun genişliği: gövde 93.9 - yatay padding 4 - büyük QR 21 -
   // küçük QR 12.5 - iki boşluk 3.6 = 52.8mm (kötümser 52mm).
-  const routeFit = resolveRouteFit({
-    destination: routeCenter,
-    transfer: transferCenter,
-    availableWidthMm: 52,
-    availableHeightMm: 13.4,
-  })
-  if (!routeFit.fits) {
-    throw new Error(ROUTE_OVERFLOW_MESSAGE)
+  // Profil secimi DETERMINISTIK: sabit sirali listede ILK sigan profil.
+  // Ayni girdi -> ayni profil, reprint AYNI sonucu uretir.
+  const fitItems = (data.items ?? []).map((line) => ({
+    productName: String(line.productName ?? ''),
+    quantity: Number(line.quantity) || 1,
+    color: line.color,
+    size: line.size,
+    sku: line.sku,
+  }))
+  let selectedProfile: LabelLayoutProfile | null = null
+  let selectedProductFit: ReturnType<typeof resolveProductFit> | null = null
+  let selectedRouteFit: ReturnType<typeof resolveRouteFit> | null = null
+  let lastRouteFits = false
+  for (const profile of LABEL_LAYOUT_PROFILES) {
+    const candidateRoute = resolveRouteFit({
+      destination: routeCenter,
+      transfer: transferCenter,
+      availableWidthMm: 52,
+      availableHeightMm: profile.routeBudgetMm,
+    })
+    lastRouteFits = lastRouteFits || candidateRoute.fits
+    if (!candidateRoute.fits) continue
+    const candidateProduct = resolveProductFit({
+      items: fitItems,
+      availableWidthMm: 89,
+      availableHeightMm: resolveProductAreaHeightMm(profile),
+    })
+    if (!candidateProduct.fits) continue
+    selectedProfile = profile
+    selectedProductFit = candidateProduct
+    selectedRouteFit = candidateRoute
+    break
   }
+  if (!selectedProfile || !selectedProductFit || !selectedRouteFit) {
+    // Sessiz kirpma YOK: hicbir guvenli profil sigdiramadi.
+    throw new Error(
+      lastRouteFits ? PRODUCT_OVERFLOW_MESSAGE : ROUTE_OVERFLOW_MESSAGE,
+    )
+  }
+  const routeFit = selectedRouteFit
   const productTitle = item ? buildProductTitleText(item) : 'Ürün bilgisi yok'
   const productMeta = buildProductMetaText(item ?? {
     productName: '',
     quantity: 1,
   })
-  // Alt urun alanina sigdirma: govde 93mm, urun satiri icin kullanilabilir
-  // yukseklik ~9.4mm (100mm etiket - sabit satirlar - padding). Sigmazsa
-  // punto kademeli kucultulur; hicbir kademede sigmazsa ACIK hata.
-  const productFit = resolveProductFit({
-    items: (data.items ?? []).map((line) => ({
-      productName: String(line.productName ?? ''),
-      quantity: Number(line.quantity) || 1,
-      color: line.color,
-      size: line.size,
-      sku: line.sku,
-    })),
-    availableWidthMm: 89,
-    availableHeightMm: 9.4,
-  })
-  if (!productFit.fits) {
-    throw new Error(PRODUCT_OVERFLOW_MESSAGE)
-  }
+  const productFit = selectedProductFit
   const productStyle =
+    `--layout-address-row:${selectedProfile.addressRowMm}mm;` +
+    `--layout-delivery-row:${selectedProfile.deliveryRowMm}mm;` +
+    `--layout-product-padding:${selectedProfile.productPaddingMm}mm;` +
+    `--layout-large-qr:${selectedProfile.largeQrMm}mm;` +
+    `--layout-small-qr:${selectedProfile.smallQrMm}mm;` +
     `--product-title-size:${productFit.tier.titlePt}pt;` +
     `--product-meta-size:${productFit.tier.metaPt}pt;` +
     `--product-line-height:${productFit.tier.lineHeight};` +
@@ -1141,7 +1172,7 @@ export function renderPrintableLabelHtml(data: LabelData): string {
           </footer>`
 
   return `
-      <article class="label-page" style="${productStyle}">
+      <article class="label-page" data-layout-profile="${selectedProfile.key}" style="${productStyle}">
         <aside class="surat-rail">
           <strong>SURAT KARGO</strong>
           <span>Siparis No: ${escapeHtml(leftReference)}</span>

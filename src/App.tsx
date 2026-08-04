@@ -945,8 +945,13 @@ function App() {
           resolveDesiBlock: (order) =>
             resolveEffectiveLabelDesi(order, order.shipment, products, integrationConfig.desi)
               .blockedReason ?? null,
+          // HTML sigdirma kurali YALNIZ tarayici baskisi icindir. Zebra/
+          // native yolda resmi ZPL byte-for-byte basilir; HTML footer tasmasi
+          // o yolu ENGELLEMEZ.
           resolveFitBlock: (order) =>
-            resolveProductFit({
+            printerSettings.mode !== 'browser-print'
+              ? null
+              : resolveProductFit({
               items: (order.items ?? []).map((line) => ({
                 productName: String(line.productName ?? ''),
                 quantity: Number(line.quantity) || 1,
@@ -954,11 +959,11 @@ function App() {
                 size: line.size,
                 sku: line.merchantSku || line.sku,
               })),
-              availableWidthMm: 89,
-              availableHeightMm: 9.4,
-            }).fits
-              ? null
-              : PRODUCT_OVERFLOW_MESSAGE,
+                  availableWidthMm: 89,
+                  availableHeightMm: 9.4,
+                }).fits
+                ? null
+                : PRODUCT_OVERFLOW_MESSAGE,
           hasPrintableLabel: (order) =>
             Boolean(resolvePersistedLabelArtifact(order).hasPrintableLabel),
           isPrinted: (order) =>
@@ -1008,10 +1013,15 @@ function App() {
               printIds,
               list,
             )
+            // KOK NEDEN (canli): burada mod 'browser-print' olarak SABIT
+            // veriliyordu. Zebra/native secili olsa bile akis HTML render
+            // yoluna giriyor, resmi persisted ZPL hazir oldugu halde urun
+            // footer'i sigmadigi icin siparis bloklaniyordu. Artik GERCEK
+            // yazici ayari kullanilir; saglayici secimi TEK yerden gelir.
             return workflowService.printLabels(
               effectiveOrders,
               printIds,
-              { ...printerSettings, mode: 'browser-print' as const },
+              printerSettings,
               labelTemplate,
               {},
               { confirmedAt: new Date().toISOString(), printedBy: 'local user' },
@@ -1125,10 +1135,8 @@ function App() {
         (order) =>
           order.labelStatus === 'PRINTED' && Boolean(order.label?.printedAt),
       )
-    const effectivePrinterSettings = {
-      ...printerSettings,
-      mode: 'browser-print' as const,
-    }
+    // Saglayici secimi TEK kaynaktan: kullanicinin gercek yazici ayari.
+    const effectivePrinterSettings = printerSettings
     // Popup rezervasyonu yok; print motoru kalıcı gizli iframe kullanır ve
     // başarılı yolda hiçbir pencere/iframe kapatılmaz.
     suratPrintTrace('PRINT_BUTTON_CLICK', {
@@ -1225,10 +1233,7 @@ function App() {
     }
     if (printPreview.mode !== 'print') return
 
-    const effectivePrinterSettings = {
-      ...printerSettings,
-      mode: 'browser-print' as const,
-    }
+    const effectivePrinterSettings = printerSettings
     // Önizleme onayı ile yazdırma: sonuç YALNIZ ordersMessage'a yazılır.
     // Desi/label hataları dashboard yükleme banner'ına (ordersError) SIZMAZ.
     setOrdersState((current) => ({

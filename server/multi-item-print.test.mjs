@@ -370,8 +370,11 @@ test('Çoklu ürünlü sipariş yazdırılabilir model ve etiket üretir', async
   assert.ok(moderateHtml.includes('(Renk: Bordo, Beden: 40)'))
 
   // Gerçekten sığmayan içerik: SESSİZCE basılmaz, açık hata verir.
+  // Adaptif yerleşim profilleri (standard/compact-multi/dense-multi)
+  // eklendikten sonra eski fixture ARTIK SIĞIYOR; testin amacı korunsun
+  // diye içerik hiçbir güvenli profile sığmayacak kadar büyütüldü.
   const longName =
-    'Çok Uzun Ürün Adı ' + 'Saten Detaylı Şifon Astarlı Tesettür Abiye '.repeat(6)
+    'Çok Uzun Ürün Adı ' + 'Saten Detaylı Şifon Astarlı Tesettür Abiye '.repeat(40)
   assert.throws(
     () =>
       renderPrintableLabelHtml(

@@ -24,8 +24,11 @@ after(async () => { if (_vite) await _vite.close() })
 const TNO = '25220148446193'
 const TEMPLATE = { id: 't', widthMm: 100, heightMm: 100, fields: [] }
 const LONG =
+  // Adaptif yerlesim profilleri (standard/compact-multi/dense-multi)
+  // eklendikten sonra eski fixture SIGIYOR. Tasma testinin amaci korunsun
+  // diye icerik HICBIR guvenli profile sigmayacak kadar buyutuldu.
   'Çok Uzun Ürün Adı ' +
-  'Saten Detaylı Şifon Astarlı Tesettür Abiye '.repeat(6)
+  'Saten Detaylı Şifon Astarlı Tesettür Abiye '.repeat(40)
 
 function order(i, items) {
   const tno = String(11467870000 + i)
