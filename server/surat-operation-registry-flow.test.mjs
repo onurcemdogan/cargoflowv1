@@ -133,10 +133,9 @@ test('REG-8: çakışan mutasyon/baskı butonları run sırasında DISABLED', ()
   assert.ok(guarded >= 7, `run guard'ı yetersiz (${guarded})`)
   const controlsSrc = readFileSync(
     join(here, '..', 'src/components/SuratCreatePrintControls.tsx'), 'utf8')
-  assert.match(
-    controlsSrc,
-    /const actionsLocked = suratCreatePrintRunning \|\| awaitingConfirmation/,
-  )
+  // Baskı doğrulaması kaldırıldı: kilit YALNIZ run süresince.
+  assert.match(controlsSrc, /const actionsLocked = suratCreatePrintRunning/)
+  assert.equal(/awaitingConfirmation/.test(controlsSrc), false)
   for (const label of [
     'Barkod Bas', 'Ortak Barkod Oluştur / Tamamla', 'ZPL İndir',
     'Kargoya Verildi Yap',

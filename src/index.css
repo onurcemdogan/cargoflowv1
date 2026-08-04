@@ -6544,27 +6544,13 @@ button:disabled {
   width: 100%;
 }
 
-/* Baskı doğrulaması: sonuç alanının İÇİNDE, bloklamayan satır içi panel.
-   window.confirm/alert veya modal overlay KULLANILMAZ. */
-.surat-print-confirmation {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 10px;
+/* Kısa, geçici baskı bilgisi. Kullanıcı müdahalesi İSTEMEZ, modal DEĞİLDİR
+   ve kendiliğinden kaybolur. */
+.surat-print-notice {
   margin: 12px 0 0;
-  padding: 12px 14px;
-  border: 1px solid var(--warning-border, #f0c36d);
-  border-left: 4px solid var(--warning, #d98c00);
-  border-radius: 10px;
-  background: var(--warning-surface, #fff8e8);
-}
-
-.surat-print-confirmation p {
-  margin: 0;
-  flex-basis: 100%;
-}
-
-.surat-print-confirmation-actions {
-  display: flex;
-  gap: 8px;
+  padding: 8px 12px;
+  border-left: 4px solid var(--accent, #2f6fed);
+  border-radius: 6px;
+  background: var(--surface-muted, #f2f5fb);
+  font-weight: 600;
 }

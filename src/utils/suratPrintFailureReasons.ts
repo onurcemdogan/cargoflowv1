@@ -24,14 +24,6 @@ export const LABEL_NOT_READY_MESSAGE =
 export const PRINT_RESULT_MISSING_MESSAGE =
   'Baskı sonucu alınamadı; durum değiştirilmedi.'
 
-/** Kullanıcı baskı onayında "Hayır"/İptal dedi. */
-export const PRINT_NOT_CONFIRMED_MESSAGE =
-  'Kullanıcı baskıyı doğrulamadı; durum değiştirilmedi.'
-
-/** Baskı onay sorusu (browser-print yolunda dialog kapandıktan sonra). */
-export const PRINT_CONFIRMATION_QUESTION =
-  'Etiketler yazıcıdan doğru şekilde çıktı mı?'
-
 /** Sipariş belgeye hiç girmedi (render aşamasında atlandı). */
 export const NOT_IN_PRINT_DOCUMENT_MESSAGE =
   'Sipariş baskı belgesine girmedi; durum değiştirilmedi.'

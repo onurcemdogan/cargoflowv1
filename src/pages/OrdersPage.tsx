@@ -52,7 +52,6 @@ import type {
 } from '../utils/ordersNavigation'
 import { buildOrderCountSummary } from '../utils/orderCounts'
 import { buildOrdersDateRange } from '../utils/orderDateRange'
-import type { PendingPrintConfirmation } from '../utils/printConfirmationModel'
 import { SuratCreatePrintControls } from '../components/SuratCreatePrintControls'
 
 interface OrdersPageProps {
@@ -66,8 +65,7 @@ interface OrdersPageProps {
     completed: number
     total: number
   }
-  pendingPrintConfirmation?: PendingPrintConfirmation
-  onAnswerPrintConfirmation?: (confirmed: boolean) => void
+  suratPrintNotice?: string
   suratCreatePrintResult?: {
     selectedCount: number
     created: number
@@ -189,8 +187,7 @@ export function OrdersPage({
   onSuratCreateAndPrint,
   suratCreatePrintRunning = false,
   suratCreatePrintProgress,
-  pendingPrintConfirmation,
-  onAnswerPrintConfirmation,
+  suratPrintNotice,
   suratCreatePrintResult,
   lastResult,
   busy,
@@ -791,8 +788,7 @@ export function OrdersPage({
         suratCreatePrintRunning={suratCreatePrintRunning}
         suratCreatePrintProgress={suratCreatePrintProgress}
         suratCreatePrintResult={suratCreatePrintResult}
-        pendingPrintConfirmation={pendingPrintConfirmation}
-        onAnswerPrintConfirmation={onAnswerPrintConfirmation}
+        suratPrintNotice={suratPrintNotice}
         onSuratCreateAndPrint={onSuratCreateAndPrint}
         onMarkPrinted={onMarkPrinted}
         onCreateShipments={onCreateShipments}

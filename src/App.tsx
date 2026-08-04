@@ -34,11 +34,6 @@ import { resolveSelectionAfterBatch } from './utils/selectedOrderSnapshot'
 import { prepareSuratPrintHostSynchronously } from './utils/browserLabelPrint'
 import { PRINT_HOST_UNAVAILABLE_MESSAGE } from './utils/suratPrintFailureReasons'
 import {
-  buildPendingPrintConfirmation,
-  type PendingPrintConfirmation,
-} from './utils/printConfirmationModel'
-import type { PendingPrintConfirmationRequest } from './providers/printing/PrintProvider'
-import {
   hasPendingServerOperation,
   isOperationInFlight,
   runExclusiveOperation,
@@ -150,43 +145,27 @@ function App() {
   // Ayni anda ikinci run YOK; eski yavas run yeni sonucu EZEMEZ.
   const suratRunGeneration = useRef(0)
   const suratRunActive = useRef(false)
-  // BLOKLAMAYAN baski dogrulamasi: window.confirm YERINE sonuc panelindeki
-  // inline alan. Cevap gelene kadar soz COZULMEZ; sessiz "evet" YOKTUR.
-  const [pendingPrintConfirmation, setPendingPrintConfirmation] =
-    useState<PendingPrintConfirmation | undefined>(undefined)
-  const printConfirmResolver = useRef<((confirmed: boolean) => void) | null>(
-    null,
+  // Baski dogrulamasi ISTENMEZ. Her sey belgeye girdiyse kullaniciya YALNIZ
+  // kisa ve GECICI bir bilgi satiri gosterilir; mudahale gerektirmez ve
+  // kendiliginden kaybolur. Atlanan/basarisiz varsa sebepler kalici sonuc
+  // alaninda gosterilir (tek sonuc alani, tekrarli mesaj yok).
+  const [suratPrintNotice, setSuratPrintNotice] = useState<string | undefined>(
+    undefined,
   )
-
-  function requestPrintConfirmation(
-    request: PendingPrintConfirmationRequest,
-    context: { createdCount: number; reprintCount: number },
-    lookupOrders: CargoOrder[],
-  ): Promise<boolean> {
-    const identityByOrderNumber = new Map(
-      lookupOrders.map((order) => [
-        String(order.orderNumber ?? ''),
-        orderPackageIdentity(order),
-      ]),
-    )
-    setPendingPrintConfirmation(
-      buildPendingPrintConfirmation(request, {
-        identityByOrderNumber,
-        createdCount: context.createdCount,
-        reprintCount: context.reprintCount,
-      }),
-    )
-    return new Promise<boolean>((resolve) => {
-      printConfirmResolver.current = resolve
-    })
-  }
-  // Kullanici cevabi: panel kapanir ve bekleyen baski sozu cozulur.
-  // Cevap VERILMEZSE (or. sayfa yenilenirse) hicbir siparis PRINTED olmaz.
-  function answerPrintConfirmation(confirmed: boolean) {
-    const resolve = printConfirmResolver.current
-    printConfirmResolver.current = null
-    setPendingPrintConfirmation(undefined)
-    resolve?.(confirmed)
+  const suratNoticeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(
+    () => () => {
+      if (suratNoticeTimer.current) clearTimeout(suratNoticeTimer.current)
+    },
+    [],
+  )
+  function showTransientPrintNotice(message: string) {
+    if (suratNoticeTimer.current) clearTimeout(suratNoticeTimer.current)
+    setSuratPrintNotice(message)
+    suratNoticeTimer.current = setTimeout(() => {
+      setSuratPrintNotice(undefined)
+      suratNoticeTimer.current = null
+    }, 6000)
   }
   const mounted = useRef(true)
   useEffect(() => {
@@ -948,20 +927,6 @@ function App() {
     // Islem boyunca DEGISMEYEN secim snapshot'i.
     const snapshotIds = [...ids]
     const snapshotOrders = orders.filter((order) => snapshotIds.includes(order.id))
-    // Panel sayilari run BASLANGICINDAKI GERCEK duruma dayanir (uydurma yok):
-    // etiketi olmayanlar yeni olusturulan, zaten basilmis olanlar tekrar baski.
-    const preRunState = new Map(
-      snapshotOrders.map((order) => [
-        String(order.orderNumber ?? ''),
-        {
-          hadLabel: Boolean(
-            resolvePersistedLabelArtifact(order).hasPrintableLabel,
-          ),
-          wasPrinted:
-            order.labelStatus === 'PRINTED' && Boolean(order.label?.printedAt),
-        },
-      ]),
-    )
 
     setSuratRunning(true)
     setSuratProgress(undefined)
@@ -1048,26 +1013,7 @@ function App() {
               { ...printerSettings, mode: 'browser-print' as const },
               labelTemplate,
               {},
-              {
-                confirmedAt: new Date().toISOString(),
-                printedBy: 'local user',
-                // Inline panel: BLOKLAYAN dialog YOK.
-                confirmBrowserPrint: (request) =>
-                  requestPrintConfirmation(
-                    request,
-                    {
-                      createdCount: request.documentOrderNumbers.filter(
-                        (orderNumber) =>
-                          preRunState.get(orderNumber)?.hadLabel === false,
-                      ).length,
-                      reprintCount: request.documentOrderNumbers.filter(
-                        (orderNumber) =>
-                          preRunState.get(orderNumber)?.wasPrinted === true,
-                      ).length,
-                    },
-                    effectiveOrders,
-                  ),
-              },
+              { confirmedAt: new Date().toISOString(), printedBy: 'local user' },
             )
           },
         }),
@@ -1087,7 +1033,19 @@ function App() {
       if (!isCurrent()) return
       // Hicbir siparis basilmadiysa host icerigi temizlenir (bos belge kalmaz).
       if (outcome.printed === 0) printHost?.release()
-      setSuratResult(outcome)
+      // Her sey yolundaysa kalici panel GOSTERILMEZ: yalniz kisa, gecici bilgi.
+      const clean =
+        outcome.printed > 0 &&
+        outcome.skipped.length === 0 &&
+        outcome.failed.length === 0
+      if (clean) {
+        setSuratResult(undefined)
+        showTransientPrintNotice(
+          `${outcome.printed} etiket yazdırmaya gönderildi.`,
+        )
+      } else {
+        setSuratResult(outcome)
+      }
       // YALNIZ baskisi DOGRULANAN siparisler secimden cikar; blocked/failed/
       // iptal edilenler SECILI KALIR.
       setSelectedIds((current) =>
@@ -1192,14 +1150,6 @@ function App() {
           confirmedAt,
           printedBy: 'local user',
           includePreviouslyPrinted: allPreviouslyPrinted,
-          // Manuel baski da AYNI inline dogrulamayi kullanir (ayri sozlesme
-          // YAZILMAZ); popup GOSTERILMEZ.
-          confirmBrowserPrint: (request) =>
-            requestPrintConfirmation(
-              request,
-              { createdCount: 0, reprintCount: request.documentOrderNumbers.length },
-              effectiveOrders,
-            ),
         },
       )
       const unresolvedNote =
@@ -1271,12 +1221,6 @@ function App() {
           confirmedAt,
           printedBy: 'local user',
           includePreviouslyPrinted,
-          confirmBrowserPrint: (request) =>
-            requestPrintConfirmation(
-              request,
-              { createdCount: 0, reprintCount: request.documentOrderNumbers.length },
-              effectiveOrders,
-            ),
         },
       )
       const unresolvedNote =
@@ -1452,8 +1396,7 @@ function App() {
           suratCreatePrintRunning={suratRunning}
           suratCreatePrintProgress={suratProgress}
           suratCreatePrintResult={suratResult}
-          pendingPrintConfirmation={pendingPrintConfirmation}
-          onAnswerPrintConfirmation={answerPrintConfirmation}
+          suratPrintNotice={suratPrintNotice}
         />
       ) : null}
 

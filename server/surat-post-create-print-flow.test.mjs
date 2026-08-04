@@ -259,47 +259,46 @@ test('PCP-13: printResult YOKSA hiçbir durum/sayaç değişmez', async () => {
 })
 
 // ---------------------------------------------------------------- 14
-test('PCP-14: kullanıcı baskıyı doğrulamazsa job ok=false ve seçim korunur', async () => {
-  const { PRINT_NOT_CONFIRMED_MESSAGE } = await load(
-    '/src/utils/suratPrintFailureReasons.ts')
-  const { resolveBrowserPrintJobs } = await load(
+test('PCP-14: baskı doğrulaması İSTENMEZ; teknik koşullar karar verir', async () => {
+  const { resolveBrowserPrintJobs, hasPrintedDocument } = await load(
     '/src/providers/printing/BrowserDownloadPrintProvider.ts')
-  const { resolveSelectionAfterBatch } = await load(
-    '/src/utils/selectedOrderSnapshot.ts')
 
-  const decision = resolveBrowserPrintJobs(
+  // print çağrıldı + sipariş belgeye girdi -> BAŞARILI (kullanıcıya soru YOK).
+  const ok = resolveBrowserPrintJobs(
     { printCalled: true, printedOrderNumbers: ['TESTORD-1'] },
     ['TESTORD-1'],
-    false, // kullanıcı "Hayır, çıkmadı" dedi
   )
-  assert.equal(decision.confirmed, false)
-  assert.equal(decision.jobs[0].ok, false)
-  assert.equal(decision.jobs[0].errorMessage, PRINT_NOT_CONFIRMED_MESSAGE)
-  // printCount artmaz, sipariş seçimde kalır.
-  assert.equal(decision.jobs[0].printJobId, undefined)
-  assert.deepEqual(resolveSelectionAfterBatch(['o-1'], []), ['o-1'])
-})
+  assert.equal(ok.printed, true)
+  assert.equal(ok.jobs[0].ok, true)
+  assert.ok(ok.jobs[0].printJobId)
 
-test('PCP-14b: printCalled TEK BAŞINA başarı değildir', async () => {
-  const { resolveBrowserPrintJobs, shouldRequestPrintConfirmation } =
-    await load('/src/providers/printing/BrowserDownloadPrintProvider.ts')
-  // print çağrıldı ama HİÇBİR sipariş belgeye girmedi: onay bile SORULMAZ.
+  // print ÇAĞRILMADI -> başarı YOK.
+  const noPrint = resolveBrowserPrintJobs(
+    { printCalled: false, printedOrderNumbers: ['TESTORD-1'] },
+    ['TESTORD-1'],
+  )
+  assert.equal(noPrint.printed, false)
+  assert.equal(noPrint.jobs[0].ok, false)
   assert.equal(
-    shouldRequestPrintConfirmation(
-      { printCalled: true, printedOrderNumbers: [] }, ['TESTORD-1']),
+    hasPrintedDocument({ printCalled: false, printedOrderNumbers: ['TESTORD-1'] },
+      ['TESTORD-1']),
     false,
   )
+})
+
+test('PCP-14b: belgeye girmeyen sipariş başarılı SAYILMAZ', async () => {
+  const { resolveBrowserPrintJobs } = await load(
+    '/src/providers/printing/BrowserDownloadPrintProvider.ts')
   const decision = resolveBrowserPrintJobs(
     { printCalled: true, printedOrderNumbers: [] },
     ['TESTORD-1'],
-    true, // onay verilse BİLE
   )
-  assert.equal(decision.confirmed, false)
+  assert.equal(decision.printed, false)
   assert.equal(decision.jobs[0].ok, false)
 })
 
 // ---------------------------------------------------------------- 15
-test('PCP-15: onay verilse bile YALNIZ belgeye giren işler başarılıdır', async () => {
+test('PCP-15: kısmi batch — YALNIZ belgeye giren işler başarılıdır', async () => {
   const { resolveBrowserPrintJobs } = await load(
     '/src/providers/printing/BrowserDownloadPrintProvider.ts')
   const decision = resolveBrowserPrintJobs(
@@ -311,9 +310,8 @@ test('PCP-15: onay verilse bile YALNIZ belgeye giren işler başarılıdır', as
       ],
     },
     ['TESTORD-1', 'TESTORD-2'],
-    true,
   )
-  assert.equal(decision.confirmed, true)
+  assert.equal(decision.printed, true)
   assert.equal(decision.jobs[0].ok, true)
   assert.equal(decision.jobs[1].ok, false)
   assert.match(decision.jobs[1].errorMessage, /sığmıyor/)

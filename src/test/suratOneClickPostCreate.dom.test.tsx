@@ -140,14 +140,19 @@ function Harness({
                     return found && hasLabel(found) ? 'READY' : 'STALE'
                   }),
                 )
+                // Baski dogrulamasi YOK: teknik olarak belgeye giren isler
+                // basarilidir. `confirmPrint` artik render/print basarisini
+                // temsil eder.
                 const decision = resolveBrowserPrintJobs(
-                  { printCalled: true, printedOrderNumbers: ['TESTORD-1'] },
+                  {
+                    printCalled: confirmPrint(),
+                    printedOrderNumbers: confirmPrint() ? ['TESTORD-1'] : [],
+                  },
                   ['TESTORD-1'],
-                  confirmPrint(),
                 )
                 return {
                   orders: list,
-                  printResult: { ok: decision.confirmed, jobs: decision.jobs },
+                  printResult: { ok: decision.printed, jobs: decision.jobs },
                 }
               },
             }),
@@ -215,7 +220,7 @@ test('PCPDOM-2: onay OLUMSUZ → başarı yok, seçim ve sonuç paneli korunur',
   render(<Harness trace={trace} confirmPrint={() => false} />)
 
   await user.click(mainButton())
-  await screen.findByText('Baskı doğrulanmadı')
+  await screen.findByText('Kargo etiketi işlemi tamamlanamadı')
 
   expect(trace.printCalls).toEqual([['READY']])
   expect(screen.getByText('Yazdırılan: 0')).toBeTruthy()
