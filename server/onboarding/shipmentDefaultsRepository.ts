@@ -12,13 +12,33 @@ import { ensureSettings } from './onboardingRepository.ts'
 type Db = any
 
 export interface ShipmentDefaults {
-  // Varsayılan BİRİM desi (satır adedi ile ÇARPILIR — mevcut çarpan sözleşmesi
-  // korunur, bkz. orderDesi.calculateOrderDesi). null → ayar yok (eski davranış).
+  // Varsayılan BİRİM desi. null → ayar yok (eski davranış).
   defaultUnitDesi: number | null
+  // Varsayılan desi ürün adediyle ÇARPILSIN mı?
+  // VARSAYILAN true: alan bulunmayan ESKİ kayıtlarda mevcut canlı davranış
+  // (adet çarpanı) AYNEN sürer; hiçbir müşterinin davranışı kendiliğinden
+  // değişmez. false → varsayılan desi paket için YALNIZ BİR KEZ kullanılır.
+  multiplyByItemQuantity: boolean
 }
 
 export const EMPTY_SHIPMENT_DEFAULTS: ShipmentDefaults = {
   defaultUnitDesi: null,
+  multiplyByItemQuantity: true,
+}
+
+// Eksik/geçersiz değer → true (geriye dönük uyumluluk). Yalnız açık `false`
+// (veya 'false'/0) kapatır.
+export function normalizeMultiplyByItemQuantity(value: unknown): boolean {
+  if (value === undefined || value === null) return true
+  if (typeof value === 'boolean') return value
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase()
+    if (normalized === 'false' || normalized === '0') return false
+    if (normalized === 'true' || normalized === '1') return true
+    return true
+  }
+  if (typeof value === 'number') return value !== 0
+  return true
 }
 
 // Frontend normalizeTenantDesiConfig ile AYNI kural: pozitif sayı, 2 ondalık;
@@ -53,6 +73,9 @@ export async function getShipmentDefaults(
       : {}
   return {
     defaultUnitDesi: normalizeDefaultUnitDesi(shipmentDefaults.defaultUnitDesi),
+    multiplyByItemQuantity: normalizeMultiplyByItemQuantity(
+      shipmentDefaults.multiplyByItemQuantity,
+    ),
   }
 }
 
@@ -68,6 +91,9 @@ export async function saveShipmentDefaults(
   const settings = readSettingsJson(current)
   const normalized: ShipmentDefaults = {
     defaultUnitDesi: normalizeDefaultUnitDesi(defaults?.defaultUnitDesi),
+    multiplyByItemQuantity: normalizeMultiplyByItemQuantity(
+      defaults?.multiplyByItemQuantity,
+    ),
   }
   await db
     .update(organizationSettings)

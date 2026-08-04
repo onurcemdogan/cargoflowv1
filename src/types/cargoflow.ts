@@ -912,6 +912,11 @@ export interface SuratIntegrationConfig {
 // gönderi oluşturmayı ENGELLER (sessiz varsayım yok).
 export interface TenantDesiConfig {
   defaultUnitDesi: number | null
+  /**
+   * Varsayılan (tenant) desi ürün adediyle çarpılsın mı? VARSAYILAN true:
+   * ayarın bulunmadığı eski kayıtlarda mevcut çarpan davranışı sürer.
+   */
+  multiplyByItemQuantity?: boolean
   categoryDefaults: Record<string, number>
   productOverrides: Record<string, number>
   variantOverrides: Record<string, number>

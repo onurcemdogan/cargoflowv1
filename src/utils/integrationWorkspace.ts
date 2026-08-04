@@ -20,7 +20,6 @@ export type SuratDetailTab =
   | 'account'
   | 'agreement'
   | 'commonBarcode'
-  | 'label'
   | 'sync'
   | 'logs'
 
@@ -57,7 +56,8 @@ export const suratDetailTabs: Array<{
   { key: 'account', label: 'Hesap' },
   { key: 'agreement', label: 'Anlaşmalı Kargo' },
   { key: 'commonBarcode', label: 'Ortak Barkod' },
-  { key: 'label', label: 'Etiket' },
+  // 'label' sekmesi KALDIRILDI: içindeki gönderi varsayılanları organizasyon
+  // geneli / sağlayıcıdan bağımsız ortak bölüme taşındı.
   { key: 'sync', label: 'Senkronizasyon' },
   { key: 'logs', label: 'Loglar' },
 ]
