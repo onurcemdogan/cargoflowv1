@@ -5,7 +5,7 @@ import {
   RefreshCcw,
   Stamp,
 } from 'lucide-react'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { CargoOrder } from '../types/cargoflow'
 import type { OrderCountSummary } from '../utils/orderCounts'
 import {
@@ -94,8 +94,32 @@ export function SuratCreatePrintControls({
   pendingPrintConfirmation,
   onAnswerPrintConfirmation,
 }: SuratCreatePrintControlsProps) {
+  // Gelismis Islemler menusu: yalniz GORSEL gruplama. Hicbir islem kaldirilmadi,
+  // hicbir handler degistirilmedi.
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+  const advancedRef = useRef<HTMLDivElement | null>(null)
   const awaitingConfirmation = Boolean(pendingPrintConfirmation)
   const actionsLocked = suratCreatePrintRunning || awaitingConfirmation
+  // Menü görünürlüğü TÜRETİLİR: işlem sürerken veya baskı doğrulaması
+  // beklerken menü kapalıdır (effect içinde setState YOK).
+  const menuOpen = advancedOpen && !actionsLocked
+  useEffect(() => {
+    if (!menuOpen) return
+    const onPointerDown = (event: MouseEvent) => {
+      if (!advancedRef.current?.contains(event.target as Node)) {
+        setAdvancedOpen(false)
+      }
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setAdvancedOpen(false)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menuOpen])
   const selectionText =
     selectedIds.length === 0
       ? 'Seçili sipariş yok'
@@ -249,11 +273,25 @@ export function SuratCreatePrintControls({
                 ? suratPhaseText || 'İşleniyor…'
                 : 'Kargo Etiketi Oluştur ve Yazdır'}
           </button>
+          <div className="surat-advanced-actions" ref={advancedRef}>
+            <button
+              type="button"
+              className="secondary-button surat-advanced-toggle"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              disabled={busy || actionsLocked}
+              onClick={() => setAdvancedOpen((open) => !open)}
+            >
+              Gelişmiş İşlemler
+            </button>
+            {menuOpen ? (
+              <div className="surat-advanced-menu" role="menu">
           <button
             type="button"
             className="secondary-button"
             onClick={onMarkPrinted}
             title={printableDisabledReason}
+            role="menuitem"
             disabled={busy || actionsLocked || selectedIds.length === 0 || !hasPrintableSelection}
           >
             <Barcode size={18} />
@@ -263,6 +301,7 @@ export function SuratCreatePrintControls({
             type="button"
             className="secondary-button"
             onClick={onCreateShipments}
+            role="menuitem"
             title={createDisabledReason}
             disabled={
               busy ||
@@ -285,6 +324,7 @@ export function SuratCreatePrintControls({
                   ? 'Önce en az bir sipariş seçin.'
                   : undefined
             }
+            role="menuitem"
             disabled={busy || actionsLocked || selectedIds.length === 0}
           >
             <RefreshCcw size={18} />
@@ -294,6 +334,7 @@ export function SuratCreatePrintControls({
             type="button"
             className="primary-button"
             onClick={onDownloadZpl}
+            role="menuitem"
             title={zplDisabledReason}
             disabled={
               busy ||
@@ -310,6 +351,7 @@ export function SuratCreatePrintControls({
             className="secondary-button"
             onClick={onMarkPrinted}
             title={printableDisabledReason}
+            role="menuitem"
             disabled={busy || actionsLocked || selectedIds.length === 0 || !hasPrintableSelection}
           >
             <Stamp size={18} />
@@ -320,11 +362,15 @@ export function SuratCreatePrintControls({
             className="secondary-button"
             onClick={onMarkHandedToCargo}
             title={handedDisabledReason}
+            role="menuitem"
             disabled={busy || actionsLocked || selectedIds.length === 0 || !hasHandedToCargoSelection}
           >
             <PackagePlus size={18} />
             Kargoya Verildi Yap
           </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </section>
     </>
