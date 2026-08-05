@@ -4,6 +4,12 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test, { after } from 'node:test'
 import { createServer } from 'vite'
+import {
+  buildSyntheticSuratZpl,
+  buildSyntheticSuratOrder,
+  FIXTURE_DATA,
+  FIXTURE_LAYOUT,
+} from './fixtures/suratOfficialZplFixture.mjs'
 
 // YEREL ECC200 DATAMATRIX (^BX) — kaynak ZPL payload'ı, ISO/IEC 16022.
 //
@@ -185,24 +191,10 @@ function decodeDataMatrixAscii(symbol) {
   return { codewords, text }
 }
 
-const OFFICIAL = [
-  '^XA', '^CI28', '^PW799', '^LL0799', '^LS0',
-  '^FO20,15^GB760,770,3^FS',
-  '^FO60,20^A0N,28,28^FDSube: FERAH^FS',
-  '^FO470,20^A0N,26,26^FDT.No: 21012920014311^FS',
-  '^FO60,150^BY3^BCN,150,Y,N,N^FD01254596670^FS',
-  '^FO60,345^A0N,24,24^FDALICI AD^FS',
-  '^FO60,375^A0N,18,18^FB700,3,0,L,0^FDMAHALLE SOKAK NO ILCE IL^FS',
-  '^FO60,480^A0N,20,20^FDOdemeTipi Birim Top Ds/Kg^FS',
-  '^FO60,510^A0N,30,30^FDPOCH KOLI 2,00^FS',
-  '^FO60,560^BXN,6,200^FD7270035184060553^FS',
-  '^FO240,630^A0N,34,34^FDKARACADAG/04^FS',
-  '^FO240,672^A0N,38,38^FDDIYARBAKIR AKTARMA^FS',
-  '^FO660,560^BQN,2,6^FDLA,01254596670^FS',
-  '^FWB', '^FO24,340^A0N,18,18^FDSiparis No: 7270035184060553^FS', '^FWN',
-  '^PQ1,0,1,Y',
-  '^XZ',
-].join('\n')
+// TEK KAYNAK sentetik şablon (bkz. fixtures/suratOfficialZplFixture.mjs).
+const OFFICIAL = buildSyntheticSuratZpl()
+const DM = FIXTURE_LAYOUT.dataMatrix
+const BX = `^BXN,${DM.module},200`
 
 // ═══ DM-1..DM-4: KODLAMA VE HATA DÜZELTME DOĞRULUĞU ════════════════════════
 
@@ -246,8 +238,8 @@ test('DM-3: tam kod sözcüğü vektörünün RS SENDROMLARI sıfırdır (bağı
 test('DM-4: sembol boyutu kapasiteye göre EN KÜÇÜK kare seçilir', async () => {
   const { encodeDataMatrix } = await load('/src/utils/dataMatrixEncoder.ts')
   assert.equal(encodeDataMatrix('123456').size, 10, '3 kod sözcüğü → 10×10')
-  // 16 haneli Sürat payload'ı 8 kod sözcüğü → 14×14 (kapasite 8).
-  assert.equal(encodeDataMatrix('7270035184060553').size, 14)
+  // 16 haneli sentetik payload 8 kod sözcüğü → 14×14 (kapasite 8).
+  assert.equal(encodeDataMatrix(FIXTURE_DATA.orderNumber).size, 14)
   assert.equal(encodeDataMatrix(''), null, 'boş payload sembol üretmez')
 })
 
@@ -255,7 +247,7 @@ test('DM-4: sembol boyutu kapasiteye göre EN KÜÇÜK kare seçilir', async () 
 
 test('DM-5: finder pattern kesintisiz L, clock track dönüşümlüdür', async () => {
   const { encodeDataMatrix } = await load('/src/utils/dataMatrixEncoder.ts')
-  const symbol = encodeDataMatrix('7270035184060553')
+  const symbol = encodeDataMatrix(FIXTURE_DATA.orderNumber)
   const { size, modules } = symbol
   for (let index = 0; index < size; index += 1) {
     assert.equal(modules[index][0], true, `sol L kesintisiz (satır ${index})`)
@@ -275,7 +267,7 @@ test('DM-5: finder pattern kesintisiz L, clock track dönüşümlüdür', async 
 
 test('DM-6: bağımsız ters çözücü payload’ı AYNEN geri okur (round-trip)', async () => {
   const { encodeDataMatrix } = await load('/src/utils/dataMatrixEncoder.ts')
-  for (const payload of ['123456', '7270035184060553', '01254596670']) {
+  for (const payload of ['123456', FIXTURE_DATA.orderNumber, FIXTURE_DATA.barcode]) {
     const symbol = encodeDataMatrix(payload)
     const decoded = decodeDataMatrixAscii(symbol)
     assert.equal(decoded.text, payload, `round-trip başarısız: ${payload}`)
@@ -284,8 +276,8 @@ test('DM-6: bağımsız ters çözücü payload’ı AYNEN geri okur (round-trip
 
 test('DM-7: üretim determinismi — aynı payload HER ZAMAN aynı matris', async () => {
   const { encodeDataMatrix } = await load('/src/utils/dataMatrixEncoder.ts')
-  const first = encodeDataMatrix('7270035184060553')
-  const second = encodeDataMatrix('7270035184060553')
+  const first = encodeDataMatrix(FIXTURE_DATA.orderNumber)
+  const second = encodeDataMatrix(FIXTURE_DATA.orderNumber)
   assert.deepEqual(first.modules, second.modules)
 })
 
@@ -297,15 +289,17 @@ test('DM-8: ^BX SVG’de gerçek modüllerle çizilir, boş kare BIRAKILMAZ', as
   const result = renderSuratZplToSvg(OFFICIAL)
   assert.equal(result.renderStatus, 'ok')
   // Modül sayısı kadar koyu dikdörtgen SVG'de bulunmalı.
-  const symbol = encodeDataMatrix('7270035184060553')
+  const symbol = encodeDataMatrix(FIXTURE_DATA.orderNumber)
   const darkModules = symbol.modules
     .flat()
     .filter(Boolean).length
   assert.ok(darkModules > 50, 'anlamlı sayıda koyu modül')
-  // ^BXN,6 → modül kenarı 6 dot. İlk koyu modül (sol üst köşe, L'nin başı)
-  // ^FO60,560 konumundadır.
+  // Modül kenarı ^BX parametresinden gelir; ilk koyu modül (finder L'sinin
+  // başı) kaynak ^FO konumundadır.
   assert.ok(
-    result.svg.includes('<rect x="60" y="560" width="6" height="6" fill="#000"/>'),
+    result.svg.includes(
+      `<rect x="${DM.x}" y="${DM.y}" width="${DM.module}" height="${DM.module}" fill="#000"/>`,
+    ),
     'DataMatrix modülleri kaynak ^FO/^BX ölçüsüyle çizilir',
   )
   // Uyarı üretilmez: alan artık gerçekten dolduruluyor.
@@ -322,35 +316,47 @@ test('DM-9: ^BX quiet zone (1 modül) beyaz olarak KORUNUR', async () => {
   )
   assert.equal(DATA_MATRIX_QUIET_MODULES, 1)
   const svg = renderSuratZplToSvg(OFFICIAL).svg
-  // 14 modül × 6 dot = 84; quiet 6 dot → 54,554 başlangıç ve 96×96 alan.
+  const { encodeDataMatrix } = await load('/src/utils/dataMatrixEncoder.ts')
+  const side = encodeDataMatrix(FIXTURE_DATA.orderNumber).size * DM.module
+  const quiet = DATA_MATRIX_QUIET_MODULES * DM.module
   assert.ok(
-    svg.includes('<rect x="54" y="554" width="96" height="96" fill="#fff"/>'),
+    svg.includes(
+      `<rect x="${DM.x - quiet}" y="${DM.y - quiet}" ` +
+        `width="${side + quiet * 2}" height="${side + quiet * 2}" fill="#fff"/>`,
+    ),
     'sessiz alan beyaz dikdörtgenle garanti edilir',
   )
 })
 
 test('DM-10: ^BX yönü (^BXB) kaynak parametresinden alınır', async () => {
   const { renderSuratZplToSvg } = await load('/src/utils/suratZplSvgRenderer.ts')
-  const rotated = renderSuratZplToSvg(OFFICIAL.replace('^BXN,6,200', '^BXB,6,200'))
+  const rotated = renderSuratZplToSvg(
+    OFFICIAL.replace(BX, `^BXB,${DM.module},200`),
+  )
   assert.equal(rotated.renderStatus, 'ok')
+  // ZPL B yönü = 270 derece (saat yönü), alan orijini etrafında.
   assert.ok(
-    rotated.svg.includes('<g transform="rotate(-90 60 560)">'),
+    rotated.svg.includes(`<g transform="rotate(270 ${DM.x} ${DM.y})">`),
     'dönmüş alan grup dönüşümüyle çizilir',
   )
 })
 
 test('DM-11: modül boyutu kaynak ^BX parametresinden gelir', async () => {
   const { renderSuratZplToSvg } = await load('/src/utils/suratZplSvgRenderer.ts')
-  const bigger = renderSuratZplToSvg(OFFICIAL.replace('^BXN,6,200', '^BXN,9,200'))
+  const bigger = renderSuratZplToSvg(OFFICIAL.replace(BX, '^BXN,9,200'))
   assert.ok(
-    bigger.svg.includes('<rect x="60" y="560" width="9" height="9" fill="#000"/>'),
+    bigger.svg.includes(
+      `<rect x="${DM.x}" y="${DM.y}" width="9" height="9" fill="#000"/>`,
+    ),
     'modül kenarı 9 dot',
   )
 })
 
 test('DM-12: ECC200 dışı kalite TAHMİNLE çizilmez, açık durum döner', async () => {
   const { renderSuratZplToSvg } = await load('/src/utils/suratZplSvgRenderer.ts')
-  const result = renderSuratZplToSvg(OFFICIAL.replace('^BXN,6,200', '^BXN,6,140'))
+  const result = renderSuratZplToSvg(
+    OFFICIAL.replace(BX, `^BXN,${DM.module},140`),
+  )
   assert.equal(result.renderStatus, 'matrix_encode_failed')
   assert.equal(result.unsupportedCommand, '^BX')
   assert.equal(result.svg, '')
@@ -361,20 +367,11 @@ test('DM-13: render başarısızsa baskı akışı GÜVENLİ mesajla atlar', asy
   const { buildSuratOfficialPrintDocument } = await load(
     '/src/utils/browserLabelPrint.ts',
   )
-  const order = {
-    id: 'o-dm', marketplace: 'Trendyol', orderNumber: '900', packageId: 'PKG-DM',
-    customerName: 'TEST ALICI', address: 'TEST MAH 1',
-    operationStatus: 'LABEL_READY', labelStatus: 'READY', hasPrintableLabel: true,
-    desi: 2, items: [],
-    shipment: {
-      provider: 'surat-kargo', trackingNumber: '21012920014311',
-      tNo: '21012920014311', barcode: '01254596670', barkodNo: '01254596670',
-      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
-      zplReady: true, printEnabled: true,
-      barcodeRaw: OFFICIAL.replace('^BXN,6,200', '^BXN,6,140'),
-      desi: 2,
-    },
-  }
+  const order = buildSyntheticSuratOrder({
+    id: 'o-dm',
+    packageId: 'PKG-DM',
+    barcodeRaw: buildSyntheticSuratZpl({ dataMatrixQuality: 140 }),
+  })
   const doc = buildSuratOfficialPrintDocument([order])
   assert.equal(doc.pages.length, 0)
   assert.equal(doc.skipped.length, 1)
@@ -386,39 +383,14 @@ test('DM-13: render başarısızsa baskı akışı GÜVENLİ mesajla atlar', asy
 
 // ═══ DM-14..DM-17: PAYLOAD KORUMASI (^BC / ^BQ / ^BX) ══════════════════════
 
-function orderWith(over = {}) {
-  return {
-    id: 'o-1', marketplace: 'Trendyol', orderNumber: '7270035184060553',
-    packageId: 'PKG-1', customerName: 'TEST ALICI', address: 'TEST MAH 1',
-    city: 'DIYARBAKIR', district: 'KAYAPINAR',
-    operationStatus: 'LABEL_READY', labelStatus: 'READY', hasPrintableLabel: true,
-    desi: 2, desiSource: 'manual_total',
-    items: [
-      {
-        id: 'l-1', productName: 'Scuba Elbise', quantity: 1,
-        color: 'Siyah', size: '42', merchantSku: 'SCUBA-SEC01',
-      },
-    ],
-    shipment: {
-      provider: 'surat-kargo', trackingNumber: '21012920014311',
-      tNo: '21012920014311', barcode: '01254596670', barkodNo: '01254596670',
-      barcodeValue: '01254596670', ozelKargoTakipNo: '7270035184060553',
-      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
-      zplReady: true, printEnabled: true, barcodeRaw: OFFICIAL, desi: 2,
-    },
-    ...over,
-  }
-}
-
 test('DM-14: tracking/sipariş alanları değişse de KAYNAK payload’lar korunur', async () => {
   const { buildSuratOfficialPrintDocument } = await load(
     '/src/utils/browserLabelPrint.ts',
   )
-  const tampered = orderWith({
+  const tampered = buildSyntheticSuratOrder({
     orderNumber: '000000000000',
     cargoTrackingNumber: '55555555555',
     shipment: {
-      ...orderWith().shipment,
       // UI alanları DEĞİŞTİ; kaynak ZPL aynı.
       ozelKargoTakipNo: '88888888888',
       barcodeValue: '99999999999',
@@ -426,7 +398,7 @@ test('DM-14: tracking/sipariş alanları değişse de KAYNAK payload’lar korun
   })
   const svg = buildSuratOfficialPrintDocument([tampered]).pages[0].render.svg
   // ^BC insan-okur numarası kaynak ZPL'den.
-  assert.ok(svg.includes('>01254596670<'))
+  assert.ok(svg.includes(`>${FIXTURE_DATA.barcode}<`))
   assert.equal(svg.includes('99999999999'), false)
   assert.equal(svg.includes('88888888888'), false)
   assert.equal(svg.includes('55555555555'), false)
@@ -434,31 +406,44 @@ test('DM-14: tracking/sipariş alanları değişse de KAYNAK payload’lar korun
   // tracking alanları değiştirilmiş sipariş ile bozulmamış sipariş BİREBİR
   // AYNI SVG'yi üretir. ^BC, ^BQ ve ^BX payload'larının hiçbiri UI'dan
   // türetilmiyor demektir.
-  const pristine = buildSuratOfficialPrintDocument([orderWith()]).pages[0]
+  const pristine = buildSuratOfficialPrintDocument([buildSyntheticSuratOrder()]).pages[0]
   assert.equal(svg, pristine.render.svg, 'payload’lar UI alanlarından türemiyor')
 })
 
 test('DM-15: ^BY modül genişliği ve insan-okur numara korunur', async () => {
   const { renderSuratZplToSvg } = await load('/src/utils/suratZplSvgRenderer.ts')
   const svg = renderSuratZplToSvg(OFFICIAL).svg
-  // ^BY3 → ilk çubuk 2 modül × 3 dot = 6 dot genişlik, yükseklik ^BCN,150.
+  const bar = FIXTURE_LAYOUT.barcode
+  // Code128 START B deseni "211214" ile başlar: ilk çubuk 2 modül.
   assert.ok(
-    svg.includes('<rect x="60" y="150" width="6" height="150" fill="#000"/>'),
-    '^BY3 modül genişliği uygulanır',
+    svg.includes(
+      `<rect x="${bar.x}" y="${bar.y}" width="${2 * bar.module}" height="${bar.height}" fill="#000"/>`,
+    ),
+    '^BY modül genişliği uygulanır',
   )
-  assert.ok(svg.includes('>01254596670<'), 'insan-okur numara korunur')
+  assert.ok(svg.includes(`>${FIXTURE_DATA.barcode}<`), 'insan-okur numara korunur')
 })
 
 test('DM-16: ^BQ payload’ı "LA," ön ekinden arındırılıp AYNEN kullanılır', async () => {
   const { renderSuratZplToSvg, defaultMatrixRenderer } = await load(
     '/src/utils/suratZplSvgRenderer.ts',
   )
-  const expected = defaultMatrixRenderer('01254596670')
+  // ^FD "LA," → hata düzeltme seviyesi L. Sabit bir seviye VARSAYILMAZ.
+  const expected = defaultMatrixRenderer(FIXTURE_DATA.barcode, 'L')
   const expectedDark = expected.flat().filter(Boolean).length
   const svg = renderSuratZplToSvg(OFFICIAL).svg
-  // ^BQN,2,6 → modül kenarı 6 dot; QR modülleri bu ölçüde çizilir.
-  const qrRects = (svg.match(/width="6" height="6" fill="#000"/g) ?? []).length
-  assert.ok(qrRects > expectedDark, 'QR modülleri SVG’de mevcut')
+  const magnification = FIXTURE_LAYOUT.qr.magnification
+  const qrRects = (
+    svg.match(
+      new RegExp(`width="${magnification}" height="${magnification}" fill="#000"`, 'g'),
+    ) ?? []
+  ).length
+  assert.equal(qrRects, expectedDark, 'QR modül sayısı kaynak seviyeyle eşleşir')
+  // Seviye YANLIŞ varsayılırsa modül sayısı DEĞİŞİR (kontrol testi).
+  assert.notEqual(
+    defaultMatrixRenderer(FIXTURE_DATA.barcode, 'H').flat().filter(Boolean).length,
+    expectedDark,
+  )
 })
 
 test('DM-17: yerel üreteçler AĞ çağrısı yapmaz, payload LOGLANMAZ', () => {

@@ -4,6 +4,12 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test, { after } from 'node:test'
 import { createServer } from 'vite'
+import {
+  buildSyntheticSuratZpl,
+  buildSyntheticSuratOrder,
+  FIXTURE_DATA,
+  FIXTURE_LAYOUT,
+} from './fixtures/suratOfficialZplFixture.mjs'
 
 // RESMÎ SÜRAT SVG — GÖRSEL REGRESYON (SNAPSHOT) TESTLERİ.
 //
@@ -39,84 +45,11 @@ after(async () => {
 })
 
 // ── SENTETİK resmî Sürat şablonu ───────────────────────────────────────────
-function officialZpl(options = {}) {
-  const {
-    recipient = 'SENTETIK ALICI',
-    address = 'ORNEK MAH ORNEK SOK NO 1 ORNEK ILCE',
-    route = 'ORNEKSEHIR/01',
-    transfer = 'ORNEKSEHIR AKTARMA',
-    barcodeModule = 3,
-    includeCode128 = true,
-    includeDataMatrix = true,
-    includeQr = true,
-  } = options
-  return [
-    '^XA', '^CI28', '^PW799', '^LL0799', '^LS0',
-    '^FO20,15^GB760,770,3^FS',
-    '^FO60,20^A0N,28,28^FDSube: ORNEK^FS',
-    '^FO470,20^A0N,26,26^FDT.No: 10000000000001^FS',
-    includeCode128
-      ? `^FO60,150^BY${barcodeModule}^BCN,150,Y,N,N^FD01200000001^FS`
-      : '',
-    `^FO60,345^A0N,24,24^FD${recipient}^FS`,
-    `^FO60,375^A0N,18,18^FB700,3,0,L,0^FD${address}^FS`,
-    '^FO60,480^A0N,20,20^FDOdemeTipi Birim Top Ds/Kg^FS',
-    '^FO60,510^A0N,30,30^FDPOCH KOLI 2,00^FS',
-    includeDataMatrix ? '^FO60,560^BXN,6,200^FD1000000000000001^FS' : '',
-    `^FO240,630^A0N,34,34^FD${route}^FS`,
-    `^FO240,672^A0N,38,38^FD${transfer}^FS`,
-    includeQr ? '^FO660,560^BQN,2,6^FDLA,01200000001^FS' : '',
-    '^FWB', '^FO24,340^A0N,18,18^FDSiparis No: 1000000000000001^FS', '^FWN',
-    '^PQ1,0,1,Y',
-    '^XZ',
-  ]
-    .filter(Boolean)
-    .join('\n')
-}
-
-function order(over = {}) {
-  return {
-    id: 'snap-1',
-    marketplace: 'Trendyol',
-    orderNumber: '1000000000000001',
-    packageId: 'PKG-SNAP-1',
-    customerName: 'SENTETIK ALICI',
-    address: 'ORNEK MAH ORNEK SOK NO 1 ORNEK ILCE',
-    city: 'ORNEKSEHIR',
-    district: 'ORNEKILCE',
-    operationStatus: 'LABEL_READY',
-    labelStatus: 'READY',
-    hasPrintableLabel: true,
-    desi: 2,
-    desiSource: 'manual_total',
-    items: [
-      {
-        id: 'snap-l-1',
-        productName: 'Ornek Elbise',
-        quantity: 1,
-        color: 'Siyah',
-        size: '42',
-        merchantSku: 'ORN-001',
-      },
-    ],
-    shipment: {
-      provider: 'surat-kargo',
-      trackingNumber: '10000000000001',
-      tNo: '10000000000001',
-      barcode: '01200000001',
-      barkodNo: '01200000001',
-      barcodeValue: '01200000001',
-      ozelKargoTakipNo: '1000000000000001',
-      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
-      candidateVerificationStatus: 'PREASSIGNED_AWAITING_ACCEPTANCE',
-      zplReady: true,
-      printEnabled: true,
-      barcodeRaw: officialZpl(),
-      desi: 2,
-    },
-    ...over,
-  }
-}
+// TEK KAYNAK: server/fixtures/suratOfficialZplFixture.mjs. Şablon artık
+// gerçek etikette olduğu gibi ^GB YATAY/DİKEY bölüm çizgileri, ^FT taban
+// çizgisi alanları, ^FB sarma/hizalama ve ^A0B dikey ray içerir.
+const officialZpl = (options = {}) => buildSyntheticSuratZpl(options)
+const order = (over = {}) => buildSyntheticSuratOrder(over)
 
 const LONG_NAME =
   'Ornek Uzun Urun Adi Premium Koleksiyon Ekstra Detayli Seri Numara Bir'
@@ -281,23 +214,52 @@ for (const fixture of FIXTURES) {
     assert.ok(svg.includes('width="100mm"'), 'genişlik 100mm')
     assert.ok(svg.includes('height="100mm"'), 'yükseklik 100mm')
     assert.ok(svg.includes('shape-rendering="crispEdges"'), 'crispEdges')
-    // Dış çerçeve
+    // Dış çerçeve — ZPL kutu kenarlığı İÇERİ çizilir, dış ölçü w×h kalır.
+    const frame = FIXTURE_LAYOUT.frame
     assert.ok(
-      svg.includes('width="760" height="770" fill="none" stroke="#000"'),
+      svg.includes(
+        `width="${frame.width - frame.thickness}" height="${frame.height - frame.thickness}" ` +
+          `fill="none" stroke="#000" stroke-width="${frame.thickness}"`,
+      ),
       'dış çerçeve mevcut',
     )
+    // BÖLÜM ÇİZGİLERİ: ^GBw,0 yatay + ^GB0,h dikey (sıfır boyut düşürülmez).
+    for (const lineY of FIXTURE_LAYOUT.sectionLines) {
+      assert.ok(
+        svg.includes(
+          `<rect x="20" y="${lineY}" width="760" height="${FIXTURE_LAYOUT.sectionLineThickness}" fill="#000"/>`,
+        ),
+        `yatay bölüm çizgisi eksik (y=${lineY})`,
+      )
+    }
+    const rail = FIXTURE_LAYOUT.railLine
+    assert.ok(
+      svg.includes(
+        `<rect x="${rail.x}" y="${rail.y}" width="${rail.thickness}" height="${rail.height}" fill="#000"/>`,
+      ),
+      'dikey ray çizgisi eksik',
+    )
     // 1D barkod + insan-okur numara
-    assert.ok(/height="150" fill="#000"/.test(svg), '1D barkod çubukları')
-    assert.ok(svg.includes('>01200000001<'), 'barkod altı numara')
+    assert.ok(
+      new RegExp(`height="${FIXTURE_LAYOUT.barcode.height}" fill="#000"`).test(svg),
+      '1D barkod çubukları',
+    )
+    assert.ok(svg.includes(`>${FIXTURE_DATA.barcode}<`), 'barkod altı numara')
     // Rota, aktarma, dikey sipariş numarası
     assert.ok(/ORNEKSEHIR/.test(svg), 'rota mevcut')
     assert.ok(/AKTARMA/.test(svg), 'aktarma mevcut')
     assert.ok(
-      /transform="rotate\(-90 24 340\)"/.test(svg),
+      svg.includes(
+        `rotate(270 ${FIXTURE_LAYOUT.verticalOrderBaseline.x} ${FIXTURE_LAYOUT.verticalOrderBaseline.y})`,
+      ),
       'dikey sipariş numarası mevcut',
     )
-    // Matris kodlar: fixture'a göre en az biri
-    const hasMatrix = /width="6" height="6" fill="#000"/.test(svg)
+    // Matris kodlar: fixture'a göre en az biri (modül ölçüsü KAYNAK ZPL'den).
+    const dmModule = FIXTURE_LAYOUT.dataMatrix.module
+    const qrModule = FIXTURE_LAYOUT.qr.magnification
+    const hasMatrix =
+      new RegExp(`width="${dmModule}" height="${dmModule}" fill="#000"`).test(svg) ||
+      new RegExp(`width="${qrModule}" height="${qrModule}" fill="#000"`).test(svg)
     assert.ok(hasMatrix, 'QR/DataMatrix modülleri mevcut')
     // Ürün footer'ı: overflow ve ürünsüz fixture'lar hariç
     if (!/06-augmentation-overflow|07-legacy/.test(fixture.name)) {
@@ -386,4 +348,38 @@ test('SNAP-REPRINT: PRINTED reprint AYNI artefaktı verir (immutable)', async ()
     'reprint yeni bir baskı artefaktı ÜRETMEZ',
   )
   assert.equal(reprint.page.render.svg, ready.page.render.svg)
+})
+
+// ═══ FİZİKSEL DOĞRULAMA HAZIRLIĞI ══════════════════════════════════════════
+//
+// İki dosya üretilir ve REPODA tutulur:
+//   fixtures/surat-svg/sentetik-reference.svg        → tek etiketin SVG'si
+//   fixtures/surat-svg/sentetik-reference-print.html → Chrome'dan doğrudan
+//                                                      yazdırılabilir belge
+// Print HTML @page { size: 100mm 100mm; margin: 0; } içerir; tarayıcıda
+// açılıp Ctrl+P ile 100 × 100 mm etikete basılabilir.
+//
+// UYARI: bu dosyalar YALNIZ fiziksel testi KOLAYLAŞTIRIR. Bu turda gerçek
+// yazıcı veya tarayıcı baskı testi YAPILMAMIŞTIR.
+test('SNAP-REFERENCE: Chrome print test dosyaları üretilir ve güncel kalır', async () => {
+  const { page, html } = await renderFixture(
+    FIXTURES.find((item) => item.name === '01-single-short-product'),
+  )
+  const svgFile = join(SNAPSHOT_DIR, 'sentetik-reference.svg')
+  const htmlFile = join(SNAPSHOT_DIR, 'sentetik-reference-print.html')
+  if (UPDATE) {
+    mkdirSync(SNAPSHOT_DIR, { recursive: true })
+    writeFileSync(svgFile, page.render.svg, 'utf8')
+    writeFileSync(htmlFile, html, 'utf8')
+    return
+  }
+  assert.ok(existsSync(svgFile), `referans SVG yok: ${svgFile}`)
+  assert.ok(existsSync(htmlFile), `referans print HTML yok: ${htmlFile}`)
+  assert.equal(readFileSync(svgFile, 'utf8'), page.render.svg, 'referans SVG bayat')
+  const printHtml = readFileSync(htmlFile, 'utf8')
+  assert.equal(printHtml, html, 'referans print HTML bayat')
+  assert.ok(printHtml.includes('@page { size: 100mm 100mm; margin: 0; }'))
+  assert.ok(printHtml.includes('viewBox="0 0 799 799"'))
+  // Tek sayfa, sonda page-break YOK.
+  assert.equal((printHtml.match(/class="surat-official-page"/g) ?? []).length, 1)
 })

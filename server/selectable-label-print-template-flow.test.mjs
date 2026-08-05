@@ -7,6 +7,12 @@ import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
 import { eq } from 'drizzle-orm'
 import { createServer } from 'vite'
+import {
+  buildSyntheticSuratZpl,
+  buildSyntheticSuratOrder,
+  FIXTURE_DATA,
+  FIXTURE_LAYOUT,
+} from './fixtures/suratOfficialZplFixture.mjs'
 
 // SEÇİLEBİLİR ETİKET BASKI ŞABLONU.
 //
@@ -65,41 +71,21 @@ async function makeOrg(db, slug) {
   return org.id
 }
 
-// SENTETİK resmî Sürat şablonu (dış çerçeveli, gerçekçi).
-const OFFICIAL = [
-  '^XA', '^CI28', '^PW799', '^LL0799', '^LS0',
-  '^FO20,15^GB760,770,3^FS',
-  '^FO60,20^A0N,28,28^FDSube: FERAH^FS',
-  '^FO470,20^A0N,26,26^FDT.No: 21012920014311^FS',
-  '^FO60,150^BY3^BCN,150,Y,N,N^FD01254596670^FS',
-  '^FO60,345^A0N,24,24^FDALICI AD^FS',
-  '^FO60,375^A0N,18,18^FB700,3,0,L,0^FDMAHALLE SOKAK NO ILCE IL^FS',
-  '^FO60,480^A0N,20,20^FDOdemeTipi Birim Top Ds/Kg^FS',
-  '^FO60,510^A0N,30,30^FDPOCH KOLI 2,00^FS',
-  '^FO60,560^BXN,6,200^FD7270035184060553^FS',
-  '^FO240,630^A0N,34,34^FDKARACADAG/04^FS',
-  '^FO240,672^A0N,38,38^FDDIYARBAKIR AKTARMA^FS',
-  '^FO660,560^BQN,2,6^FDLA,01254596670^FS',
-  '^FWB', '^FO24,340^A0N,18,18^FDSiparis No: 7270035184060553^FS', '^FWN',
-  '^PQ1,0,1,Y',
-  '^XZ',
-].join('\n')
+// TEK KAYNAK sentetik şablon: fixtures/suratOfficialZplFixture.mjs.
+// Gerçek etikette olduğu gibi ^GB yatay/dikey bölüm çizgileri, ^FT taban
+// çizgisi alanları, ^FB sarma/hizalama ve ^A0B dikey ray içerir.
+const OFFICIAL = buildSyntheticSuratZpl()
 
+// Ürün satırı TÜRKÇE karakter içerir (SV-TR bunu doğrular); bu bilgi ZPL'den
+// değil SİPARİŞ satırından gelir ve augmentation ile footer'a eklenir.
 function printableOrder(over = {}) {
-  return {
+  return buildSyntheticSuratOrder({
     id: 'o-1',
-    marketplace: 'Trendyol',
-    orderNumber: '7270035184060553',
     packageId: 'PKG-1',
     customerName: 'TEST ALICI',
     address: 'TEST MAH 1',
     city: 'DIYARBAKIR',
     district: 'KAYAPINAR',
-    operationStatus: 'LABEL_READY',
-    labelStatus: 'READY',
-    hasPrintableLabel: true,
-    desi: 2,
-    desiSource: 'manual_total',
     items: [
       {
         id: 'l-1',
@@ -111,23 +97,8 @@ function printableOrder(over = {}) {
         barcode: 'BC-1',
       },
     ],
-    shipment: {
-      provider: 'surat-kargo',
-      trackingNumber: '21012920014311',
-      tNo: '21012920014311',
-      barcode: '01254596670',
-      barkodNo: '01254596670',
-      barcodeValue: '01254596670',
-      ozelKargoTakipNo: '7270035184060553',
-      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
-      candidateVerificationStatus: 'PREASSIGNED_AWAITING_ACCEPTANCE',
-      zplReady: true,
-      printEnabled: true,
-      barcodeRaw: OFFICIAL,
-      desi: 2,
-    },
     ...over,
-  }
+  })
 }
 
 // ═══ AYAR (21) ═════════════════════════════════════════════════════════════
@@ -282,24 +253,34 @@ test('SV-6..SV-20: resmî alanlar ve ürün bilgisi SVG\'de görünür', async (
     '/src/utils/browserLabelPrint.ts',
   )
   const svg = buildSuratOfficialPrintDocument([printableOrder()]).pages[0].render.svg
-  // 6) dış çerçeve çizilir
-  assert.ok(svg.includes('width="760" height="770"'), 'dış çerçeve')
+  // 6) dış çerçeve çizilir (kenarlık İÇERİ, dış ölçü w×h)
+  const frame = FIXTURE_LAYOUT.frame
+  assert.ok(
+    svg.includes(
+      `width="${frame.width - frame.thickness}" height="${frame.height - frame.thickness}"`,
+    ),
+    'dış çerçeve',
+  )
+  // 6b) bölüm ayırıcı çizgileri (^GBw,0 ve ^GB0,h) EKSİKSİZ
+  for (const lineY of FIXTURE_LAYOUT.sectionLines) {
+    assert.ok(svg.includes(`y="${lineY}" width="760"`), `bölüm çizgisi yok: ${lineY}`)
+  }
   // 7-15) resmî alanlar
   for (const [name, needle] of [
-    ['gönderici şubesi', 'Sube: FERAH'],
-    ['T.No', 'T.No: 21012920014311'],
-    ['alıcı', 'ALICI AD'],
-    ['adres', 'MAHALLE'],
-    ['ödeme/birim/desi', 'POCH KOLI 2,00'],
-    ['rota', 'KARACADAG/04'],
-    ['aktarma', 'DIYARBAKIR AKTARMA'],
-    ['dikey sipariş no', 'Siparis No: 7270035184060553'],
+    ['gönderici şubesi', `Sube: ${FIXTURE_DATA.branch}`],
+    ['T.No', `T.No: ${FIXTURE_DATA.trackingNumber}`],
+    ['alıcı', FIXTURE_DATA.recipient],
+    ['adres', 'ORNEK MAHALLESI'],
+    ['ödeme/birim/desi', 'POCH'],
+    ['rota', FIXTURE_DATA.route],
+    ['aktarma', FIXTURE_DATA.transfer],
+    ['dikey sipariş no', `Siparis No: ${FIXTURE_DATA.orderNumber}`],
   ]) {
     assert.ok(svg.includes(needle), `resmî alan yok: ${name}`)
   }
   // 8/9) 1D barkod çubukları + altındaki insan-okur sayı
   assert.ok((svg.match(/<rect/g) ?? []).length > 20, '1D barkod çubukları')
-  assert.ok(svg.includes('>01254596670<'), 'barkod altı sayı')
+  assert.ok(svg.includes(`>${FIXTURE_DATA.barcode}<`), 'barkod altı sayı')
   // 12) büyük QR (yerel üreteç ile gerçek modüller)
   assert.ok((svg.match(/<rect/g) ?? []).length > 100, 'QR modülleri')
   // 16-20) ürün adı, adet, renk, beden, SKU
@@ -319,14 +300,11 @@ test('SV-BARCODE: barkod ve QR payload KAYNAKTAN gelir, yeniden üretilmez', asy
   )
   // Sipariş alanları FARKLI olsa bile ZPL payload'ı kullanılır.
   const order = printableOrder({
-    shipment: {
-      ...printableOrder().shipment,
-      // UI alanları değişti; kaynak ZPL AYNI kaldı.
-      barcodeValue: '99999999999',
-    },
+    // UI alanları değişti; kaynak ZPL AYNI kaldı.
+    shipment: { barcodeValue: '99999999999' },
   })
   const svg = buildSuratOfficialPrintDocument([order]).pages[0].render.svg
-  assert.ok(svg.includes('>01254596670<'), 'kaynak ZPL barkodu korunur')
+  assert.ok(svg.includes(`>${FIXTURE_DATA.barcode}<`), 'kaynak ZPL barkodu korunur')
   assert.equal(svg.includes('99999999999'), false, 'UI alanı barkoda sızmaz')
 })
 
@@ -423,7 +401,7 @@ test('AUG-1: ürün satırı sığmasa da resmî ZPL render edilir', async () =>
   const doc = buildSuratOfficialPrintDocument([order])
   assert.equal(doc.pages.length, 1)
   assert.equal(doc.pages[0].render.renderStatus, 'ok')
-  assert.ok(doc.pages[0].render.svg.includes('T.No: 21012920014311'))
+  assert.ok(doc.pages[0].render.svg.includes(`T.No: ${FIXTURE_DATA.trackingNumber}`))
 })
 
 test('AUG-2: eski technicalZpl-only kayıt (ürün satırı yok) render edilir', async () => {
@@ -439,7 +417,7 @@ test('AUG-2: eski technicalZpl-only kayıt (ürün satırı yok) render edilir',
   const doc = buildSuratOfficialPrintDocument([legacy])
   assert.equal(doc.pages.length, 1)
   assert.equal(doc.pages[0].render.renderStatus, 'ok')
-  assert.ok(doc.pages[0].render.svg.includes('01254596670'))
+  assert.ok(doc.pages[0].render.svg.includes(FIXTURE_DATA.barcode))
 })
 
 // ═══ GÜVENLİK ══════════════════════════════════════════════════════════════
@@ -480,13 +458,13 @@ function suratOrder(over = {}) {
   return printableOrder(over)
 }
 function foreignCarrierOrder(over = {}) {
-  const base = printableOrder({ id: 'o-foreign', packageId: 'PKG-F' })
-  return {
-    ...base,
+  return printableOrder({
+    id: 'o-foreign',
+    packageId: 'PKG-F',
     cargoProviderName: 'Baska Kargo',
-    shipment: { ...base.shipment, provider: 'baska-kargo' },
+    shipment: { provider: 'baska-kargo' },
     ...over,
-  }
+  })
 }
 
 test('RT-1/RT-2: override yoksa organizasyon varsayılanı, varsa GEÇİCİ seçim', async () => {
