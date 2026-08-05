@@ -20,6 +20,7 @@
 import qrcode from 'qrcode-generator'
 import { parseSuratZplGeometry } from './suratZplGeometry.ts'
 import { resolveSuratTemplateFingerprint } from './suratZplProductLine.ts'
+import { encodeDataMatrix } from './dataMatrixEncoder.ts'
 
 export const SURAT_SVG_RENDER_VERSION = 'surat-zpl-svg-v1'
 export const SURAT_RENDER_UNAVAILABLE_MESSAGE =
@@ -30,6 +31,8 @@ export type SuratRenderStatus =
   | 'unsupported_command'
   | 'unsupported_template'
   | 'empty_source'
+  /** Matris kod (QR/DataMatrix) YEREL olarak üretilemedi — placeholder ÇİZİLMEZ. */
+  | 'matrix_encode_failed'
 
 export interface SuratSvgRenderResult {
   renderStatus: SuratRenderStatus
@@ -182,51 +185,68 @@ function renderCode128(
 }
 
 // ── QR / DataMatrix ───────────────────────────────────────────────────────
-// PAYLOAD KAYNAK ZPL'DEN alınır. Gerçek matris üretimi için yerel bir
-// kütüphane gerekir; repoda mevcut olan qrcode-generator KULLANILIR.
-// Kütüphane çözülemezse SESSİZ boşluk bırakılmaz: uyarı üretilir ve
-// alan işaretlenir.
+// PAYLOAD KAYNAK ZPL'DEN alınır ve UI/sipariş alanlarından ASLA yeniden
+// üretilmez. İki üreteç de YEREL'dir:
+//   ^BQ QR         → repoda zaten bulunan qrcode-generator (yeni bağımlılık YOK)
+//   ^BX DataMatrix → CargoFlow içindeki ECC200 üreteci (dataMatrixEncoder.ts)
+// Üretim başarısız olursa SESSİZ placeholder ÇİZİLMEZ: render açık durumla
+// (matrix_encode_failed) reddedilir ve çağıran katman CargoFlow şablonuna
+// düşmeyi önerir.
 export interface MatrixCodeRenderer {
-  (payload: string, moduleCount: number): boolean[][] | null
+  (payload: string): boolean[][] | null
 }
 
-function renderMatrix(
+export interface MatrixDrawResult {
+  svg: string
+  /** false ise matris yerel olarak üretilemedi (placeholder ÇİZİLMEZ). */
+  ok: boolean
+}
+
+function drawMatrix(
   x: number,
   y: number,
-  side: number,
-  payload: string,
-  renderer: MatrixCodeRenderer | undefined,
-  warnings: string[],
-): string {
-  const modules = renderer ? renderer(payload, 0) : null
-  if (!modules || modules.length === 0) {
-    warnings.push('Matris kod yerel olarak üretilemedi; alan boş bırakıldı.')
-    return `<rect x="${x}" y="${y}" width="${side}" height="${side}" fill="none" stroke="#000" stroke-width="1"/>`
-  }
+  modules: boolean[][] | null,
+  moduleDots: number,
+  quietModules: number,
+  transform: string,
+): MatrixDrawResult {
+  if (!modules || modules.length === 0) return { svg: '', ok: false }
   const count = modules.length
-  const cell = side / count
-  const rects: string[] = []
+  const cell = moduleDots
+  const parts: string[] = []
+  // QUIET ZONE: sembolün dört yanında `quietModules` modül genişliğinde
+  // BEYAZ alan garanti edilir; komşu içerik sessiz alana taşamaz.
+  if (quietModules > 0) {
+    const quiet = quietModules * cell
+    parts.push(
+      `<rect x="${x - quiet}" y="${y - quiet}" ` +
+        `width="${count * cell + quiet * 2}" height="${count * cell + quiet * 2}" ` +
+        `fill="#fff"/>`,
+    )
+  }
   for (let row = 0; row < count; row += 1) {
     for (let col = 0; col < count; col += 1) {
       if (!modules[row][col]) continue
-      rects.push(
+      parts.push(
         `<rect x="${x + col * cell}" y="${y + row * cell}" width="${cell}" height="${cell}" fill="#000"/>`,
       )
     }
   }
-  return rects.join('')
+  const inner = parts.join('')
+  return {
+    svg: transform ? `<g${transform}>${inner}</g>` : inner,
+    ok: true,
+  }
 }
 
 export interface RenderOptions {
-  /** Yerel matris kod üreteci (QR/DataMatrix). Ağ çağrısı YAPMAZ. */
+  /** Yerel QR üreteci (test edilebilirlik için). Ağ çağrısı YAPMAZ. */
   matrixRenderer?: MatrixCodeRenderer
 }
 
 /**
  * Varsayılan YEREL QR üreteci — repoda zaten bulunan `qrcode-generator`
- * paketini kullanır (yeni bağımlılık YOK, ağ çağrısı YOK). DataMatrix (^BX)
- * için yerel üreteç bulunmadığından o alan uyarıyla işaretlenir; sessizce
- * boş bırakılmaz.
+ * paketini kullanır (yeni bağımlılık YOK, ağ çağrısı YOK).
  */
 export const defaultMatrixRenderer: MatrixCodeRenderer = (payload) => {
   try {
@@ -241,6 +261,25 @@ export const defaultMatrixRenderer: MatrixCodeRenderer = (payload) => {
     return null
   }
 }
+
+/**
+ * YEREL DataMatrix (ECC200) üreteci. Payload kaynak ZPL'den gelir; burada
+ * hiçbir alan yeniden türetilmez. Yalnız payload → matris dönüşümü yapar.
+ */
+export const defaultDataMatrixRenderer: MatrixCodeRenderer = (payload) => {
+  const symbol = encodeDataMatrix(payload)
+  return symbol ? symbol.modules : null
+}
+
+/** ^BX yalnız ECC200 (kalite 200) için birebir üretilebilir. */
+export const DATA_MATRIX_ECC200_QUALITY = 200
+/**
+ * ECC200 zorunlu sessiz alanı: her kenarda 1 modül. DataMatrix için AÇIKÇA
+ * çizilir. ^BQ QR'da sessiz alan kaynak etiket düzeninin kendi beyaz
+ * boşluğundan gelir (Zebra ^BQ de sessiz alan çizmez); oraya beyaz dikdörtgen
+ * basmak resmî çerçeveyi silerdi.
+ */
+export const DATA_MATRIX_QUIET_MODULES = 1
 
 export function renderSuratZplToSvg(
   rawZpl: unknown,
@@ -292,7 +331,8 @@ export function renderSuratZplToSvg(
   let barcodeHeight = 0
   let barcodeShowText = true
   let pending: 'text' | 'code128' | 'qr' | 'datamatrix' = 'text'
-  let matrixSide = 0
+  let matrixModuleDots = 6
+  let dataMatrixQuality = DATA_MATRIX_ECC200_QUALITY
 
   for (const token of zpl.split('^').slice(1)) {
     const command = token.slice(0, 2).toUpperCase()
@@ -356,14 +396,19 @@ export function renderSuratZplToSvg(
         break
       }
       case 'BQ': {
+        // ^BQa,b,c → a: yön, b: model, c: büyütme (modül başına dot).
         const parts = args.split(',')
-        matrixSide = num(parts[2], 4) * 25
+        if (/^[BR]/i.test(String(parts[0] ?? ''))) fieldRotated = true
+        matrixModuleDots = Math.max(1, num(parts[2], 4))
         pending = 'qr'
         break
       }
       case 'BX': {
+        // ^BXo,h,s → o: yön, h: modül kenarı (dot), s: kalite (200 = ECC200).
         const parts = args.split(',')
-        matrixSide = num(parts[1], 6) * 24
+        if (/^[BR]/i.test(String(parts[0] ?? ''))) fieldRotated = true
+        matrixModuleDots = Math.max(1, num(parts[1], 6))
+        dataMatrixQuality = num(parts[2], DATA_MATRIX_ECC200_QUALITY)
         pending = 'datamatrix'
         break
       }
@@ -395,14 +440,50 @@ export function renderSuratZplToSvg(
           )
         } else if (pending === 'qr' || pending === 'datamatrix') {
           // ^BQ verisi "LA,payload" biçimindedir; payload AYNEN korunur.
+          // ^BX verisi payload'ın KENDİSİDİR. İkisi de yalnız kaynak ZPL'den
+          // gelir; sipariş/UI alanlarından türetilmez.
           const payload = pending === 'qr' ? data.replace(/^[A-Z]{2},/i, '') : data
-          // QR: yerel üreteç. DataMatrix: yerel üreteç YOK → uyarı.
+          if (
+            pending === 'datamatrix' &&
+            dataMatrixQuality !== DATA_MATRIX_ECC200_QUALITY
+          ) {
+            // Kaynak sözleşmeye uymayan kalite seviyesi TAHMİNLE çizilmez.
+            return {
+              ...base,
+              renderStatus: 'matrix_encode_failed',
+              svg: '',
+              templateFingerprint: fingerprint.signature,
+              unsupportedCommand: '^BX',
+              warnings: [
+                `Desteklenmeyen DataMatrix kalite seviyesi (${dataMatrixQuality}); yalnız ECC200 üretilir.`,
+              ],
+            }
+          }
           const renderer =
-            options.matrixRenderer ??
-            (pending === 'qr' ? defaultMatrixRenderer : undefined)
-          body.push(
-            renderMatrix(x, y, matrixSide || 100, payload, renderer, warnings),
+            pending === 'qr'
+              ? (options.matrixRenderer ?? defaultMatrixRenderer)
+              : defaultDataMatrixRenderer
+          const drawn = drawMatrix(
+            x,
+            y,
+            renderer(payload),
+            matrixModuleDots,
+            pending === 'datamatrix' ? DATA_MATRIX_QUIET_MODULES : 0,
+            fieldRotated ? ` transform="rotate(-90 ${x} ${y})"` : '',
           )
+          if (!drawn.ok) {
+            // SESSİZ PLACEHOLDER YOK: boş/yanlış bir kare çizmek yerine
+            // render açık durumla reddedilir.
+            return {
+              ...base,
+              renderStatus: 'matrix_encode_failed',
+              svg: '',
+              templateFingerprint: fingerprint.signature,
+              unsupportedCommand: pending === 'qr' ? '^BQ' : '^BX',
+              warnings: ['Matris kod yerel olarak üretilemedi.'],
+            }
+          }
+          body.push(drawn.svg)
         } else if (data.trim()) {
           const family = resolveZplFontFamily(fontCode)
           const transform = fieldRotated
