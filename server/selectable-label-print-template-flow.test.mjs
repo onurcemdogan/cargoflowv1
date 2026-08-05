@@ -473,3 +473,264 @@ test('SEC-2: yeni dependency EKLENMEDİ (mevcut qrcode-generator kullanılır)',
   )
   assert.match(src, /from 'qrcode-generator'/)
 })
+
+// ═══ ŞABLON YÖNLENDİRMESİ — TEK KARAR NOKTASI (3/4/5) ══════════════════════
+
+function suratOrder(over = {}) {
+  return printableOrder(over)
+}
+function foreignCarrierOrder(over = {}) {
+  const base = printableOrder({ id: 'o-foreign', packageId: 'PKG-F' })
+  return {
+    ...base,
+    cargoProviderName: 'Baska Kargo',
+    shipment: { ...base.shipment, provider: 'baska-kargo' },
+    ...over,
+  }
+}
+
+test('RT-1/RT-2: override yoksa organizasyon varsayılanı, varsa GEÇİCİ seçim', async () => {
+  const { resolveLabelPrintTemplateDecision } = await load(
+    '/src/utils/labelPrintTemplateRouting.ts',
+  )
+  const orders = [suratOrder()]
+  // Varsayılan CargoFlow.
+  assert.equal(
+    resolveLabelPrintTemplateDecision({ orders }).template,
+    'cargoflow_html',
+  )
+  // Organizasyon varsayılanı resmî Sürat.
+  assert.equal(
+    resolveLabelPrintTemplateDecision({
+      organizationTemplate: 'surat_official_zpl',
+      orders,
+    }).template,
+    'surat_official_zpl',
+  )
+  // Geçici seçim organizasyon varsayılanını EZER (yalnız bu çalışma için).
+  const overridden = resolveLabelPrintTemplateDecision({
+    organizationTemplate: 'cargoflow_html',
+    templateOverride: 'surat_official_zpl',
+    orders,
+  })
+  assert.equal(overridden.template, 'surat_official_zpl')
+  assert.equal(overridden.overridden, true)
+  const back = resolveLabelPrintTemplateDecision({
+    organizationTemplate: 'surat_official_zpl',
+    templateOverride: 'cargoflow_html',
+    orders,
+  })
+  assert.equal(back.template, 'cargoflow_html')
+  assert.equal(back.overridden, true)
+})
+
+test('RT-3: AÇIK resmî Sürat seçimi + Sürat dışı gönderi → güvenli HATA', async () => {
+  const { resolveLabelPrintTemplateDecision, SURAT_ONLY_TEMPLATE_MESSAGE } =
+    await load('/src/utils/labelPrintTemplateRouting.ts')
+  const decision = resolveLabelPrintTemplateDecision({
+    organizationTemplate: 'cargoflow_html',
+    templateOverride: 'surat_official_zpl',
+    orders: [suratOrder(), foreignCarrierOrder()],
+  })
+  assert.equal(decision.blockedReason, SURAT_ONLY_TEMPLATE_MESSAGE)
+  assert.equal(
+    SURAT_ONLY_TEMPLATE_MESSAGE,
+    'Resmî Sürat şablonu yalnız Sürat Kargo gönderilerinde kullanılabilir.',
+  )
+  // Sessizce YANLIŞ sağlayıcı etiketi çizilmez.
+  assert.equal(decision.fallbackApplied, false)
+})
+
+test('RT-4: organizasyon VARSAYILANI + Sürat dışı gönderi → güvenli fallback + TEK bilgi', async () => {
+  const { resolveLabelPrintTemplateDecision, SURAT_TEMPLATE_FALLBACK_NOTICE } =
+    await load('/src/utils/labelPrintTemplateRouting.ts')
+  const decision = resolveLabelPrintTemplateDecision({
+    organizationTemplate: 'surat_official_zpl',
+    orders: [suratOrder(), foreignCarrierOrder()],
+  })
+  assert.equal(decision.template, 'cargoflow_html')
+  assert.equal(decision.fallbackApplied, true)
+  assert.equal(decision.notice, SURAT_TEMPLATE_FALLBACK_NOTICE)
+  assert.equal(decision.blockedReason, undefined)
+})
+
+test('RT-5: sağlayıcı tespiti — shipment.provider, kargo firması, boş kurulum', async () => {
+  const { isSuratShipmentOrder } = await load(
+    '/src/utils/labelPrintTemplateRouting.ts',
+  )
+  assert.equal(isSuratShipmentOrder(suratOrder()), true)
+  assert.equal(isSuratShipmentOrder(foreignCarrierOrder()), false)
+  const base = printableOrder()
+  // Sağlayıcı hiç belirtilmemiş: mevcut create ön kontrolüyle aynı varsayım.
+  assert.equal(
+    isSuratShipmentOrder({ ...base, cargoProviderName: '', shipment: {} }),
+    true,
+  )
+  // Kargo firması adı Sürat, shipment.provider yok.
+  assert.equal(
+    isSuratShipmentOrder({
+      ...base,
+      cargoProviderName: 'Sürat Kargo Marketplace',
+      shipment: {},
+    }),
+    true,
+  )
+  assert.equal(isSuratShipmentOrder(undefined), false)
+})
+
+test('RT-6: gösterge metni ve normalize', async () => {
+  const { describeLabelPrintTemplate, normalizeLabelPrintTemplate } = await load(
+    '/src/utils/labelPrintTemplateRouting.ts',
+  )
+  assert.equal(describeLabelPrintTemplate('cargoflow_html'), 'Şablon: CargoFlow')
+  assert.equal(
+    describeLabelPrintTemplate('surat_official_zpl'),
+    'Şablon: Resmî Sürat',
+  )
+  assert.equal(normalizeLabelPrintTemplate('saçma'), 'cargoflow_html')
+  assert.equal(normalizeLabelPrintTemplate(undefined), 'cargoflow_html')
+})
+
+// ═══ BASKI ZİNCİRİ BAĞLANTISI (3/6) ════════════════════════════════════════
+
+test('WIRE-1: print provider şablona göre yönlendirir, HTML yolu VARSAYILANDIR', () => {
+  const provider = readFileSync(
+    join(here, '..', 'src', 'providers', 'printing', 'BrowserDownloadPrintProvider.ts'),
+    'utf8',
+  )
+  const browserBranch = provider.slice(
+    provider.indexOf("input.printerSettings.mode === 'browser-print'"),
+    provider.indexOf("input.printerSettings.mode === 'download'"),
+  )
+  assert.match(browserBranch, /labelPrintTemplate === 'surat_official_zpl'/)
+  assert.match(browserBranch, /printSuratOfficialDocument\(/)
+  // Mevcut HTML yolu KALDIRILMADI ve varsayılan olarak kalır.
+  assert.match(browserBranch, /printCleanLabelDocument\(/)
+  assert.match(browserBranch, /useOfficialTemplate\s*\?/)
+  // jobs sözleşmesi DEĞİŞMEDİ (kısmi başarı + per-job onay).
+  assert.match(browserBranch, /resolveBrowserPrintJobs\(browserPrintDebug, orderNumbers\)/)
+})
+
+test('WIRE-2: workflowService şablon seçimini provider’a AYNEN geçirir', () => {
+  const service = readFileSync(
+    join(here, '..', 'src', 'services', 'orderWorkflowService.ts'),
+    'utf8',
+  )
+  const printLabels = service.slice(
+    service.indexOf('async printLabels('),
+    service.indexOf('async printLabels(') + 6000,
+  )
+  assert.match(printLabels, /labelPrintTemplate\?: LabelPrintTemplate/)
+  assert.match(printLabels, /labelPrintTemplate: options\.labelPrintTemplate/)
+})
+
+test('WIRE-3: App ŞABLON KARARINI create’ten ÖNCE verir ve bloklarsa create YAPMAZ', () => {
+  const app = readFileSync(join(here, '..', 'src', 'App.tsx'), 'utf8')
+  const handler = app.slice(
+    app.indexOf('async function handleSuratCreateAndPrintForIds'),
+    app.indexOf('async function handlePrintLabelsForIds'),
+  )
+  const decisionAt = handler.indexOf('resolveRunLabelTemplate(')
+  const blockAt = handler.indexOf('templateDecision.blockedReason')
+  const createAt = handler.indexOf('runSuratCreateAndPrint(')
+  assert.ok(decisionAt > -1 && blockAt > -1 && createAt > -1)
+  assert.ok(decisionAt < blockAt, 'karar önce verilir')
+  assert.ok(blockAt < createAt, 'bloklama create’ten ÖNCEDİR')
+  assert.match(handler, /labelPrintTemplate: templateDecision\.template/)
+  // Tek karar noktası: üç UI yüzeyi için ayrı mantık kopyalanmaz.
+  assert.equal(
+    (app.match(/resolveLabelPrintTemplateDecision\(/g) ?? []).length,
+    1,
+    'karar mantığı TEK yerde',
+  )
+})
+
+test('WIRE-4: resmî baskı MEVCUT kalıcı iframe yaşam döngüsünü kullanır', () => {
+  const src = readFileSync(
+    join(here, '..', 'src', 'utils', 'browserLabelPrint.ts'),
+    'utf8',
+  )
+  const official = src.slice(
+    src.indexOf('export async function printSuratOfficialDocument'),
+    src.indexOf('// Toplu baski belgesi'),
+  )
+  // Popup YOK, ikinci pencere YOK.
+  assert.equal(/window\.open/.test(official), false)
+  // Ortak yaşam döngüsü (iframe + window.print) yeniden kullanılır.
+  assert.match(official, /dispatchPrintDocument\(/)
+  assert.match(official, /activePrintExecution/, 'çift çalıştırma guard’ı')
+  assert.match(official, /printMode: 'surat-official-svg'/)
+  // Harici servis YOK.
+  assert.equal(/labelary|labelzoom|fetch\(/i.test(official), false)
+  // HTML şablonu resmî modda YENİDEN ÇİZİLMEZ.
+  assert.equal(/buildCleanLabelDocument|renderPrintableLabelHtml/.test(official), false)
+  // Ortak dispatch gerçekten window.print çağırır.
+  const dispatch = src.slice(
+    src.indexOf('async function dispatchPrintDocument'),
+    src.indexOf('export async function printSuratOfficialDocument'),
+  )
+  assert.match(dispatch, /frameWindow\.print\(\)/)
+  assert.match(dispatch, /ensurePersistentPrintFrame\(executionId\)/)
+})
+
+// ═══ ÖNİZLEME = BASKI ARTEFAKTI (7) ════════════════════════════════════════
+
+test('PV-1: önizleme ve Chrome baskısı AYNI artefaktı kullanır', async () => {
+  const { buildSuratOfficialArtifact, buildSuratOfficialPrintDocument } =
+    await load('/src/utils/browserLabelPrint.ts')
+  const order = printableOrder()
+  const preview = buildSuratOfficialArtifact(order)
+  const printed = buildSuratOfficialPrintDocument([order])
+  assert.ok(preview.page)
+  assert.equal(printed.pages.length, 1)
+  assert.equal(
+    preview.page.printZplSha256,
+    printed.pages[0].printZplSha256,
+    'printZplSha256 eşit değil',
+  )
+  assert.equal(
+    preview.page.render.renderVersion,
+    printed.pages[0].render.renderVersion,
+  )
+  assert.equal(
+    preview.page.render.templateFingerprint,
+    printed.pages[0].render.templateFingerprint,
+  )
+  // Aynı SVG: "yaklaşık önizleme" ÜRETİLMEZ.
+  assert.equal(preview.page.render.svg, printed.pages[0].render.svg)
+})
+
+test('PV-2: önizleme SAF’tır — provider/create/printCount yan etkisi YOK', () => {
+  const component = readFileSync(
+    join(here, '..', 'src', 'components', 'SuratOfficialLabelPreview.tsx'),
+    'utf8',
+  )
+  const code = component
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n')
+  for (const forbidden of [
+    'fetch(', 'createShipment', 'printLabels', 'printCount',
+    'labelStatus =', 'useEffect', 'window.print',
+  ]) {
+    assert.equal(code.includes(forbidden), false, `yan etki: ${forbidden}`)
+  }
+  // Ortak artefakt üreticisini kullanır.
+  assert.match(component, /buildSuratOfficialArtifact/)
+  // Önizleme kimliği DOM'a taşınır (baskı ile karşılaştırılabilir).
+  assert.match(component, /data-print-zpl-sha256/)
+  assert.match(component, /data-render-version/)
+  assert.match(component, /data-template-fingerprint/)
+})
+
+test('PV-3: CargoFlow HTML modu MEVCUT önizlemeyi kullanmaya devam eder', () => {
+  const modal = readFileSync(
+    join(here, '..', 'src', 'components', 'PrintPreviewModal.tsx'),
+    'utf8',
+  )
+  assert.match(modal, /labelPrintTemplate === 'surat_official_zpl'/)
+  assert.match(modal, /<LabelPreviewCard/)
+  assert.match(modal, /<SuratOfficialLabelPreview/)
+  // Varsayılan CargoFlow.
+  assert.match(modal, /labelPrintTemplate = 'cargoflow_html'/)
+})
