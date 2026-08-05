@@ -2239,6 +2239,8 @@ export class OrderWorkflowService {
       confirmedAt: options.confirmedAt,
       labelTemplate: template,
       mappingConfig,
+      // Etiket renk/beden tamamlama icin organizasyon kapsamli katalog.
+      products: this.loadProducts(),
     })
 
     const successfulOrderNumbers = new Set(

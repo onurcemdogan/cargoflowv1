@@ -1529,6 +1529,7 @@ function App() {
           previewDrafts={labelPreviewDrafts}
           printerSettings={printerSettings}
           busy={ordersState.ordersLoading}
+          products={productsState.products}
           onClose={() => setPrintPreview(undefined)}
           onConfirm={handlePrintPreviewConfirm}
           onDesiChange={handleOrderDesiChange}
