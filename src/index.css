@@ -5795,6 +5795,38 @@ button:disabled {
   opacity: 0.55;
 }
 
+/* Kargo Etiketi Şablonu seçimi — mevcut toggle satırlarıyla aynı görsel dil. */
+.integration-choice-group {
+  margin: 18px 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.integration-choice-group legend {
+  padding: 0;
+  color: #1d2b3a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.integration-choice-group .integration-toggle-row {
+  margin-top: 10px;
+}
+
+.integration-toggle-row input[type='radio'] {
+  flex: 0 0 auto;
+  width: 17px;
+  height: 17px;
+  margin-top: 1px;
+  accent-color: #1f6feb;
+  cursor: pointer;
+}
+
+.integration-toggle-row input[type='radio']:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 .integration-toggle-text {
   display: flex;
   flex-direction: column;
@@ -6634,6 +6666,39 @@ button:disabled {
   border-radius: 6px;
   background: var(--surface-muted, #f2f5fb);
   font-weight: 600;
+}
+
+/* Hangi etiket şablonunun varsayılan olduğunu söyleyen KÜÇÜK gösterge.
+   Yeni panel değildir; ana düğmenin yanında tek satır kalır. */
+.surat-template-indicator {
+  align-self: center;
+  color: var(--text-muted, #6d7e90);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* Resmî Sürat önizlemesi: SVG kâğıt oranını (1:1) korur. */
+.surat-official-preview {
+  width: 100%;
+  max-width: 320px;
+  margin: 0 auto;
+  background: #fff;
+}
+
+.surat-official-preview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+
+.surat-official-preview-unavailable {
+  padding: 12px;
+  border: 1px dashed #d0d7de;
+  border-radius: 8px;
+  color: #6d7e90;
+  font-size: 12px;
 }
 
 /* Sipariş Detayı: tek ana aksiyon + Gelişmiş İşlemler açılır menüsü.
