@@ -10,6 +10,7 @@ import { verifySuratShipment } from '../../utils/suratVerification'
 import { resolveSuratPrintEligibility } from '../../utils/suratPrintEligibility'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
 import { validateOfficialSuratZpl } from '../../utils/officialSuratLabel'
+import { deriveAugmentedSuratZplWithHashes } from '../../utils/augmentedSuratZpl'
 import {
   DEFAULT_DESI_MISSING_MESSAGE,
   resolveEffectiveLabelDesi,
@@ -388,7 +389,21 @@ export class ZebraZplLabelProvider implements LabelProvider {
     if (!official.ok) {
       throw new Error(`Sürat resmî etiketi alınamadı: ${official.reason}`)
     }
-    const zplContent = official.zpl
+    // TÜRETİLMİŞ baskı ZPL'i: resmî kaynak AYNEN korunur (technicalZpl
+    // ÜZERİNE YAZILMAZ), yalnız final ^PQ / ^XZ öncesine ürün satırı eklenir.
+    // Native/raw-ZPL yolu bu türetilmiş çıktıyı gönderir; indirme ve önizleme
+    // ile AYNI deterministik artefakt ve AYNI SHA kullanılır.
+    const augmented = deriveAugmentedSuratZplWithHashes(
+      official.zpl,
+      (order.items ?? []).map((item) => ({
+        productName: String(item.productName ?? ''),
+        quantity: Number(item.quantity) || 1,
+        color: item.color,
+        size: item.size,
+        sku: item.merchantSku || item.sku,
+      })),
+    )
+    const zplContent = augmented.printZpl
     const zplSource = 'surat.ortakBarkod.BarcodeRaw'
     const desiMismatchWarning = desiMismatch
       ? 'API’den dönen etiket desisi, CargoFlow önizlemesinden farklı.'
@@ -411,6 +426,13 @@ export class ZebraZplLabelProvider implements LabelProvider {
       templateId: template.id,
       zplContent,
       zplSource,
+      // Kaynak ZPL ve hash'ler audit/teşhis içindir; kullanıcıya ayrı bir
+      // "Kaynak ZPL indir" aksiyonu SUNULMAZ.
+      sourceZplContent: augmented.sourceZpl,
+      printZplSha256: augmented.printZplSha256,
+      printZplSourceSha256: augmented.printZplSourceSha256,
+      printZplVersion: augmented.printZplVersion,
+      printZplFooterProfile: augmented.printZplFooterProfile ?? undefined,
       desi: normalizedDesi.desi,
       desiSource: normalizedDesi.desiSource,
       desiDebug,
