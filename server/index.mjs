@@ -717,69 +717,15 @@ app.get('/api/orders', async (request, response) => {
       // Yalnız aktif pazaryeri hesabının siparişleri (başka hesap/legacy gizli).
       context.marketplaceAccountId,
     )
-    // YEREL harici-işlem arşivi: sipariş satirlarina DOKUNMAZ, organization
-    // settings JSONB'sinden okunur. Istemci canonical kimlikle esler.
-    const { getExternalProcessing } = await import(
-      './orders/externalProcessingRepository.ts'
-    )
-    const externalProcessing = await getExternalProcessing(
-      context.db,
-      context.organizationId,
-    )
     response.json({
       ok: true,
       orders: result.orders,
       total: result.total,
       page: result.page,
       pageSize: result.pageSize,
-      externalProcessing,
     })
   } catch {
     response.status(500).json({ ok: false, message: 'Siparişler yüklenemedi.' })
-  }
-})
-
-// POST /api/orders/external-processing — YEREL, MANUEL, GERİ ALINABİLİR.
-// Provider veya marketplace çağrısı YAPMAZ; sipariş satırlarını, tracking
-// numarasını, barkodu, labelStatus'u ve printCount'u DEĞİŞTİRMEZ. Yalnız
-// organization_settings.settings_json.externalProcessing güncellenir.
-app.post('/api/orders/external-processing', async (request, response) => {
-  const context = await requireOrderPersistenceContext(request, response)
-  if (!context) return
-  const body = request.body ?? {}
-  const orderKeys = Array.isArray(body.orderKeys) ? body.orderKeys : []
-  const processed = body.processed !== false
-  if (orderKeys.length === 0) {
-    response.status(400).json({ ok: false, message: 'Sipariş listesi boş.' })
-    return
-  }
-  try {
-    const { markExternallyProcessed, restoreToActive } = await import(
-      './orders/externalProcessingRepository.ts'
-    )
-    const userId = request.auth?.userId ?? null
-    const result = processed
-      ? await markExternallyProcessed(context.db, context.organizationId, orderKeys, {
-          processedByUserId: userId,
-        })
-      : await restoreToActive(context.db, context.organizationId, orderKeys)
-    response.json({
-      ok: true,
-      processed,
-      changed: result.changed,
-      unchanged: result.unchanged,
-      invalid: result.invalid,
-      externalProcessing: result.state,
-    })
-  } catch (error) {
-    response.status(500).json({
-      ok: false,
-      // Hata metni ham sipariş verisi TAŞIMAZ.
-      message:
-        error instanceof Error && error.message
-          ? error.message
-          : 'Harici işlem durumu güncellenemedi.',
-    })
   }
 })
 
@@ -846,8 +792,6 @@ app.get('/api/orders/:id/label', async (request, response) => {
       source: result.source,
       // Kalıcı desi: reprint etiketinin "Top Ds/Kg" alanı orijinal değeri korur.
       desi: result.desi,
-      // Kalıcı baskı modeli ÖZETİ (ham şifreli payload ASLA dönmez).
-      print: result.print ?? null,
     })
   } catch {
     response.status(500).json({ ok: false, message: 'Kayıtlı etiket alınamadı.' })

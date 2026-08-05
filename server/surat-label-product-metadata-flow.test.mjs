@@ -125,28 +125,19 @@ test('PM-5: SKU adayları sırayla denenir, kod biçimi doğrulanır', async () 
 
 // ── eksik alanlar / placeholder yasağı ────────────────────────────────────
 
-// SÖZLEŞME GÜNCELLENDİ (canlı gözlem): eksik renk/beden ARTIK sessizce
-// atılmaz. Bazı etiketlerde "(Beden: 42)", bazılarında "(Renk: X, Beden: Y)"
-// çıkması TUTARSIZDI. Yeni kural: renk ve beden HER satırda yazılır; tüm
-// güvenilir kaynaklar denendikten sonra bulunamayan alan "Belirtilmemiş"
-// olarak GÖSTERİLİR (sahte renk ÜRETİLMEZ). Boş "()" ve boş "[]" hâlâ YASAK.
 test('PM-6: eksik alanlarda boş parantez / boş köşeli parantez BASILMAZ', async () => {
   const noSku = await line({ productName: 'Ürün', quantity: 1, color: 'Mavi', size: '36' })
   assert.equal(noSku.meta, '(Renk: Mavi, Beden: 36)')
   const noColor = await line({
     productName: 'Ürün', quantity: 1, size: '36', merchantSku: 'SECIL-334',
   })
-  assert.equal(noColor.meta, '(Renk: Belirtilmemiş, Beden: 36) [SECIL-334]')
+  assert.equal(noColor.meta, '(Beden: 36) [SECIL-334]')
   const noSize = await line({
     productName: 'Ürün', quantity: 1, color: 'Mavi', merchantSku: 'SECIL-334',
   })
-  assert.equal(noSize.meta, '(Renk: Mavi, Beden: Belirtilmemiş) [SECIL-334]')
+  assert.equal(noSize.meta, '(Renk: Mavi) [SECIL-334]')
   const nothing = await line({ productName: 'Ürün', quantity: 1 })
-  assert.equal(
-    nothing.meta,
-    '(Renk: Belirtilmemiş, Beden: Belirtilmemiş)',
-    'hiç kaynak yoksa eksiklik AÇIKÇA gösterilir, satır gizlenmez',
-  )
+  assert.equal(nothing.meta, '', 'hiç meta yoksa satır boş')
   for (const out of [noSku, noColor, noSize, nothing]) {
     assert.equal(/\(\)/.test(out.meta), false)
     assert.equal(/\[\]/.test(out.meta), false)
@@ -175,9 +166,7 @@ test('PM-7: placeholder ve undefined/null değerler elenir', async () => {
     stockCode: 'null',
     productCode: '-',
   })
-  // Placeholder değerler yine ELENİR; eksiklik "Belirtilmemiş" ile gösterilir
-  // ve SKU bulunamadığı için köşeli parantez BASILMAZ.
-  assert.equal(out.meta, '(Renk: Belirtilmemiş, Beden: Belirtilmemiş)')
+  assert.equal(out.meta, '')
   for (const token of ['undefined', 'null', 'N/A', 'merchantSku', 'sku']) {
     assert.equal(out.meta.includes(token), false, token)
   }

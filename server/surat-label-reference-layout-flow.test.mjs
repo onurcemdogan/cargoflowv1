@@ -224,13 +224,9 @@ test('REF-13: ekran önizlemesi ile baskı aynı ürün-meta ve adres sözleşme
   const preview = readFileSync(
     join(here, '..', 'src/components/LabelHtmlPreview.tsx'), 'utf8',
   )
-  // Aynı referans biçimi — ARTIK KOPYA DEĞİL, ORTAK helper. Önizleme ile
-  // baskının ayrışması yapısal olarak imkânsız hale getirildi.
-  assert.match(preview, /buildProductMetaText/)
-  const print = readFileSync(
-    join(here, '..', 'src/utils/browserLabelPrint.ts'), 'utf8',
-  )
-  assert.match(print, /buildProductMetaText/)
+  // Aynı referans biçimi.
+  assert.match(preview, /\(\$\{attrs\.join\(', '\)\}\)/)
+  assert.match(preview, /\[\$\{item\.sku\}\]/)
   // Aynı adres düzeni: sağ bölme yok, alt satır TEL | il/ilçe.
   assert.equal(/surat-address-route/.test(preview), false)
   assert.match(preview, /surat-address-footer/)
@@ -398,16 +394,9 @@ test('REF-22: Renk / Beden / SKU meta satırı ASLA atılmaz', async () => {
   assert.equal(buildProductMetaText(item), '(Renk: Lacivert, Beden: 40) [sku1]')
   const fit = resolveProductFit({ items: [item], availableWidthMm: 89, availableHeightMm: 9.4 })
   assert.ok(fit.lineCount >= 2, 'başlık + meta satırı birlikte sayılır')
-  // SÖZLEŞME GÜNCELLENDİ: eksik renk/beden artık ATILMAZ, "Belirtilmemiş"
-  // olarak gösterilir; SKU yoksa köşeli parantez yine BASILMAZ.
-  assert.equal(
-    buildProductMetaText({ productName: 'X', quantity: 1 }),
-    '(Renk: Belirtilmemiş, Beden: Belirtilmemiş)',
-  )
-  assert.equal(
-    buildProductMetaText({ productName: 'X', quantity: 1, sku: 's' }),
-    '(Renk: Belirtilmemiş, Beden: Belirtilmemiş) [s]',
-  )
+  // Eksik alanlarda boş parantez basılmaz.
+  assert.equal(buildProductMetaText({ productName: 'X', quantity: 1 }), '')
+  assert.equal(buildProductMetaText({ productName: 'X', quantity: 1, sku: 's' }), '[s]')
 })
 
 test('REF-23: önizleme ile baskı AYNI sığdırma sözleşmesini kullanır', () => {

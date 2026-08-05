@@ -12,7 +12,6 @@ import {
   resolveSuratPrintEligibility,
 } from './suratPrintEligibility'
 import { verifySuratShipment } from './suratVerification'
-import { isExternallyProcessed } from './externalProcessing'
 import {
   buildOrderCountSummary,
   dedupeOrdersByPackageIdentity,
@@ -36,9 +35,6 @@ export interface OrderTabClassification {
   isDelivered: boolean
   isCanceledOrReturned: boolean
   isArchived: boolean
-  // YEREL, manuel arşiv (harici programda işlendi). Pazaryeri/provider
-  // durumundan tamamen ayrıdır.
-  isExternallyProcessed: boolean
   hasError: boolean
   operationStatusLabel: string
 }
@@ -92,7 +88,6 @@ export interface VisibleOrdersDebug {
   latestSyncAt?: string
   latestSyncCount: number
   afterSelectedTabCount: number
-  afterExternalProcessingFilter: number
   afterTabFilter: number
   afterOperationTabFilter: number
   afterMarketplaceFilter: number
@@ -312,7 +307,6 @@ export function classifyOrderForTabs(
     isDelivered,
     isCanceledOrReturned,
     isArchived,
-    isExternallyProcessed: isExternallyProcessed(order),
     hasError,
     // Statü etiketi de TEK canonical aşama helper'ından türetilir; böylece
     // recentOperations statüsü ile Operation Flow sayaçları aynı kaynaktan gelir.
@@ -372,8 +366,6 @@ export function orderMatchesQuickTab(
       return classification.isCanceledOrReturned
     case 'archive':
       return classification.isArchived
-    case 'externallyProcessed':
-      return classification.isExternallyProcessed
     case 'all':
     default:
       return true
@@ -456,7 +448,6 @@ export function buildVisibleOrders({
         ).length
       : 0,
     afterSelectedTabCount: 0,
-    afterExternalProcessingFilter: 0,
     afterTabFilter: 0,
     afterOperationTabFilter: 0,
     afterMarketplaceFilter: 0,
@@ -475,21 +466,6 @@ export function buildVisibleOrders({
     quantityTotal: 0,
     exclusions,
   }
-
-  // HARİCİ SİSTEMDE İŞLENDİ: kullanıcının MANUEL işaretlediği siparişler
-  // aktif operasyon görünümünden ve SAYAÇLARDAN çıkar. Veritabanından
-  // SİLİNMEZ; yalnız "Harici Sistemde İşlendi" filtresiyle görünür ve geri
-  // alınabilir. Otomatik kural YOKTUR.
-  if (operationTabFilter !== 'externallyProcessed') {
-    current = applyOrderFilter(
-      current,
-      (order) => !isExternallyProcessed(order),
-      exclusions,
-      'externalProcessingFilter',
-      'Sipariş harici sistemde işlendi olarak işaretlendi.',
-    )
-  }
-  debug.afterExternalProcessingFilter = current.length
 
   if (selectedTab === 'currentSync') {
     current = applyOrderFilter(

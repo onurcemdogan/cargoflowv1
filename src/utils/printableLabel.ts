@@ -1,6 +1,5 @@
 import type {
   CargoOrder,
-  CargoProduct,
   LabelTemplate,
   Shipment,
   SuratLabelMappingConfig,
@@ -306,16 +305,12 @@ export function buildPrintableLabelData(
   resolution: PrintableLabelResolution,
   template?: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
-  // Organizasyon kapsamli urun katalogu — onizleme ve baski AYNI kaynagi
-  // kullanir; renk/beden ASLA ayrisamaz.
-  products: CargoProduct[] = [],
 ): LabelData {
   const data = buildLabelData(
     resolution.order,
     resolution.shipment,
     template,
     mappingConfig,
-    products,
   )
   const shipmentReference =
     data.shipmentReference ||

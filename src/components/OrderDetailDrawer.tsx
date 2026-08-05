@@ -41,11 +41,6 @@ import {
 import { SuratShipmentTimeline } from './SuratShipmentTimeline'
 import { buildSuratShipmentTimeline } from '../utils/suratShipmentTimeline'
 import { StatusBadge } from './StatusBadge'
-import {
-  resolveLabelProductMetadata,
-  type ResolvedProductMetadata,
-} from '../utils/labelProductMetadata'
-import { resolveCatalogVariantMetadata } from '../utils/labelVariantCatalog'
 
 interface OrderDetailDrawerProps {
   order: CargoOrder
@@ -407,21 +402,6 @@ export function OrderDetailDrawer({
                       products,
                     ).map((candidate) => candidate.url)}
                     matchDebug={buildProductMatchDebug(item, products)}
-                    variantMetadata={resolveLabelProductMetadata(
-                      {
-                        productName: item.productName,
-                        color: item.color,
-                        size: item.size,
-                        sku: item.sku,
-                        merchantSku: item.merchantSku,
-                        stockCode: item.stockCode,
-                        productCode: item.productCode,
-                        variantAttributes: item.variantAttributes,
-                      },
-                      resolveCatalogVariantMetadata(item, products, {
-                        marketplace: order.marketplace,
-                      }),
-                    )}
                     desiLine={desiCalculation.lines.find(
                       (line) => line.lineId === String(item.id),
                     )}
@@ -905,7 +885,6 @@ function OrderLine({
   imageCandidates,
   matchDebug,
   desiLine,
-  variantMetadata,
 }: {
   orderNumber: string
   item: OrderItem
@@ -913,15 +892,11 @@ function OrderLine({
   imageCandidates: string[]
   matchDebug: ProductMatchDebug
   desiLine?: LineDesiBreakdown
-  variantMetadata: ResolvedProductMetadata
 }) {
   const imageResolvedFrom = imageResolution.imageResolvedFrom
   const product = imageResolution.matchedProduct
-  // Renk/beden ETİKETLE AYNI çözümleyiciden gelir (kopya mantık YOK):
-  // satır alanı → variantAttributes → katalog varyantı (kesin kod eşleşmesi)
-  // → çapalı başlık ayrıştırması. Bulanık görsel eşleşmesi KULLANILMAZ.
-  const color = variantMetadata.color
-  const size = variantMetadata.size
+  const color = item.color || findVariantValue(item, 'Renk') || product?.color
+  const size = item.size || findVariantValue(item, 'Beden') || product?.size
   const hasVariantInfo =
     Boolean(color || size) || Boolean(item.variantAttributes?.length)
   const quantity = Math.max(1, Number(item.quantity) || 1)
@@ -1062,6 +1037,16 @@ function LineDetail({ label, value }: { label: string; value?: string }) {
       <span>{label}</span>
       <strong>{value || '-'}</strong>
     </div>
+  )
+}
+
+function findVariantValue(item: OrderItem, name: string): string {
+  const normalized = name.toLocaleLowerCase('tr-TR')
+  return (
+    item.variantAttributes?.find(
+      (attribute) =>
+        attribute.name.toLocaleLowerCase('tr-TR') === normalized,
+    )?.value ?? ''
   )
 }
 

@@ -1,6 +1,5 @@
 import type {
   CargoOrder,
-  CargoProduct,
   LabelTemplate,
   PrinterSettings,
   SuratLabelMappingConfig,
@@ -15,9 +14,6 @@ export interface PrintInput {
   confirmedAt?: string
   labelTemplate?: LabelTemplate
   mappingConfig?: SuratLabelMappingConfig
-  // Organizasyon kapsamli urun katalogu (etiket renk/beden tamamlama icin).
-  // Saglanmazsa davranis eskisi gibidir: yalniz siparis satiri verisi kullanilir.
-  products?: CargoProduct[]
 }
 
 export interface PrintResult {

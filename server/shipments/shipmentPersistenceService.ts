@@ -112,28 +112,6 @@ export function isSuratRecordPreassignedReady(
   return hasZpl
 }
 
-// Carrier payload'a türetilmiş printZpl artifact'ini ekler. Kaynak alanlara
-// (technicalZpl, technicalZplSha256, technicalZplLength) DOKUNULMAZ.
-async function withPrintZplArtifact(
-  db: ServiceDb,
-  organizationId: string,
-  marketplace: string,
-  packageId: string,
-  record: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  try {
-    const { loadPrintLineItems } = await import('./printZplItems.ts')
-    const { attachPrintZplArtifact } = await import('./printZplRepository.ts')
-    const items = await loadPrintLineItems(db, organizationId, marketplace, packageId)
-    if (items.length === 0) return record
-    return attachPrintZplArtifact(record, items, new Date().toISOString())
-  } catch {
-    // Artifact üretilemedi: create AKIŞI BOZULMAZ, kaynak ZPL aynen persist
-    // edilir ve kayıt legacy hydration yoluna düşer. Ham ZPL LOGLANMAZ.
-    return record
-  }
-}
-
 // Başarılı create'te shipment + operation TEK transaction'da yazılır (M:
 // yarıda hata → sahte shipment oluşmaz). Doğrulanmış SUCCESS ve ön-atanmış hazır
 // (preassigned) create'lerde canonical shipment yazılır; belirsiz/başarısız
@@ -148,22 +126,6 @@ export async function writeOperationRecord(
     columns.status === 'succeeded' || isSuratRecordPreassignedReady(record)
   if (shouldPersistShipment) {
     const shipment = (record.shipment ?? {}) as Record<string, unknown>
-    // TÜRETİLMİŞ BASKI ZPL'İ: resmî technicalZpl AYNEN korunur; ürün satırı
-    // eklenmiş printZpl AYNI carrier payload nesnesinde, AYNI shipment
-    // yazımında (tek transaction) kalıcı hale gelir. Provider'a İKİNCİ create
-    // çağrısı YAPILMAZ; tracking/barkod/desi DEĞİŞMEZ.
-    //
-    // Satırlar veya katalog okunamazsa artifact ÜRETİLMEZ ve create eskisi
-    // gibi devam eder: kayıt legacy sayılır ve ilk baskı/indirme sırasında
-    // compare-and-set ile hydrate edilir (sahte READY veya sessiz ürün kaybı
-    // OLUŞMAZ).
-    const carrierPayload = await withPrintZplArtifact(
-      db,
-      organizationId,
-      columns.marketplace,
-      columns.packageId,
-      record,
-    )
     await db.transaction(async (tx) => {
       await upsertCreateOperation(tx, columns)
       await upsertShipment(tx, {
@@ -186,7 +148,7 @@ export async function writeOperationRecord(
             record.candidateBarcodeNumber,
           ) || null,
         trackingLink: first(shipment.trackingLink) || null,
-        carrierPayload,
+        carrierPayload: record,
       })
     })
     return

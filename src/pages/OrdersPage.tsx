@@ -53,10 +53,6 @@ import type {
 import { buildOrderCountSummary } from '../utils/orderCounts'
 import { buildOrdersDateRange } from '../utils/orderDateRange'
 import { SuratCreatePrintControls } from '../components/SuratCreatePrintControls'
-import {
-  EXTERNAL_PROCESSING_LABEL,
-  isExternallyProcessed,
-} from '../utils/externalProcessing'
 
 interface OrdersPageProps {
   orders: CargoOrder[]
@@ -110,9 +106,6 @@ interface OrdersPageProps {
   onMarkPrinted: () => void
   onMarkPrintedForOrder: (orderId: string) => void
   onMarkHandedToCargo: () => void
-  // YEREL arşiv (harici programda işlendi) — provider/marketplace çağrısı YOK.
-  onMarkExternallyProcessed?: (orders: CargoOrder[]) => void
-  onRestoreFromExternalProcessing?: (orders: CargoOrder[]) => void
 }
 
 export interface OrdersFetchOptions {
@@ -178,9 +171,6 @@ const operationTabOptions: Array<{ key: OperationTabFilter; label: string }> = [
   { key: 'labelReady', label: 'Etiket Basılacak' },
   { key: 'labelPrinted', label: 'Etiket Basıldı' },
   { key: 'archive', label: 'Arşiv' },
-  // YEREL arşiv: kullanıcının manuel işaretlediği, başka bir entegrasyon
-  // programında işlenen siparişler. Buradan geri alınabilirler.
-  { key: 'externallyProcessed', label: EXTERNAL_PROCESSING_LABEL },
 ]
 
 const dateRangeOptions: Array<{ key: OrdersDatePreset; label: string }> = [
@@ -225,8 +215,6 @@ export function OrdersPage({
   onMarkPrinted,
   onMarkPrintedForOrder,
   onMarkHandedToCargo,
-  onMarkExternallyProcessed,
-  onRestoreFromExternalProcessing,
 }: OrdersPageProps) {
   const [marketplace, setMarketplace] = useState<'all' | MarketplaceName>(
     initialFilters?.marketplace ?? 'all',
@@ -334,13 +322,6 @@ export function OrdersPage({
   const hasZplDownloadableSelection = selectedOrders.some(canDownloadZpl)
   const hasPrintableSelection = selectedOrders.some(canMarkPrinted)
   const hasHandedToCargoSelection = selectedOrders.some(canMarkHandedToCargo)
-  // Seçim GERÇEK snapshot'tan gelir (sayfa/filtre değişse de doğru sipariş).
-  const hasExternallyProcessedSelection = selectedOrders.some(
-    isExternallyProcessed,
-  )
-  const hasActiveSelection = selectedOrders.some(
-    (order) => !isExternallyProcessed(order),
-  )
   const printableDisabledReason = bulkDisabledReason(
     busy,
     selectedIds.length,
@@ -820,18 +801,6 @@ export function OrdersPage({
         onTrackShipments={onTrackShipments}
         onDownloadZpl={onDownloadZpl}
         onMarkHandedToCargo={onMarkHandedToCargo}
-        onMarkExternallyProcessed={
-          onMarkExternallyProcessed
-            ? () => onMarkExternallyProcessed(selectedOrders)
-            : undefined
-        }
-        onRestoreFromExternalProcessing={
-          onRestoreFromExternalProcessing
-            ? () => onRestoreFromExternalProcessing(selectedOrders)
-            : undefined
-        }
-        hasExternallyProcessedSelection={hasExternallyProcessedSelection}
-        hasActiveSelection={hasActiveSelection}
         hasPrintableSelection={hasPrintableSelection}
         hasShipmentCreatableSelection={hasShipmentCreatableSelection}
         hasZplDownloadableSelection={hasZplDownloadableSelection}

@@ -6,14 +6,10 @@ import {
 import qrcode from 'qrcode-generator'
 import type {
   CargoOrder,
-  CargoProduct,
   LabelTemplate,
   SuratLabelMappingConfig,
 } from '../types/cargoflow'
 import { buildLabelData, type LabelData } from './labelData'
-import { deriveAugmentedSuratZplWithHashes } from './augmentedSuratZpl'
-import { resolveSuratProductLineItems } from './suratProductLineItems'
-import { PRODUCT_LINE_OVERFLOW_MESSAGE } from './suratZplProductLine'
 import {
   LEGACY_ZPL_MISSING_MESSAGE,
   resolveSuratPrintEligibility,
@@ -55,16 +51,6 @@ export interface SuratPrintPageModel {
   // carrier_zpl: taşıyıcının gerçek ZPL'i var; canonical_html: legacy kayıt,
   // etiket canonical alanlardan HTML olarak basılır (ZPL İndir kapalı).
   printSource?: 'carrier_zpl' | 'canonical_html'
-  // TÜRETİLMİŞ baskı ZPL'i: resmî kaynak AYNEN + en alta ürün satırı.
-  // `zpl` alanı bu türetilmiş çıktıdır (indirme, native ve önizleme AYNI
-  // artefaktı kullanır). Kaynak ZPL audit için ayrıca taşınır.
-  sourceZpl?: string
-  printZplSha256?: string
-  printZplSourceSha256?: string
-  printZplVersion?: string
-  printZplFooterProfile?: string
-  /** Ürün satırı eklenemediyse güvenli sebep (PII içermez). */
-  printZplFallbackReason?: string
 }
 
 export interface SuratPrintSkip {
@@ -85,12 +71,7 @@ export interface SuratBulkPrintResult {
   debug?: BrowserLabelPrintDebug
 }
 
-export function buildSuratPrintPageModel(
-  order: CargoOrder,
-  // Organizasyon kapsamlı ürün kataloğu: ZPL ürün satırı HTML etiketiyle
-  // AYNI metadata zincirini kullanır (ayrı tahmin algoritması YOK).
-  products: CargoProduct[] = [],
-): {
+export function buildSuratPrintPageModel(order: CargoOrder): {
   model?: SuratPrintPageModel
   reason?: string
 } {
@@ -187,38 +168,13 @@ export function buildSuratPrintPageModel(
           ),
         }
       : {}
-  // TÜRETİLMİŞ printZpl: resmî ZPL byte-for-byte korunur, yalnız final ^PQ /
-  // ^XZ öncesine ürün satırı eklenir. Deterministiktir: aynı sipariş + aynı
-  // kaynak ZPL HER ZAMAN aynı çıktıyı ve aynı SHA'yı verir; bu yüzden
-  // önizleme, indirme, native baskı ve reprint AYNI artefaktı kullanır.
-  const productLineItems = resolveSuratProductLineItems(order, products)
-  const augmented = deriveAugmentedSuratZplWithHashes(
-    eligibility.barcodeRaw,
-    productLineItems,
-  )
-  // SESSİZ ÜRÜN KAYBI YASAK: desteklenen Sürat şablonunda ürün metadata'sı
-  // VARKEN güvenli footer üretilemiyorsa kaynak ZPL "başarılı augmented
-  // etiket" gibi BASILMAZ. Sipariş atlanır (READY korunur, printCount
-  // artmaz, seçim korunur); batch'in kalanı DEVAM EDER.
-  if (
-    augmented.fallbackReason === 'footer_overflow' &&
-    productLineItems.length > 0
-  ) {
-    return { reason: PRODUCT_LINE_OVERFLOW_MESSAGE }
-  }
   return {
     model: {
       orderNumber: String(order.orderNumber ?? ''),
       trackingNumber,
       barcodeNumber,
       ozelKargoTakipNo,
-      zpl: augmented.printZpl,
-      sourceZpl: augmented.sourceZpl,
-      printZplSha256: augmented.printZplSha256,
-      printZplSourceSha256: augmented.printZplSourceSha256,
-      printZplVersion: augmented.printZplVersion,
-      printZplFooterProfile: augmented.printZplFooterProfile ?? undefined,
-      printZplFallbackReason: augmented.fallbackMessage,
+      zpl: eligibility.barcodeRaw,
       recipient: String(order.customerName ?? ''),
       address: String(order.address ?? ''),
       desi: order.desi ?? null,
@@ -234,7 +190,6 @@ export function buildSuratPrintPageModel(
 
 export function resolveSuratPrintableSelection(
   orders: CargoOrder[],
-  products: CargoProduct[] = [],
 ): SuratPrintSelection {
   const printable: SuratPrintSelection['printable'] = []
   const skipped: SuratPrintSkip[] = []
@@ -243,7 +198,7 @@ export function resolveSuratPrintableSelection(
     const dedupeKey = String(order.id || order.orderNumber || '')
     if (dedupeKey && seen.has(dedupeKey)) continue
     if (dedupeKey) seen.add(dedupeKey)
-    const { model, reason } = buildSuratPrintPageModel(order, products)
+    const { model, reason } = buildSuratPrintPageModel(order)
     suratPrintTrace('PAGE_RESOLUTION_RESULT', {
       orderNumber: String(order.orderNumber ?? order.id ?? '-'),
       lifecycleStatus: order.shipment?.lifecycleStatus ?? '',
@@ -283,9 +238,8 @@ export interface SuratZplDownload {
 // kullanır ki iki aksiyon tutarlı olsun.
 export function buildSuratZplDownload(
   orders: CargoOrder[],
-  products: CargoProduct[] = [],
 ): SuratZplDownload | null {
-  const selection = resolveSuratPrintableSelection(orders, products)
+  const selection = resolveSuratPrintableSelection(orders)
   // ZPL dosyasına yalnız taşıyıcının GERÇEK ZPL'i girer. canonical_html
   // kaynaklı (legacy, ZPL'siz) etiketler yazdırılabilir olsa da indirme
   // listesinden açıklamayla düşer.
@@ -328,9 +282,8 @@ export async function printSuratLabels(
   orders: CargoOrder[],
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
-  products: CargoProduct[] = [],
 ): Promise<SuratBulkPrintResult> {
-  const selection = resolveSuratPrintableSelection(orders, products)
+  const selection = resolveSuratPrintableSelection(orders)
   if (selection.printable.length === 0) {
     return {
       printedOrderNumbers: [],
@@ -344,7 +297,6 @@ export async function printSuratLabels(
       selection.printable.map((item) => item.order),
       template,
       mappingConfig,
-      products,
     )
     // Belgeye giren siparisler basarili; render'da atlananlar skipped'a eklenir.
     // Bir siparisin hatasi DIGERLERINI basarisiz gostermez.
@@ -567,7 +519,6 @@ export async function printCleanLabelDocument(
   orders: CargoOrder[],
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
-  products: CargoProduct[] = [],
 ): Promise<BrowserLabelPrintDebug> {
   const executionId = `print-${++printExecutionCounter}`
   const orderNumbers = orders.map((order) => String(order.orderNumber ?? ''))
@@ -618,12 +569,7 @@ export async function printCleanLabelDocument(
     suratPrintTrace('HTML_BUILD_START', { executionId, orderNumbers })
     // SIPARIS BAZINDA izolasyon: render edilemeyen siparis BUTUN batch'i
     // dusurmez; yalniz kendisi atlanir ve sebebi debug.skipped'a yazilir.
-    const document_ = buildCleanLabelDocument(
-      orders,
-      template,
-      mappingConfig,
-      products,
-    )
+    const document_ = buildCleanLabelDocument(orders, template, mappingConfig)
     const printHtml = document_.html
     debug.skipped = document_.skipped
     debug.printedOrderNumbers = document_.printable.map(
@@ -758,14 +704,10 @@ export function buildCleanLabelDocument(
   orders: CargoOrder[],
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
-  // Organizasyon kapsamli urun katalogu. Siparis satirinda eksik olan
-  // renk/beden YALNIZ kesin kod eslesmesiyle buradan tamamlanir; onizleme ve
-  // baski AYNI veriyi gorur.
-  products: CargoProduct[] = [],
 ): CleanLabelDocument {
   const widthMm = template.widthMm || 100
   const heightMm = template.heightMm || 100
-  const selection = resolveSuratPrintableSelection(orders, products)
+  const selection = resolveSuratPrintableSelection(orders)
   const skipped: SuratPrintSkip[] = [...selection.skipped]
   const printable: Array<{ order: CargoOrder; model: SuratPrintPageModel }> = []
   const pages: string[] = []
@@ -773,13 +715,7 @@ export function buildCleanLabelDocument(
   for (const entry of selection.printable) {
     const { order, model } = entry
     try {
-      const data = buildLabelData(
-        order,
-        order.shipment,
-        template,
-        mappingConfig,
-        products,
-      )
+      const data = buildLabelData(order, order.shipment, template, mappingConfig)
       pages.push(
         renderPrintableLabelHtml({
           ...data,
@@ -1112,9 +1048,8 @@ export function buildCleanLabelHtml(
   orders: CargoOrder[],
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
-  products: CargoProduct[] = [],
 ): string {
-  return buildCleanLabelDocument(orders, template, mappingConfig, products).html
+  return buildCleanLabelDocument(orders, template, mappingConfig).html
 }
 
 export function renderPrintableLabelHtml(data: LabelData): string {
@@ -1296,15 +1231,13 @@ export function renderLegacyPrintableLabelHtml(data: LabelData): string {
             item ? `${item.quantity || 1} x ${item.productName}` : 'Ürün bilgisi yok',
           )}</strong>
           <span>${escapeHtml(
-            item
-              ? buildProductMetaText({
-                  productName: String(item.productName ?? ''),
-                  quantity: Number(item.quantity) || 1,
-                  color: item.color,
-                  size: item.size,
-                  sku: item.sku,
-                })
-              : '',
+            [
+              item?.color ? `Renk: ${item.color}` : '',
+              item?.size ? `Beden: ${item.size}` : '',
+              item?.sku ? `SKU: ${item.sku}` : '',
+            ]
+              .filter(Boolean)
+              .join(' | '),
           )}</span>
         </footer>
       </article>

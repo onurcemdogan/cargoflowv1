@@ -1,6 +1,4 @@
 import {
-  Archive,
-  ArchiveRestore,
   Barcode,
   Download,
   PackagePlus,
@@ -18,10 +16,6 @@ import {
   resolveSuratPhaseText,
   type SuratCreatePrintProgress,
 } from '../utils/suratPhaseText'
-import {
-  EXTERNAL_PROCESSING_MARK_LABEL,
-  EXTERNAL_PROCESSING_RESTORE_LABEL,
-} from '../utils/externalProcessing'
 export type { SuratCreatePrintProgress }
 
 // OrdersPage'ten DAVRANIŞ DEĞİŞTİRMEDEN ayrılan tek-buton bölümü.
@@ -56,13 +50,6 @@ export interface SuratCreatePrintControlsProps {
   onTrackShipments: () => void
   onDownloadZpl: () => void
   onMarkHandedToCargo: () => void
-  // YEREL arşiv: siparişi başka bir entegrasyon programında işlendi olarak
-  // işaretler / aktif operasyona geri alır. Provider veya marketplace çağrısı
-  // YAPILMAZ.
-  onMarkExternallyProcessed?: () => void
-  onRestoreFromExternalProcessing?: () => void
-  hasExternallyProcessedSelection?: boolean
-  hasActiveSelection?: boolean
   hasPrintableSelection: boolean
   hasShipmentCreatableSelection: boolean
   hasZplDownloadableSelection: boolean
@@ -91,10 +78,6 @@ export function SuratCreatePrintControls({
   onTrackShipments,
   onDownloadZpl,
   onMarkHandedToCargo,
-  onMarkExternallyProcessed,
-  onRestoreFromExternalProcessing,
-  hasExternallyProcessedSelection = false,
-  hasActiveSelection = true,
   hasPrintableSelection,
   hasShipmentCreatableSelection,
   hasZplDownloadableSelection,
@@ -334,50 +317,6 @@ export function SuratCreatePrintControls({
             <PackagePlus size={18} />
             Kargoya Verildi Yap
           </button>
-          {onMarkExternallyProcessed ? (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={onMarkExternallyProcessed}
-              role="menuitem"
-              title={
-                selectedIds.length === 0
-                  ? 'Önce en az bir sipariş seçin.'
-                  : 'Siparişi CargoFlow aktif operasyon listesinden çıkarır. Kargo firmasına veya pazaryerine hiçbir işlem gönderilmez; geri alınabilir.'
-              }
-              disabled={
-                busy ||
-                actionsLocked ||
-                selectedIds.length === 0 ||
-                !hasActiveSelection
-              }
-            >
-              <Archive size={18} />
-              {EXTERNAL_PROCESSING_MARK_LABEL}
-            </button>
-          ) : null}
-          {onRestoreFromExternalProcessing ? (
-            <button
-              type="button"
-              className="secondary-button"
-              onClick={onRestoreFromExternalProcessing}
-              role="menuitem"
-              title={
-                selectedIds.length === 0
-                  ? 'Önce en az bir sipariş seçin.'
-                  : 'Yanlış işaretlenen siparişi tekrar aktif operasyon listesine alır.'
-              }
-              disabled={
-                busy ||
-                actionsLocked ||
-                selectedIds.length === 0 ||
-                !hasExternallyProcessedSelection
-              }
-            >
-              <ArchiveRestore size={18} />
-              {EXTERNAL_PROCESSING_RESTORE_LABEL}
-            </button>
-          ) : null}
               </div>
             ) : null}
           </div>

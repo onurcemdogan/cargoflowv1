@@ -6,19 +6,12 @@
 // başlığının sonundaki "SECIL-334, 36" eki temizlenmiyordu. Sonuç:
 //   "1 x Taşlı Simli Tesettür Abiye SECIL-334, 36"  /  "[taşlı]"
 //
-// SÖZLEŞME (çözümleme önceliği):
-//  1) Sipariş satırındaki YAPISAL color / size alanları.
-//  2) variantAttributes içindeki DOĞRULANMIŞ anahtarlar
-//     (Renk / Renk Seçeneği / Color / Colour — Beden / Size / Numara /
-//     Ebat / Ölçü).
-//  3) Organizasyon kapsamındaki ÜRÜN KATALOĞU varyantı — YALNIZ kesin
-//     kod/barkod eşleşmesiyle (bkz. labelVariantCatalog.ts). Fuzzy ad
-//     eşleşmesi ve çelişkili adaylarda tahmin YOKTUR.
-//  4) SON ÇARE ürün başlığından, YALNIZ çapalı (anchored) ve doğrulanmış
+// SÖZLEŞME:
+//  1) Değerler ÖNCE yapısal alanlardan çözülür (color/size, variantAttributes).
+//  2) Sonra marketplace satır metadata'sı (stockCode/productCode).
+//  3) SON ÇARE ürün başlığından, YALNIZ çapalı (anchored) ve doğrulanmış
 //     parçalar çıkarılır: sondaki ", <beden>", sondaki model kodu, sondaki
 //     bilinen renk token'ı.
-//  Marketplace satır kodları (merchantSku/sku/stockCode/productCode) YALNIZ
-//  SKU alanı için kullanılır.
 //  4) Placeholder/alan-adı metinleri ("merchantSku", "sku", "undefined", …)
 //     HİÇBİR koşulda basılmaz.
 //  5) SKU olmayan serbest metin ("taşlı") SKU alanına KONMAZ.
@@ -36,12 +29,6 @@ export interface ProductMetadataSource {
   stockCode?: unknown
   productCode?: unknown
   variantAttributes?: Array<{ name?: unknown; value?: unknown }> | null
-}
-
-// Katalogdan (kesin eşleşmeyle) gelen doğrulanmış varyant değerleri.
-export interface CatalogMetadataInput {
-  color?: unknown
-  size?: unknown
 }
 
 export interface ResolvedProductMetadata {
@@ -77,13 +64,8 @@ export function isPlaceholderValue(value: unknown): boolean {
   return PLACEHOLDER_TOKENS.has(fold(text))
 }
 
-// Gerçek bir model/stok kodu mu? Serbest metin ("taşlı") REDDEDİLİR.
-//
-// KANIT (DuruSoft canlı çıktısı): gerçek merchant SKU'su SAF SAYISAL olabilir
-// ("[6496]"). Eski kural "en az bir harf VE en az bir rakam" istediği için bu
-// tür kodlar sessizce DÜŞÜYORDU. Kural daraltıldı: saf sayısal kod da geçerli
-// SAYILIR, ancak BEDEN ile karışmaması için en az 4 hane olmalıdır
-// (looksLikeSizeValue en fazla 3 haneli sayıyı beden kabul eder).
+// Gerçek bir model/stok kodu mu? Serbest metin ("taşlı") ve saf sayı ("36")
+// REDDEDİLİR: kod en az bir harf VE en az bir rakam içermelidir.
 export function looksLikeSkuCode(value: unknown): boolean {
   const text = String(value ?? '').trim()
   if (!text || isPlaceholderValue(text)) return false
@@ -92,10 +74,8 @@ export function looksLikeSkuCode(value: unknown): boolean {
   // Boşluklu serbest metin kod değildir (tek kelime ya da kod-benzeri ayraç).
   if (/\s/.test(text)) return false
   if (!/[0-9]/.test(text)) return false
-  const hasLetter = /[A-Za-zÇĞİÖŞÜçğıöşü]/.test(text)
-  if (hasLetter) return true
-  // Saf sayısal: beden olamayacak kadar uzun olmalı.
-  return /^[0-9]{4,}$/.test(text) && !looksLikeSizeValue(text)
+  if (!/[A-Za-zÇĞİÖŞÜçğıöşü]/.test(text)) return false
+  return true
 }
 
 // Beden değeri makul mü? ("36", "XL", "3XL", "40/42")
@@ -145,7 +125,6 @@ function firstUsable(values: unknown[]): string {
 
 export function resolveLabelProductMetadata(
   item: ProductMetadataSource,
-  catalog?: CatalogMetadataInput | null,
 ): ResolvedProductMetadata {
   const sources = { color: 'none', size: 'none', sku: 'none' }
 
@@ -169,24 +148,7 @@ export function resolveLabelProductMetadata(
     }
   }
 
-  // 3) ÜRÜN KATALOĞU varyantı (kesin kod/barkod eşleşmesi). Yalnız EKSİK
-  //    alanları doldurur; satırın kendi yapısal değerini EZMEZ.
-  if (!color) {
-    const fromCatalog = firstUsable([catalog?.color])
-    if (fromCatalog) {
-      color = fromCatalog
-      sources.color = 'catalogVariant'
-    }
-  }
-  if (!size) {
-    const fromCatalog = firstUsable([catalog?.size])
-    if (fromCatalog && looksLikeSizeValue(fromCatalog)) {
-      size = fromCatalog
-      sources.size = 'catalogVariant'
-    }
-  }
-
-  // 4) Marketplace satır metadata'sı — YALNIZ gerçek kod biçimindekiler.
+  // 3) Marketplace satır metadata'sı — YALNIZ gerçek kod biçimindekiler.
   let sku = ''
   for (const [key, value] of [
     ['merchantSku', item.merchantSku],
@@ -201,11 +163,11 @@ export function resolveLabelProductMetadata(
     }
   }
 
-  // 5) SON ÇARE: başlıktan çapalı ayrıştırma. Yalnız EKSİK alanlar doldurulur
+  // 4) SON ÇARE: başlıktan çapalı ayrıştırma. Yalnız EKSİK alanlar doldurulur
   //    ve YALNIZ meta'da kullanılan ek başlıktan kaldırılır.
   let productName = String(item.productName ?? '').trim()
 
-  // 5a) Sondaki ", <beden>"
+  // 4a) Sondaki ", <beden>"
   const sizeMatch = productName.match(/,\s*([0-9]{1,3}([/-][0-9]{1,3})?)\s*$/u)
   if (sizeMatch) {
     const candidate = sizeMatch[1]
@@ -217,7 +179,7 @@ export function resolveLabelProductMetadata(
     if (size) productName = productName.slice(0, sizeMatch.index).trim()
   }
 
-  // 5b) Sondaki model/stok kodu.
+  // 4b) Sondaki model/stok kodu.
   const tokens = productName.split(/\s+/)
   const lastToken = tokens[tokens.length - 1] ?? ''
   if (looksLikeSkuCode(lastToken)) {
@@ -230,7 +192,7 @@ export function resolveLabelProductMetadata(
     }
   }
 
-  // 5c) Sondaki bilinen renk token'ı (tek veya iki kelimelik).
+  // 4c) Sondaki bilinen renk token'ı (tek veya iki kelimelik).
   if (!color) {
     const folded = fold(productName)
     for (const token of KNOWN_COLOR_TOKENS) {
