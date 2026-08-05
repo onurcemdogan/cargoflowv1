@@ -1,0 +1,224 @@
+{
+  "generatedFrom": "server/labels/inventoryGbCommandsCli.mjs",
+  "realTemplate": {
+    "available": false,
+    "path": "server/fixtures/real-template-masked.zpl",
+    "reason": "Repoda GERCEK Surat technicalZpl ornegi YOK. Depodaki tek .zpl dosyasi sentetik fixture. Karsilastirma YAPILAMADI.",
+    "gbCount": 0,
+    "commands": []
+  },
+  "syntheticFixture": {
+    "path": "server/fixtures/synthetic-surat-reference.zpl",
+    "gbCount": 7,
+    "commands": [
+      {
+        "source": "synthetic",
+        "rawCommand": "^GB760,770,3",
+        "anchor": "^FO",
+        "x": 20,
+        "y": 15,
+        "width": 760,
+        "height": 770,
+        "thickness": 3,
+        "type": "rectangle"
+      },
+      {
+        "source": "synthetic",
+        "rawCommand": "^GB0,770,2",
+        "anchor": "^FO",
+        "x": 65,
+        "y": 15,
+        "width": 0,
+        "height": 770,
+        "thickness": 2,
+        "type": "vertical"
+      },
+      {
+        "source": "synthetic",
+        "rawCommand": "^GB760,0,2",
+        "anchor": "^FO",
+        "x": 20,
+        "y": 110,
+        "width": 760,
+        "height": 0,
+        "thickness": 2,
+        "type": "horizontal"
+      },
+      {
+        "source": "synthetic",
+        "rawCommand": "^GB760,0,2",
+        "anchor": "^FO",
+        "x": 20,
+        "y": 285,
+        "width": 760,
+        "height": 0,
+        "thickness": 2,
+        "type": "horizontal"
+      },
+      {
+        "source": "synthetic",
+        "rawCommand": "^GB760,0,2",
+        "anchor": "^FO",
+        "x": 20,
+        "y": 455,
+        "width": 760,
+        "height": 0,
+        "thickness": 2,
+        "type": "horizontal"
+      },
+      {
+        "source": "synthetic",
+        "rawCommand": "^GB760,0,2",
+        "anchor": "^FO",
+        "x": 20,
+        "y": 545,
+        "width": 760,
+        "height": 0,
+        "thickness": 2,
+        "type": "horizontal"
+      },
+      {
+        "source": "synthetic",
+        "rawCommand": "^GB760,0,2",
+        "anchor": "^FO",
+        "x": 20,
+        "y": 700,
+        "width": 760,
+        "height": 0,
+        "thickness": 2,
+        "type": "horizontal"
+      }
+    ]
+  },
+  "onlyInSynthetic": [
+    {
+      "source": "synthetic",
+      "rawCommand": "^GB760,770,3",
+      "anchor": "^FO",
+      "x": 20,
+      "y": 15,
+      "width": 760,
+      "height": 770,
+      "thickness": 3,
+      "type": "rectangle"
+    },
+    {
+      "source": "synthetic",
+      "rawCommand": "^GB0,770,2",
+      "anchor": "^FO",
+      "x": 65,
+      "y": 15,
+      "width": 0,
+      "height": 770,
+      "thickness": 2,
+      "type": "vertical"
+    },
+    {
+      "source": "synthetic",
+      "rawCommand": "^GB760,0,2",
+      "anchor": "^FO",
+      "x": 20,
+      "y": 110,
+      "width": 760,
+      "height": 0,
+      "thickness": 2,
+      "type": "horizontal"
+    },
+    {
+      "source": "synthetic",
+      "rawCommand": "^GB760,0,2",
+      "anchor": "^FO",
+      "x": 20,
+      "y": 285,
+      "width": 760,
+      "height": 0,
+      "thickness": 2,
+      "type": "horizontal"
+    },
+    {
+      "source": "synthetic",
+      "rawCommand": "^GB760,0,2",
+      "anchor": "^FO",
+      "x": 20,
+      "y": 455,
+      "width": 760,
+      "height": 0,
+      "thickness": 2,
+      "type": "horizontal"
+    },
+    {
+      "source": "synthetic",
+      "rawCommand": "^GB760,0,2",
+      "anchor": "^FO",
+      "x": 20,
+      "y": 545,
+      "width": 760,
+      "height": 0,
+      "thickness": 2,
+      "type": "horizontal"
+    },
+    {
+      "source": "synthetic",
+      "rawCommand": "^GB760,0,2",
+      "anchor": "^FO",
+      "x": 20,
+      "y": 700,
+      "width": 760,
+      "height": 0,
+      "thickness": 2,
+      "type": "horizontal"
+    }
+  ],
+  "onlyInReal": [],
+  "provenance": [
+    {
+      "rawCommand": "^GB760,770,3",
+      "x": 20,
+      "y": 15,
+      "type": "rectangle",
+      "evidence": "DOLAYLI KANIT: canli production regresyonunda gercek Surat ZPL inde etiketin buyuk bolumunu kaplayan bir ^GB cercevesi bulundugu davranisla kanitlandi (contentBottom ~785)."
+    },
+    {
+      "rawCommand": "^GB0,770,2",
+      "x": 65,
+      "y": 15,
+      "type": "vertical",
+      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+    },
+    {
+      "rawCommand": "^GB760,0,2",
+      "x": 20,
+      "y": 110,
+      "type": "horizontal",
+      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+    },
+    {
+      "rawCommand": "^GB760,0,2",
+      "x": 20,
+      "y": 285,
+      "type": "horizontal",
+      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+    },
+    {
+      "rawCommand": "^GB760,0,2",
+      "x": 20,
+      "y": 455,
+      "type": "horizontal",
+      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+    },
+    {
+      "rawCommand": "^GB760,0,2",
+      "x": 20,
+      "y": 545,
+      "type": "horizontal",
+      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+    },
+    {
+      "rawCommand": "^GB760,0,2",
+      "x": 20,
+      "y": 700,
+      "type": "horizontal",
+      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+    }
+  ]
+}

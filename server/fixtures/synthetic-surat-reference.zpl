@@ -1,3 +1,10 @@
+^FX UYARI: BU DOSYA GERCEK SURAT SABLONU DEGILDIR.
+^FX Asagidaki ^GB cizgilerinden YALNIZ dis cerceve dolayli kanita dayanir;
+^FX dikey ray cizgisi ve bes yatay ayirici DuruSoft fotografina bakilarak
+^FX uydurulmustur ve gercek technicalZpl de bulundugu KANITLANMAMISTIR.
+^FX Ayrinti: server/fixtures/surat-render/line-landmark-report.md
+^FX Gercek sablon geldiginde bu dosya real-template-masked.zpl ile
+^FX degistirilmelidir. Bu fixture SALT TEST amaclidir.
 ^XA
 ^CI28
 ^PW799
