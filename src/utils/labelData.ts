@@ -1,7 +1,10 @@
 import { resolveLabelProductMetadata } from './labelProductMetadata'
+import { resolveCatalogVariantMetadata } from './labelVariantCatalog'
 import type {
   CargoOrder,
+  CargoProduct,
   LabelTemplate,
+  MarketplaceName,
   OrderItem,
   OrderVariantAttribute,
   Shipment,
@@ -171,11 +174,16 @@ export function buildSuratLabelData(
   shipment?: Shipment,
   template?: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
+  products: CargoProduct[] = [],
 ): LabelData {
   const effectiveShipment = shipment ?? order?.shipment
   const extracted = extractSuratFields(order, effectiveShipment)
   const verification = verifySuratShipment(order, effectiveShipment)
-  const items = normalizeItems(order?.items ?? [])
+  const items = normalizeItems(
+    order?.items ?? [],
+    products,
+    order?.marketplace,
+  )
   const tNo = verification.tNo
   const shipmentReference = selectShipmentReference(order, effectiveShipment, extracted)
   const barcodeSelection = selectMainBarcodeValue(
@@ -288,8 +296,17 @@ export function buildLabelData(
   shipment?: Shipment,
   template?: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
+  // Organizasyon kapsamli urun katalogu (opsiyonel). Verilirse siparis
+  // satirinda eksik olan renk/beden YALNIZ kesin kod eslesmesiyle tamamlanir.
+  products: CargoProduct[] = [],
 ): LabelData {
-  return buildSuratLabelData(order, shipment, template, mappingConfig)
+  return buildSuratLabelData(
+    order,
+    shipment,
+    template,
+    mappingConfig,
+    products,
+  )
 }
 
 export function validateLabelData(
@@ -596,21 +613,33 @@ function selectMainBarcodeValue(
   return { value: '', source: '' }
 }
 
-function normalizeItems(items: OrderItem[]): LabelDataItem[] {
+function normalizeItems(
+  items: OrderItem[],
+  products: CargoProduct[] = [],
+  marketplace?: MarketplaceName,
+): LabelDataItem[] {
   return items.map((item) => {
     // Renk / beden / SKU ve temiz urun adi TEK dogrulanmis cozumleyiciden
     // gelir: placeholder ("merchantSku"), serbest metin ("tasli") ve baslik
     // sonundaki "KOD, BEDEN" eki burada elenir (labelProductMetadata.ts).
-    const resolved = resolveLabelProductMetadata({
-      productName: item.productName,
-      color: item.color,
-      size: item.size,
-      sku: item.sku,
-      merchantSku: item.merchantSku,
-      stockCode: item.stockCode,
-      productCode: item.productCode,
-      variantAttributes: item.variantAttributes,
+    // Siparis satirinda renk/beden yoksa organizasyon kapsamindaki urun
+    // katalogundan YALNIZ kesin kod/barkod eslesmesiyle tamamlanir.
+    const catalog = resolveCatalogVariantMetadata(item, products, {
+      marketplace,
     })
+    const resolved = resolveLabelProductMetadata(
+      {
+        productName: item.productName,
+        color: item.color,
+        size: item.size,
+        sku: item.sku,
+        merchantSku: item.merchantSku,
+        stockCode: item.stockCode,
+        productCode: item.productCode,
+        variantAttributes: item.variantAttributes,
+      },
+      catalog,
+    )
     return {
       productName: resolved.productName,
       barcode: String(item.barcode ?? '').trim(),

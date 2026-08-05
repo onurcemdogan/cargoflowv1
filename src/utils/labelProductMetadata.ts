@@ -6,12 +6,19 @@
 // başlığının sonundaki "SECIL-334, 36" eki temizlenmiyordu. Sonuç:
 //   "1 x Taşlı Simli Tesettür Abiye SECIL-334, 36"  /  "[taşlı]"
 //
-// SÖZLEŞME:
-//  1) Değerler ÖNCE yapısal alanlardan çözülür (color/size, variantAttributes).
-//  2) Sonra marketplace satır metadata'sı (stockCode/productCode).
-//  3) SON ÇARE ürün başlığından, YALNIZ çapalı (anchored) ve doğrulanmış
+// SÖZLEŞME (çözümleme önceliği):
+//  1) Sipariş satırındaki YAPISAL color / size alanları.
+//  2) variantAttributes içindeki DOĞRULANMIŞ anahtarlar
+//     (Renk / Renk Seçeneği / Color / Colour — Beden / Size / Numara /
+//     Ebat / Ölçü).
+//  3) Organizasyon kapsamındaki ÜRÜN KATALOĞU varyantı — YALNIZ kesin
+//     kod/barkod eşleşmesiyle (bkz. labelVariantCatalog.ts). Fuzzy ad
+//     eşleşmesi ve çelişkili adaylarda tahmin YOKTUR.
+//  4) SON ÇARE ürün başlığından, YALNIZ çapalı (anchored) ve doğrulanmış
 //     parçalar çıkarılır: sondaki ", <beden>", sondaki model kodu, sondaki
 //     bilinen renk token'ı.
+//  Marketplace satır kodları (merchantSku/sku/stockCode/productCode) YALNIZ
+//  SKU alanı için kullanılır.
 //  4) Placeholder/alan-adı metinleri ("merchantSku", "sku", "undefined", …)
 //     HİÇBİR koşulda basılmaz.
 //  5) SKU olmayan serbest metin ("taşlı") SKU alanına KONMAZ.
@@ -29,6 +36,12 @@ export interface ProductMetadataSource {
   stockCode?: unknown
   productCode?: unknown
   variantAttributes?: Array<{ name?: unknown; value?: unknown }> | null
+}
+
+// Katalogdan (kesin eşleşmeyle) gelen doğrulanmış varyant değerleri.
+export interface CatalogMetadataInput {
+  color?: unknown
+  size?: unknown
 }
 
 export interface ResolvedProductMetadata {
@@ -125,6 +138,7 @@ function firstUsable(values: unknown[]): string {
 
 export function resolveLabelProductMetadata(
   item: ProductMetadataSource,
+  catalog?: CatalogMetadataInput | null,
 ): ResolvedProductMetadata {
   const sources = { color: 'none', size: 'none', sku: 'none' }
 
@@ -148,7 +162,24 @@ export function resolveLabelProductMetadata(
     }
   }
 
-  // 3) Marketplace satır metadata'sı — YALNIZ gerçek kod biçimindekiler.
+  // 3) ÜRÜN KATALOĞU varyantı (kesin kod/barkod eşleşmesi). Yalnız EKSİK
+  //    alanları doldurur; satırın kendi yapısal değerini EZMEZ.
+  if (!color) {
+    const fromCatalog = firstUsable([catalog?.color])
+    if (fromCatalog) {
+      color = fromCatalog
+      sources.color = 'catalogVariant'
+    }
+  }
+  if (!size) {
+    const fromCatalog = firstUsable([catalog?.size])
+    if (fromCatalog && looksLikeSizeValue(fromCatalog)) {
+      size = fromCatalog
+      sources.size = 'catalogVariant'
+    }
+  }
+
+  // 4) Marketplace satır metadata'sı — YALNIZ gerçek kod biçimindekiler.
   let sku = ''
   for (const [key, value] of [
     ['merchantSku', item.merchantSku],
@@ -163,11 +194,11 @@ export function resolveLabelProductMetadata(
     }
   }
 
-  // 4) SON ÇARE: başlıktan çapalı ayrıştırma. Yalnız EKSİK alanlar doldurulur
+  // 5) SON ÇARE: başlıktan çapalı ayrıştırma. Yalnız EKSİK alanlar doldurulur
   //    ve YALNIZ meta'da kullanılan ek başlıktan kaldırılır.
   let productName = String(item.productName ?? '').trim()
 
-  // 4a) Sondaki ", <beden>"
+  // 5a) Sondaki ", <beden>"
   const sizeMatch = productName.match(/,\s*([0-9]{1,3}([/-][0-9]{1,3})?)\s*$/u)
   if (sizeMatch) {
     const candidate = sizeMatch[1]
@@ -179,7 +210,7 @@ export function resolveLabelProductMetadata(
     if (size) productName = productName.slice(0, sizeMatch.index).trim()
   }
 
-  // 4b) Sondaki model/stok kodu.
+  // 5b) Sondaki model/stok kodu.
   const tokens = productName.split(/\s+/)
   const lastToken = tokens[tokens.length - 1] ?? ''
   if (looksLikeSkuCode(lastToken)) {
@@ -192,7 +223,7 @@ export function resolveLabelProductMetadata(
     }
   }
 
-  // 4c) Sondaki bilinen renk token'ı (tek veya iki kelimelik).
+  // 5c) Sondaki bilinen renk token'ı (tek veya iki kelimelik).
   if (!color) {
     const folded = fold(productName)
     for (const token of KNOWN_COLOR_TOKENS) {

@@ -1,5 +1,6 @@
 import type {
   CargoOrder,
+  CargoProduct,
   LabelPreviewOverrides,
   LabelTemplate,
   SuratLabelMappingConfig,
@@ -14,6 +15,10 @@ interface LabelPreviewCardProps {
   mappingConfig?: SuratLabelMappingConfig
   overrides?: LabelPreviewOverrides
   compact?: boolean
+  // Organizasyon kapsamli urun katalogu. Baski tarafiyla AYNI veriyi
+  // kullanmak icin verilir; onizleme ve etiket ASLA farkli renk/beden
+  // gosteremez.
+  products?: CargoProduct[]
 }
 
 export function LabelPreviewCard({
@@ -23,10 +28,11 @@ export function LabelPreviewCard({
   mappingConfig,
   overrides,
   compact = false,
+  products = [],
 }: LabelPreviewCardProps) {
   const data =
     labelData ??
-    buildLabelData(order, order?.shipment, template, mappingConfig)
+    buildLabelData(order, order?.shipment, template, mappingConfig, products)
 
   return (
     <div className={compact ? 'label-preview-card compact' : 'label-preview-card'}>
@@ -37,6 +43,7 @@ export function LabelPreviewCard({
         mappingConfig={mappingConfig}
         overrides={overrides}
         compact={compact}
+        products={products}
       />
     </div>
   )

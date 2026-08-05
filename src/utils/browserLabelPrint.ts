@@ -6,6 +6,7 @@ import {
 import qrcode from 'qrcode-generator'
 import type {
   CargoOrder,
+  CargoProduct,
   LabelTemplate,
   SuratLabelMappingConfig,
 } from '../types/cargoflow'
@@ -282,6 +283,7 @@ export async function printSuratLabels(
   orders: CargoOrder[],
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
+  products: CargoProduct[] = [],
 ): Promise<SuratBulkPrintResult> {
   const selection = resolveSuratPrintableSelection(orders)
   if (selection.printable.length === 0) {
@@ -297,6 +299,7 @@ export async function printSuratLabels(
       selection.printable.map((item) => item.order),
       template,
       mappingConfig,
+      products,
     )
     // Belgeye giren siparisler basarili; render'da atlananlar skipped'a eklenir.
     // Bir siparisin hatasi DIGERLERINI basarisiz gostermez.
@@ -519,6 +522,7 @@ export async function printCleanLabelDocument(
   orders: CargoOrder[],
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
+  products: CargoProduct[] = [],
 ): Promise<BrowserLabelPrintDebug> {
   const executionId = `print-${++printExecutionCounter}`
   const orderNumbers = orders.map((order) => String(order.orderNumber ?? ''))
@@ -569,7 +573,12 @@ export async function printCleanLabelDocument(
     suratPrintTrace('HTML_BUILD_START', { executionId, orderNumbers })
     // SIPARIS BAZINDA izolasyon: render edilemeyen siparis BUTUN batch'i
     // dusurmez; yalniz kendisi atlanir ve sebebi debug.skipped'a yazilir.
-    const document_ = buildCleanLabelDocument(orders, template, mappingConfig)
+    const document_ = buildCleanLabelDocument(
+      orders,
+      template,
+      mappingConfig,
+      products,
+    )
     const printHtml = document_.html
     debug.skipped = document_.skipped
     debug.printedOrderNumbers = document_.printable.map(
@@ -704,6 +713,10 @@ export function buildCleanLabelDocument(
   orders: CargoOrder[],
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
+  // Organizasyon kapsamli urun katalogu. Siparis satirinda eksik olan
+  // renk/beden YALNIZ kesin kod eslesmesiyle buradan tamamlanir; onizleme ve
+  // baski AYNI veriyi gorur.
+  products: CargoProduct[] = [],
 ): CleanLabelDocument {
   const widthMm = template.widthMm || 100
   const heightMm = template.heightMm || 100
@@ -715,7 +728,13 @@ export function buildCleanLabelDocument(
   for (const entry of selection.printable) {
     const { order, model } = entry
     try {
-      const data = buildLabelData(order, order.shipment, template, mappingConfig)
+      const data = buildLabelData(
+        order,
+        order.shipment,
+        template,
+        mappingConfig,
+        products,
+      )
       pages.push(
         renderPrintableLabelHtml({
           ...data,
@@ -1048,8 +1067,9 @@ export function buildCleanLabelHtml(
   orders: CargoOrder[],
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
+  products: CargoProduct[] = [],
 ): string {
-  return buildCleanLabelDocument(orders, template, mappingConfig).html
+  return buildCleanLabelDocument(orders, template, mappingConfig, products).html
 }
 
 export function renderPrintableLabelHtml(data: LabelData): string {
@@ -1231,13 +1251,15 @@ export function renderLegacyPrintableLabelHtml(data: LabelData): string {
             item ? `${item.quantity || 1} x ${item.productName}` : 'Ürün bilgisi yok',
           )}</strong>
           <span>${escapeHtml(
-            [
-              item?.color ? `Renk: ${item.color}` : '',
-              item?.size ? `Beden: ${item.size}` : '',
-              item?.sku ? `SKU: ${item.sku}` : '',
-            ]
-              .filter(Boolean)
-              .join(' | '),
+            item
+              ? buildProductMetaText({
+                  productName: String(item.productName ?? ''),
+                  quantity: Number(item.quantity) || 1,
+                  color: item.color,
+                  size: item.size,
+                  sku: item.sku,
+                })
+              : '',
           )}</span>
         </footer>
       </article>

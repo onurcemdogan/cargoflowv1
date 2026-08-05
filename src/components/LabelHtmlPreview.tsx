@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react'
 import { defaultLabelTypography } from '../services/integrationConfigService'
 import type {
   CargoOrder,
+  CargoProduct,
   LabelPreviewOverrides,
   LabelTemplate,
   SuratLabelMappingConfig,
@@ -10,6 +11,7 @@ import { buildLabelData, type LabelData, type LabelDataItem } from '../utils/lab
 import { formatDesi } from '../utils/desi'
 import { BarcodePreview } from './BarcodePreview'
 import {
+  buildProductMetaText,
   PRODUCT_FIT_TIERS,
   PRODUCT_OVERFLOW_MESSAGE,
 } from '../utils/labelProductFit'
@@ -30,6 +32,10 @@ interface LabelHtmlPreviewProps {
   template?: LabelTemplate
   overrides?: LabelPreviewOverrides
   compact?: boolean
+  // Organizasyon kapsamli urun katalogu. Baski tarafiyla AYNI veriyi
+  // kullanmak icin verilir; onizleme ve etiket ASLA farkli renk/beden
+  // gosteremez.
+  products?: CargoProduct[]
 }
 
 export function LabelHtmlPreview({
@@ -40,10 +46,11 @@ export function LabelHtmlPreview({
   template,
   overrides,
   compact = false,
+  products = [],
 }: LabelHtmlPreviewProps) {
   const data =
     labelData ??
-    buildLabelData(order, order?.shipment, template, mappingConfig)
+    buildLabelData(order, order?.shipment, template, mappingConfig, products)
 
   if (!order && !labelData) {
     return (
@@ -241,18 +248,17 @@ function formatProductTitle(item?: LabelDataItem): string {
   return `${item.quantity || 1} x ${item.productName}`.trim()
 }
 
-// Referans etiketteki biçim: "(Renk: X, Beden: Y) [sku/varyant/model kodu]".
-// Eksik alanlar atlanır; boş parantez veya boş köşeli parantez BASILMAZ.
-// Yazdırma tarafındaki buildReferenceProductMeta ile AYNI sözleşmedir.
+// Önizleme ve baskı AYNI bicimlendiriciyi kullanir (kopya YOK): boylece
+// onizlemede gorunen renk/beden ile basilan etiket ASLA ayrisamaz.
 function formatProductMeta(item?: LabelDataItem): string {
   if (!item) return ''
-  const attrs = [
-    item.color ? `Renk: ${item.color}` : '',
-    item.size ? `Beden: ${item.size}` : '',
-  ].filter(Boolean)
-  const grouped = attrs.length > 0 ? `(${attrs.join(', ')})` : ''
-  const code = item.sku ? `[${item.sku}]` : ''
-  return [grouped, code].filter(Boolean).join(' ')
+  return buildProductMetaText({
+    productName: String(item.productName ?? ''),
+    quantity: Number(item.quantity) || 1,
+    color: item.color,
+    size: item.size,
+    sku: item.sku,
+  })
 }
 
 function splitAddress(address: string): string[] {
