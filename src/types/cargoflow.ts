@@ -118,6 +118,11 @@ export type AuditAction =
   | 'Entegrasyon kaydedildi'
   | 'Yazıcı ayarı kaydedildi'
   | 'Etiket şablonu kaydedildi'
+  // Yerel arşiv: siparişin başka bir entegrasyon programında işlendiğini
+  // kullanıcı MANUEL işaretler / geri alır. Provider veya marketplace
+  // çağrısı YOKTUR.
+  | 'external_processing_marked'
+  | 'external_processing_restored'
 
 export type AuditLevel = 'info' | 'success' | 'warning' | 'error'
 
@@ -798,6 +803,14 @@ export interface CargoOrder {
   archived?: boolean
   archivedAt?: string
   archivedReason?: string
+  // YEREL arşiv durumu (organizasyon ayarlarında saklanır). Pazaryeri veya
+  // provider durumundan TAMAMEN AYRIDIR: tracking, barkod, labelStatus ve
+  // printCount DEĞİŞMEZ. Yalnız aktif operasyon görünümünü etkiler.
+  externalProcessing?: {
+    processed: boolean
+    processedAt?: string
+    source?: 'manual'
+  }
 }
 
 export interface CargoProduct {
