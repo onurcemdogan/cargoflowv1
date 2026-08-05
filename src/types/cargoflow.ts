@@ -674,6 +674,8 @@ export interface Label {
   printZplSourceSha256?: string
   printZplVersion?: string
   printZplFooterProfile?: string
+  augmentationStatus?: string
+  augmentationWarning?: string
   createdAt: string
   printedAt?: string
   printedBy?: string

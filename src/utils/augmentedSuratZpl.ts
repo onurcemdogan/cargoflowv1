@@ -31,6 +31,29 @@ export type AugmentedZplFallbackReason =
   | 'no_items'
   | 'footer_overflow'
 
+/**
+ * Ürün satırı ekleme SONUCU. Augmentation EK BİR ÖZELLİKTİR: başarısız olması
+ * provider başarısını, shipment lifecycle'ını veya BASKIYI geçersiz kılmaz.
+ */
+export type AugmentationStatus =
+  | 'success'
+  | 'overflow'
+  | 'unsupported_template'
+  | 'unavailable'
+
+/** Fallback durumunda kullanıcıya gösterilen GÜVENLİ uyarı (PII içermez). */
+export const AUGMENTATION_FALLBACK_WARNING =
+  'Ürün satırı eklenemedi; resmî kargo etiketi kullanıldı.'
+
+export function resolveAugmentationStatus(
+  reason: AugmentedZplFallbackReason | undefined,
+): AugmentationStatus {
+  if (!reason) return 'success'
+  if (reason === 'footer_overflow') return 'overflow'
+  if (reason === 'unsupported_template') return 'unsupported_template'
+  return 'unavailable'
+}
+
 export interface AugmentedSuratZpl {
   /** Baskı/indirme/native için kullanılacak ZPL. */
   printZpl: string
@@ -42,6 +65,8 @@ export interface AugmentedSuratZpl {
   templateFingerprint: string
   /** Ürün satırı gerçekten eklendi mi. */
   augmented: boolean
+  /** Ek özellik sonucu; baskıyı BLOKLAMAZ. */
+  augmentationStatus: AugmentationStatus
   fallbackReason?: AugmentedZplFallbackReason
   /** Kullanıcıya gösterilebilir güvenli açıklama (PII içermez). */
   fallbackMessage?: string
@@ -84,9 +109,14 @@ export function deriveAugmentedSuratZpl(
     printZplFooterProfile: null,
     templateFingerprint: '',
     augmented: false,
+    augmentationStatus: 'unavailable',
   }
   if (!sourceZpl.trim()) {
-    return { ...base, fallbackReason: 'no_source' }
+    return {
+      ...base,
+      fallbackReason: 'no_source',
+      augmentationStatus: 'unavailable',
+    }
   }
 
   const geometry = parseSuratZplGeometry(sourceZpl)
@@ -96,6 +126,7 @@ export function deriveAugmentedSuratZpl(
     return {
       ...withFingerprint,
       fallbackReason: 'unsupported_template',
+      augmentationStatus: 'unsupported_template',
       // Sebep yalnız teknik şablon bilgisi taşır (müşteri verisi YOK).
       fallbackMessage: `Bilinmeyen etiket şablonu (${fingerprint.reason ?? 'imza eşleşmedi'}); resmî ZPL aynen kullanıldı.`,
     }
@@ -105,7 +136,11 @@ export function deriveAugmentedSuratZpl(
     (item) => String(item?.productName ?? '').trim().length > 0,
   )
   if (usableItems.length === 0) {
-    return { ...withFingerprint, fallbackReason: 'no_items' }
+    return {
+      ...withFingerprint,
+      fallbackReason: 'no_items',
+      augmentationStatus: 'unavailable',
+    }
   }
 
   const plan = planSuratFooter(usableItems, geometry)
@@ -113,7 +148,8 @@ export function deriveAugmentedSuratZpl(
     return {
       ...withFingerprint,
       fallbackReason: 'footer_overflow',
-      fallbackMessage: plan.reason,
+      augmentationStatus: 'overflow',
+      fallbackMessage: AUGMENTATION_FALLBACK_WARNING,
     }
   }
 
@@ -121,7 +157,11 @@ export function deriveAugmentedSuratZpl(
   const utf8 = /\^CI28/i.test(sourceZpl)
   const commands = buildFooterZplCommands(plan, { utf8 })
   if (commands.length === 0) {
-    return { ...withFingerprint, fallbackReason: 'footer_overflow' }
+    return {
+      ...withFingerprint,
+      fallbackReason: 'footer_overflow',
+      augmentationStatus: 'overflow',
+    }
   }
 
   const insertAt = resolveInsertionIndex(sourceZpl)
@@ -148,6 +188,7 @@ export function deriveAugmentedSuratZpl(
     printZplFooterProfile: plan.profile.key,
     templateFingerprint: fingerprint.signature,
     augmented: true,
+    augmentationStatus: 'success',
     metrics: {
       contentBottom: geometry.contentBottom,
       footerTop: plan.area.top,

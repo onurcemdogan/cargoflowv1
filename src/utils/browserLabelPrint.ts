@@ -11,9 +11,11 @@ import type {
   SuratLabelMappingConfig,
 } from '../types/cargoflow'
 import { buildLabelData, type LabelData } from './labelData'
-import { deriveAugmentedSuratZplWithHashes } from './augmentedSuratZpl'
+import {
+  AUGMENTATION_FALLBACK_WARNING,
+  deriveAugmentedSuratZplWithHashes,
+} from './augmentedSuratZpl'
 import { resolveSuratProductLineItems } from './suratProductLineItems'
-import { PRODUCT_LINE_OVERFLOW_MESSAGE } from './suratZplProductLine'
 import {
   LEGACY_ZPL_MISSING_MESSAGE,
   resolveSuratPrintEligibility,
@@ -65,6 +67,10 @@ export interface SuratPrintPageModel {
   printZplFooterProfile?: string
   /** Ürün satırı eklenemediyse güvenli sebep (PII içermez). */
   printZplFallbackReason?: string
+  /** success | overflow | unsupported_template | unavailable */
+  augmentationStatus?: string
+  /** Fallback kullanıldıysa gösterilecek GÜVENLİ uyarı (PII içermez). */
+  augmentationWarning?: string
 }
 
 export interface SuratPrintSkip {
@@ -196,16 +202,12 @@ export function buildSuratPrintPageModel(
     eligibility.barcodeRaw,
     productLineItems,
   )
-  // SESSİZ ÜRÜN KAYBI YASAK: desteklenen Sürat şablonunda ürün metadata'sı
-  // VARKEN güvenli footer üretilemiyorsa kaynak ZPL "başarılı augmented
-  // etiket" gibi BASILMAZ. Sipariş atlanır (READY korunur, printCount
-  // artmaz, seçim korunur); batch'in kalanı DEVAM EDER.
-  if (
-    augmented.fallbackReason === 'footer_overflow' &&
-    productLineItems.length > 0
-  ) {
-    return { reason: PRODUCT_LINE_OVERFLOW_MESSAGE }
-  }
+  // CANLI REGRESYON DÜZELTMESİ: ürün satırı ekleme EK BİR ÖZELLİKTİR ve
+  // BASKIYI ASLA BLOKLAMAZ. Önceki sürüm footer sığmadığında siparişi
+  // tamamen atlıyordu; gerçek Sürat şablonunda footer alanı 0 çıktığı için
+  // TÜM baskılar (yeni ve eski READY/PRINTED etiketler dâhil) durdu.
+  // Yeni sözleşme: augmentation başarısızsa resmî kaynak ZPL kullanılır ve
+  // sonuç SESSİZ DEĞİLDİR — augmentationStatus + güvenli uyarı taşınır.
   return {
     model: {
       orderNumber: String(order.orderNumber ?? ''),
@@ -219,6 +221,10 @@ export function buildSuratPrintPageModel(
       printZplVersion: augmented.printZplVersion,
       printZplFooterProfile: augmented.printZplFooterProfile ?? undefined,
       printZplFallbackReason: augmented.fallbackMessage,
+      augmentationStatus: augmented.augmentationStatus,
+      augmentationWarning: augmented.augmented
+        ? undefined
+        : AUGMENTATION_FALLBACK_WARNING,
       recipient: String(order.customerName ?? ''),
       address: String(order.address ?? ''),
       desi: order.desi ?? null,

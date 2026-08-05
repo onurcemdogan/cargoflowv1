@@ -239,7 +239,7 @@ test('OZP-29..OZP-31: ürün satırı resmî içerikle çakışmaz, ^LL dışın
 
 // ═══ 32-35: imkânsız içerik, bilinmeyen şablon, fallback ═══════════════════
 
-test('OZP-32/OZP-33: sığmayan içerik AÇIK hata verir, kaynak bozulmaz', async () => {
+test('OZP-32/OZP-33: sığmayan içerik güvenli uyarı verir, kaynak bozulmaz', async () => {
   const impossible = Array.from({ length: 40 }, (_, index) => ({
     productName: `Çok Uzun Ürün Adı Numara ${index} Ekstra Detay Serisi Premium Koleksiyon`,
     quantity: 1,
@@ -251,9 +251,12 @@ test('OZP-32/OZP-33: sığmayan içerik AÇIK hata verir, kaynak bozulmaz', asyn
   const result = await derive(impossible, source)
   assert.equal(result.augmented, false)
   assert.equal(result.fallbackReason, 'footer_overflow')
-  assert.match(
-    result.fallbackMessage ?? '',
-    /resmî kargo etiketinin alt alanına sığmıyor/,
+  // SÖZLEŞME GÜNCELLENDİ (canlı regresyon): sığmama artık BASKIYI ENGELLEYEN
+  // bir hata değil, ek özelliğin atlandığını bildiren GÜVENLİ bir uyarıdır.
+  assert.equal(result.augmentationStatus, 'overflow')
+  assert.equal(
+    result.fallbackMessage,
+    'Ürün satırı eklenemedi; resmî kargo etiketi kullanıldı.',
   )
   // 33) Kaynak AYNEN kullanılır → bu sipariş batch'i durdurmaz.
   assert.equal(result.printZpl, source)
@@ -504,7 +507,7 @@ test('INT-3: "Taşlı" ZPL footer\'ında da renk sayılmaz', async () => {
   assert.ok(model.zpl.includes('Renk: Belirtilmemiş'))
 })
 
-test('INT-4: footer sığmazsa SESSİZ ham ZPL basılmaz; sipariş atlanır', async () => {
+test('INT-4: footer sığmasa bile baskı BLOKLANMAZ (uyarıyla devam)', async () => {
   const { buildSuratPrintPageModel, resolveSuratPrintableSelection } = await load(
     '/src/utils/browserLabelPrint.ts',
   )
@@ -520,19 +523,26 @@ test('INT-4: footer sığmazsa SESSİZ ham ZPL basılmaz; sipariş atlanır', as
   }))
   const blocked = printableOrder({ id: 'o-blocked', items: impossible })
   const { model, reason } = buildSuratPrintPageModel(blocked)
-  assert.equal(model, undefined, 'model üretilmez (ham ZPL başarılı sayılmaz)')
-  assert.match(reason ?? '', /resmî kargo etiketinin alt alanına sığmıyor/)
+  // SÖZLEŞME GÜNCELLENDİ (canlı regresyon): footer sığmasa BİLE baskı
+  // ENGELLENMEZ. Resmî kaynak ZPL basılır; durum sessiz değil, açık uyarıyla
+  // raporlanır. Eski davranış (siparişi atlamak) TÜM baskıları durdurmuştu.
+  assert.ok(model, 'model üretilir; baskı bloklanmaz')
+  assert.equal(reason, undefined)
+  assert.equal(model.zpl, model.sourceZpl, 'resmî kaynak ZPL kullanılır')
+  assert.equal(model.augmentationStatus, 'overflow')
+  assert.equal(
+    model.augmentationWarning,
+    'Ürün satırı eklenemedi; resmî kargo etiketi kullanıldı.',
+  )
 
-  // KISMİ BATCH: sığmayan sipariş atlanır, diğeri basılmaya devam eder.
+  // KISMİ BATCH: hiçbir sipariş düşmez.
   const healthy = printableOrder({ id: 'o-ok' })
   const selection = resolveSuratPrintableSelection([blocked, healthy])
-  assert.equal(selection.printable.length, 1)
-  assert.equal(selection.printable[0].order.id, 'o-ok')
-  assert.equal(selection.skipped.length, 1)
-  assert.match(selection.skipped[0].reason, /sığmıyor/)
+  assert.equal(selection.printable.length, 2)
+  assert.equal(selection.skipped.length, 0)
 })
 
-test('INT-5: provider da sessiz kayıp yerine AÇIK hata verir', async () => {
+test('INT-5: provider augmentation hatasında etiketi GEÇERSİZ KILMAZ', async () => {
   const { ZebraZplLabelProvider } = await load(
     '/src/providers/labels/ZebraZplLabelProvider.ts',
   )
@@ -545,17 +555,17 @@ test('INT-5: provider da sessiz kayıp yerine AÇIK hata verir', async () => {
       variantAttributes: [{ name: 'Renk', value: 'Krem' }, { name: 'Beden', value: '40' }],
     })),
   })
-  await assert.rejects(
-    () =>
-      new ZebraZplLabelProvider().generateSingle({
-        order,
-        shipment: order.shipment,
-        template: { id: 'tpl' },
-        mappingConfig: {},
-        desiConfig: { defaultUnitDesi: 2 },
-      }),
-    /sığmıyor/,
-  )
+  // SÖZLEŞME GÜNCELLENDİ: provider augmentation başarısızlığında HATA ATMAZ;
+  // resmî etiket geçerli kalır ve durum raporlanır.
+  const label = await new ZebraZplLabelProvider().generateSingle({
+    order,
+    shipment: order.shipment,
+    template: { id: 'tpl' },
+    mappingConfig: {},
+    desiConfig: { defaultUnitDesi: 2 },
+  })
+  assert.equal(label.zplContent, order.shipment.barcodeRaw)
+  assert.equal(label.augmentationStatus, 'overflow')
 })
 
 test('INT-6: external-processing davranışları ZPL çalışmasından ETKİLENMEZ', async () => {
@@ -572,4 +582,154 @@ test('INT-6: external-processing davranışları ZPL çalışmasından ETKİLENM
   assert.equal(marked.shipment.barcodeRaw, order.shipment.barcodeRaw)
   assert.equal(marked.shipment.trackingNumber, order.shipment.trackingNumber)
   assert.equal(marked.labelStatus, order.labelStatus)
+})
+
+// ═══ CANLI REGRESYON: AUGMENTATION BASKIYI BLOKLAMAMALI ════════════════════
+//
+// Canlı belirti: provider 200 döndü (tracking + barkod + ZPL + LABEL_READY),
+// buna rağmen UI "Ürün bilgileri resmî kargo etiketinin alt alanına sığmıyor."
+// veriyordu ve ESKİ READY/PRINTED etiketler de yazdırılamıyordu.
+//
+// Kök neden: gerçek Sürat şablonunda bölümleri saran DIŞ ÇERÇEVE (^GB)
+// içerik sayılıyor, footer alanı 0 kalıyor ve her sipariş footer_overflow
+// oluyordu; önceki sürüm bunu "baskı yapılamaz" hatasına çeviriyordu.
+//
+// Yeni sözleşme: augmentation EK ÖZELLİKTİR; başarısızlığı provider sonucunu,
+// shipment lifecycle'ını veya baskıyı GEÇERSİZ KILMAZ.
+
+// Dış çerçeveli (gerçekçi) resmî şablon.
+function framedOfficialZpl() {
+  return [
+    '^XA', '^CI28', '^PW799', '^LL0799', '^LS0',
+    '^FO20,15^GB760,770,3^FS',
+    '^FO60,20^A0N,28,28^FDSube: FERAH^FS',
+    '^FO470,20^A0N,26,26^FDT.No: 21012920014311^FS',
+    '^FO60,150^BY3^BCN,150,Y,N,N^FD01254596670^FS',
+    '^FO60,345^A0N,24,24^FDALICI AD^FS',
+    '^FO60,560^BXN,6,200^FD7270035184060553^FS',
+    '^FO240,672^A0N,38,38^FDDIYARBAKIR AKTARMA^FS',
+    '^FO660,560^BQN,2,6^FDLA,01254596670^FS',
+    '^FWB', '^FO24,340^A0N,18,18^FDSiparis No: 7270035184060553^FS', '^FWN',
+    '^PQ1,0,1,Y',
+    '^XZ',
+  ].join('\n')
+}
+
+// Footer'a ASLA sığmayacak içerik (overflow'u zorlar).
+const IMPOSSIBLE_ITEMS = Array.from({ length: 40 }, (_, index) => ({
+  id: `l-${index}`,
+  productName: `Cok Uzun Urun Adi Numara ${index} Ekstra Detay Serisi Premium Koleksiyon`,
+  quantity: 1,
+  merchantSku: `SKU-${index}`,
+  variantAttributes: [
+    { name: 'Renk', value: 'Krem' },
+    { name: 'Beden', value: '40' },
+  ],
+}))
+
+test('HF-1: dış çerçeve içerik sayılmaz — normal siparişte footer alanı KALIR', async () => {
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const geometry = parseSuratZplGeometry(framedOfficialZpl())
+  // Çerçeve yok sayılmazsa contentBottom ~785 olur ve alan 0 kalırdı.
+  assert.ok(
+    geometry.contentBottom < geometry.labelLength - 40,
+    `contentBottom(${geometry.contentBottom}) çerçeve yüzünden şişmemeli`,
+  )
+  const { resolveFooterArea } = await load('/src/utils/suratZplProductLine.ts')
+  const area = resolveFooterArea(geometry)
+  assert.ok(area.height > 0, `footer yüksekliği kalmalı (${area.height})`)
+})
+
+test('HF-2: footer sığmasa bile print modeli ÜRETİLİR (baskı bloklanmaz)', async () => {
+  const { buildSuratPrintPageModel } = await load('/src/utils/browserLabelPrint.ts')
+  const order = printableOrder({ items: IMPOSSIBLE_ITEMS })
+  const { model, reason } = buildSuratPrintPageModel(order)
+  assert.ok(model, `model üretilmeli, reason=${reason ?? '-'}`)
+  assert.equal(reason, undefined)
+  // Resmî kaynak ZPL basılabilir durumda.
+  assert.ok(model.zpl.includes('^XA') && model.zpl.includes('^XZ'))
+  assert.equal(model.zpl, model.sourceZpl, 'fallback: resmî kaynak kullanılır')
+  // SESSİZ DEĞİL: durum ve güvenli uyarı taşınır.
+  assert.equal(model.augmentationStatus, 'overflow')
+  assert.equal(
+    model.augmentationWarning,
+    'Ürün satırı eklenemedi; resmî kargo etiketi kullanıldı.',
+  )
+  // Uyarı ham ZPL veya müşteri verisi TAŞIMAZ.
+  assert.equal(model.augmentationWarning.includes('^XA'), false)
+})
+
+test('HF-3: provider augmentation başarısızlığında HATA ATMAZ, etiket geçerli kalır', async () => {
+  const { ZebraZplLabelProvider } = await load(
+    '/src/providers/labels/ZebraZplLabelProvider.ts',
+  )
+  const order = printableOrder({ items: IMPOSSIBLE_ITEMS })
+  const label = await new ZebraZplLabelProvider().generateSingle({
+    order,
+    shipment: order.shipment,
+    template: { id: 'tpl' },
+    mappingConfig: {},
+    desiConfig: { defaultUnitDesi: 2 },
+  })
+  assert.ok(label.zplContent, 'etiket üretilir')
+  assert.equal(label.zplContent, order.shipment.barcodeRaw, 'resmî ZPL korunur')
+  assert.equal(label.augmentationStatus, 'overflow')
+  assert.equal(
+    label.augmentationWarning,
+    'Ürün satırı eklenemedi; resmî kargo etiketi kullanıldı.',
+  )
+})
+
+test('HF-4: ESKİ READY/PRINTED etiket ürün satırı olmadan da yazdırılabilir', async () => {
+  const { buildSuratPrintPageModel, resolveSuratPrintableSelection } = await load(
+    '/src/utils/browserLabelPrint.ts',
+  )
+  // Ürün satırı HİÇ YOK (eski kayıt) → augmentation yapılamaz.
+  const legacy = printableOrder({
+    id: 'o-legacy',
+    items: [],
+    operationStatus: 'LABEL_PRINTED',
+    labelStatus: 'PRINTED',
+  })
+  const { model } = buildSuratPrintPageModel(legacy)
+  assert.ok(model, 'eski etiket yazdırılabilir')
+  assert.equal(model.zpl, legacy.shipment.barcodeRaw)
+  // Batch: overflow'lu sipariş DİĞERLERİNİ durdurmaz ve kendisi de atlanmaz.
+  const blocked = printableOrder({ id: 'o-blocked', items: IMPOSSIBLE_ITEMS })
+  const healthy = printableOrder({ id: 'o-ok' })
+  const selection = resolveSuratPrintableSelection([blocked, healthy, legacy])
+  assert.equal(selection.printable.length, 3, 'hiçbir sipariş düşmez')
+  assert.equal(selection.skipped.length, 0)
+})
+
+test('HF-5: unsupported template de baskıyı bloklamaz', async () => {
+  const { buildSuratPrintPageModel } = await load('/src/utils/browserLabelPrint.ts')
+  const foreign = ['^XA', '^PW600', '^LL400', '^FO10,10^A0N,20,20^FDBaska^FS', '^XZ'].join('\n')
+  const order = printableOrder({
+    id: 'o-foreign',
+    shipment: { ...printableOrder().shipment, barcodeRaw: foreign },
+  })
+  const { model, reason } = buildSuratPrintPageModel(order)
+  assert.ok(model, `model üretilmeli, reason=${reason ?? '-'}`)
+  assert.equal(model.zpl, foreign, 'kaynak aynen kullanılır')
+  assert.equal(model.augmentationStatus, 'unsupported_template')
+})
+
+test('HF-6: augmentation başarılıysa ürün satırı KORUNUR (özellik kaybolmadı)', async () => {
+  const { buildSuratPrintPageModel } = await load('/src/utils/browserLabelPrint.ts')
+  const order = printableOrder({
+    shipment: { ...printableOrder().shipment, barcodeRaw: framedOfficialZpl() },
+  })
+  const { model } = buildSuratPrintPageModel(order)
+  assert.ok(model)
+  assert.equal(model.augmentationStatus, 'success')
+  assert.ok(
+    model.zpl.includes('(Renk: Krem, Beden: 40) [6496]'),
+    'DuruSoft biçimli ürün satırı eklenir',
+  )
+  // Kaynak korunur ve tek sayfa kalır.
+  assert.equal((model.zpl.match(/\^XA/g) ?? []).length, 1)
+  assert.equal((model.zpl.match(/\^XZ/g) ?? []).length, 1)
+  assert.ok(model.zpl.includes('T.No: 21012920014311'))
+  assert.notEqual(model.printZplSha256, model.printZplSourceSha256)
 })

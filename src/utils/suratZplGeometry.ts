@@ -235,10 +235,21 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
     return { ...empty, printWidth, labelLength, reason: 'Ölçülebilir alan yok.' }
   }
 
-  const contentBottom = elements.reduce(
-    (bottom, element) => Math.max(bottom, element.y + element.height),
-    0,
+  // CANLI REGRESYON KÖK NEDENİ: gerçek Sürat etiketinde bölümleri saran bir
+  // DIŞ ÇERÇEVE (^GB) var ve neredeyse tüm etiketi kaplıyor. Çerçeve ÇİZGİDİR,
+  // içerik DEĞİLDİR; içerik sayılınca contentBottom ~785 çıkıyor, ürün alanı
+  // 0 kalıyor ve HER sipariş "sığmıyor" oluyordu. Etiketin büyük bölümünü
+  // kaplayan kutular ölçümde yok sayılır (kutunun İÇİ boştur).
+  const isFullLabelFrame = (element: ZplElementBox): boolean =>
+    element.kind === 'box' &&
+    element.width >= printWidth * 0.8 &&
+    element.height >= labelLength * 0.6
+  const contentElements = elements.filter(
+    (element) => !isFullLabelFrame(element),
   )
+  const contentBottom = (
+    contentElements.length > 0 ? contentElements : elements
+  ).reduce((bottom, element) => Math.max(bottom, element.y + element.height), 0)
   const contentRight = elements.reduce(
     (right, element) => Math.max(right, element.x + element.width),
     0,

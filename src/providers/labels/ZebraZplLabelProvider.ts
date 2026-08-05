@@ -10,9 +10,11 @@ import { verifySuratShipment } from '../../utils/suratVerification'
 import { resolveSuratPrintEligibility } from '../../utils/suratPrintEligibility'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
 import { validateOfficialSuratZpl } from '../../utils/officialSuratLabel'
-import { deriveAugmentedSuratZplWithHashes } from '../../utils/augmentedSuratZpl'
+import {
+  AUGMENTATION_FALLBACK_WARNING,
+  deriveAugmentedSuratZplWithHashes,
+} from '../../utils/augmentedSuratZpl'
 import { resolveSuratProductLineItems } from '../../utils/suratProductLineItems'
-import { PRODUCT_LINE_OVERFLOW_MESSAGE } from '../../utils/suratZplProductLine'
 import {
   DEFAULT_DESI_MISSING_MESSAGE,
   resolveEffectiveLabelDesi,
@@ -403,14 +405,9 @@ export class ZebraZplLabelProvider implements LabelProvider {
       official.zpl,
       productLineItems,
     )
-    // SESSİZ ÜRÜN KAYBI YASAK: desteklenen şablonda ürün metadata'sı VARKEN
-    // footer üretilemiyorsa kaynak ZPL başarılı etiket gibi DÖNDÜRÜLMEZ.
-    if (
-      augmented.fallbackReason === 'footer_overflow' &&
-      productLineItems.length > 0
-    ) {
-      throw new Error(PRODUCT_LINE_OVERFLOW_MESSAGE)
-    }
+    // CANLI REGRESYON DÜZELTMESİ: augmentation başarısızlığı etiketi
+    // GEÇERSİZ KILMAZ. Provider'ın resmî ZPL'i her hâlükârda basılabilir
+    // kalır; yalnız durum ve güvenli uyarı raporlanır.
     const zplContent = augmented.printZpl
     const zplSource = 'surat.ortakBarkod.BarcodeRaw'
     const desiMismatchWarning = desiMismatch
@@ -441,6 +438,10 @@ export class ZebraZplLabelProvider implements LabelProvider {
       printZplSourceSha256: augmented.printZplSourceSha256,
       printZplVersion: augmented.printZplVersion,
       printZplFooterProfile: augmented.printZplFooterProfile ?? undefined,
+      augmentationStatus: augmented.augmentationStatus,
+      augmentationWarning: augmented.augmented
+        ? undefined
+        : AUGMENTATION_FALLBACK_WARNING,
       desi: normalizedDesi.desi,
       desiSource: normalizedDesi.desiSource,
       desiDebug,
