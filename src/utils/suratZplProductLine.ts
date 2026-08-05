@@ -16,7 +16,7 @@
 //    satırı yalnız resmî içeriğin ALTINDAKİ boş alana, ^LL sınırı içinde
 //    yazılır. Güvenli alan yoksa ekleme YAPILMAZ (fallback).
 //  - Şablon bilinen Sürat şablonu değilse ürün yazılmaz; kaynak aynen kullanılır.
-import { parseSuratZplGeometry, type ZplGeometry } from './suratZplGeometry'
+import { parseSuratZplGeometry, type ZplGeometry } from './suratZplGeometry.ts'
 
 export interface SuratProductLineItem {
   productName: string

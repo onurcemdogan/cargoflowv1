@@ -14,14 +14,14 @@
 // Şablon bilinen Sürat şablonu değilse veya ürün satırı güvenli alana
 // sığmıyorsa printZpl = technicalZpl olur ve sebep AÇIKÇA raporlanır
 // (sessiz kırpma veya bilinmeyen koordinata yazma YOKTUR).
-import { parseSuratZplGeometry } from './suratZplGeometry'
+import { parseSuratZplGeometry } from './suratZplGeometry.ts'
 import {
   buildFooterZplCommands,
   planSuratFooter,
   resolveSuratTemplateFingerprint,
   type SuratFooterProfileKey,
   type SuratProductLineItem,
-} from './suratZplProductLine'
+} from './suratZplProductLine.ts'
 
 export const PRINT_ZPL_VERSION = 'surat-product-line-v1'
 
