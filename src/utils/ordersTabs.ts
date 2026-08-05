@@ -21,6 +21,10 @@ export type QuickTab =
   | 'delivered'
   | 'cancelReturn'
   | 'archive'
+  // YEREL arşiv: başka bir entegrasyon programında işlendiği kullanıcı
+  // tarafından MANUEL işaretlenen siparişler. Pazaryeri/provider durumu
+  // DEĞİLDİR; aktif operasyon görünümünden çıkarılır, geri alınabilir.
+  | 'externallyProcessed'
   | 'all'
 
 export function statusesForFetch(tab: QuickTab): MarketplaceStatus[] {
@@ -55,6 +59,8 @@ export function resolveLegacyTab(tab: QuickTab | undefined): {
       return { tab: 'newOrders', operationTab: tab }
     case 'archive':
       return { tab: 'all', operationTab: 'archive' }
+    case 'externallyProcessed':
+      return { tab: 'all', operationTab: 'externallyProcessed' }
     case 'currentSync':
     case 'today':
     case 'open':

@@ -60,16 +60,25 @@ export function buildProductTitleText(item: ProductFitItem): string {
   return `${Math.max(1, Math.round(Number(item.quantity) || 1))} x ${item.productName}`
 }
 
-// Referans biçim: "(Renk: X, Beden: Y) [SKU]". Eksik alan atlanır; boş
-// parantez/köşeli parantez basılmaz.
+// Eksik renk/beden için TEK metin. Sahte değer ÜRETİLMEZ; alanın gerçekten
+// bulunamadığı AÇIKÇA gösterilir (sessizce gizlemek yerine).
+export const UNSPECIFIED_METADATA_VALUE = 'Belirtilmemiş'
+
+// Referans biçim: "(Renk: X, Beden: Y) [SKU]".
+//
+// TUTARLILIK KURALI: renk ve beden HER ürün satırında yazılır. Tüm güvenilir
+// kaynaklar (satır alanı → variantAttributes → katalog varyantı → çapalı
+// başlık ayrıştırması) denendikten sonra hâlâ bulunamayan alan sessizce
+// KALDIRILMAZ, "Belirtilmemiş" olarak gösterilir. Böylece bazı etiketlerde
+// "(Beden: 42)", bazılarında "(Renk: X, Beden: Y)" çıkması sona erer.
+//
+// SKU yoksa köşeli parantez HİÇ basılmaz (boş "[]" üretilmez).
 export function buildProductMetaText(item: ProductFitItem): string {
-  const attrs = [
-    item.color ? `Renk: ${item.color}` : '',
-    item.size ? `Beden: ${item.size}` : '',
-  ].filter(Boolean)
-  const grouped = attrs.length > 0 ? `(${attrs.join(', ')})` : ''
-  const code = item.sku ? `[${item.sku}]` : ''
-  return [grouped, code].filter(Boolean).join(' ')
+  const color = String(item.color ?? '').trim() || UNSPECIFIED_METADATA_VALUE
+  const size = String(item.size ?? '').trim() || UNSPECIFIED_METADATA_VALUE
+  const grouped = `(Renk: ${color}, Beden: ${size})`
+  const sku = String(item.sku ?? '').trim()
+  return sku ? `${grouped} [${sku}]` : grouped
 }
 
 // Bir metnin verilen genişlik/puntoda kaç satır SARACAĞINI tahmin eder.
