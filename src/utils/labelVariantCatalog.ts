@@ -22,7 +22,7 @@
 //     marketplace'i verilirse yalnız aynı marketplace ürünleri değerlendirilir.
 //  5) PII veya credential OKUNMAZ/LOGLANMAZ; yalnız kod, renk ve beden alanları.
 import type { CargoProduct, MarketplaceName, OrderItem } from '../types/cargoflow'
-import { normalizeProductIdentifier } from './productImage'
+import { normalizeProductIdentifier } from './productImage.ts'
 
 /** Kesin eşleşme anahtarları — SIRALI denenir. Ürün adı DAHİL DEĞİLDİR. */
 export type CatalogVariantMatchKey =

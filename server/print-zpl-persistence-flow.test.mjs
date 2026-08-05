@@ -383,3 +383,286 @@ test('PZ-LOG: raw ZPL ve PII loglanmaz', () => {
   assert.equal(repo.PRINT_ZPL_SOURCE_MISMATCH_MESSAGE.includes('^XA'), false)
   assert.equal(repo.PRINT_ZPL_SOURCE_MISSING_MESSAGE.includes('^XA'), false)
 })
+
+// ═══ GERÇEK AKIŞ BAĞLANTISI ════════════════════════════════════════════════
+//
+// Bu bölüm persistence katmanının GERÇEK create ve okuma yollarına bağlı
+// olduğunu davranışsal olarak doğrular (yalnız kaynak-string testi değil).
+
+const orderService = await import('./orders/orderPersistenceService.ts')
+const shipmentService = await import('./shipments/shipmentPersistenceService.ts')
+
+async function seedOrderWithLines(db, organizationId, lines) {
+  const [order] = await db
+    .insert(schema.orders)
+    .values({
+      organizationId,
+      marketplace: 'Trendyol',
+      packageId: 'PKG-1',
+      orderNumber: '7270035184060553',
+      operationStatus: 'LABEL_READY',
+      orderDate: new Date('2026-08-01T00:00:00.000Z'),
+    })
+    .returning()
+  for (const [index, line] of lines.entries()) {
+    await db.insert(schema.orderLines).values({
+      organizationId,
+      orderId: order.id,
+      externalLineId: `L-${index}`,
+      productName: line.productName,
+      barcode: line.barcode ?? null,
+      merchantSku: line.merchantSku ?? null,
+      quantity: line.quantity ?? 1,
+      variantAttributes: line.variantAttributes ?? [],
+    })
+  }
+  return order
+}
+
+async function seedCatalogVariant(db, organizationId, variant) {
+  const [product] = await db
+    .insert(schema.products)
+    .values({
+      organizationId,
+      marketplace: 'Trendyol',
+      externalProductId: `EP-${variant.barcode}`,
+      title: 'Sentetik Ürün',
+    })
+    .returning()
+  await db.insert(schema.productVariants).values({
+    organizationId,
+    productId: product.id,
+    externalVariantId: `EV-${variant.barcode}`,
+    barcode: variant.barcode ?? null,
+    merchantSku: variant.merchantSku ?? null,
+    stockCode: variant.stockCode ?? null,
+    color: variant.color ?? null,
+    size: variant.size ?? null,
+  })
+}
+
+test('WIRE-1: create zinciri printZplArtifact’i AYNI yazımda persist eder', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'wire-1')
+  await seedOrderWithLines(db, org, [
+    {
+      productName: 'Önü Drapeli Loş Tesettür Takım',
+      barcode: 'BC-77',
+      merchantSku: '6496',
+      quantity: 1,
+      variantAttributes: [{ name: 'Beden', value: '40' }],
+    },
+  ])
+  // Katalogda renk var (sipariş satırında YOK) → footer'a gelmeli.
+  await seedCatalogVariant(db, org, { barcode: 'BC-77', color: 'Krem', size: '40' })
+
+  await shipmentService.writeOperationRecord(db, org, {
+    organizationId: org,
+    marketplace: 'Trendyol',
+    packageId: 'PKG-1',
+    orderNumber: '7270035184060553',
+    provider: 'surat-kargo',
+    status: 'succeeded',
+    technicalZpl: OFFICIAL,
+    carrierTrackingNumber: '21012920014311',
+    carrierBarcodeNumber: '01254596670',
+    shipment: {
+      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+      barkodNo: '01254596670',
+    },
+  })
+
+  const stored = await readPayload(db, org)
+  assert.ok(stored.printZplArtifact, 'artifact create sırasında persist edildi')
+  // technicalZpl AYNEN korunur
+  assert.equal(stored.technicalZpl, OFFICIAL)
+  // katalog rengi footer'a ulaştı
+  assert.ok(
+    stored.printZplArtifact.printZpl.includes('(Renk: Krem, Beden: 40) [6496]'),
+    'katalog zenginleştirmesi create sırasında uygulandı',
+  )
+  assert.equal(stored.printZplArtifact.printZplVersion, 'surat-product-line-v1')
+  assert.ok(stored.printZplArtifact.printZplCreatedAt)
+})
+
+test('WIRE-2: create tekrarı ikinci provider çağrısı yapmaz, aynı SHA kalır', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'wire-2')
+  await seedOrderWithLines(db, org, [
+    { productName: 'Ürün', barcode: 'BC-1', merchantSku: '6496', quantity: 1 },
+  ])
+  const record = {
+    organizationId: org,
+    marketplace: 'Trendyol',
+    packageId: 'PKG-1',
+    orderNumber: '7270035184060553',
+    provider: 'surat-kargo',
+    status: 'succeeded',
+    technicalZpl: OFFICIAL,
+    shipment: { lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE' },
+  }
+  await shipmentService.writeOperationRecord(db, org, record)
+  const first = (await readPayload(db, org)).printZplArtifact.printZplSha256
+  await shipmentService.writeOperationRecord(db, org, record)
+  const second = (await readPayload(db, org)).printZplArtifact.printZplSha256
+  assert.equal(second, first, 'idempotent: aynı SHA')
+  // Persistence servisi provider çağrısı içermez.
+  const src = readFileSync(
+    join(here, 'shipments', 'shipmentPersistenceService.ts'),
+    'utf8',
+  )
+  assert.equal(/fetch\(|SOAPAction/i.test(src), false)
+})
+
+test('WIRE-3: create satır/katalog okunamazsa akış BOZULMAZ (legacy yola düşer)', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'wire-3')
+  // Sipariş satırı YOK → artifact üretilmez ama shipment yazılır.
+  await shipmentService.writeOperationRecord(db, org, {
+    organizationId: org,
+    marketplace: 'Trendyol',
+    packageId: 'PKG-1',
+    orderNumber: '7270035184060553',
+    provider: 'surat-kargo',
+    status: 'succeeded',
+    technicalZpl: OFFICIAL,
+    shipment: { lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE' },
+  })
+  const stored = await readPayload(db, org)
+  assert.equal(stored.printZplArtifact, undefined, 'artifact yok')
+  assert.equal(stored.technicalZpl, OFFICIAL, 'kaynak korunur')
+})
+
+test('WIRE-4: label servisi persisted printZpl döndürür (katalog zenginleştirmeli)', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'wire-4')
+  const order = await seedOrderWithLines(db, org, [
+    {
+      productName: 'Önü Drapeli Loş Tesettür Takım',
+      barcode: 'BC-77',
+      merchantSku: '6496',
+      quantity: 1,
+      variantAttributes: [{ name: 'Beden', value: '40' }],
+    },
+  ])
+  await seedCatalogVariant(db, org, { barcode: 'BC-77', color: 'Krem', size: '40' })
+  // GERÇEK create yolu: artifact aynı yazımda persist edilir.
+  await shipmentService.writeOperationRecord(db, org, {
+    organizationId: org,
+    marketplace: 'Trendyol',
+    packageId: 'PKG-1',
+    orderNumber: '7270035184060553',
+    provider: 'surat-kargo',
+    status: 'succeeded',
+    technicalZpl: OFFICIAL,
+    carrierTrackingNumber: '21012920014311',
+    carrierBarcodeNumber: '01254596670',
+    shipment: {
+      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+      barcodeRaw: OFFICIAL,
+      barkodNo: '01254596670',
+    },
+  })
+
+  const result = await orderService.resolvePersistedLabel(db, org, order.id)
+  assert.equal(result.found, true)
+  // Dönen ZPL ürün satırı TAŞIR ve katalog rengi uygulanmış.
+  assert.ok(result.zpl.includes('(Renk: Krem, Beden: 40) [6496]'))
+  assert.equal(result.source, 'shipment.printZplArtifact')
+  // Güvenli DTO özeti döner (ham payload YOK).
+  assert.equal(result.print.printZplVersion, 'surat-product-line-v1')
+  assert.equal(result.print.renderMode, 'raw-zpl')
+  assert.equal(result.print.augmentationStatus, 'augmented')
+  // Kalıcı hale geldi.
+  const stored = await readPayload(db, org)
+  assert.equal(stored.printZplArtifact.printZplSha256, result.print.printZplSha256)
+  assert.equal(stored.technicalZpl, OFFICIAL, 'kaynak korunur')
+})
+
+test('WIRE-5: reprint katalog/satır değişiminden ETKİLENMEZ (persisted byte)', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'wire-5')
+  const order = await seedOrderWithLines(db, org, [
+    { productName: 'İlk Ürün', barcode: 'BC-77', merchantSku: '6496', quantity: 1 },
+  ])
+  await seedCatalogVariant(db, org, { barcode: 'BC-77', color: 'Krem', size: '40' })
+  await shipmentService.writeOperationRecord(db, org, {
+    organizationId: org,
+    marketplace: 'Trendyol',
+    packageId: 'PKG-1',
+    orderNumber: '7270035184060553',
+    provider: 'surat-kargo',
+    status: 'succeeded',
+    technicalZpl: OFFICIAL,
+    carrierTrackingNumber: '21012920014311',
+    carrierBarcodeNumber: '01254596670',
+    shipment: {
+      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+      barcodeRaw: OFFICIAL,
+      barkodNo: '01254596670',
+    },
+  })
+
+  const first = await orderService.resolvePersistedLabel(db, org, order.id)
+  const firstSha = first.print.printZplSha256
+
+  // Sonradan katalog VE sipariş satırı değişir.
+  await db
+    .update(schema.productVariants)
+    .set({ color: 'Siyah', size: '99' })
+    .where(eq(schema.productVariants.organizationId, org))
+  await db
+    .update(schema.orderLines)
+    .set({ productName: 'TAMAMEN FARKLI', merchantSku: 'YENI-SKU' })
+    .where(eq(schema.orderLines.organizationId, org))
+
+  const reprint = await orderService.resolvePersistedLabel(db, org, order.id)
+  assert.equal(reprint.print.printZplSha256, firstSha, 'SHA değişmez')
+  assert.equal(reprint.zpl, first.zpl, 'byte-for-byte aynı')
+  assert.ok(reprint.zpl.includes('İlk Ürün'), 'eski metadata korunur')
+  assert.equal(reprint.zpl.includes('YENI-SKU'), false)
+  assert.equal(reprint.zpl.includes('Siyah'), false)
+})
+
+test('WIRE-6: preview/download/native AYNI persisted SHA — tek okuma servisi', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'wire-6')
+  const order = await seedOrderWithLines(db, org, [
+    { productName: 'Ürün', barcode: 'BC-77', merchantSku: '6496', quantity: 1 },
+  ])
+  await shipmentService.writeOperationRecord(db, org, {
+    organizationId: org,
+    marketplace: 'Trendyol',
+    packageId: 'PKG-1',
+    orderNumber: '7270035184060553',
+    provider: 'surat-kargo',
+    status: 'succeeded',
+    technicalZpl: OFFICIAL,
+    carrierTrackingNumber: '21012920014311',
+    carrierBarcodeNumber: '01254596670',
+    shipment: {
+      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+      barcodeRaw: OFFICIAL,
+      barkodNo: '01254596670',
+    },
+  })
+  const surfaces = await Promise.all([
+    orderService.resolvePersistedLabel(db, org, order.id),
+    orderService.resolvePersistedLabel(db, org, order.id),
+    orderService.resolvePersistedLabel(db, org, order.id),
+  ])
+  const sha = surfaces[0].print.printZplSha256
+  for (const surface of surfaces) {
+    assert.equal(surface.print.printZplSha256, sha)
+    assert.equal(surface.zpl, surfaces[0].zpl)
+  }
+  // Kalıcı kayıt TEK.
+  const stored = await readPayload(db, org)
+  assert.equal(stored.printZplArtifact.printZplSha256, sha)
+})

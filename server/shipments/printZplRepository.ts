@@ -200,7 +200,12 @@ export function buildPrintZplArtifact(
 
 export interface ResolveOptions {
   /** Ürün satırları — YALNIZ ilk üretimde (hydration) kullanılır. */
-  items: SuratProductLineItem[]
+  items?: SuratProductLineItem[]
+  /**
+   * TEMBEL yükleyici: YALNIZ hydration gerektiğinde çağrılır. Kalıcı kayıt
+   * varsa katalog ve sipariş satırları HİÇ OKUNMAZ (reprint immutability).
+   */
+  loadItems?: () => Promise<SuratProductLineItem[]>
   /** Zaman damgası çağıran katmandan gelir (test edilebilirlik). */
   now?: string
 }
@@ -241,10 +246,14 @@ export async function resolvePersistedPrintableLabel(
     }
   }
 
-  // 2) Legacy hydration — YALNIZ BİR KEZ, compare-and-set ile.
+  // 2) Legacy hydration — YALNIZ BİR KEZ, compare-and-set ile. Ürün satırları
+  //    ve katalog ANCAK BURADA yüklenir.
+  const items = options.loadItems
+    ? await options.loadItems()
+    : (options.items ?? [])
   const { artifact, augmentationStatus } = buildPrintZplArtifact(
     sourceZpl,
-    options.items,
+    items,
     options.now ?? new Date().toISOString(),
   )
   const won = await compareAndSetArtifact(db, key, encrypted, {

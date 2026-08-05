@@ -12,9 +12,9 @@
 //   4) güvenli, çapalı başlık ayrıştırması
 //   5) hâlâ bulunamıyorsa "Belirtilmemiş" (sahte renk ÜRETİLMEZ)
 import type { CargoOrder, CargoProduct } from '../types/cargoflow'
-import { resolveLabelProductMetadata } from './labelProductMetadata'
-import { resolveCatalogVariantMetadata } from './labelVariantCatalog'
-import type { SuratProductLineItem } from './suratZplProductLine'
+import { resolveLabelProductMetadata } from './labelProductMetadata.ts'
+import { resolveCatalogVariantMetadata } from './labelVariantCatalog.ts'
+import type { SuratProductLineItem } from './suratZplProductLine.ts'
 
 export function resolveSuratProductLineItems(
   order: CargoOrder | undefined,
