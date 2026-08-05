@@ -44,6 +44,12 @@ import { mapSuratCarrierStatus } from '../utils/shipmentStatus'
 import { buildDesiDebug, resolveNormalizedDesi } from '../utils/desi'
 import { calculateOrderDesi } from '../utils/orderDesi'
 import {
+  applyExternalProcessingState,
+  describeExternalProcessingOutcome,
+  externalProcessingKeys,
+  type ExternalProcessingState,
+} from '../utils/externalProcessing'
+import {
   buildRevisionMismatch,
   FRONTEND_BUILD_REVISION,
 } from '../utils/buildRevision'
@@ -231,6 +237,8 @@ export class OrderWorkflowService {
   // bayrak kapalıdır ve tüm localStorage akışı DEĞİŞMEDEN çalışır.
   private authMode = false
   private authOrdersCache: CargoOrder[] = []
+  // YEREL harici-islem arsivi (organization settings JSONB'sinden gelir).
+  private externalProcessingState: ExternalProcessingState = { entries: {} }
   // Escszamanli siparis yuklemelerinde son yazan kazanir (stale yanit ezmesin).
   private ordersLoadGeneration = 0
 
@@ -302,6 +310,94 @@ export class OrderWorkflowService {
   // Auth modda sunucudan (GET /api/orders) org-scoped, server-side sayfalı
   // liste yükler ve in-memory snapshot'ı günceller. Organization req.auth'tan
   // çözülür; frontend'ten org parametresi GÖNDERİLMEZ.
+  // HARİCİ SİSTEMDE İŞLENDİ — YEREL, MANUEL, GERİ ALINABİLİR.
+  //
+  // Provider veya marketplace çağrısı YAPMAZ. Tracking numarası, barkod,
+  // labelStatus, printCount ve ZPL DEĞİŞMEZ; yeni gönderi oluşturulmaz ve
+  // "Kargoya Verildi" işlemi tetiklenmez. Yalnız organization settings
+  // JSONB'sindeki yerel arşiv güncellenir ve aktif görünüm etkilenir.
+  //
+  // Seçim GERÇEK snapshot'tan gelir: canonical paket kimliği kullanılır, bu
+  // yüzden sayfa/filtre değişimi yanlış siparişi işaretleyemez.
+  async setExternalProcessing(
+    orders: CargoOrder[],
+    processed: boolean,
+  ): Promise<{ orders: CargoOrder[]; result: WorkflowResult }> {
+    const keys = externalProcessingKeys(orders)
+    if (keys.length === 0) {
+      return {
+        orders: this.authOrdersCache,
+        result: { level: 'warning', message: 'Seçili sipariş bulunamadı.' },
+      }
+    }
+    try {
+      const response = await fetch('/api/orders/external-processing', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ orderKeys: keys, processed }),
+      })
+      const payload = (await response.json().catch(() => null)) as {
+        ok?: boolean
+        changed?: number
+        unchanged?: number
+        invalid?: number
+        message?: string
+        externalProcessing?: ExternalProcessingState
+      } | null
+      if (!response.ok || !payload?.ok) {
+        throw new Error(
+          payload?.message ?? 'Harici işlem durumu güncellenemedi.',
+        )
+      }
+      this.externalProcessingState = payload.externalProcessing ?? {
+        entries: {},
+      }
+      const nextOrders = applyExternalProcessingState(
+        this.authOrdersCache,
+        this.externalProcessingState,
+      )
+      this.authOrdersCache = nextOrders
+      const changed = Number(payload.changed ?? 0)
+      const unchanged = Number(payload.unchanged ?? 0)
+      const failed = Number(payload.invalid ?? 0)
+      const message = describeExternalProcessingOutcome(
+        { requested: keys.length, changed, unchanged, failed },
+        processed,
+      )
+      // AUDIT: yalnız güvenli sayaç ve zaman damgası. Müşteri adı, adres,
+      // telefon, ZPL veya credential YAZILMAZ.
+      this.auditLogService.append({
+        action: processed
+          ? 'external_processing_marked'
+          : 'external_processing_restored',
+        level: failed > 0 ? 'warning' : 'success',
+        details: `${keys.length} sipariş kimliği işlendi; ${changed} değişti, ${unchanged} zaten bu durumdaydı.`,
+      })
+      return {
+        orders: nextOrders,
+        result: {
+          level: failed > 0 ? 'warning' : 'success',
+          message,
+        },
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Harici işlem durumu güncellenemedi.'
+      this.auditLogService.append({
+        action: 'Hata oluştu',
+        level: 'error',
+        details: message,
+      })
+      return {
+        orders: this.authOrdersCache,
+        result: { level: 'error', message },
+      }
+    }
+  }
+
   async loadOrdersFromServer(
     filters: {
       status?: string
@@ -473,10 +569,20 @@ export class OrderWorkflowService {
       total?: number
       page?: number
       pageSize?: number
+      externalProcessing?: ExternalProcessingState
     }
-    const orders = Array.isArray(payload.orders)
+    const mapped = Array.isArray(payload.orders)
       ? payload.orders.map((order) => withDerivedOperationStatus(order))
       : []
+    // YEREL harici-islem arsivi siparise DAMGALANIR. Siparisin hicbir
+    // pazaryeri/provider alani degistirilmez; yalniz gorunum bayragi eklenir.
+    if (payload.externalProcessing) {
+      this.externalProcessingState = payload.externalProcessing
+    }
+    const orders = applyExternalProcessingState(
+      mapped,
+      this.externalProcessingState,
+    )
     return {
       orders,
       total: Number(payload.total ?? orders.length),
@@ -2239,6 +2345,8 @@ export class OrderWorkflowService {
       confirmedAt: options.confirmedAt,
       labelTemplate: template,
       mappingConfig,
+      // Etiket renk/beden tamamlama icin organizasyon kapsamli katalog.
+      products: this.loadProducts(),
     })
 
     const successfulOrderNumbers = new Set(

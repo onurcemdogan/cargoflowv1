@@ -794,7 +794,10 @@ function App() {
     const selectedDownloadOrders = effectiveOrders.filter((order) =>
       ids.includes(order.id),
     )
-    const download = buildSuratZplDownload(selectedDownloadOrders)
+    const download = buildSuratZplDownload(
+      selectedDownloadOrders,
+      productsState.products,
+    )
     if (!download || !download.content.trim()) {
       const reason =
         download?.skipped?.[0]?.reason ||
@@ -1306,6 +1309,34 @@ function App() {
     refreshLogs()
   }
 
+  // HARİCİ SİSTEMDE İŞLENDİ — YEREL arşivleme / geri alma.
+  //
+  // Provider veya marketplace çağrısı YOKTUR; tracking, barkod, labelStatus ve
+  // printCount DEĞİŞMEZ. Sonuç TEK bildirim alanında gösterilir (popup/modal
+  // YOK, aynı mesaj banner+toast olarak TEKRARLANMAZ).
+  async function handleExternalProcessing(
+    targets: CargoOrder[],
+    processed: boolean,
+  ) {
+    setBusy(true)
+    try {
+      const response = await workflowService.setExternalProcessing(
+        targets,
+        processed,
+      )
+      setOrdersState((current) => ({
+        ...current,
+        orders: response.orders,
+        ordersMessage: response.result,
+      }))
+      // Arşivlenen sipariş artık aktif listede olmadığı için seçim temizlenir.
+      setSelectedIds([])
+      refreshLogs()
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function handleSaveIntegrations(config: IntegrationConfig) {
     setBusy(true)
     try {
@@ -1437,6 +1468,12 @@ function App() {
           onMarkPrinted={handleMarkPrinted}
           onMarkPrintedForOrder={handleMarkPrintedForOrder}
           onMarkHandedToCargo={handleMarkHandedToCargo}
+          onMarkExternallyProcessed={(targets) =>
+            void handleExternalProcessing(targets, true)
+          }
+          onRestoreFromExternalProcessing={(targets) =>
+            void handleExternalProcessing(targets, false)
+          }
           onSuratCreateAndPrint={() =>
             handleCreateAndPrintCarrierLabelsForIds(selectedIds)
           }
@@ -1529,6 +1566,7 @@ function App() {
           previewDrafts={labelPreviewDrafts}
           printerSettings={printerSettings}
           busy={ordersState.ordersLoading}
+          products={productsState.products}
           onClose={() => setPrintPreview(undefined)}
           onConfirm={handlePrintPreviewConfirm}
           onDesiChange={handleOrderDesiChange}

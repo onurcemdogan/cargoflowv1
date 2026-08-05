@@ -2,6 +2,7 @@ import { Download, Printer, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type {
   CargoOrder,
+  CargoProduct,
   LabelPreviewOverrides,
   LabelTemplate,
   PrinterSettings,
@@ -30,6 +31,8 @@ interface PrintPreviewModalProps {
   previewDrafts?: Record<string, LabelPreviewOverrides>
   printerSettings: PrinterSettings
   busy: boolean
+  // Organizasyon kapsamli urun katalogu (etiket renk/beden tamamlama).
+  products?: CargoProduct[]
   onClose: () => void
   onConfirm: (orderIds: string[], includePreviouslyPrinted: boolean) => void
   onModeChange?: (mode: Exclude<PrintPreviewMode, 'preview'>) => void
@@ -49,6 +52,7 @@ export function PrintPreviewModal({
   previewDrafts = {},
   printerSettings,
   busy,
+  products = [],
   onClose,
   onConfirm,
   onModeChange,
@@ -255,10 +259,12 @@ export function PrintPreviewModal({
                       resolution,
                       template,
                       mappingConfig,
+                      products,
                     )}
                     template={template}
                     mappingConfig={mappingConfig}
                     overrides={previewDrafts[order.id]}
+                    products={products}
                   />
                 </section>
               ) : (

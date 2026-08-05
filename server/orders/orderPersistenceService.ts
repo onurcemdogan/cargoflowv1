@@ -343,6 +343,18 @@ export interface PersistedLabelResult {
   // Kalıcı desi: reprint etiketinde "Top Ds/Kg" alanı orijinal değeri korusun
   // diye (order.desi reload'da kaybolduğunda) kalıcı payload/ZPL'den döner.
   desi: number | null
+  // Kalıcı baskı modeli özeti (ham payload İSTEMCİYE DÖNMEZ).
+  print?: PrintableLabelSummary | null
+}
+
+export interface PrintableLabelSummary {
+  printZplSha256: string
+  printZplSourceSha256: string
+  printZplVersion: string
+  footerProfile: string | null
+  templateFingerprint: string
+  augmentationStatus: 'augmented' | 'source_only'
+  renderMode: 'raw-zpl'
 }
 
 // Reprint (tekrar yazdırma) için KAYITLI etiket artifact'ini çözer. Provider'a
@@ -398,6 +410,62 @@ export async function resolvePersistedLabel(
   // Kalıcı desi: attachShipment order.desi'yi zaten payload/ZPL'den geri
   // yansıttı; yine de ham ZPL'den ekstraksiyon son güvence olarak eklenir.
   const desi = positiveDesi(order.desi) ?? extractDesiFromZpl(zpl || '')
+
+  // TEK KAYNAK BASKI MODELİ: baskıya giden ZPL, ürün satırı eklenmiş KALICI
+  // printZpl'dir. Kayıt varsa AYNEN kullanılır (metadata resolver ÇALIŞMAZ,
+  // katalog OKUNMAZ); legacy kayıt ilk kullanımda katalog zenginleştirmeli
+  // olarak compare-and-set ile BİR KEZ hydrate edilir. Kaynak SHA
+  // uyuşmazlığında AÇIK hata verilir (sessiz kullanım/üzerine yazma YOK).
+  let printModel: PrintableLabelSummary | null = null
+  if (zpl) {
+    const [
+      { resolvePersistedPrintableLabel, PRINT_ZPL_SOURCE_MISMATCH_MESSAGE },
+      { loadPrintLineItems },
+    ] = await Promise.all([
+      import('../shipments/printZplRepository.ts'),
+      import('../shipments/printZplItems.ts'),
+    ])
+    const marketplace = firstStr(order.marketplace)
+    const packageId = firstStr(order.packageId)
+    const provider = firstStr(
+      (order.shipment as Record<string, unknown> | undefined)?.provider,
+    ) || 'surat-kargo'
+    // Kalıcı model BEST-EFFORT'tur: canonical shipment satırı veya payload
+    // içinde kaynak ZPL bulunamayan ESKİ kayıtlarda (ör. yalnız operation
+    // kaydından çözülen ZPL) MEVCUT davranış korunur ve ham kaynak döner.
+    // TEK İSTİSNA: kaynak/print SHA uyuşmazlığı — bu SESSİZCE yutulmaz.
+    let model = null
+    try {
+      model = await resolvePersistedPrintableLabel(
+        db,
+        { organizationId, marketplace, packageId, provider },
+        {
+          // Ürün satırları YALNIZ ilk hydration'da kullanılır; kalıcı kayıt
+          // varsa bu yükleyici HİÇ çağrılmaz (tembel).
+          loadItems: () =>
+            loadPrintLineItems(db, organizationId, marketplace, packageId),
+        },
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      if (message === PRINT_ZPL_SOURCE_MISMATCH_MESSAGE) throw error
+      // Kalıcı model yok: mevcut (eski) ham ZPL davranışı korunur.
+    }
+    if (model) {
+    zpl = model.printZpl
+    source = 'shipment.printZplArtifact'
+    printModel = {
+      printZplSha256: model.printZplSha256,
+      printZplSourceSha256: model.printZplSourceSha256,
+      printZplVersion: model.printZplVersion,
+      footerProfile: model.printZplFooterProfile,
+      templateFingerprint: model.templateFingerprint,
+      augmentationStatus: model.augmentationStatus,
+      renderMode: model.renderMode,
+    }
+    }
+  }
+
   return {
     found: true,
     eligible,
@@ -406,6 +474,7 @@ export async function resolvePersistedLabel(
     zpl: zpl || null,
     source,
     desi,
+    print: printModel,
   }
 }
 
