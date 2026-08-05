@@ -794,7 +794,10 @@ function App() {
     const selectedDownloadOrders = effectiveOrders.filter((order) =>
       ids.includes(order.id),
     )
-    const download = buildSuratZplDownload(selectedDownloadOrders)
+    const download = buildSuratZplDownload(
+      selectedDownloadOrders,
+      productsState.products,
+    )
     if (!download || !download.content.trim()) {
       const reason =
         download?.skipped?.[0]?.reason ||

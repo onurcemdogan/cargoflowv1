@@ -11,6 +11,8 @@ import { resolveSuratPrintEligibility } from '../../utils/suratPrintEligibility'
 import { resolveSuratBarcodeRawZpl } from '../../utils/zpl'
 import { validateOfficialSuratZpl } from '../../utils/officialSuratLabel'
 import { deriveAugmentedSuratZplWithHashes } from '../../utils/augmentedSuratZpl'
+import { resolveSuratProductLineItems } from '../../utils/suratProductLineItems'
+import { PRODUCT_LINE_OVERFLOW_MESSAGE } from '../../utils/suratZplProductLine'
 import {
   DEFAULT_DESI_MISSING_MESSAGE,
   resolveEffectiveLabelDesi,
@@ -393,16 +395,22 @@ export class ZebraZplLabelProvider implements LabelProvider {
     // ÜZERİNE YAZILMAZ), yalnız final ^PQ / ^XZ öncesine ürün satırı eklenir.
     // Native/raw-ZPL yolu bu türetilmiş çıktıyı gönderir; indirme ve önizleme
     // ile AYNI deterministik artefakt ve AYNI SHA kullanılır.
+    const productLineItems = resolveSuratProductLineItems(
+      order,
+      input.products ?? [],
+    )
     const augmented = deriveAugmentedSuratZplWithHashes(
       official.zpl,
-      (order.items ?? []).map((item) => ({
-        productName: String(item.productName ?? ''),
-        quantity: Number(item.quantity) || 1,
-        color: item.color,
-        size: item.size,
-        sku: item.merchantSku || item.sku,
-      })),
+      productLineItems,
     )
+    // SESSİZ ÜRÜN KAYBI YASAK: desteklenen şablonda ürün metadata'sı VARKEN
+    // footer üretilemiyorsa kaynak ZPL başarılı etiket gibi DÖNDÜRÜLMEZ.
+    if (
+      augmented.fallbackReason === 'footer_overflow' &&
+      productLineItems.length > 0
+    ) {
+      throw new Error(PRODUCT_LINE_OVERFLOW_MESSAGE)
+    }
     const zplContent = augmented.printZpl
     const zplSource = 'surat.ortakBarkod.BarcodeRaw'
     const desiMismatchWarning = desiMismatch

@@ -12,6 +12,8 @@ import type {
 } from '../types/cargoflow'
 import { buildLabelData, type LabelData } from './labelData'
 import { deriveAugmentedSuratZplWithHashes } from './augmentedSuratZpl'
+import { resolveSuratProductLineItems } from './suratProductLineItems'
+import { PRODUCT_LINE_OVERFLOW_MESSAGE } from './suratZplProductLine'
 import {
   LEGACY_ZPL_MISSING_MESSAGE,
   resolveSuratPrintEligibility,
@@ -83,7 +85,12 @@ export interface SuratBulkPrintResult {
   debug?: BrowserLabelPrintDebug
 }
 
-export function buildSuratPrintPageModel(order: CargoOrder): {
+export function buildSuratPrintPageModel(
+  order: CargoOrder,
+  // Organizasyon kapsamlı ürün kataloğu: ZPL ürün satırı HTML etiketiyle
+  // AYNI metadata zincirini kullanır (ayrı tahmin algoritması YOK).
+  products: CargoProduct[] = [],
+): {
   model?: SuratPrintPageModel
   reason?: string
 } {
@@ -184,16 +191,21 @@ export function buildSuratPrintPageModel(order: CargoOrder): {
   // ^XZ öncesine ürün satırı eklenir. Deterministiktir: aynı sipariş + aynı
   // kaynak ZPL HER ZAMAN aynı çıktıyı ve aynı SHA'yı verir; bu yüzden
   // önizleme, indirme, native baskı ve reprint AYNI artefaktı kullanır.
+  const productLineItems = resolveSuratProductLineItems(order, products)
   const augmented = deriveAugmentedSuratZplWithHashes(
     eligibility.barcodeRaw,
-    (order.items ?? []).map((item) => ({
-      productName: String(item.productName ?? ''),
-      quantity: Number(item.quantity) || 1,
-      color: item.color,
-      size: item.size,
-      sku: item.merchantSku || item.sku,
-    })),
+    productLineItems,
   )
+  // SESSİZ ÜRÜN KAYBI YASAK: desteklenen Sürat şablonunda ürün metadata'sı
+  // VARKEN güvenli footer üretilemiyorsa kaynak ZPL "başarılı augmented
+  // etiket" gibi BASILMAZ. Sipariş atlanır (READY korunur, printCount
+  // artmaz, seçim korunur); batch'in kalanı DEVAM EDER.
+  if (
+    augmented.fallbackReason === 'footer_overflow' &&
+    productLineItems.length > 0
+  ) {
+    return { reason: PRODUCT_LINE_OVERFLOW_MESSAGE }
+  }
   return {
     model: {
       orderNumber: String(order.orderNumber ?? ''),
@@ -222,6 +234,7 @@ export function buildSuratPrintPageModel(order: CargoOrder): {
 
 export function resolveSuratPrintableSelection(
   orders: CargoOrder[],
+  products: CargoProduct[] = [],
 ): SuratPrintSelection {
   const printable: SuratPrintSelection['printable'] = []
   const skipped: SuratPrintSkip[] = []
@@ -230,7 +243,7 @@ export function resolveSuratPrintableSelection(
     const dedupeKey = String(order.id || order.orderNumber || '')
     if (dedupeKey && seen.has(dedupeKey)) continue
     if (dedupeKey) seen.add(dedupeKey)
-    const { model, reason } = buildSuratPrintPageModel(order)
+    const { model, reason } = buildSuratPrintPageModel(order, products)
     suratPrintTrace('PAGE_RESOLUTION_RESULT', {
       orderNumber: String(order.orderNumber ?? order.id ?? '-'),
       lifecycleStatus: order.shipment?.lifecycleStatus ?? '',
@@ -270,8 +283,9 @@ export interface SuratZplDownload {
 // kullanır ki iki aksiyon tutarlı olsun.
 export function buildSuratZplDownload(
   orders: CargoOrder[],
+  products: CargoProduct[] = [],
 ): SuratZplDownload | null {
-  const selection = resolveSuratPrintableSelection(orders)
+  const selection = resolveSuratPrintableSelection(orders, products)
   // ZPL dosyasına yalnız taşıyıcının GERÇEK ZPL'i girer. canonical_html
   // kaynaklı (legacy, ZPL'siz) etiketler yazdırılabilir olsa da indirme
   // listesinden açıklamayla düşer.
@@ -316,7 +330,7 @@ export async function printSuratLabels(
   mappingConfig: SuratLabelMappingConfig = {},
   products: CargoProduct[] = [],
 ): Promise<SuratBulkPrintResult> {
-  const selection = resolveSuratPrintableSelection(orders)
+  const selection = resolveSuratPrintableSelection(orders, products)
   if (selection.printable.length === 0) {
     return {
       printedOrderNumbers: [],
@@ -751,7 +765,7 @@ export function buildCleanLabelDocument(
 ): CleanLabelDocument {
   const widthMm = template.widthMm || 100
   const heightMm = template.heightMm || 100
-  const selection = resolveSuratPrintableSelection(orders)
+  const selection = resolveSuratPrintableSelection(orders, products)
   const skipped: SuratPrintSkip[] = [...selection.skipped]
   const printable: Array<{ order: CargoOrder; model: SuratPrintPageModel }> = []
   const pages: string[] = []

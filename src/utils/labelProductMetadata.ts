@@ -77,8 +77,13 @@ export function isPlaceholderValue(value: unknown): boolean {
   return PLACEHOLDER_TOKENS.has(fold(text))
 }
 
-// Gerçek bir model/stok kodu mu? Serbest metin ("taşlı") ve saf sayı ("36")
-// REDDEDİLİR: kod en az bir harf VE en az bir rakam içermelidir.
+// Gerçek bir model/stok kodu mu? Serbest metin ("taşlı") REDDEDİLİR.
+//
+// KANIT (DuruSoft canlı çıktısı): gerçek merchant SKU'su SAF SAYISAL olabilir
+// ("[6496]"). Eski kural "en az bir harf VE en az bir rakam" istediği için bu
+// tür kodlar sessizce DÜŞÜYORDU. Kural daraltıldı: saf sayısal kod da geçerli
+// SAYILIR, ancak BEDEN ile karışmaması için en az 4 hane olmalıdır
+// (looksLikeSizeValue en fazla 3 haneli sayıyı beden kabul eder).
 export function looksLikeSkuCode(value: unknown): boolean {
   const text = String(value ?? '').trim()
   if (!text || isPlaceholderValue(text)) return false
@@ -87,8 +92,10 @@ export function looksLikeSkuCode(value: unknown): boolean {
   // Boşluklu serbest metin kod değildir (tek kelime ya da kod-benzeri ayraç).
   if (/\s/.test(text)) return false
   if (!/[0-9]/.test(text)) return false
-  if (!/[A-Za-zÇĞİÖŞÜçğıöşü]/.test(text)) return false
-  return true
+  const hasLetter = /[A-Za-zÇĞİÖŞÜçğıöşü]/.test(text)
+  if (hasLetter) return true
+  // Saf sayısal: beden olamayacak kadar uzun olmalı.
+  return /^[0-9]{4,}$/.test(text) && !looksLikeSizeValue(text)
 }
 
 // Beden değeri makul mü? ("36", "XL", "3XL", "40/42")

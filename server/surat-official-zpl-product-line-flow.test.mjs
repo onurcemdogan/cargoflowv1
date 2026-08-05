@@ -414,3 +414,162 @@ test('OZP-TR: Türkçe karakter kararı deterministiktir', async () => {
   // ^CI28 yoksa deterministik transliterasyon (bozuk karakter YOK).
   assert.equal(transliterateTurkish('Şğıİç Öü'), 'Sgi Ic Ou'.replace('Sgi Ic', 'SgiIc'))
 })
+
+// ═══ ENTEGRASYON: ortak metadata resolver + sessiz kayıp yasağı ════════════
+//
+// Bu bölüm iki feature dalının BİRLİKTE çalıştığını sabitler: ZPL ürün satırı
+// artık HTML etiketiyle AYNI çözümleyici zincirini kullanır (yapısal alan →
+// variantAttributes → kesin katalog eşleşmesi → çapalı başlık → Belirtilmemiş)
+// ve desteklenen şablonda footer üretilemiyorsa sipariş SESSİZCE ham ZPL ile
+// basılmaz.
+
+function catalogProduct(over = {}) {
+  return {
+    id: 'p-1',
+    marketplace: 'Trendyol',
+    productName: 'Sentetik Ürün',
+    sku: '',
+    barcode: '',
+    productMainId: 'MODEL-1',
+    stock: 0,
+    price: 0,
+    source: 'real',
+    updatedAt: '2026-08-05T00:00:00.000Z',
+    ...over,
+  }
+}
+
+test('INT-1: ZPL ürün satırı KATALOG varyantından renk tamamlar (ortak resolver)', async () => {
+  const { buildSuratPrintPageModel } = await load('/src/utils/browserLabelPrint.ts')
+  // Sipariş satırında YALNIZ beden var (canlı vaka: order_lines'ta color yok).
+  const order = printableOrder({
+    items: [
+      {
+        id: 'l-1',
+        productName: 'Önü Drapeli Loş Tesettür Takım',
+        quantity: 1,
+        barcode: 'BC-77',
+        merchantSku: '6496',
+        variantAttributes: [{ name: 'Beden', value: '40' }],
+      },
+    ],
+  })
+  // Katalogsuz: renk bulunamaz → Belirtilmemiş (TAHMİN YOK).
+  const withoutCatalog = buildSuratPrintPageModel(order).model
+  assert.ok(withoutCatalog.zpl.includes('Renk: Belirtilmemiş, Beden: 40'))
+  // Katalogla: kesin barkod eşleşmesinden renk gelir.
+  const withCatalog = buildSuratPrintPageModel(order, [
+    catalogProduct({ barcode: 'BC-77', color: 'Krem', size: '40' }),
+  ]).model
+  assert.ok(
+    withCatalog.zpl.includes('(Renk: Krem, Beden: 40) [6496]'),
+    'katalog enrichment ZPL footer\'ına ulaşmalı',
+  )
+  // Katalog eklendiği için artefakt DEĞİŞİR (farklı SHA) — ama kaynak aynıdır.
+  assert.notEqual(withCatalog.printZplSha256, withoutCatalog.printZplSha256)
+  assert.equal(withCatalog.printZplSourceSha256, withoutCatalog.printZplSourceSha256)
+})
+
+test('INT-2: ZPL footer AYRI tahmin algoritması kullanmaz (tek giriş noktası)', () => {
+  const src = readFileSync(
+    join(here, '..', 'src', 'utils', 'suratProductLineItems.ts'),
+    'utf8',
+  )
+  assert.match(src, /resolveLabelProductMetadata/)
+  assert.match(src, /resolveCatalogVariantMetadata/)
+  // Provider ve print model AYNI helper'ı çağırır.
+  for (const rel of [
+    'src/utils/browserLabelPrint.ts',
+    'src/providers/labels/ZebraZplLabelProvider.ts',
+  ]) {
+    const consumer = readFileSync(join(here, '..', rel), 'utf8')
+    assert.match(consumer, /resolveSuratProductLineItems/, rel)
+  }
+})
+
+test('INT-3: "Taşlı" ZPL footer\'ında da renk sayılmaz', async () => {
+  const { buildSuratPrintPageModel } = await load('/src/utils/browserLabelPrint.ts')
+  const order = printableOrder({
+    items: [
+      {
+        id: 'l-1',
+        productName: 'Taşlı Simli Tesettür Abiye',
+        quantity: 1,
+        merchantSku: 'SECIL-334',
+      },
+    ],
+  })
+  const model = buildSuratPrintPageModel(order).model
+  assert.ok(model.zpl.includes('Taşlı Simli Tesettür Abiye'))
+  assert.ok(model.zpl.includes('Renk: Belirtilmemiş'))
+})
+
+test('INT-4: footer sığmazsa SESSİZ ham ZPL basılmaz; sipariş atlanır', async () => {
+  const { buildSuratPrintPageModel, resolveSuratPrintableSelection } = await load(
+    '/src/utils/browserLabelPrint.ts',
+  )
+  const impossible = Array.from({ length: 40 }, (_, index) => ({
+    id: `l-${index}`,
+    productName: `Çok Uzun Ürün Adı Numara ${index} Ekstra Detay Serisi Premium Koleksiyon`,
+    quantity: 1,
+    merchantSku: `SKU-${index}`,
+    variantAttributes: [
+      { name: 'Renk', value: 'Krem' },
+      { name: 'Beden', value: '40' },
+    ],
+  }))
+  const blocked = printableOrder({ id: 'o-blocked', items: impossible })
+  const { model, reason } = buildSuratPrintPageModel(blocked)
+  assert.equal(model, undefined, 'model üretilmez (ham ZPL başarılı sayılmaz)')
+  assert.match(reason ?? '', /resmî kargo etiketinin alt alanına sığmıyor/)
+
+  // KISMİ BATCH: sığmayan sipariş atlanır, diğeri basılmaya devam eder.
+  const healthy = printableOrder({ id: 'o-ok' })
+  const selection = resolveSuratPrintableSelection([blocked, healthy])
+  assert.equal(selection.printable.length, 1)
+  assert.equal(selection.printable[0].order.id, 'o-ok')
+  assert.equal(selection.skipped.length, 1)
+  assert.match(selection.skipped[0].reason, /sığmıyor/)
+})
+
+test('INT-5: provider da sessiz kayıp yerine AÇIK hata verir', async () => {
+  const { ZebraZplLabelProvider } = await load(
+    '/src/providers/labels/ZebraZplLabelProvider.ts',
+  )
+  const order = printableOrder({
+    items: Array.from({ length: 40 }, (_, index) => ({
+      id: `l-${index}`,
+      productName: `Çok Uzun Ürün Adı Numara ${index} Ekstra Detay Serisi Premium`,
+      quantity: 1,
+      merchantSku: `SKU-${index}`,
+      variantAttributes: [{ name: 'Renk', value: 'Krem' }, { name: 'Beden', value: '40' }],
+    })),
+  })
+  await assert.rejects(
+    () =>
+      new ZebraZplLabelProvider().generateSingle({
+        order,
+        shipment: order.shipment,
+        template: { id: 'tpl' },
+        mappingConfig: {},
+        desiConfig: { defaultUnitDesi: 2 },
+      }),
+    /sığmıyor/,
+  )
+})
+
+test('INT-6: external-processing davranışları ZPL çalışmasından ETKİLENMEZ', async () => {
+  const { isExternallyProcessed, applyExternalProcessingState, externalProcessingKey } =
+    await load('/src/utils/externalProcessing.ts')
+  const order = printableOrder()
+  assert.equal(isExternallyProcessed(order), false)
+  const key = externalProcessingKey(order)
+  const [marked] = applyExternalProcessingState([order], {
+    entries: { [key]: { processedAt: '2026-08-05T09:00:00.000Z', source: 'manual' } },
+  })
+  assert.equal(isExternallyProcessed(marked), true)
+  // Etiket/kargo alanları DEĞİŞMEZ.
+  assert.equal(marked.shipment.barcodeRaw, order.shipment.barcodeRaw)
+  assert.equal(marked.shipment.trackingNumber, order.shipment.trackingNumber)
+  assert.equal(marked.labelStatus, order.labelStatus)
+})
