@@ -735,7 +735,9 @@ export interface PrintDebug {
   printHistory: PrintHistoryEntry[]
   browserPrintDebug?: {
     printRequested: boolean
-    printMode: 'chrome-html' | 'zpl-native' | 'test-label'
+    // surat-official-svg: Sürat'in resmî ZPL düzeni YEREL SVG olarak
+    // render edilip Chrome'a gönderildi (CargoFlow HTML şablonu kullanılmadı).
+    printMode: 'chrome-html' | 'zpl-native' | 'test-label' | 'surat-official-svg'
     labelHtmlGenerated: boolean
     labelHtmlLength: number
     barcodeValue: string

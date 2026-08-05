@@ -3,6 +3,7 @@ import { defaultLabelTemplate } from '../../services/integrationConfigService'
 import {
   BrowserLabelPrintError,
   printCleanLabelDocument,
+  printSuratOfficialDocument,
 } from '../../utils/browserLabelPrint'
 import { NOT_IN_PRINT_DOCUMENT_MESSAGE } from '../../utils/suratPrintFailureReasons'
 
@@ -110,12 +111,21 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
 
     if (input.printerSettings.mode === 'browser-print') {
       try {
-        const browserPrintDebug = await printCleanLabelDocument(
-          printableOrders,
-          input.labelTemplate ?? defaultLabelTemplate,
-          input.mappingConfig,
-          input.products ?? [],
-        )
+        // ŞABLON SEÇİMİ: iki yol YAN YANA yaşar. Varsayılan (ve seçim
+        // verilmediğinde) mevcut CargoFlow HTML yoludur — davranış değişmez.
+        const useOfficialTemplate =
+          input.labelPrintTemplate === 'surat_official_zpl'
+        const browserPrintDebug = useOfficialTemplate
+          ? await printSuratOfficialDocument(
+              printableOrders,
+              input.products ?? [],
+            )
+          : await printCleanLabelDocument(
+              printableOrders,
+              input.labelTemplate ?? defaultLabelTemplate,
+              input.mappingConfig,
+              input.products ?? [],
+            )
         const orderNumbers = printableOrders.map((order) => order.orderNumber)
         // Kullanıcıya AYRICA doğrulama sorulmaz: baskı yoluna teknik olarak
         // verilen siparişler başarılı sayılır.

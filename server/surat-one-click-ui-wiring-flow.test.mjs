@@ -31,9 +31,12 @@ test('UI-1: buton seçim yokken ve işlem sürerken DISABLED', () => {
 test('UI-2: buton SEÇİM üzerinden çalışır, görünür listeden DEĞİL', () => {
   // Ortak, provider-bagimsiz giris noktasi (Siparisler + Detay + Dashboard).
   assert.match(app, /handleCreateAndPrintCarrierLabelsForIds\(selectedIds\)/)
+  // GUNCELLENDI (gerekce): ortak wrapper artik istege bagli GECICI sablon
+  // secimini de tasir — printSelectedLabels({ templateOverride }) sozlesmesi.
+  // Yonlendirme HEDEFI degismedi: ayni ic handler cagrilir.
   assert.match(
     app,
-    /function handleCreateAndPrintCarrierLabelsForIds[\s\S]*?handleSuratCreateAndPrintForIds\(ids\)/,
+    /function handleCreateAndPrintCarrierLabelsForIds[\s\S]*?handleSuratCreateAndPrintForIds\(ids, printOptions\)/,
     'wrapper mevcut akisa yonlendirir',
   )
   const handler = app.slice(

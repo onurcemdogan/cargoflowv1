@@ -53,6 +53,7 @@ import type {
 import { buildOrderCountSummary } from '../utils/orderCounts'
 import { buildOrdersDateRange } from '../utils/orderDateRange'
 import { SuratCreatePrintControls } from '../components/SuratCreatePrintControls'
+import type { LabelPrintTemplate } from '../utils/labelPrintTemplateRouting'
 import {
   EXTERNAL_PROCESSING_LABEL,
   isExternallyProcessed,
@@ -63,6 +64,15 @@ interface OrdersPageProps {
   products: CargoProduct[]
   selectedIds: string[]
   onSuratCreateAndPrint?: () => void
+  // Gelişmiş İşlemler'den yapılan GEÇİCİ şablon seçimi. Ayarı DEĞİŞTİRMEZ;
+  // yalnız bu baskı çalışmasına uygulanır.
+  onSuratCreateAndPrintWithTemplate?: (
+    template: LabelPrintTemplate,
+  ) => void
+  /** "Şablon: CargoFlow" | "Şablon: Resmî Sürat" (organizasyon varsayılanı). */
+  labelPrintTemplateIndicator?: string
+  /** Seçimde Sürat gönderisi yoksa resmî şablon aksiyonu pasif olur. */
+  hasSuratPrintableSelection?: boolean
   suratCreatePrintRunning?: boolean
   suratCreatePrintProgress?: {
     phase: 'preflight' | 'create' | 'prepare' | 'print' | 'done'
@@ -198,6 +208,9 @@ export function OrdersPage({
   products,
   selectedIds,
   onSuratCreateAndPrint,
+  onSuratCreateAndPrintWithTemplate,
+  labelPrintTemplateIndicator,
+  hasSuratPrintableSelection = true,
   suratCreatePrintRunning = false,
   suratCreatePrintProgress,
   suratPrintNotice,
@@ -815,6 +828,9 @@ export function OrdersPage({
         suratCreatePrintResult={suratCreatePrintResult}
         suratPrintNotice={suratPrintNotice}
         onSuratCreateAndPrint={onSuratCreateAndPrint}
+        onSuratCreateAndPrintWithTemplate={onSuratCreateAndPrintWithTemplate}
+        labelPrintTemplateIndicator={labelPrintTemplateIndicator}
+        hasSuratPrintableSelection={hasSuratPrintableSelection}
         onMarkPrinted={onMarkPrinted}
         onCreateShipments={onCreateShipments}
         onTrackShipments={onTrackShipments}

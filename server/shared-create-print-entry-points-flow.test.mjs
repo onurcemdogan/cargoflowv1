@@ -227,7 +227,22 @@ test('SEP-23/24: kullanıcı aksiyonlarında "Sürat" yok, iç isimler DURUYOR',
     controls.indexOf('<div className="toolbar-actions">'),
     controls.indexOf('</section>', controls.indexOf('<div className="toolbar-actions">')),
   )
-  assert.equal(/Sürat/.test(actions), false)
+  // GÜNCELLENDİ (gerekçe): Gelişmiş İşlemler menüsüne, ETİKET ŞABLONUNUN KENDİ
+  // ADI olan "Resmî Sürat Şablonuyla Yazdır" aksiyonu eklendi. Bu, operasyonel
+  // aksiyonların sağlayıcı adı taşımaması kuralının istisnası DEĞİL, seçilen
+  // ŞABLONUN adıdır. Kural ZAYIFLATILMADI, DARALTILDI: "Sürat" YALNIZ şablon
+  // seçimi satırlarında geçebilir; diğer TÜM aksiyonlarda hâlâ yasaktır.
+  const suratLines = actions.split('\n').filter((line) => /Sürat/.test(line))
+  assert.ok(
+    suratLines.some((line) => /Resmî Sürat Şablonuyla Yazdır/.test(line)),
+    'şablon seçimi aksiyonu mevcut',
+  )
+  for (const line of suratLines) {
+    assert.ok(
+      /Şablonuyla Yazdır|resmî etiket düzenini/.test(line),
+      `şablon dışı aksiyonda sağlayıcı adı: ${line.trim()}`,
+    )
+  }
   // İÇ teknik isimler KORUNUR.
   for (const name of [
     'runSuratCreateAndPrint', 'suratOperationRegistry', 'suratCreatePrintPlan',
@@ -250,5 +265,10 @@ test('SEP-25/26/27: PII loglanmaz, ZPL ve izolasyon yolları değişmedi', () =>
     changed.indexOf('function isCarrierLabelActionBusy'),
   )
   assert.equal(/fetch\(/.test(wrapper), false, 'yeni endpoint yok')
-  assert.match(wrapper, /handleSuratCreateAndPrintForIds\(ids\)/)
+  // GÜNCELLENDİ (gerekçe): ortak wrapper artık isteğe bağlı GEÇİCİ şablon
+  // seçimini de taşır — printSelectedLabels({ templateOverride }) sözleşmesi.
+  // Wrapper hâlâ YALNIZ yönlendiricidir: yeni endpoint/lifecycle yoktur ve
+  // aynı iç handler çağrılır.
+  assert.match(wrapper, /handleSuratCreateAndPrintForIds\(ids, printOptions\)/)
+  assert.equal(/workflowService\./.test(wrapper), false, 'wrapper iş yapmaz')
 })

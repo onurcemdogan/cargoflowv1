@@ -25,6 +25,13 @@ import {
 } from './utils/browserLabelPrint'
 import { resolveSuratPrintEligibility } from './utils/suratPrintEligibility'
 import { runSuratCreateAndPrint } from './services/suratCreateAndPrintOrchestrator'
+import {
+  describeLabelPrintTemplate,
+  isSuratShipmentOrder,
+  normalizeLabelPrintTemplate,
+  resolveLabelPrintTemplateDecision,
+  type LabelPrintTemplate,
+} from './utils/labelPrintTemplateRouting'
 import type { OrchestratorProgress, OrchestratorResult } from './services/suratCreateAndPrintOrchestrator'
 import {
   buildCreateAdapter,
@@ -888,6 +895,27 @@ function App() {
     return { effectiveOrders, unresolved }
   }
 
+  // ── BASKI ŞABLONU: TEK KARAR NOKTASI ────────────────────────────────────
+  // Organizasyon varsayılanı ayarlardan gelir. Gelişmiş İşlemler menüsündeki
+  // geçici seçim YALNIZ o çalışma için geçerlidir ve organization settings
+  // değerini DEĞİŞTİRMEZ (aşağıda hiçbir save çağrısı yoktur).
+  const organizationLabelPrintTemplate = normalizeLabelPrintTemplate(
+    integrationConfig.desi?.labelPrintTemplate,
+  )
+  const labelPrintTemplateIndicator = describeLabelPrintTemplate(
+    organizationLabelPrintTemplate,
+  )
+  function resolveRunLabelTemplate(
+    runOrders: CargoOrder[],
+    templateOverride?: LabelPrintTemplate,
+  ) {
+    return resolveLabelPrintTemplateDecision({
+      organizationTemplate: organizationLabelPrintTemplate,
+      templateOverride,
+      orders: runOrders,
+    })
+  }
+
   function handleMarkPrinted() {
     void handlePrintLabelsForIds(selectedIds)
   }
@@ -902,8 +930,27 @@ function App() {
   // TEK BUTON: on kontrol -> (gerekiyorsa) create -> baski. Yeni create/print
   // is mantigi YOK; mevcut workflowService yollari adaptorlerle kullanilir.
   // BASARI YALNIZ printResult.jobs[].ok'tan gelir (orchestrator + adaptor).
-  async function handleSuratCreateAndPrintForIds(ids: string[]) {
+  async function handleSuratCreateAndPrintForIds(
+    ids: string[],
+    printOptions: { templateOverride?: LabelPrintTemplate } = {},
+  ) {
     if (ids.length === 0 || suratRunActive.current) return
+    // ŞABLON KARARI create'ten ÖNCE verilir: kullanıcının AÇIK seçimi
+    // uygulanamıyorsa Sürat gönderisi OLUŞTURULMAZ ve hiçbir statü değişmez.
+    const templateDecision = resolveRunLabelTemplate(
+      orders.filter((order) => ids.includes(order.id)),
+      printOptions.templateOverride,
+    )
+    if (templateDecision.blockedReason) {
+      setOrdersState((current) => ({
+        ...current,
+        ordersMessage: {
+          level: 'error',
+          message: templateDecision.blockedReason ?? '',
+        },
+      }))
+      return
+    }
     // ILK AWAIT'TEN ONCE, kullanici click stack'i icinde: baski host'u hazirla.
     // Host kurulamiyorsa Surat gonderisi OLUSTURULMAZ, hicbir statu/sayac
     // degismez. Zebra/native yolunda host GEREKMEZ.
@@ -1036,7 +1083,12 @@ function App() {
               printerSettings,
               labelTemplate,
               {},
-              { confirmedAt: new Date().toISOString(), printedBy: 'local user' },
+              {
+                confirmedAt: new Date().toISOString(),
+                printedBy: 'local user',
+                // TEK yönlendirme: CargoFlow HTML mi, resmî Sürat SVG mi.
+                labelPrintTemplate: templateDecision.template,
+              },
             )
           },
         }),
@@ -1061,13 +1113,19 @@ function App() {
         outcome.printed > 0 &&
         outcome.skipped.length === 0 &&
         outcome.failed.length === 0
+      // Resmî Sürat şablonu istendi ama seçimde Sürat dışı gönderi vardı:
+      // güvenli biçimde CargoFlow şablonuna düşüldü. TEK kısa bilgi verilir.
+      const fallbackNote = templateDecision.fallbackApplied
+        ? ` ${templateDecision.notice}`
+        : ''
       if (clean) {
         setSuratResult(undefined)
         showTransientPrintNotice(
-          `${outcome.printed} etiket yazdırmaya gönderildi.`,
+          `${outcome.printed} etiket yazdırmaya gönderildi.${fallbackNote}`,
         )
       } else {
         setSuratResult(outcome)
+        if (fallbackNote) showTransientPrintNotice(fallbackNote.trim())
       }
       // YALNIZ baskisi DOGRULANAN siparisler secimden cikar; blocked/failed/
       // iptal edilenler SECILI KALIR.
@@ -1104,11 +1162,21 @@ function App() {
   // orchestrator, adaptorler, operation registry, idempotency, post-create
   // order handoff, persisted-label dogrulamasi ve browser/Zebra baski sonucu
   // AYNEN mevcut yollardan gelir. Yeni endpoint/lifecycle/saglayici YOK.
-  function handleCreateAndPrintCarrierLabelsForIds(ids: string[]) {
-    void handleSuratCreateAndPrintForIds(ids)
+  //
+  // SÖZLEŞME: printSelectedLabels({ templateOverride? }).
+  // templateOverride verilmezse ORGANIZASYON VARSAYILANI kullanılır; verilirse
+  // YALNIZ bu çalışma için geçerlidir ve ayar kaydı DEĞİŞMEZ.
+  function handleCreateAndPrintCarrierLabelsForIds(
+    ids: string[],
+    printOptions: { templateOverride?: LabelPrintTemplate } = {},
+  ) {
+    void handleSuratCreateAndPrintForIds(ids, printOptions)
   }
-  function handleCreateAndPrintCarrierLabelForOrder(orderId: string) {
-    handleCreateAndPrintCarrierLabelsForIds([orderId])
+  function handleCreateAndPrintCarrierLabelForOrder(
+    orderId: string,
+    printOptions: { templateOverride?: LabelPrintTemplate } = {},
+  ) {
+    handleCreateAndPrintCarrierLabelsForIds([orderId], printOptions)
   }
   // Bir ekranda baslayan run DIGER ekranlarda da busy gorunur; ayni paket
   // kimligi icin ikinci create/print acilmaz.
@@ -1126,7 +1194,10 @@ function App() {
     suratProgress,
   )
 
-  async function handlePrintLabelsForIds(orderIds: string[]) {
+  async function handlePrintLabelsForIds(
+    orderIds: string[],
+    printOptions: { templateOverride?: LabelPrintTemplate } = {},
+  ) {
     if (orderIds.length === 0) {
       setOrdersState((current) => ({
         ...current,
@@ -1149,6 +1220,21 @@ function App() {
       )
     // Saglayici secimi TEK kaynaktan: kullanicinin gercek yazici ayari.
     const effectivePrinterSettings = printerSettings
+    // Şablon kararı BASKIDAN ÖNCE; açık seçim uygulanamıyorsa baskı YAPILMAZ.
+    const templateDecision = resolveRunLabelTemplate(
+      selectedOrders,
+      printOptions.templateOverride,
+    )
+    if (templateDecision.blockedReason) {
+      setOrdersState((current) => ({
+        ...current,
+        ordersMessage: {
+          level: 'error',
+          message: templateDecision.blockedReason ?? '',
+        },
+      }))
+      return
+    }
     // Popup rezervasyonu yok; print motoru kalıcı gizli iframe kullanır ve
     // başarılı yolda hiçbir pencere/iframe kapatılmaz.
     suratPrintTrace('PRINT_BUTTON_CLICK', {
@@ -1198,18 +1284,22 @@ function App() {
           confirmedAt,
           printedBy: 'local user',
           includePreviouslyPrinted: allPreviouslyPrinted,
+          labelPrintTemplate: templateDecision.template,
         },
       )
       const unresolvedNote =
         unresolved.length > 0
           ? ` Kayıtlı etiket alınamayan sipariş(ler): ${unresolved.join(', ')}.`
           : ''
+      const fallbackNote = templateDecision.fallbackApplied
+        ? ` ${templateDecision.notice}`
+        : ''
       setOrdersState((current) => ({
         ...current,
         orders: response.orders,
         ordersMessage: {
           ...response.result,
-          message: `${response.result.message}${unresolvedNote}`,
+          message: `${response.result.message}${unresolvedNote}${fallbackNote}`,
         },
       }))
     } catch (error) {
@@ -1266,6 +1356,10 @@ function App() {
           confirmedAt,
           printedBy: 'local user',
           includePreviouslyPrinted,
+          // Önizleme onayı da AYNI karar noktasını kullanır.
+          labelPrintTemplate: resolveRunLabelTemplate(
+            orders.filter((order) => orderIds.includes(order.id)),
+          ).template,
         },
       )
       const unresolvedNote =
@@ -1477,6 +1571,15 @@ function App() {
           onSuratCreateAndPrint={() =>
             handleCreateAndPrintCarrierLabelsForIds(selectedIds)
           }
+          onSuratCreateAndPrintWithTemplate={(template) =>
+            handleCreateAndPrintCarrierLabelsForIds(selectedIds, {
+              templateOverride: template,
+            })
+          }
+          labelPrintTemplateIndicator={labelPrintTemplateIndicator}
+          hasSuratPrintableSelection={orders
+            .filter((order) => selectedIds.includes(order.id))
+            .every((order) => isSuratShipmentOrder(order))}
           onCreateAndPrintLabelForOrder={
             handleCreateAndPrintCarrierLabelForOrder
           }
@@ -1567,6 +1670,7 @@ function App() {
           printerSettings={printerSettings}
           busy={ordersState.ordersLoading}
           products={productsState.products}
+          labelPrintTemplate={organizationLabelPrintTemplate}
           onClose={() => setPrintPreview(undefined)}
           onConfirm={handlePrintPreviewConfirm}
           onDesiChange={handleOrderDesiChange}
