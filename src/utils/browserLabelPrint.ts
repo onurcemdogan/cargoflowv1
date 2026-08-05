@@ -10,6 +10,7 @@ import type {
   SuratLabelMappingConfig,
 } from '../types/cargoflow'
 import { buildLabelData, type LabelData } from './labelData'
+import { deriveAugmentedSuratZplWithHashes } from './augmentedSuratZpl'
 import {
   LEGACY_ZPL_MISSING_MESSAGE,
   resolveSuratPrintEligibility,
@@ -51,6 +52,16 @@ export interface SuratPrintPageModel {
   // carrier_zpl: taşıyıcının gerçek ZPL'i var; canonical_html: legacy kayıt,
   // etiket canonical alanlardan HTML olarak basılır (ZPL İndir kapalı).
   printSource?: 'carrier_zpl' | 'canonical_html'
+  // TÜRETİLMİŞ baskı ZPL'i: resmî kaynak AYNEN + en alta ürün satırı.
+  // `zpl` alanı bu türetilmiş çıktıdır (indirme, native ve önizleme AYNI
+  // artefaktı kullanır). Kaynak ZPL audit için ayrıca taşınır.
+  sourceZpl?: string
+  printZplSha256?: string
+  printZplSourceSha256?: string
+  printZplVersion?: string
+  printZplFooterProfile?: string
+  /** Ürün satırı eklenemediyse güvenli sebep (PII içermez). */
+  printZplFallbackReason?: string
 }
 
 export interface SuratPrintSkip {
@@ -168,13 +179,33 @@ export function buildSuratPrintPageModel(order: CargoOrder): {
           ),
         }
       : {}
+  // TÜRETİLMİŞ printZpl: resmî ZPL byte-for-byte korunur, yalnız final ^PQ /
+  // ^XZ öncesine ürün satırı eklenir. Deterministiktir: aynı sipariş + aynı
+  // kaynak ZPL HER ZAMAN aynı çıktıyı ve aynı SHA'yı verir; bu yüzden
+  // önizleme, indirme, native baskı ve reprint AYNI artefaktı kullanır.
+  const augmented = deriveAugmentedSuratZplWithHashes(
+    eligibility.barcodeRaw,
+    (order.items ?? []).map((item) => ({
+      productName: String(item.productName ?? ''),
+      quantity: Number(item.quantity) || 1,
+      color: item.color,
+      size: item.size,
+      sku: item.merchantSku || item.sku,
+    })),
+  )
   return {
     model: {
       orderNumber: String(order.orderNumber ?? ''),
       trackingNumber,
       barcodeNumber,
       ozelKargoTakipNo,
-      zpl: eligibility.barcodeRaw,
+      zpl: augmented.printZpl,
+      sourceZpl: augmented.sourceZpl,
+      printZplSha256: augmented.printZplSha256,
+      printZplSourceSha256: augmented.printZplSourceSha256,
+      printZplVersion: augmented.printZplVersion,
+      printZplFooterProfile: augmented.printZplFooterProfile ?? undefined,
+      printZplFallbackReason: augmented.fallbackMessage,
       recipient: String(order.customerName ?? ''),
       address: String(order.address ?? ''),
       desi: order.desi ?? null,

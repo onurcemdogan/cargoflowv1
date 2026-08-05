@@ -657,8 +657,18 @@ export interface Label {
   barcodeFormat: 'Code128'
   barcodeValue: string
   templateId: string
+  // Baskıya giden ZPL: resmî kaynak AYNEN + en alta ürün satırı
+  // (türetilmiş printZpl). İndirme, native/raw ve önizleme AYNI artefaktı
+  // kullanır.
   zplContent: string
   zplSource?: 'surat.ortakBarkod.BarcodeRaw' | 'generated'
+  // Kaynak (dokunulmamış) resmî ZPL — YALNIZ audit/teşhis içindir;
+  // kullanıcıya ayrı bir indirme aksiyonu sunulmaz.
+  sourceZplContent?: string
+  printZplSha256?: string
+  printZplSourceSha256?: string
+  printZplVersion?: string
+  printZplFooterProfile?: string
   createdAt: string
   printedAt?: string
   printedBy?: string

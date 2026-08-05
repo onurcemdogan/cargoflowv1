@@ -286,6 +286,91 @@ test('OZP-36/OZP-38/OZP-39: türetme DETERMINISTIK; katalog değişimi etkilemez
   assert.equal(/CargoProduct|products/.test(moduleSource), false)
 })
 
+test('OZP-40/OZP-42: indirme ve önizleme AYNI printZpl hash\'ini kullanır', async () => {
+  const { buildSuratPrintPageModel, buildSuratZplDownload } = await load(
+    '/src/utils/browserLabelPrint.ts',
+  )
+  const order = printableOrder()
+  const { model } = buildSuratPrintPageModel(order)
+  assert.ok(model, 'model üretildi')
+  assert.ok(model.zpl.includes('Drapeli'), 'model ZPL ürün satırı taşır')
+  const download = buildSuratZplDownload([order])
+  assert.ok(download)
+  assert.equal(download.content, model.zpl, 'indirme printZpl döndürür')
+  assert.equal(download.models[0].printZplSha256, model.printZplSha256)
+  // Kaynak ZPL audit için taşınır ama indirilen içerik DEĞİLDİR.
+  assert.notEqual(download.content, model.sourceZpl)
+})
+
+test('OZP-41: native/raw yolu printZpl gönderir (technicalZpl DEĞİL)', async () => {
+  const { ZebraZplLabelProvider } = await load(
+    '/src/providers/labels/ZebraZplLabelProvider.ts',
+  )
+  const order = printableOrder()
+  const label = await new ZebraZplLabelProvider().generateSingle({
+    order,
+    shipment: order.shipment,
+    template: { id: 'tpl' },
+    mappingConfig: {},
+    desiConfig: { defaultUnitDesi: 2 },
+  })
+  assert.ok(label.zplContent.includes('Drapeli'), 'native ZPL ürün satırı taşır')
+  assert.equal(label.sourceZplContent, order.shipment.barcodeRaw)
+  assert.notEqual(label.zplContent, label.sourceZplContent)
+  const { sha256Hex } = await load('/src/utils/augmentedSuratZpl.ts')
+  assert.equal(label.printZplSha256, sha256Hex(label.zplContent))
+  // Aynı sipariş için model ve label AYNI artefaktı verir.
+  const { buildSuratPrintPageModel } = await load('/src/utils/browserLabelPrint.ts')
+  assert.equal(buildSuratPrintPageModel(order).model.printZplSha256, label.printZplSha256)
+})
+
+function printableOrder(over = {}) {
+  const zpl = officialZpl()
+  return {
+    id: 'o-1',
+    marketplace: 'Trendyol',
+    orderNumber: '7270035184060553',
+    packageId: 'PKG-1',
+    customerName: 'TEST ALICI',
+    customerPhone: '5350000000',
+    address: 'TEST MAH 1',
+    city: 'DIYARBAKIR',
+    district: 'KAYAPINAR',
+    operationStatus: 'LABEL_READY',
+    labelStatus: 'READY',
+    hasPrintableLabel: true,
+    desi: 2,
+    desiSource: 'manual_total',
+    items: [
+      {
+        id: 'l-1',
+        productName: 'Önü Drapeli Loş Tesettür Takım',
+        quantity: 1,
+        color: 'Krem',
+        size: '40',
+        merchantSku: '6496',
+        barcode: 'BC-1',
+      },
+    ],
+    shipment: {
+      provider: 'surat-kargo',
+      trackingNumber: '21012920014311',
+      tNo: '21012920014311',
+      barcode: '01254596670',
+      barkodNo: '01254596670',
+      barcodeValue: '01254596670',
+      ozelKargoTakipNo: '7270035184060553',
+      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+      candidateVerificationStatus: 'PREASSIGNED_AWAITING_ACCEPTANCE',
+      zplReady: true,
+      printEnabled: true,
+      barcodeRaw: zpl,
+      desi: 2,
+    },
+    ...over,
+  }
+}
+
 // ═══ 45-52: güvenlik, gizlilik ve migration ════════════════════════════════
 
 test('OZP-45: harici render/Labelary çağrısı YOK', () => {
