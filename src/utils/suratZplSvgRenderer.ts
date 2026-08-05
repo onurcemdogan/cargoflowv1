@@ -47,6 +47,27 @@ export interface SuratSvgRenderResult {
   warnings: string[]
   /** Desteklenmeyen komut bulunduysa adı (teşhis; PII yok). */
   unsupportedCommand?: string
+  /**
+   * Çizilen her öğenin ÖLÇÜLMÜŞ sınırlayıcı kutusu (dot). SVG dizesini
+   * ayrıştırmadan landmark karşılaştırması yapılabilsin diye üretilir;
+   * kaynak ZPL semantiğinin doğrudan çıktısıdır.
+   */
+  elements: SuratRenderedElement[]
+}
+
+export interface SuratRenderedElement {
+  kind: 'box' | 'line' | 'text' | 'barcode' | 'matrix'
+  /** Sol üst köşe (dot, etiket koordinat uzayı). */
+  x: number
+  y: number
+  width: number
+  height: number
+  /** ZPL alan dönüşü (0 / 90 / 180 / 270, saat yönü). */
+  rotation: number
+  /** Metin/barkod içeriği — teşhis amaçlı; LOGLANMAZ. */
+  text?: string
+  /** Metin taban çizgisi (dot) — ^FO/^FT farkı burada görünür. */
+  baseline?: number
 }
 
 // 203 dpi: 8 dot/mm (Sürat ^PW799 ≈ 99.875 mm; fiziksel etiket 100 mm).
@@ -152,36 +173,326 @@ export function encodeCode128B(value: string): number[] {
   return widths
 }
 
-function renderCode128(
-  x: number,
-  y: number,
+// ═══ ZPL ALAN SEMANTİĞİ ════════════════════════════════════════════════════
+//
+// Koordinatlar ETİKET ALANINA GÖRE ELLE yeniden kurulmaz; her şey kaynak
+// ZPL komutundan türetilir.
+//
+//   ^FO x,y  FIELD ORIGIN  → (x,y) alanın SOL ÜST köşesidir. Metinde
+//                            karakter hücresinin ÜSTÜ y'dedir; taban çizgisi
+//                            y + ascent kadar aşağıdadır.
+//   ^FT x,y  FIELD TYPESET → (x,y) TABAN ÇİZGİSİDİR. Barkodda çubukların ALT
+//                            kenarı, matris kodda sembolün ALT kenarıdır.
+//
+// KÖK NEDEN (önceki sürüm): ^FT ile ^FO ayrımı YOKTU ve her metnin taban
+// çizgisi y + TAM karakter yüksekliğine konuyordu. Sonuç: metinler olması
+// gerekenden ~0.22 karakter yüksekliği kadar AŞAĞIDA çıkıyor, gönderici
+// bloğu ile barkod arasında fazladan boşluk oluşuyordu.
+
+/**
+ * Karakter hücresinin üstünden taban çizgisine oran. Zebra ölçeklenebilir
+ * fontunda (CG Triumvirate) istenen karakter yüksekliği HÜCRE yüksekliğidir;
+ * taban çizgisi hücrenin üstünden yaklaşık bu oran kadar aşağıdadır.
+ */
+export const ZPL_TEXT_ASCENT_RATIO = 0.78
+/**
+ * Monospace yığında ortalama ilerleme genişliğinin em'e oranı. ^FB satır
+ * kırılımı ve ölçülen metin genişliği bu orandan hesaplanır.
+ */
+export const ZPL_TEXT_ADVANCE_RATIO = 0.6
+/** Çubuklarla insan-okur satır arasındaki boşluk (dot). */
+export const BARCODE_TEXT_GAP = 4
+
+type ZplRotation = 0 | 90 | 180 | 270
+
+/** ^FW / alan komutlarındaki N,R,I,B → saat yönünde derece. */
+export function resolveZplRotation(code: unknown, fallback: ZplRotation = 0): ZplRotation {
+  const letter = String(code ?? '').trim().charAt(0).toUpperCase()
+  if (letter === 'N') return 0
+  if (letter === 'R') return 90
+  if (letter === 'I') return 180
+  if (letter === 'B') return 270
+  return fallback
+}
+
+function round(value: number): number {
+  return Math.round(value * 1000) / 1000
+}
+
+/**
+ * Alan dönüşü + yatay ölçek için SVG transform listesi.
+ * Liste SOLDAN SAĞA yazılır ve SAĞDAN SOLA uygulanır: önce yerel yatay
+ * ölçekleme, sonra alan orijini etrafında döndürme.
+ */
+function fieldTransform(
+  rotation: ZplRotation,
+  anchorX: number,
+  anchorY: number,
+  scaleX: number,
+): string {
+  const parts: string[] = []
+  if (rotation !== 0) parts.push(`rotate(${rotation} ${round(anchorX)} ${round(anchorY)})`)
+  if (scaleX !== 1) {
+    parts.push(
+      `translate(${round(anchorX)} 0)`,
+      `scale(${round(scaleX)} 1)`,
+      `translate(${round(-anchorX)} 0)`,
+    )
+  }
+  return parts.length > 0 ? ` transform="${parts.join(' ')}"` : ''
+}
+
+interface FieldState {
+  /** Alan orijini (^FO) veya taban çizgisi (^FT) noktası. */
+  x: number
+  y: number
+  /** ^FT ile açıldıysa true. */
+  typeset: boolean
+  rotation: ZplRotation
+}
+
+interface FontState {
+  /** ^A0/^A@ karakter YÜKSEKLİĞİ (dot). */
+  height: number
+  /** ^A0/^A@ karakter GENİŞLİĞİ (dot). 0 → yükseklikle aynı. */
+  width: number
+  code: string
+}
+
+interface BlockState {
+  /** ^FB blok genişliği (dot); 0 → sarma yok. */
+  width: number
+  /** ^FB en fazla satır. */
+  lines: number
+  /** ^FB satırlar arası ek boşluk (dot). */
+  lineGap: number
+  justify: 'L' | 'C' | 'R' | 'J'
+}
+
+interface DrawResult {
+  svg: string
+  elements: SuratRenderedElement[]
+}
+
+// ── METİN ──────────────────────────────────────────────────────────────────
+function drawText(
+  field: FieldState,
+  font: FontState,
+  block: BlockState,
+  data: string,
+): DrawResult {
+  const height = Math.max(1, font.height)
+  // ^A0h,w: w verilmezse (0) genişlik yüksekliğe eşittir.
+  const width = font.width > 0 ? font.width : height
+  const scaleX = width === height ? 1 : width / height
+  const advance = ZPL_TEXT_ADVANCE_RATIO * width
+  const ascent = height * ZPL_TEXT_ASCENT_RATIO
+
+  // ^FB sarma: blok genişliği verildiyse kelime bazlı, en fazla `lines` satır.
+  const lines: string[] = []
+  if (block.width > 0) {
+    const perLine = Math.max(1, Math.floor(block.width / Math.max(1, advance)))
+    let current = ''
+    for (const word of data.split(/\s+/).filter(Boolean)) {
+      const next = current ? `${current} ${word}` : word
+      if (next.length <= perLine) {
+        current = next
+        continue
+      }
+      if (current) lines.push(current)
+      current = word
+      if (lines.length >= block.lines) break
+    }
+    if (current && lines.length < block.lines) lines.push(current)
+  } else {
+    lines.push(data)
+  }
+  if (lines.length === 0) return { svg: '', elements: [] }
+
+  const lineHeight = height + block.lineGap
+  const family = resolveZplFontFamily(font.code)
+  // ^FB hizalama: L/J sola, C ortaya, R sağa.
+  const anchorAttribute =
+    block.justify === 'C' ? 'middle' : block.justify === 'R' ? 'end' : 'start'
+  const textX =
+    block.justify === 'C'
+      ? field.x + block.width / 2
+      : block.justify === 'R'
+        ? field.x + block.width
+        : field.x
+  // ^FT taban çizgisiyle, ^FO hücre üstüyle hizalanır.
+  const firstBaseline = field.typeset ? field.y : field.y + ascent
+  const transform = fieldTransform(field.rotation, field.x, field.y, scaleX)
+
+  const parts: string[] = []
+  let minX = Infinity
+  let maxX = -Infinity
+  lines.forEach((line, index) => {
+    const baseline = firstBaseline + index * lineHeight
+    // scaleX alan orijini etrafinda uygulandigindan hizalama noktasi geri
+    // hesaplanir: field.x + (xUser - field.x) * scaleX === textX
+    const anchorUserX =
+      scaleX === 1 ? textX : field.x + (textX - field.x) / scaleX
+    parts.push(
+      `<text x="${round(anchorUserX)}" y="${round(baseline)}" ` +
+        `font-family="${family}" font-size="${round(height)}" fill="#000" ` +
+        `text-anchor="${anchorAttribute}" xml:space="preserve">${escapeXml(line)}</text>`,
+    )
+    const lineWidth = line.length * advance
+    const startX =
+      block.justify === 'C'
+        ? textX - lineWidth / 2
+        : block.justify === 'R'
+          ? textX - lineWidth
+          : textX
+    minX = Math.min(minX, startX)
+    maxX = Math.max(maxX, startX + lineWidth)
+  })
+
+  const top = firstBaseline - ascent
+  const totalHeight = height + (lines.length - 1) * lineHeight
+  return {
+    svg: transform
+      ? `<g${transform}>${parts.join('')}</g>`
+      : parts.join(''),
+    elements: [
+      {
+        kind: 'text',
+        x: round(minX),
+        y: round(top),
+        width: round(maxX - minX),
+        height: round(totalHeight),
+        rotation: field.rotation,
+        text: lines.join(' '),
+        baseline: round(firstBaseline),
+      },
+    ],
+  }
+}
+
+// ── ^GB KUTU / ÇİZGİ ───────────────────────────────────────────────────────
+//
+// ^GBw,h,t : w×h DIŞ ölçüsünde, kenarlığı İÇERİ doğru t kalınlığında kutu.
+// w veya h kalınlıktan küçük/eşitse ZPL bunu DOLU BİR ÇİZGİ olarak basar:
+//   ^GB0,height,thickness  → DİKEY çizgi
+//   ^GBwidth,0,thickness   → YATAY çizgi
+// KÖK NEDEN (eksik çizgiler): önceki sürüm her ^GB'yi `fill="none"` konturlu
+// dikdörtgen olarak çiziyordu. Sıfır genişlikli/yükseklikli çizgiler bu
+// yüzden ya hiç görünmüyor ya da içi boş bir çerçeve olarak çıkıyordu;
+// bölüm ayırıcılarının tamamı kayboluyordu.
+function drawGraphicBox(
+  field: FieldState,
+  args: string,
+): DrawResult {
+  const parts = args.split(',')
+  const thickness = Math.max(1, num(parts[2], 1))
+  const width = num(parts[0], thickness)
+  const height = num(parts[1], thickness)
+  const color = String(parts[3] ?? 'B').trim().toUpperCase().startsWith('W')
+    ? '#fff'
+    : '#000'
+  const transform = fieldTransform(field.rotation, field.x, field.y, 1)
+
+  if (width <= thickness || height <= thickness) {
+    // DOLU ÇİZGİ (dikey veya yatay).
+    const lineWidth = Math.max(width, thickness)
+    const lineHeight = Math.max(height, thickness)
+    const svg =
+      `<rect x="${round(field.x)}" y="${round(field.y)}" ` +
+      `width="${round(lineWidth)}" height="${round(lineHeight)}" fill="${color}"/>`
+    return {
+      svg: transform ? `<g${transform}>${svg}</g>` : svg,
+      elements: [
+        {
+          kind: 'line',
+          x: round(field.x),
+          y: round(field.y),
+          width: round(lineWidth),
+          height: round(lineHeight),
+          rotation: field.rotation,
+        },
+      ],
+    }
+  }
+
+  // KUTU: dış ölçü w×h, kenarlık İÇERİ. SVG kontur merkezlendiği için
+  // t/2 kadar içeri kaydırılır; böylece dış sınır tam olarak w×h olur.
+  const inset = thickness / 2
+  const svg =
+    `<rect x="${round(field.x + inset)}" y="${round(field.y + inset)}" ` +
+    `width="${round(width - thickness)}" height="${round(height - thickness)}" ` +
+    `fill="none" stroke="${color}" stroke-width="${round(thickness)}"/>`
+  return {
+    svg: transform ? `<g${transform}>${svg}</g>` : svg,
+    elements: [
+      {
+        kind: 'box',
+        x: round(field.x),
+        y: round(field.y),
+        width: round(width),
+        height: round(height),
+        rotation: field.rotation,
+      },
+    ],
+  }
+}
+
+// ── ^BC CODE 128 ───────────────────────────────────────────────────────────
+function drawCode128(
+  field: FieldState,
   data: string,
   moduleWidth: number,
-  height: number,
+  barHeight: number,
   showText: boolean,
-  fontSize: number,
-): string {
+  interpretationHeight: number,
+): DrawResult {
   const widths = encodeCode128B(data)
-  let cursor = x
+  const totalModules = widths.reduce((total, value) => total + value, 0)
+  const totalWidth = totalModules * moduleWidth
+  // ^FT: y çubukların ALT kenarıdır. ^FO: y çubukların ÜST kenarıdır.
+  const top = field.typeset ? field.y - barHeight : field.y
+  const parts: string[] = []
+  let cursor = field.x
   let dark = true
-  const bars: string[] = []
-  for (const width of widths) {
-    const w = width * moduleWidth
+  for (const modules of widths) {
+    const barWidth = modules * moduleWidth
     if (dark) {
-      bars.push(
-        `<rect x="${cursor}" y="${y}" width="${w}" height="${height}" fill="#000"/>`,
+      parts.push(
+        `<rect x="${round(cursor)}" y="${round(top)}" ` +
+          `width="${round(barWidth)}" height="${round(barHeight)}" fill="#000"/>`,
       )
     }
-    cursor += w
+    cursor += barWidth
     dark = !dark
   }
-  const totalWidth = cursor - x
-  const text = showText
-    ? `<text x="${x + totalWidth / 2}" y="${y + height + fontSize}" ` +
-      `font-family="${ZPL_FONT_STACK}" font-size="${fontSize}" ` +
-      `text-anchor="middle" fill="#000" letter-spacing="2">${escapeXml(data)}</text>`
-    : ''
-  return bars.join('') + text
+  let bottom = top + barHeight
+  if (showText) {
+    // Yorum satırı ZPL'de aktif fontla basılır ve çubukların ALTINDA yer alır.
+    const ascent = interpretationHeight * ZPL_TEXT_ASCENT_RATIO
+    const baseline = top + barHeight + BARCODE_TEXT_GAP + ascent
+    parts.push(
+      `<text x="${round(field.x + totalWidth / 2)}" y="${round(baseline)}" ` +
+        `font-family="${ZPL_FONT_STACK}" font-size="${round(interpretationHeight)}" ` +
+        `text-anchor="middle" fill="#000">${escapeXml(data)}</text>`,
+    )
+    bottom = top + barHeight + BARCODE_TEXT_GAP + interpretationHeight
+  }
+  const transform = fieldTransform(field.rotation, field.x, field.y, 1)
+  const svg = parts.join('')
+  return {
+    svg: transform ? `<g${transform}>${svg}</g>` : svg,
+    elements: [
+      {
+        kind: 'barcode',
+        x: round(field.x),
+        y: round(top),
+        width: round(totalWidth),
+        height: round(bottom - top),
+        rotation: field.rotation,
+        text: data,
+      },
+    ],
+  }
 }
 
 // ── QR / DataMatrix ───────────────────────────────────────────────────────
@@ -193,34 +504,28 @@ function renderCode128(
 // (matrix_encode_failed) reddedilir ve çağıran katman CargoFlow şablonuna
 // düşmeyi önerir.
 export interface MatrixCodeRenderer {
-  (payload: string): boolean[][] | null
-}
-
-export interface MatrixDrawResult {
-  svg: string
-  /** false ise matris yerel olarak üretilemedi (placeholder ÇİZİLMEZ). */
-  ok: boolean
+  (payload: string, errorCorrection?: string): boolean[][] | null
 }
 
 function drawMatrix(
-  x: number,
-  y: number,
+  field: FieldState,
   modules: boolean[][] | null,
   moduleDots: number,
   quietModules: number,
-  transform: string,
-): MatrixDrawResult {
-  if (!modules || modules.length === 0) return { svg: '', ok: false }
+): DrawResult | null {
+  if (!modules || modules.length === 0) return null
   const count = modules.length
-  const cell = moduleDots
+  const side = count * moduleDots
+  // ^FT: y sembolün ALT kenarıdır. ^FO: ÜST kenarı.
+  const top = field.typeset ? field.y - side : field.y
   const parts: string[] = []
   // QUIET ZONE: sembolün dört yanında `quietModules` modül genişliğinde
   // BEYAZ alan garanti edilir; komşu içerik sessiz alana taşamaz.
   if (quietModules > 0) {
-    const quiet = quietModules * cell
+    const quiet = quietModules * moduleDots
     parts.push(
-      `<rect x="${x - quiet}" y="${y - quiet}" ` +
-        `width="${count * cell + quiet * 2}" height="${count * cell + quiet * 2}" ` +
+      `<rect x="${round(field.x - quiet)}" y="${round(top - quiet)}" ` +
+        `width="${round(side + quiet * 2)}" height="${round(side + quiet * 2)}" ` +
         `fill="#fff"/>`,
     )
   }
@@ -228,14 +533,25 @@ function drawMatrix(
     for (let col = 0; col < count; col += 1) {
       if (!modules[row][col]) continue
       parts.push(
-        `<rect x="${x + col * cell}" y="${y + row * cell}" width="${cell}" height="${cell}" fill="#000"/>`,
+        `<rect x="${round(field.x + col * moduleDots)}" y="${round(top + row * moduleDots)}" ` +
+          `width="${round(moduleDots)}" height="${round(moduleDots)}" fill="#000"/>`,
       )
     }
   }
-  const inner = parts.join('')
+  const transform = fieldTransform(field.rotation, field.x, field.y, 1)
+  const svg = parts.join('')
   return {
-    svg: transform ? `<g${transform}>${inner}</g>` : inner,
-    ok: true,
+    svg: transform ? `<g${transform}>${svg}</g>` : svg,
+    elements: [
+      {
+        kind: 'matrix',
+        x: round(field.x),
+        y: round(top),
+        width: round(side),
+        height: round(side),
+        rotation: field.rotation,
+      },
+    ],
   }
 }
 
@@ -247,10 +563,18 @@ export interface RenderOptions {
 /**
  * Varsayılan YEREL QR üreteci — repoda zaten bulunan `qrcode-generator`
  * paketini kullanır (yeni bağımlılık YOK, ağ çağrısı YOK).
+ * Hata düzeltme seviyesi KAYNAK ^FD ön ekinden gelir ("LA,..." → L); sabit
+ * bir seviye VARSAYILMAZ, çünkü seviye modül sayısını ve dolayısıyla
+ * sembolün sınırlayıcı kutusunu doğrudan değiştirir.
  */
-export const defaultMatrixRenderer: MatrixCodeRenderer = (payload) => {
+export const defaultMatrixRenderer: MatrixCodeRenderer = (payload, errorCorrection) => {
+  const level =
+    errorCorrection === 'L' || errorCorrection === 'M' ||
+    errorCorrection === 'Q' || errorCorrection === 'H'
+      ? errorCorrection
+      : 'M'
   try {
-    const qr = qrcode(0, 'M')
+    const qr = qrcode(0, level)
     qr.addData(payload || '-')
     qr.make()
     const count = qr.getModuleCount()
@@ -280,6 +604,8 @@ export const DATA_MATRIX_ECC200_QUALITY = 200
  * basmak resmî çerçeveyi silerdi.
  */
 export const DATA_MATRIX_QUIET_MODULES = 1
+/** 203 dpi yazıcıda ^BQ büyütme varsayılanı (Zebra ZPL kılavuzu). */
+export const QR_DEFAULT_MAGNIFICATION = 2
 
 export function renderSuratZplToSvg(
   rawZpl: unknown,
@@ -293,6 +619,7 @@ export function renderSuratZplToSvg(
     widthMm: LABEL_MM,
     heightMm: LABEL_MM,
     warnings: [] as string[],
+    elements: [] as SuratRenderedElement[],
   }
   if (!zpl.trim()) {
     return { ...base, renderStatus: 'empty_source', svg: '', templateFingerprint: '' }
@@ -314,25 +641,42 @@ export function renderSuratZplToSvg(
   const labelLength = geometry.labelLength || 799
   const warnings: string[] = []
   const body: string[] = []
+  const elements: SuratRenderedElement[] = []
 
-  // ── ZPL komutlarını sırayla yorumla ─────────────────────────────────────
-  let x = 0
-  let y = 0
-  let fontHeight = 20
-  let fontWidth = 20
-  let fontCode = '0'
-  let rotated = false
-  let fieldRotated = false
-  let blockWidth = 0
-  let blockLines = 1
+  // ── Yazıcı/etiket düzeyi durum ────────────────────────────────────────
+  let homeX = 0
+  let homeY = 0
+  let shiftLeft = 0
+  let defaultRotation: ZplRotation = 0
+
+  // ── Alan düzeyi durum (^FS ile sıfırlanır) ────────────────────────────
+  let field: FieldState = { x: 0, y: 0, typeset: false, rotation: 0 }
+  // Zebra ^CF varsayilani: yerlesik font A (9 x 5 dot). ^A gormeyen alanlar
+  // ve barkod yorum satiri bu fontu kullanir.
+  let font: FontState = { height: 9, width: 5, code: 'A' }
+  let defaultFont: FontState = { height: 9, width: 5, code: 'A' }
+  let block: BlockState = { width: 0, lines: 1, lineGap: 0, justify: 'L' }
   let hexMarker = ''
   let barcodeModule = 2
-  let barcodeRatio = 3
   let barcodeHeight = 0
   let barcodeShowText = true
   let pending: 'text' | 'code128' | 'qr' | 'datamatrix' = 'text'
-  let matrixModuleDots = 6
+  let matrixModuleDots = 0
   let dataMatrixQuality = DATA_MATRIX_ECC200_QUALITY
+
+  const resetField = () => {
+    block = { width: 0, lines: 1, lineGap: 0, justify: 'L' }
+    hexMarker = ''
+    pending = 'text'
+    font = { ...defaultFont }
+    field = { ...field, rotation: defaultRotation, typeset: false }
+  }
+
+  const push = (result: DrawResult | null) => {
+    if (!result) return
+    body.push(result.svg)
+    elements.push(...result.elements)
+  }
 
   for (const token of zpl.split('^').slice(1)) {
     const command = token.slice(0, 2).toUpperCase()
@@ -348,101 +692,137 @@ export function renderSuratZplToSvg(
       }
     }
     switch (command) {
+      case 'LH': {
+        // ^LHx,y — etiket başlangıcı; TÜM alanlar bu kadar ötelenir.
+        const parts = args.split(',')
+        homeX = num(parts[0], 0)
+        homeY = num(parts[1], 0)
+        break
+      }
+      case 'LS':
+        // ^LSa — basılan görüntüyü SOLA kaydırır (x_efektif = x - a).
+        shiftLeft = num(args, 0)
+        break
+      case 'CF': {
+        // ^CFf,h,w — varsayılan font. Sonraki alanlar ^A görmezse bunu kullanır.
+        const parts = args.split(',')
+        defaultFont = {
+          code: String(parts[0] ?? 'A').trim() || 'A',
+          height: num(parts[1], defaultFont.height),
+          width: num(parts[2], 0),
+        }
+        font = { ...defaultFont }
+        break
+      }
       case 'FW':
-        rotated = /^[BR]/i.test(args)
+        defaultRotation = resolveZplRotation(args, defaultRotation)
+        field = { ...field, rotation: defaultRotation }
         break
       case 'FO':
       case 'FT': {
-        const [px, py] = args.split(',')
-        x = num(px)
-        y = num(py)
-        fieldRotated = rotated
-        blockWidth = 0
-        blockLines = 1
+        const parts = args.split(',')
+        field = {
+          x: num(parts[0]) + homeX - shiftLeft,
+          y: num(parts[1]) + homeY,
+          typeset: command === 'FT',
+          rotation: defaultRotation,
+        }
+        block = { width: 0, lines: 1, lineGap: 0, justify: 'L' }
         pending = 'text'
         break
       }
       case 'A0':
       case 'A@': {
+        // ^A0o,h,w — o: yön, h: karakter yüksekliği, w: karakter genişliği.
         const parts = args.split(',')
-        fontCode = command
-        if (/^[BR]/i.test(String(parts[0] ?? ''))) fieldRotated = true
-        fontHeight = num(parts[1], fontHeight)
-        fontWidth = num(parts[2], fontHeight)
+        field = { ...field, rotation: resolveZplRotation(parts[0], field.rotation) }
+        font = {
+          code: command,
+          height: num(parts[1], font.height),
+          width: num(parts[2], 0),
+        }
         break
       }
       case 'FH':
         hexMarker = args.slice(0, 1) || '_'
         break
       case 'FB': {
+        // ^FBa,b,c,d — a: blok genişliği, b: satır sayısı,
+        // c: satırlar arası ek boşluk, d: hizalama.
         const parts = args.split(',')
-        blockWidth = num(parts[0], 0)
-        blockLines = Math.max(1, num(parts[1], 1))
+        block = {
+          width: num(parts[0], 0),
+          lines: Math.max(1, num(parts[1], 1)),
+          lineGap: num(parts[2], 0),
+          justify: (String(parts[3] ?? 'L').trim().toUpperCase().charAt(0) ||
+            'L') as BlockState['justify'],
+        }
         break
       }
       case 'BY': {
         const parts = args.split(',')
-        barcodeModule = num(parts[0], barcodeModule)
-        barcodeRatio = num(parts[1], barcodeRatio)
+        // ^BYw,r,h — w: modul genisligi, r: genis/dar orani, h: varsayilan
+        // yukseklik. Code 128 SABIT genislikli bir simgelemedir; `r` orani
+        // Code 128'de KULLANILMAZ (yalniz 2-of-5 turevlerinde anlamlidir),
+        // bu yuzden burada saklanmaz.
+        barcodeModule = Math.max(1, num(parts[0], barcodeModule))
         barcodeHeight = num(parts[2], barcodeHeight)
         break
       }
       case 'BC': {
+        // ^BCo,h,f,g,e,m — o: yön, h: yükseklik, f: yorum satırı.
         const parts = args.split(',')
-        if (/^[BR]/i.test(String(parts[0] ?? ''))) fieldRotated = true
+        field = { ...field, rotation: resolveZplRotation(parts[0], field.rotation) }
         barcodeHeight = num(parts[1], barcodeHeight || 100)
-        barcodeShowText = String(parts[2] ?? 'Y').toUpperCase() !== 'N'
+        barcodeShowText = String(parts[2] ?? 'Y').trim().toUpperCase() !== 'N'
         pending = 'code128'
         break
       }
       case 'BQ': {
-        // ^BQa,b,c → a: yön, b: model, c: büyütme (modül başına dot).
+        // ^BQa,b,c — a: yön, b: model, c: büyütme (modül başına dot).
         const parts = args.split(',')
-        if (/^[BR]/i.test(String(parts[0] ?? ''))) fieldRotated = true
-        matrixModuleDots = Math.max(1, num(parts[2], 4))
+        field = { ...field, rotation: resolveZplRotation(parts[0], field.rotation) }
+        matrixModuleDots = Math.max(1, num(parts[2], QR_DEFAULT_MAGNIFICATION))
         pending = 'qr'
         break
       }
       case 'BX': {
-        // ^BXo,h,s → o: yön, h: modül kenarı (dot), s: kalite (200 = ECC200).
+        // ^BXo,h,s — o: yön, h: modül kenarı (varsayılan ^BY modül genişliği),
+        // s: kalite (200 = ECC200).
         const parts = args.split(',')
-        if (/^[BR]/i.test(String(parts[0] ?? ''))) fieldRotated = true
-        matrixModuleDots = Math.max(1, num(parts[1], 6))
+        field = { ...field, rotation: resolveZplRotation(parts[0], field.rotation) }
+        matrixModuleDots = Math.max(1, num(parts[1], barcodeModule))
         dataMatrixQuality = num(parts[2], DATA_MATRIX_ECC200_QUALITY)
         pending = 'datamatrix'
         break
       }
-      case 'GB': {
-        const parts = args.split(',')
-        const width = num(parts[0])
-        const height = num(parts[1])
-        const thickness = Math.max(1, num(parts[2], 1))
-        // Dış çerçeve GÖRSELDE ÇİZİLİR (footer fit ölçümünden ayrıdır).
-        body.push(
-          `<rect x="${x}" y="${y}" width="${Math.max(width, thickness)}" ` +
-            `height="${Math.max(height, thickness)}" fill="none" stroke="#000" ` +
-            `stroke-width="${thickness}"/>`,
-        )
+      case 'GB':
+        push(drawGraphicBox(field, args))
         break
-      }
+      case 'FS':
+        resetField()
+        break
       case 'FD': {
         const raw = args.split('^')[0] ?? ''
         const data = decodeHexEscapes(raw, hexMarker)
         if (pending === 'code128') {
-          body.push(
-            renderCode128(
-              x, y, data,
+          push(
+            drawCode128(
+              field,
+              data,
               barcodeModule,
               barcodeHeight || 100,
               barcodeShowText,
-              Math.max(14, barcodeModule * 6),
+              font.height,
             ),
           )
         } else if (pending === 'qr' || pending === 'datamatrix') {
-          // ^BQ verisi "LA,payload" biçimindedir; payload AYNEN korunur.
+          // ^BQ verisi "<hata düzeltme><giriş modu>,payload" biçimindedir;
           // ^BX verisi payload'ın KENDİSİDİR. İkisi de yalnız kaynak ZPL'den
           // gelir; sipariş/UI alanlarından türetilmez.
-          const payload = pending === 'qr' ? data.replace(/^[A-Z]{2},/i, '') : data
+          const qrMatch = /^([HQML])([AM]),([\s\S]*)$/.exec(data)
+          const payload = pending === 'qr' && qrMatch ? qrMatch[3] : data
+          const errorCorrection = pending === 'qr' && qrMatch ? qrMatch[1] : undefined
           if (
             pending === 'datamatrix' &&
             dataMatrixQuality !== DATA_MATRIX_ECC200_QUALITY
@@ -464,14 +844,12 @@ export function renderSuratZplToSvg(
               ? (options.matrixRenderer ?? defaultMatrixRenderer)
               : defaultDataMatrixRenderer
           const drawn = drawMatrix(
-            x,
-            y,
-            renderer(payload),
-            matrixModuleDots,
+            field,
+            renderer(payload, errorCorrection),
+            matrixModuleDots || barcodeModule,
             pending === 'datamatrix' ? DATA_MATRIX_QUIET_MODULES : 0,
-            fieldRotated ? ` transform="rotate(-90 ${x} ${y})"` : '',
           )
-          if (!drawn.ok) {
+          if (!drawn) {
             // SESSİZ PLACEHOLDER YOK: boş/yanlış bir kare çizmek yerine
             // render açık durumla reddedilir.
             return {
@@ -483,43 +861,9 @@ export function renderSuratZplToSvg(
               warnings: ['Matris kod yerel olarak üretilemedi.'],
             }
           }
-          body.push(drawn.svg)
+          push(drawn)
         } else if (data.trim()) {
-          const family = resolveZplFontFamily(fontCode)
-          const transform = fieldRotated
-            ? ` transform="rotate(-90 ${x} ${y})"`
-            : ''
-          if (blockWidth > 0 && blockLines > 1) {
-            // ^FB: kelime bazlı sarma; metin KESİLMEZ.
-            const charsPerLine = Math.max(
-              1,
-              Math.floor(blockWidth / Math.max(1, fontWidth * 0.6)),
-            )
-            const lines: string[] = []
-            let current = ''
-            for (const word of data.split(/\s+/)) {
-              const next = current ? `${current} ${word}` : word
-              if (next.length <= charsPerLine) current = next
-              else {
-                if (current) lines.push(current)
-                current = word
-              }
-              if (lines.length >= blockLines) break
-            }
-            if (current && lines.length < blockLines) lines.push(current)
-            lines.forEach((line, index) => {
-              body.push(
-                `<text x="${x}" y="${y + fontHeight * (index + 1)}" ` +
-                  `font-family="${family}" font-size="${fontHeight}" ` +
-                  `fill="#000"${transform}>${escapeXml(line)}</text>`,
-              )
-            })
-          } else {
-            body.push(
-              `<text x="${x}" y="${y + fontHeight}" font-family="${family}" ` +
-                `font-size="${fontHeight}" fill="#000"${transform}>${escapeXml(data)}</text>`,
-            )
-          }
+          push(drawText(field, font, block, data))
         }
         pending = 'text'
         hexMarker = ''
@@ -527,6 +871,24 @@ export function renderSuratZplToSvg(
       }
       default:
         break
+    }
+  }
+
+  // SINIR KONTROLÜ: hiçbir öğe etiket alanının dışına taşmamalı. Taşma
+  // SESSİZ bırakılmaz; koordinatlar KEYFİ olarak kaydırılmaz (kaynak ZPL tek
+  // doğrudur), yalnız güvenli bir uyarı üretilir.
+  for (const element of elements) {
+    if (element.rotation !== 0) continue
+    if (
+      element.x < 0 ||
+      element.y < 0 ||
+      element.x + element.width > printWidth ||
+      element.y + element.height > labelLength
+    ) {
+      warnings.push(
+        `Kaynak ZPL'de etiket alanını aşan öğe (${element.kind}); kaydırma YAPILMADI.`,
+      )
+      break
     }
   }
 
@@ -552,5 +914,6 @@ export function renderSuratZplToSvg(
     widthMm: LABEL_MM,
     heightMm: LABEL_MM,
     warnings,
+    elements,
   }
 }
