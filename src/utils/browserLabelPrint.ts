@@ -17,6 +17,11 @@ import {
 } from './augmentedSuratZpl'
 import { resolveSuratProductLineItems } from './suratProductLineItems'
 import {
+  renderSuratZplToSvg,
+  SURAT_RENDER_UNAVAILABLE_MESSAGE,
+  type SuratSvgRenderResult,
+} from './suratZplSvgRenderer'
+import {
   LEGACY_ZPL_MISSING_MESSAGE,
   resolveSuratPrintEligibility,
 } from './suratPrintEligibility'
@@ -89,6 +94,74 @@ export interface SuratBulkPrintResult {
   skipped: SuratPrintSkip[]
   printCalled: boolean
   debug?: BrowserLabelPrintDebug
+}
+
+// ── RESMÎ SÜRAT ŞABLONU: yerel SVG baskı belgesi ─────────────────────────
+//
+// CargoFlow HTML şablonu KALDIRILMADI; bu YOL ONUN YANINDA yaşar ve yalnız
+// labelPrintTemplate === 'surat_official_zpl' seçildiğinde kullanılır.
+// Aynı hidden iframe + window.print yaşam döngüsü paylaşılır.
+export interface SuratOfficialPage {
+  orderNumber: string
+  printZplSha256: string
+  render: SuratSvgRenderResult
+}
+
+export interface SuratOfficialDocument {
+  html: string
+  pages: SuratOfficialPage[]
+  skipped: SuratPrintSkip[]
+}
+
+/**
+ * Seçili siparişler için resmî Sürat etiketini YEREL olarak SVG'ye render
+ * eder ve tek bir yazdırma belgesi üretir. Harici render servisi KULLANILMAZ.
+ * Bir siparişin render'ı başarısız olursa YALNIZ o sipariş atlanır; diğerleri
+ * basılır (kısmi batch izolasyonu).
+ */
+export function buildSuratOfficialPrintDocument(
+  orders: CargoOrder[],
+  products: CargoProduct[] = [],
+): SuratOfficialDocument {
+  const selection = resolveSuratPrintableSelection(orders, products)
+  const skipped: SuratPrintSkip[] = [...selection.skipped]
+  const pages: SuratOfficialPage[] = []
+  for (const entry of selection.printable) {
+    const render = renderSuratZplToSvg(entry.model.zpl)
+    if (render.renderStatus !== 'ok' || !render.svg) {
+      skipped.push({
+        orderNumber: entry.model.orderNumber,
+        reason: SURAT_RENDER_UNAVAILABLE_MESSAGE,
+      })
+      continue
+    }
+    pages.push({
+      orderNumber: entry.model.orderNumber,
+      printZplSha256: entry.model.printZplSha256 ?? '',
+      render,
+    })
+  }
+  const widthMm = pages[0]?.render.widthMm ?? 100
+  const heightMm = pages[0]?.render.heightMm ?? 100
+  const html = [
+    '<!doctype html><html><head><meta charset="utf-8" />',
+    '<title>Surat Etiket</title><style>',
+    `@page { size: ${widthMm}mm ${heightMm}mm; margin: 0; }`,
+    'html, body { margin: 0; padding: 0; width: ' + widthMm + 'mm; height: ' + heightMm + 'mm; background: #fff; }',
+    '.surat-official-page {',
+    `  width: ${widthMm}mm; height: ${heightMm}mm;`,
+    '  margin: 0; padding: 0; overflow: hidden; page-break-inside: avoid; break-inside: avoid;',
+    '}',
+    // Son sayfadan SONRA page-break KONMAZ: ikinci boş sayfa oluşmaz.
+    '.surat-official-page + .surat-official-page { page-break-before: always; break-before: page; }',
+    '.surat-official-page svg { display: block; width: 100%; height: 100%; }',
+    '</style></head><body>',
+    pages
+      .map((page) => `<section class="surat-official-page">${page.render.svg}</section>`)
+      .join(''),
+    '</body></html>',
+  ].join('')
+  return { html, pages, skipped }
 }
 
 export function buildSuratPrintPageModel(

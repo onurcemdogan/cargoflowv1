@@ -420,6 +420,7 @@ app.get('/api/local-config/integration', async (request, response) => {
         desi: {
           defaultUnitDesi: shipmentDefaults.defaultUnitDesi,
           multiplyByItemQuantity: shipmentDefaults.multiplyByItemQuantity,
+          labelPrintTemplate: shipmentDefaults.labelPrintTemplate,
         },
       })
     } catch {
@@ -536,6 +537,10 @@ app.put('/api/local-config/integration', async (request, response) => {
           multiplyByItemQuantity:
             incoming.desi.multiplyByItemQuantity ??
             shipmentDefaults.multiplyByItemQuantity,
+          // Alan gonderilmezse MEVCUT deger korunur (kismi kayit guvenli).
+          labelPrintTemplate:
+            incoming.desi.labelPrintTemplate ??
+            shipmentDefaults.labelPrintTemplate,
         })
       }
       const status = await getMaskedIntegrationStatus(db, organizationId)
@@ -548,6 +553,7 @@ app.put('/api/local-config/integration', async (request, response) => {
         desi: {
           defaultUnitDesi: shipmentDefaults.defaultUnitDesi,
           multiplyByItemQuantity: shipmentDefaults.multiplyByItemQuantity,
+          labelPrintTemplate: shipmentDefaults.labelPrintTemplate,
         },
         // Frontend bu bağlamı state reset için kullanır (hesap değişimi tespiti).
         activeMarketplaceAccount: activeAccount,

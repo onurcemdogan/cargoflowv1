@@ -248,6 +248,10 @@ export class IntegrationConfigService {
             // çarpan davranışı korunur.
             multiplyByItemQuantity:
               payload.desi?.multiplyByItemQuantity !== false,
+            labelPrintTemplate:
+              payload.desi?.labelPrintTemplate === 'surat_official_zpl'
+                ? 'surat_official_zpl'
+                : 'cargoflow_html',
           }),
           trendyol: {
             ...defaultIntegrationConfig.trendyol,

@@ -935,6 +935,8 @@ export interface SuratIntegrationConfig {
 // desi vermediğinde sırasıyla variant/product override, kategori varsayılanı
 // ve tenant varsayılanı devreye girer. defaultUnitDesi null ise eksik desi
 // gönderi oluşturmayı ENGELLER (sessiz varsayım yok).
+export type LabelPrintTemplate = 'cargoflow_html' | 'surat_official_zpl'
+
 export interface TenantDesiConfig {
   defaultUnitDesi: number | null
   /**
@@ -942,6 +944,11 @@ export interface TenantDesiConfig {
    * ayarın bulunmadığı eski kayıtlarda mevcut çarpan davranışı sürer.
    */
   multiplyByItemQuantity?: boolean
+  /**
+   * Baskı şablonu: 'cargoflow_html' (VARSAYILAN, mevcut HTML etiketi) veya
+   * 'surat_official_zpl' (Sürat'in resmî düzeni, yerel SVG render).
+   */
+  labelPrintTemplate?: LabelPrintTemplate
   categoryDefaults: Record<string, number>
   productOverrides: Record<string, number>
   variantOverrides: Record<string, number>

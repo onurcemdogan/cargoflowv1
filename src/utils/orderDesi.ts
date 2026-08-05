@@ -51,6 +51,7 @@ export interface OrderDesiCalculation {
 export const DEFAULT_TENANT_DESI_CONFIG: TenantDesiConfig = {
   defaultUnitDesi: null,
   multiplyByItemQuantity: true,
+  labelPrintTemplate: 'cargoflow_html',
   categoryDefaults: {},
   productOverrides: {},
   variantOverrides: {},
@@ -63,6 +64,11 @@ export function normalizeTenantDesiConfig(
     defaultUnitDesi: positiveNumber(value?.defaultUnitDesi),
     // Eksik alan -> true (mevcut canli davranis korunur).
     multiplyByItemQuantity: value?.multiplyByItemQuantity !== false,
+    // Eksik/bilinmeyen -> cargoflow_html (mevcut baski davranisi korunur).
+    labelPrintTemplate:
+      value?.labelPrintTemplate === 'surat_official_zpl'
+        ? 'surat_official_zpl'
+        : 'cargoflow_html',
     categoryDefaults: normalizeOverrideMap(value?.categoryDefaults),
     productOverrides: normalizeOverrideMap(value?.productOverrides),
     variantOverrides: normalizeOverrideMap(value?.variantOverrides),

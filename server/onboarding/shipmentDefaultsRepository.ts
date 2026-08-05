@@ -19,11 +19,29 @@ export interface ShipmentDefaults {
   // (adet çarpanı) AYNEN sürer; hiçbir müşterinin davranışı kendiliğinden
   // değişmez. false → varsayılan desi paket için YALNIZ BİR KEZ kullanılır.
   multiplyByItemQuantity: boolean
+  // Hangi baskı şablonu kullanılacak?
+  //   cargoflow_html     → mevcut CargoFlow HTML/CSS etiketi (VARSAYILAN)
+  //   surat_official_zpl → Sürat'in resmî ZPL düzeni, yerel SVG render
+  // VARSAYILAN cargoflow_html: alanı olmayan ESKİ kayıtlarda mevcut canlı
+  // baskı davranışı AYNEN sürer; deploy ile kimsenin davranışı değişmez.
+  labelPrintTemplate: LabelPrintTemplate
+}
+
+export type LabelPrintTemplate = 'cargoflow_html' | 'surat_official_zpl'
+
+export const DEFAULT_LABEL_PRINT_TEMPLATE: LabelPrintTemplate = 'cargoflow_html'
+
+// Bilinmeyen/eksik değer → cargoflow_html (geriye dönük uyumluluk).
+export function normalizeLabelPrintTemplate(value: unknown): LabelPrintTemplate {
+  return value === 'surat_official_zpl'
+    ? 'surat_official_zpl'
+    : DEFAULT_LABEL_PRINT_TEMPLATE
 }
 
 export const EMPTY_SHIPMENT_DEFAULTS: ShipmentDefaults = {
   defaultUnitDesi: null,
   multiplyByItemQuantity: true,
+  labelPrintTemplate: DEFAULT_LABEL_PRINT_TEMPLATE,
 }
 
 // Eksik/geçersiz değer → true (geriye dönük uyumluluk). Yalnız açık `false`
@@ -76,6 +94,9 @@ export async function getShipmentDefaults(
     multiplyByItemQuantity: normalizeMultiplyByItemQuantity(
       shipmentDefaults.multiplyByItemQuantity,
     ),
+    labelPrintTemplate: normalizeLabelPrintTemplate(
+      shipmentDefaults.labelPrintTemplate,
+    ),
   }
 }
 
@@ -93,6 +114,9 @@ export async function saveShipmentDefaults(
     defaultUnitDesi: normalizeDefaultUnitDesi(defaults?.defaultUnitDesi),
     multiplyByItemQuantity: normalizeMultiplyByItemQuantity(
       defaults?.multiplyByItemQuantity,
+    ),
+    labelPrintTemplate: normalizeLabelPrintTemplate(
+      defaults?.labelPrintTemplate,
     ),
   }
   await db
