@@ -244,8 +244,29 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
     element.kind === 'box' &&
     element.width >= printWidth * 0.8 &&
     element.height >= labelLength * 0.6
+  // AYNI SINIF, İKİNCİ BİÇİM: etiket boyunca uzanan İNCE DİKEY ÇİZGİ
+  // (^GB0,h,t ile çizilen sütun ayırıcı / ray kenarı). Çerçeve gibi bu da
+  // ÇİZGİDİR, içerik DEĞİLDİR.
+  const isFullHeightRule = (element: ZplElementBox): boolean =>
+    element.kind === 'box' &&
+    element.height >= labelLength * 0.6 &&
+    element.width <= 12
+  // ÜÇÜNCÜ BİÇİM: sol dikey SİPARİŞ RAYI metni. Ray etiketin solunda baştan
+  // sona uzanan YAPISAL bir şerittir ve footer alanı zaten rayın SAĞINDAN
+  // başlar (resolveFooterArea → x = leftRailRight + gap). Ölçüm rayı aşağı
+  // doğru uzuyor sayıp contentBottom'ı etiketin dışına taşıyordu.
+  const isLeftRail = (element: ZplElementBox): boolean =>
+    element.rotated && element.x <= LEFT_RAIL_MAX_X
+  // KÖK NEDEN: bu üç yapısal öge "içerik" sayıldığında contentBottom etiketin
+  // dibine yapışıyor, footer yüksekliği 0 kalıyor ve ürün satırı HİÇBİR
+  // siparişe eklenemiyordu ("Ürün satırı eklenemedi" uyarısının sebebi).
+  // Ölçüm yalnızca DARALTILDI; hiçbir yeni öge içerik sayılmaya başlamadı,
+  // bu yüzden resmî alanların üzerine yazma riski ARTMAZ.
   const contentElements = elements.filter(
-    (element) => !isFullLabelFrame(element),
+    (element) =>
+      !isFullLabelFrame(element) &&
+      !isFullHeightRule(element) &&
+      !isLeftRail(element),
   )
   const contentBottom = (
     contentElements.length > 0 ? contentElements : elements
