@@ -7,6 +7,17 @@
 // ÖNİZLEME VE BASKI AYNI ARTEFAKTI KULLANIR: sonuç sipariş bazında
 // önbelleklenir, böylece önizlemede gösterilen PNG ile Chrome'a giden PNG
 // BİREBİR aynı baytlardır (aynı renderSha256 / printZplSha256).
+//
+// AUTH: istek ortak CargoFlow authenticated API sözleşmesinden geçer
+// (`authenticatedApiRequest`). Organization YALNIZ sunucuda session'dan
+// çözülür; istemci hiçbir kimlik/kapsam alanı göndermez.
+import {
+  authenticatedApiRequest,
+  AUTH_REQUIRED_MESSAGE,
+  isAuthFailureStatus,
+} from './authenticatedApiRequest'
+
+export { AUTH_REQUIRED_MESSAGE }
 
 export interface SuratRenderArtifact {
   mimeType: string
@@ -79,11 +90,23 @@ export function peekSuratRenderArtifact(
 export class SuratRenderRequestError extends Error {
   code: string
   status: number
-  constructor(message: string, code: string, status: number) {
+  /**
+   * Sunucunun teknik mesajı — YALNIZ güvenli tanı kaydı için. Kullanıcıya
+   * `message` gösterilir. Ham ZPL, imageBase64 veya PII İÇERMEZ (uç bunları
+   * zaten döndürmez).
+   */
+  debugMessage?: string
+  constructor(
+    message: string,
+    code: string,
+    status: number,
+    debugMessage?: string,
+  ) {
     super(message)
     this.name = 'SuratRenderRequestError'
     this.code = code
     this.status = status
+    if (debugMessage) this.debugMessage = debugMessage
   }
 }
 
@@ -124,12 +147,13 @@ export async function fetchSuratRenderArtifact(
   artifactCache.delete(key)
   let response: Response
   try {
-    response = await fetch(SURAT_RENDER_ENDPOINT, {
+    // ORTAK AUTHENTICATED API SÖZLEŞMESİ (çıplak fetch YOK): oturum
+    // `cargoflow_session` cookie'siyle aynı origin üzerinden taşınır.
+    // Gövde YALNIZ canonical kimliktir; organizationId, marketplaceAccountId,
+    // ham ZPL, müşteri verisi veya takip numarası GÖNDERİLMEZ.
+    response = await authenticatedApiRequest(SURAT_RENDER_ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      // YALNIZ canonical kimlik. Ham ZPL alanı GÖNDERİLMEZ.
-      body: JSON.stringify({ orderId: key }),
+      json: { orderId: key },
       signal: options.signal,
     })
   } catch {
@@ -143,12 +167,23 @@ export async function fetchSuratRenderArtifact(
     | Record<string, unknown>
     | null
   if (!response.ok || !payload?.ok) {
-    const message =
+    const serverMessage =
       typeof payload?.message === 'string' && payload.message
         ? payload.message
-        : SURAT_RENDER_UNAVAILABLE_MESSAGE
+        : ''
+    // OTURUM REDDİ: kullanıcıya teknik metin değil, GÜVENLİ yeniden-oturum
+    // mesajı gösterilir. Sunucunun gerçek mesajı tanı için `debugMessage`
+    // alanında taşınır (PII, ham ZPL veya imageBase64 İÇERMEZ).
+    if (isAuthFailureStatus(response.status)) {
+      throw new SuratRenderRequestError(
+        AUTH_REQUIRED_MESSAGE,
+        'auth_required',
+        response.status,
+        serverMessage,
+      )
+    }
     throw new SuratRenderRequestError(
-      message,
+      serverMessage || SURAT_RENDER_UNAVAILABLE_MESSAGE,
       typeof payload?.code === 'string' ? payload.code : 'render_failed',
       response.status,
     )

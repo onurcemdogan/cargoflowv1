@@ -329,6 +329,14 @@ const TENANT_AUTH_PATHS = [
   '/api/onboarding',
   '/api/shipments/surat',
   '/api/labels/zpl',
+  // KÖK NEDEN (canlı): resmî Sürat render ucu bu listede YOKTU. Express
+  // `app.use(path, mw)` ÖN EK eşleşmesi yapar ve '/api/labels/zpl',
+  // '/api/labels/render/surat' ile EŞLEŞMEZ. Bu yüzden tenantAuth hiç
+  // çalışmıyor, geçerli `cargoflow_session` cookie'sine rağmen `request.auth`
+  // boş kalıyor ve requireOrderPersistenceContext 404 "Sipariş persistence
+  // yalnız auth modda kullanılabilir." dönüyordu. Guard DEĞİŞMEDİ; yalnız
+  // uç, diğer org-kapsamlı uçlarla AYNI auth kapısının arkasına alındı.
+  '/api/labels/render',
   '/api/printing/zebra',
 ]
 const TENANT_INJECT_PATHS = [
