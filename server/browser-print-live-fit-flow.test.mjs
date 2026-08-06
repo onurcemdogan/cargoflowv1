@@ -235,8 +235,30 @@ test('LIVE-21/22: native/Zebra yoluna HTML fit SIZMAZ, resmî ZPL değişmez', (
     assert.equal(zebra.includes(leak), false, `Zebra dalına sızdı: ${leak}`)
   }
   assert.match(zebra, /jobs: data\.jobs/)
+  // RESMÎ SÜRAT PNG DALI da HTML-OLMAYAN bir yoldur: HTML belge üreticisi veya
+  // ürün-sığdırma çözümleyicisi bu dala SIZMAMALIDIR.
+  const officialStart = provider.indexOf('(await printOfficialSuratLabels(')
+  const officialEnd = provider.indexOf('await printCleanLabelDocument(')
+  assert.ok(officialStart > 0 && officialEnd > officialStart, 'iki dal da var')
+  const officialBranch = provider.slice(officialStart, officialEnd)
+  for (const leak of [
+    'buildCleanLabelDocument', 'resolveProductFit',
+    'resolveLabelLayout', 'resolveRouteFit',
+  ]) {
+    assert.equal(
+      officialBranch.includes(leak),
+      false,
+      `Resmî Sürat dalına sızdı: ${leak}`,
+    )
+  }
   const app = readFileSync(join(here, '..', 'src/App.tsx'), 'utf8')
-  assert.match(app, /printerSettings\.mode !== 'browser-print'\s*\n?\s*\? null/)
+  // SÖZLEŞME GENİŞLETİLDİ (fix/official-surat-print-skip) — GEVŞETİLMEDİ:
+  // ürün-sığdırma kapısı artık HEM Zebra/native HEM resmî Sürat PNG yolunda
+  // devre dışıdır. İddia tek koşul yerine İKİ koşulu birden arar.
+  assert.match(
+    app,
+    /printerSettings\.mode !== 'browser-print' \|\|\s*\n?\s*templateDecision\.template === 'surat_official_zpl'\s*\n?\s*\? null/,
+  )
 })
 
 test('LIVE-23/24/25: ortak handler, popup yok, PII loglanmaz', () => {

@@ -12,12 +12,29 @@ import {
   fetchSuratRenderArtifact,
   SURAT_RENDER_UNAVAILABLE_MESSAGE,
 } from './suratLabelRenderClient'
-import { printOfficialSuratDocument } from '../utils/browserLabelPrint'
+import {
+  printOfficialSuratDocument,
+  suratPrintTrace,
+} from '../utils/browserLabelPrint'
+import { SURAT_ONLY_TEMPLATE_MESSAGE } from '../utils/labelPrintTemplateRouting'
 import type {
   OfficialSuratPage,
   OfficialSuratSkip,
 } from '../utils/officialSuratPrintDocument'
 import type { BrowserLabelPrintDebug } from '../utils/browserLabelPrint'
+
+/**
+ * SAĞLAYICI KONTROLÜ (§6): KANONİK kalıcı gönderi kaydındaki `shipment.provider`
+ * alanı kullanılır. UI satır metni veya görünen kargo adı (`cargoProviderName`)
+ * KULLANILMAZ.
+ *
+ * Alan boşsa istemci karar VERMEZ: sunucu kendi kanonik kaydından doğrular ve
+ * Sürat değilse 409 `not_surat_shipment` döner (tek otorite orada kalır).
+ */
+function isNonSuratShipment(order: CargoOrder): boolean {
+  const provider = String(order.shipment?.provider ?? '').trim()
+  return provider.length > 0 && !/surat|sürat/i.test(provider)
+}
 
 export interface OfficialSuratPrintResult {
   debug: BrowserLabelPrintDebug
@@ -36,10 +53,19 @@ export async function printOfficialSuratLabels(
   const pages: OfficialSuratPage[] = []
   const skipped: OfficialSuratSkip[] = []
 
+  let renderRequested = 0
+  let renderSucceeded = 0
   for (const order of orders) {
     const orderNumber = String(order.orderNumber ?? order.id ?? '-')
+    // Sürat OLMAYAN gönderi için render ucu HİÇ çağrılmaz.
+    if (isNonSuratShipment(order)) {
+      skipped.push({ orderNumber, reason: SURAT_ONLY_TEMPLATE_MESSAGE })
+      continue
+    }
     try {
+      renderRequested += 1
       const artifact = await fetchSuratRenderArtifact(String(order.id ?? ''))
+      renderSucceeded += 1
       pages.push({
         orderNumber,
         imageBase64: artifact.imageBase64,
@@ -56,6 +82,17 @@ export async function printOfficialSuratLabels(
       })
     }
   }
+
+  // GÜVENLİ TELEMETRİ (§9): yalnız şablon, sayım ve mevcut güvenli kimlik
+  // (sipariş numarası). Ham ZPL, imageBase64, müşteri bilgisi, takip numarası
+  // veya şifreli payload LOGLANMAZ.
+  suratPrintTrace('OFFICIAL_TEMPLATE_ROUTED', {
+    template: 'surat_official_zpl',
+    orderNumbers: orders.map((order) => String(order.orderNumber ?? '')),
+    renderRequested,
+    renderSucceeded,
+    skipCount: skipped.length,
+  })
 
   const debug = await printOfficialSuratDocument(pages, skipped)
   return {

@@ -34,17 +34,46 @@ export const SURAT_RENDER_ENDPOINT = '/api/labels/render/surat'
 
 // Sipariş bazında artefakt önbelleği: önizleme + baskı + tekrar baskı AYNI
 // PNG'yi kullanır. Anahtar sipariş kimliğidir; ham ZPL SAKLANMAZ.
-const artifactCache = new Map<string, SuratRenderArtifact>()
+//
+// GÜVENLİ ÖNBELLEK SÖZLEŞMESİ:
+//  - YALNIZ başarılı ve geçerli artefakt yazılır; hata veya boş yanıt ASLA
+//    önbelleğe girmez (başarısız bir giriş sonraki baskıda "etiket yok"
+//    sonucunu doğuramaz).
+//  - Giriş, kendi canonical sipariş kimliğini ve render SHA'sını taşır;
+//    okurken ikisi de doğrulanır. Eşleşmeyen giriş ATILIR ve yeniden render
+//    edilir — başka bir siparişin PNG'si ASLA kullanılmaz.
+interface CachedArtifact {
+  orderId: string
+  renderSha256: string
+  artifact: SuratRenderArtifact
+}
+const artifactCache = new Map<string, CachedArtifact>()
 
 /** Test/oturum temizliği. */
 export function clearSuratRenderCache(): void {
   artifactCache.clear()
 }
 
+/** Anahtar + giriş içeriği tutarlıysa artefaktı verir; değilse girişi ATAR. */
+function readCachedArtifact(key: string): SuratRenderArtifact | undefined {
+  const entry = artifactCache.get(key)
+  if (!entry) return undefined
+  const valid =
+    entry.orderId === key &&
+    Boolean(entry.renderSha256) &&
+    entry.renderSha256 === entry.artifact.renderSha256 &&
+    Boolean(entry.artifact.imageBase64)
+  if (!valid) {
+    artifactCache.delete(key)
+    return undefined
+  }
+  return entry.artifact
+}
+
 export function peekSuratRenderArtifact(
   orderId: string,
 ): SuratRenderArtifact | undefined {
-  return artifactCache.get(String(orderId))
+  return readCachedArtifact(String(orderId))
 }
 
 export class SuratRenderRequestError extends Error {
@@ -79,10 +108,20 @@ export async function fetchSuratRenderArtifact(
   options: { force?: boolean; signal?: AbortSignal } = {},
 ): Promise<SuratRenderArtifact> {
   const key = String(orderId)
+  if (!key) {
+    throw new SuratRenderRequestError(
+      SURAT_RENDER_UNAVAILABLE_MESSAGE,
+      'missing_order_id',
+      0,
+    )
+  }
   if (!options.force) {
-    const cached = artifactCache.get(key)
+    const cached = readCachedArtifact(key)
     if (cached) return cached
   }
+  // Bu sipariş için elde kalan (varsa bozuk) giriş, yeni render sonucuyla
+  // değiştirilir; hata durumunda ise HİÇ giriş bırakılmaz.
+  artifactCache.delete(key)
   let response: Response
   try {
     response = await fetch(SURAT_RENDER_ENDPOINT, {
@@ -138,6 +177,10 @@ export async function fetchSuratRenderArtifact(
       ? { warning: payload.warning }
       : {}),
   }
-  artifactCache.set(key, artifact)
+  artifactCache.set(key, {
+    orderId: key,
+    renderSha256: artifact.renderSha256,
+    artifact,
+  })
   return artifact
 }

@@ -1004,8 +1004,15 @@ function App() {
           // vardi. Iki kalemli siparis on kontrolde bloklanip renderer'a HIC
           // ULASMIYORDU. Artik on kontrol de renderer ile AYNI cozumleyiciyi
           // kullanir; profil secimi TEK yerdedir.
+          //
+          // ŞABLONA DUYARLI: bu kural CargoFlow HTML belgesinin ürün alanına
+          // aittir. Resmî Sürat modunda baskı içeriği sunucudaki kayıtlı
+          // printZpl'den PNG olarak gelir; HTML sığdırma koşulu ARANMAZ.
+          // (Aksi hâlde çok kalemli sipariş, render ucu hiç çağrılmadan ön
+          // kontrolde bloklanıyordu.)
           resolveFitBlock: (order) =>
-            printerSettings.mode !== 'browser-print'
+            printerSettings.mode !== 'browser-print' ||
+            templateDecision.template === 'surat_official_zpl'
               ? null
               : resolveLabelLayoutBlockReason({
                   items: (order.items ?? []).map((line) => ({
