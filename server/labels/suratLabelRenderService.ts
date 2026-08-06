@@ -19,6 +19,10 @@ import {
 } from '../shipments/printZplRepository.ts'
 import { loadPrintLineItems } from '../shipments/printZplItems.ts'
 import {
+  AUGMENTATION_FALLBACK_WARNING,
+  type AugmentationStatus,
+} from '../../src/utils/augmentedSuratZpl.ts'
+import {
   renderZplToPng,
   ZPL_RENDER_FAILED_MESSAGE,
   ZPL_RENDERER_PACKAGE,
@@ -31,9 +35,11 @@ type Db = any
 /** Sürat dışı gönderide resmî şablon KULLANILAMAZ. */
 export const NOT_SURAT_SHIPMENT_MESSAGE =
   'Resmî Sürat şablonu yalnız Sürat Kargo gönderilerinde kullanılabilir.'
-/** Ürün satırı eklenemediğinde gösterilen GÜVENLİ uyarı. */
-export const PRODUCT_LINE_FALLBACK_WARNING =
-  'Ürün satırı eklenemedi; resmî kargo etiketi kullanıldı.'
+/**
+ * Ürün satırı eklenemediğinde gösterilen GÜVENLİ uyarı. Metin TEK KAYNAKTAN
+ * (domain sabiti) gelir; burada kopyalanmaz.
+ */
+export const PRODUCT_LINE_FALLBACK_WARNING = AUGMENTATION_FALLBACK_WARNING
 
 export function isSuratProvider(provider: unknown): boolean {
   return /surat|sürat/i.test(String(provider ?? ''))
@@ -65,7 +71,12 @@ export interface SuratRenderDto {
   renderEngine: string
   renderEngineVersion: string
   zebrashVersion: string
-  augmentationStatus: string
+  /**
+   * DOMAIN sözleşmesi: success | overflow | unsupported_template | unavailable.
+   * Kalıcılık katmanının `augmented | source_only` bayrağı DTO'ya SIZMAZ —
+   * paralel durum sözlüğü YOKTUR.
+   */
+  augmentationStatus: AugmentationStatus
   warning?: string
 }
 
@@ -152,6 +163,14 @@ export async function renderSuratLabel(
     throw new SuratRenderError(502, 'render_failed', ZPL_RENDER_FAILED_MESSAGE)
   }
 
+  // Kalıcılık bayrağı → DOMAIN sözlüğü. Ürün satırı eklendiyse 'success';
+  // eklenmediyse kalıcı artefakttaki gerçek NEDEN kullanılır (eski kayıtlarda
+  // neden saklanmadığı için 'unavailable' güvenli varsayılandır).
+  const augmentationStatus: AugmentationStatus =
+    model.augmentationStatus === 'augmented'
+      ? 'success'
+      : (model.augmentationReason ?? 'unavailable')
+
   return {
     mimeType: 'image/png',
     imageBase64: render.pngBase64,
@@ -164,9 +183,9 @@ export async function renderSuratLabel(
     renderEngine: ZPL_RENDERER_PACKAGE,
     renderEngineVersion: ZPL_RENDERER_PACKAGE_VERSION,
     zebrashVersion: render.engine.zebrashVersion,
-    augmentationStatus: model.augmentationStatus,
-    ...(model.augmentationStatus === 'source_only'
-      ? { warning: PRODUCT_LINE_FALLBACK_WARNING }
-      : {}),
+    augmentationStatus,
+    ...(augmentationStatus === 'success'
+      ? {}
+      : { warning: PRODUCT_LINE_FALLBACK_WARNING }),
   }
 }

@@ -27,6 +27,7 @@ import {
 import {
   deriveAugmentedSuratZplWithHashes,
   sha256Hex,
+  type AugmentationStatus as DomainAugmentationStatus,
 } from '../../src/utils/augmentedSuratZpl.ts'
 import type { SuratProductLineItem } from '../../src/utils/suratZplProductLine.ts'
 
@@ -47,6 +48,13 @@ export interface PersistedPrintZpl {
   printZplFooterProfile: string | null
   templateFingerprint: string
   printZplCreatedAt: string
+  /**
+   * DOMAIN augmentation sonucu (success | overflow | unsupported_template |
+   * unavailable). Kalıcı artefaktta saklanır ki reprint'te ürün satırının
+   * NEDEN eklenemediği yeniden augmentation ÇALIŞTIRMADAN bilinebilsin.
+   * Eski kayıtlarda bulunmaz (opsiyonel).
+   */
+  augmentationReason?: DomainAugmentationStatus
 }
 
 export type AugmentationStatus = 'augmented' | 'source_only'
@@ -100,6 +108,10 @@ function readPersisted(
       : null,
     templateFingerprint: readString(block.templateFingerprint),
     printZplCreatedAt: readString(block.printZplCreatedAt),
+    // Eski kayıtlarda YOKTUR; okunamıyorsa undefined kalır.
+    ...(typeof block.augmentationReason === 'string'
+      ? { augmentationReason: block.augmentationReason as DomainAugmentationStatus }
+      : {}),
   }
 }
 
@@ -193,7 +205,11 @@ export function buildPrintZplArtifact(
       printZplFooterProfile: derived.printZplFooterProfile,
       templateFingerprint: derived.templateFingerprint,
       printZplCreatedAt: createdAt,
+      augmentationReason: derived.augmentationStatus,
     },
+    // Kalıcılık düzeyindeki MEVCUT bayrak (augmented | source_only) korunur;
+    // domain sözlüğü AYRICA `augmentationReason` ile taşınır. Paralel bir
+    // durum sözlüğü OLUŞTURULMAZ: DTO domain değerlerini kullanır.
     augmentationStatus: derived.augmented ? 'augmented' : 'source_only',
   }
 }

@@ -31,6 +31,13 @@ import type {
 import { formatDisplayDate, maskSecret } from '../utils/formatters'
 import { describeDesiMultiplierExample } from '../utils/orderDesi'
 import {
+  CARGOFLOW_TEMPLATE_DESCRIPTION,
+  CARGOFLOW_TEMPLATE_LABEL,
+  normalizeLabelPrintTemplate,
+  SURAT_TEMPLATE_DESCRIPTION,
+  SURAT_TEMPLATE_LABEL,
+} from '../utils/labelPrintTemplateRouting'
+import {
   resolveSuratConfigured,
   resolveTrendyolConfigured,
 } from '../utils/integrationConfigured'
@@ -286,6 +293,10 @@ function ShipmentDefaultsSection({
 }: ShipmentDefaultsSectionProps) {
   // Ekrandaki örnek GERÇEK hesaptan gelir (elle yazılmış rakam yok).
   const example = describeDesiMultiplierExample(form.desi?.defaultUnitDesi)
+  // Ayar hiç yoksa veya bilinmeyen bir değer geldiyse CargoFlow seçilidir.
+  const selectedLabelPrintTemplate = normalizeLabelPrintTemplate(
+    form.desi?.labelPrintTemplate,
+  )
 
   function updateDesi(patch: Partial<NonNullable<IntegrationConfig['desi']>>) {
     setForm((current) => ({
@@ -370,6 +381,49 @@ function ShipmentDefaultsSection({
           </span>
         </span>
       </div>
+      {/* KARGO ETİKETİ ŞABLONU — sağlayıcıdan BAĞIMSIZ ortak ayar. Sürat
+          hesabı tanımlı olmasa da görünür. Varsayılan CargoFlow'dur, bu
+          yüzden deploy sonrası mevcut davranış DEĞİŞMEZ. */}
+      <fieldset className="integration-choice-group">
+        <legend>Kargo Etiketi Şablonu</legend>
+        {(
+          [
+            {
+              value: 'cargoflow_html',
+              label: CARGOFLOW_TEMPLATE_LABEL,
+              description: CARGOFLOW_TEMPLATE_DESCRIPTION,
+            },
+            {
+              value: 'surat_official_zpl',
+              label: SURAT_TEMPLATE_LABEL,
+              description: SURAT_TEMPLATE_DESCRIPTION,
+            },
+          ] as const
+        ).map((option) => (
+          <div className="integration-toggle-row" key={option.value}>
+            <input
+              id={`label-print-template-${option.value}`}
+              type="radio"
+              name="label-print-template"
+              value={option.value}
+              checked={selectedLabelPrintTemplate === option.value}
+              disabled={busy}
+              onChange={() => updateDesi({ labelPrintTemplate: option.value })}
+            />
+            <span className="integration-toggle-text">
+              <label
+                className="integration-toggle-title"
+                htmlFor={`label-print-template-${option.value}`}
+              >
+                {option.label}
+              </label>
+              <span className="integration-toggle-description">
+                {option.description}
+              </span>
+            </span>
+          </div>
+        ))}
+      </fieldset>
       <div className="integration-detail-footer">
         <button
           type="button"

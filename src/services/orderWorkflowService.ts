@@ -1,3 +1,4 @@
+import type { LabelPrintTemplate } from '../utils/labelPrintTemplateRouting'
 import type { LabelProvider } from '../providers/labels/LabelProvider'
 import type { MarketplaceProvider } from '../providers/marketplace/MarketplaceProvider'
 import type { PrintProvider, PrintResult } from '../providers/printing/PrintProvider'
@@ -2250,6 +2251,9 @@ export class OrderWorkflowService {
       confirmedAt: string
       printedBy?: string
       includePreviouslyPrinted?: boolean
+      // Bu çalışmada kullanılacak şablon; karar UI'daki TEK çözümleyiciden
+      // (resolveLabelPrintTemplateDecision) gelir.
+      labelPrintTemplate?: LabelPrintTemplate
     },
   ): Promise<{
     orders: CargoOrder[]
@@ -2345,6 +2349,7 @@ export class OrderWorkflowService {
       confirmedAt: options.confirmedAt,
       labelTemplate: template,
       mappingConfig,
+      labelPrintTemplate: options.labelPrintTemplate,
       // Etiket renk/beden tamamlama icin organizasyon kapsamli katalog.
       products: this.loadProducts(),
     })

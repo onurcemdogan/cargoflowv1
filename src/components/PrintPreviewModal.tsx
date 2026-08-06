@@ -13,6 +13,8 @@ import {
   resolvePrintableLabel,
 } from '../utils/printableLabel'
 import { LabelPreviewCard } from './LabelPreviewCard'
+import { SuratOfficialLabelPreview } from './SuratOfficialLabelPreview'
+import type { LabelPrintTemplate } from '../utils/labelPrintTemplateRouting'
 import {
   desiValuesDiffer,
   extractZplDesi,
@@ -33,6 +35,8 @@ interface PrintPreviewModalProps {
   busy: boolean
   // Organizasyon kapsamli urun katalogu (etiket renk/beden tamamlama).
   products?: CargoProduct[]
+  /** Önizlemenin hangi şablonu göstereceği (organizasyon varsayılanı). */
+  labelPrintTemplate?: LabelPrintTemplate
   onClose: () => void
   onConfirm: (orderIds: string[], includePreviouslyPrinted: boolean) => void
   onModeChange?: (mode: Exclude<PrintPreviewMode, 'preview'>) => void
@@ -53,6 +57,7 @@ export function PrintPreviewModal({
   printerSettings,
   busy,
   products = [],
+  labelPrintTemplate = 'cargoflow_html',
   onClose,
   onConfirm,
   onModeChange,
@@ -253,6 +258,12 @@ export function PrintPreviewModal({
               />
               {ready ? (
                 <section className="bulk-label-paper">
+                  {/* Resmî Sürat modunda önizleme, Chrome baskısıyla AYNI
+                      endpoint artefaktını gösterir. CargoFlow HTML modunda
+                      mevcut önizleme AYNEN korunur. */}
+                  {labelPrintTemplate === 'surat_official_zpl' ? (
+                    <SuratOfficialLabelPreview order={resolution.order} />
+                  ) : (
                   <LabelPreviewCard
                     order={order}
                     labelData={buildPrintableLabelData(
@@ -266,6 +277,7 @@ export function PrintPreviewModal({
                     overrides={previewDrafts[order.id]}
                     products={products}
                   />
+                  )}
                 </section>
               ) : (
                 <section className="bulk-label-unavailable">

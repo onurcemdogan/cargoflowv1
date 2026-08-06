@@ -420,6 +420,8 @@ app.get('/api/local-config/integration', async (request, response) => {
         desi: {
           defaultUnitDesi: shipmentDefaults.defaultUnitDesi,
           multiplyByItemQuantity: shipmentDefaults.multiplyByItemQuantity,
+          labelPrintTemplate: shipmentDefaults.labelPrintTemplate,
+          labelPrintTemplate: shipmentDefaults.labelPrintTemplate,
         },
       })
     } catch {
@@ -536,6 +538,9 @@ app.put('/api/local-config/integration', async (request, response) => {
           multiplyByItemQuantity:
             incoming.desi.multiplyByItemQuantity ??
             shipmentDefaults.multiplyByItemQuantity,
+          labelPrintTemplate:
+            incoming.desi.labelPrintTemplate ??
+            shipmentDefaults.labelPrintTemplate,
         })
       }
       const status = await getMaskedIntegrationStatus(db, organizationId)

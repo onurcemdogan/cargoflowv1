@@ -33,7 +33,9 @@ test('UI-2: buton SEÇİM üzerinden çalışır, görünür listeden DEĞİL', 
   assert.match(app, /handleCreateAndPrintCarrierLabelsForIds\(selectedIds\)/)
   assert.match(
     app,
-    /function handleCreateAndPrintCarrierLabelsForIds[\s\S]*?handleSuratCreateAndPrintForIds\(ids\)/,
+    // GUNCELLENDI: wrapper artik (ids, printOptions) tasir; yonlendirme
+    // HEDEFI degismedi.
+    /function handleCreateAndPrintCarrierLabelsForIds[\s\S]*?handleSuratCreateAndPrintForIds\(ids, printOptions\)/,
     'wrapper mevcut akisa yonlendirir',
   )
   const handler = app.slice(

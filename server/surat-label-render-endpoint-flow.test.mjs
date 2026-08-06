@@ -287,7 +287,7 @@ test('RE-11: augmentation ürün satırı yoksa technicalZpl render edilir + gü
   // Sipariş satırı YOK → ürün satırı üretilemez.
   const seeded = await seed(db)
   const dto = await render(db, seeded)
-  assert.equal(dto.augmentationStatus, 'source_only')
+  assert.equal(dto.augmentationStatus, 'unavailable')
   assert.equal(dto.warning, 'Ürün satırı eklenemedi; resmî kargo etiketi kullanıldı.')
   assert.equal(/\^XA|\^FD/.test(dto.warning), false)
   assert.equal(dto.widthPx, 799, 'baskı BLOKLANMAZ')

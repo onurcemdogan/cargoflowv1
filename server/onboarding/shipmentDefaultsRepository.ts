@@ -11,6 +11,20 @@ import { ensureSettings } from './onboardingRepository.ts'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
 
+/**
+ * Baskı şablonu — organization_settings JSONB içinde saklanır.
+ * YENİ KOLON veya MIGRATION GEREKMEZ. Alanı olmayan eski kayıtlar ve
+ * bilinmeyen değerler güvenli varsayılana düşer, böylece deploy sonrası
+ * mevcut kullanıcıların baskı davranışı KENDİLİĞİNDEN DEĞİŞMEZ.
+ */
+export type LabelPrintTemplate = 'cargoflow_html' | 'surat_official_zpl'
+export const DEFAULT_LABEL_PRINT_TEMPLATE: LabelPrintTemplate = 'cargoflow_html'
+export function normalizeLabelPrintTemplate(value: unknown): LabelPrintTemplate {
+  return value === 'surat_official_zpl'
+    ? 'surat_official_zpl'
+    : DEFAULT_LABEL_PRINT_TEMPLATE
+}
+
 export interface ShipmentDefaults {
   // Varsayılan BİRİM desi. null → ayar yok (eski davranış).
   defaultUnitDesi: number | null
@@ -19,11 +33,14 @@ export interface ShipmentDefaults {
   // (adet çarpanı) AYNEN sürer; hiçbir müşterinin davranışı kendiliğinden
   // değişmez. false → varsayılan desi paket için YALNIZ BİR KEZ kullanılır.
   multiplyByItemQuantity: boolean
+  /** Baskı şablonu: cargoflow_html (VARSAYILAN) | surat_official_zpl. */
+  labelPrintTemplate: LabelPrintTemplate
 }
 
 export const EMPTY_SHIPMENT_DEFAULTS: ShipmentDefaults = {
   defaultUnitDesi: null,
   multiplyByItemQuantity: true,
+  labelPrintTemplate: DEFAULT_LABEL_PRINT_TEMPLATE,
 }
 
 // Eksik/geçersiz değer → true (geriye dönük uyumluluk). Yalnız açık `false`
@@ -73,6 +90,9 @@ export async function getShipmentDefaults(
       : {}
   return {
     defaultUnitDesi: normalizeDefaultUnitDesi(shipmentDefaults.defaultUnitDesi),
+    labelPrintTemplate: normalizeLabelPrintTemplate(
+      shipmentDefaults.labelPrintTemplate,
+    ),
     multiplyByItemQuantity: normalizeMultiplyByItemQuantity(
       shipmentDefaults.multiplyByItemQuantity,
     ),
@@ -91,6 +111,9 @@ export async function saveShipmentDefaults(
   const settings = readSettingsJson(current)
   const normalized: ShipmentDefaults = {
     defaultUnitDesi: normalizeDefaultUnitDesi(defaults?.defaultUnitDesi),
+    labelPrintTemplate: normalizeLabelPrintTemplate(
+      defaults?.labelPrintTemplate,
+    ),
     multiplyByItemQuantity: normalizeMultiplyByItemQuantity(
       defaults?.multiplyByItemQuantity,
     ),

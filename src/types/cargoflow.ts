@@ -735,7 +735,7 @@ export interface PrintDebug {
   printHistory: PrintHistoryEntry[]
   browserPrintDebug?: {
     printRequested: boolean
-    printMode: 'chrome-html' | 'zpl-native' | 'test-label'
+    printMode: 'chrome-html' | 'zpl-native' | 'test-label' | 'surat-official-png'
     labelHtmlGenerated: boolean
     labelHtmlLength: number
     barcodeValue: string
@@ -942,6 +942,8 @@ export interface TenantDesiConfig {
    * ayarın bulunmadığı eski kayıtlarda mevcut çarpan davranışı sürer.
    */
   multiplyByItemQuantity?: boolean
+  /** Baskı şablonu: cargoflow_html (VARSAYILAN) | surat_official_zpl. */
+  labelPrintTemplate?: 'cargoflow_html' | 'surat_official_zpl'
   categoryDefaults: Record<string, number>
   productOverrides: Record<string, number>
   variantOverrides: Record<string, number>
