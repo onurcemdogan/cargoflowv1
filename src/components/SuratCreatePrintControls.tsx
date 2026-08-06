@@ -4,6 +4,7 @@ import {
   Barcode,
   Download,
   PackagePlus,
+  Printer,
   RefreshCcw,
   Stamp,
 } from 'lucide-react'
@@ -22,6 +23,10 @@ import {
   EXTERNAL_PROCESSING_MARK_LABEL,
   EXTERNAL_PROCESSING_RESTORE_LABEL,
 } from '../utils/externalProcessing'
+import {
+  SURAT_ONLY_TEMPLATE_MESSAGE,
+  type LabelPrintTemplate,
+} from '../utils/labelPrintTemplateRouting'
 export type { SuratCreatePrintProgress }
 
 // OrdersPage'ten DAVRANIŞ DEĞİŞTİRMEDEN ayrılan tek-buton bölümü.
@@ -51,6 +56,13 @@ export interface SuratCreatePrintControlsProps {
   suratCreatePrintProgress?: SuratCreatePrintProgress
   suratCreatePrintResult?: SuratCreatePrintResult
   onSuratCreateAndPrint?: () => void
+  // GEÇİCİ şablon seçimi: YALNIZ bu baskı çalışması için geçerlidir ve
+  // organization settings değerini DEĞİŞTİRMEZ.
+  onSuratCreateAndPrintWithTemplate?: (template: LabelPrintTemplate) => void
+  /** "Şablon: CargoFlow" | "Şablon: Resmî Sürat" (organizasyon varsayılanı). */
+  labelPrintTemplateIndicator?: string
+  /** Seçimde Sürat gönderisi var mı? Yoksa resmî şablon aksiyonu pasiftir. */
+  hasSuratPrintableSelection?: boolean
   onMarkPrinted: () => void
   onCreateShipments: () => void
   onTrackShipments: () => void
@@ -86,6 +98,9 @@ export function SuratCreatePrintControls({
   suratCreatePrintProgress,
   suratCreatePrintResult,
   onSuratCreateAndPrint,
+  onSuratCreateAndPrintWithTemplate,
+  labelPrintTemplateIndicator,
+  hasSuratPrintableSelection = true,
   onMarkPrinted,
   onCreateShipments,
   onTrackShipments,
@@ -239,6 +254,15 @@ export function SuratCreatePrintControls({
               ? suratPhaseText || 'İşleniyor…'
               : 'Kargo Etiketi Oluştur ve Yazdır'}
           </button>
+          {/* Küçük ve tek satırlık gösterge; yeni panel EKLEMEZ. */}
+          {labelPrintTemplateIndicator ? (
+            <span
+              className="surat-template-indicator"
+              data-testid="label-print-template-indicator"
+            >
+              {labelPrintTemplateIndicator}
+            </span>
+          ) : null}
           <div className="surat-advanced-actions" ref={advancedRef}>
             <button
               type="button"
@@ -252,6 +276,57 @@ export function SuratCreatePrintControls({
             </button>
             {menuOpen ? (
               <div className="surat-advanced-menu" role="menu">
+          {/* GEÇİCİ ŞABLON SEÇİMİ — ayarı DEĞİŞTİRMEZ, yalnız bu çalışmaya
+              uygulanır. Popup/onay modalı YOKTUR. */}
+          {onSuratCreateAndPrintWithTemplate ? (
+            <button
+              type="button"
+              className="secondary-button"
+              role="menuitem"
+              data-testid="print-with-cargoflow-template"
+              onClick={() => {
+                setAdvancedOpen(false)
+                onSuratCreateAndPrintWithTemplate('cargoflow_html')
+              }}
+              title={
+                selectedIds.length === 0
+                  ? 'Önce en az bir sipariş seçin.'
+                  : 'Bu baskı için CargoFlow etiket şablonunu kullanır; kayıtlı ayar değişmez.'
+              }
+              disabled={busy || actionsLocked || selectedIds.length === 0}
+            >
+              <Printer size={18} />
+              CargoFlow Şablonuyla Yazdır
+            </button>
+          ) : null}
+          {onSuratCreateAndPrintWithTemplate ? (
+            <button
+              type="button"
+              className="secondary-button"
+              role="menuitem"
+              data-testid="print-with-surat-template"
+              onClick={() => {
+                setAdvancedOpen(false)
+                onSuratCreateAndPrintWithTemplate('surat_official_zpl')
+              }}
+              title={
+                selectedIds.length === 0
+                  ? 'Önce en az bir sipariş seçin.'
+                  : !hasSuratPrintableSelection
+                    ? SURAT_ONLY_TEMPLATE_MESSAGE
+                    : 'Bu baskı için Sürat’in resmî etiket düzenini kullanır; kayıtlı ayar değişmez.'
+              }
+              disabled={
+                busy ||
+                actionsLocked ||
+                selectedIds.length === 0 ||
+                !hasSuratPrintableSelection
+              }
+            >
+              <Printer size={18} />
+              Resmî Sürat Şablonuyla Yazdır
+            </button>
+          ) : null}
           <button
             type="button"
             className="secondary-button"

@@ -420,6 +420,8 @@ app.get('/api/local-config/integration', async (request, response) => {
         desi: {
           defaultUnitDesi: shipmentDefaults.defaultUnitDesi,
           multiplyByItemQuantity: shipmentDefaults.multiplyByItemQuantity,
+          labelPrintTemplate: shipmentDefaults.labelPrintTemplate,
+          labelPrintTemplate: shipmentDefaults.labelPrintTemplate,
         },
       })
     } catch {
@@ -536,6 +538,9 @@ app.put('/api/local-config/integration', async (request, response) => {
           multiplyByItemQuantity:
             incoming.desi.multiplyByItemQuantity ??
             shipmentDefaults.multiplyByItemQuantity,
+          labelPrintTemplate:
+            incoming.desi.labelPrintTemplate ??
+            shipmentDefaults.labelPrintTemplate,
         })
       }
       const status = await getMaskedIntegrationStatus(db, organizationId)
@@ -851,6 +856,70 @@ app.get('/api/orders/:id/label', async (request, response) => {
     })
   } catch {
     response.status(500).json({ ok: false, message: 'Kayıtlı etiket alınamadı.' })
+  }
+})
+
+// POST /api/labels/render/surat — RESMÎ SÜRAT ETİKETİNİ PNG OLARAK RENDER EDER.
+//
+// Motor: zebrash (zpl-renderer-js@4.0.0) — CargoFlow sunucusunda YEREL çalışır,
+// hiçbir harici render servisine (Labelary vb.) çıkılmaz.
+//
+// GÜVENLİK SÖZLEŞMESİ
+//   - İstemciden HAM ZPL KABUL EDİLMEZ: gövdede yalnız canonical orderId
+//     bulunur; `zpl` benzeri alan gelirse istek 400 ile REDDEDİLİR.
+//   - Yanıt ham ZPL, şifreli payload veya ayrı müşteri alanı İÇERMEZ.
+//   - Org yalnız req.auth'tan; aktif pazaryeri hesabı backend'de çözülür.
+//   - Provider/marketplace çağrısı YOK, yeni shipment YOK, printCount ve
+//     labelStatus DEĞİŞMEZ.
+//   - Görüntü hassastır: private/no-store, nosniff.
+app.post('/api/labels/render/surat', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const body = request.body ?? {}
+  // İstemci RAW ZPL GÖNDEREMEZ.
+  for (const forbidden of ['zpl', 'printZpl', 'technicalZpl', 'barcodeRaw']) {
+    if (body[forbidden] !== undefined) {
+      response.status(400).json({
+        ok: false,
+        code: 'raw_zpl_not_accepted',
+        message: 'Bu uç ham ZPL kabul etmez; yalnız sipariş kimliği gönderin.',
+      })
+      return
+    }
+  }
+  const orderId = String(body.orderId ?? '')
+  if (!orderId) {
+    response.status(400).json({ ok: false, message: 'orderId zorunlu.' })
+    return
+  }
+  try {
+    const [{ renderSuratLabel, SuratRenderError }, { getOrder }] = await Promise.all([
+      import('./labels/suratLabelRenderService.ts'),
+      import('./orders/orderPersistenceService.ts'),
+    ])
+    const dto = await renderSuratLabel({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: context.marketplaceAccountId,
+      orderId,
+      getOrder,
+    })
+    response.set('Cache-Control', 'private, no-store')
+    response.set('Pragma', 'no-cache')
+    response.set('X-Content-Type-Options', 'nosniff')
+    response.json({ ok: true, ...dto })
+    void SuratRenderError
+  } catch (error) {
+    const status = Number(error?.status) || 500
+    // Hata mesajı ham ZPL veya PII TAŞIMAZ.
+    response.status(status).json({
+      ok: false,
+      code: error?.code ?? 'render_failed',
+      message:
+        error instanceof Error && error.message
+          ? error.message
+          : 'Resmî Sürat etiketi oluşturulamadı.',
+    })
   }
 })
 

@@ -27,6 +27,11 @@ import {
   buildProductTitleText,
 } from './labelProductFit'
 import { resolveLabelLayout } from './labelLayoutResolver'
+import {
+  buildOfficialSuratPrintDocument,
+  type OfficialSuratPage,
+  type OfficialSuratSkip,
+} from './officialSuratPrintDocument'
 
 // Her etiket sayfası kendi bağımsız (immutable) modelini kullanır; bir
 // siparişin kodları başka siparişe sızamaz.
@@ -396,7 +401,7 @@ export interface BrowserLabelPrintDebug {
   /** Belgeye GERCEKTEN giren siparis numaralari. */
   printedOrderNumbers?: string[]
   printRequested: boolean
-  printMode: 'chrome-html' | 'zpl-native' | 'test-label'
+  printMode: 'chrome-html' | 'zpl-native' | 'test-label' | 'surat-official-png'
   labelHtmlGenerated: boolean
   labelHtmlLength: number
   barcodeValue: string
@@ -652,89 +657,7 @@ export async function printCleanLabelDocument(
       return failPrint(debug, 'Yazdırılacak etiket içeriği oluşturulamadı.')
     }
 
-    const iframe = ensurePersistentPrintFrame(executionId)
-    const frameDocument = iframe.contentDocument
-    const frameWindow = iframe.contentWindow
-    if (!frameDocument || !frameWindow) {
-      suratPrintTrace('PRINT_ERROR', {
-        executionId,
-        reason: 'iframe-content-unavailable',
-      })
-      return failPrint(debug, 'Baskı iframe belgesi oluşturulamadı.')
-    }
-    debug.printWindowOpened = true
-
-    suratPrintTrace('DOCUMENT_WRITE_START', { executionId })
-    writePrintDocument(frameDocument, printHtml)
-    suratPrintTrace('DOCUMENT_WRITE_END', { executionId })
-    await waitForPrintDocument(frameDocument)
-
-    // Tanı: afterprint/beforeunload yalnız LOGLANIR; hiçbir cleanup yapılmaz.
-    try {
-      frameWindow.onafterprint = () =>
-        suratPrintTrace('AFTERPRINT_FIRED', {
-          executionId,
-          action: 'none',
-          windowClosed: false,
-        })
-      frameWindow.onbeforeunload = () =>
-        suratPrintTrace('WINDOW_BEFOREUNLOAD', { executionId })
-    } catch {
-      // bazı ortamlarda listener atanamayabilir; kritik değil
-    }
-
-    const frameFonts = (
-      frameDocument as Document & { fonts?: { ready?: Promise<unknown> } }
-    ).fonts
-    if (frameFonts?.ready) {
-      await frameFonts.ready
-    }
-    suratPrintTrace('FONTS_READY', { executionId })
-
-    // Kritik (canlı enstrümantasyonla doğrulandı): gizli/0x0 iframe'in kendi
-    // rAF'i Chrome'da HİÇ tetiklenmez; arka plan sekmelerde PARENT rAF de
-    // duraklatılır. Akış RAF beklemesinde asılı kalıyordu. Bu yüzden rAF her
-    // zaman kısa bir timeout ile YARIŞTIRILIR — hangisi önce gelirse akış
-    // ilerler, asla asılı kalmaz.
-    const raf =
-      typeof window !== 'undefined' &&
-      typeof window.requestAnimationFrame === 'function'
-        ? window.requestAnimationFrame.bind(window)
-        : typeof frameWindow.requestAnimationFrame === 'function'
-          ? frameWindow.requestAnimationFrame.bind(frameWindow)
-          : null
-    const nextPaintTick = (): Promise<'raf' | 'timeout'> =>
-      new Promise((resolve) => {
-        let settled = false
-        const settle = (source: 'raf' | 'timeout') => {
-          if (settled) return
-          settled = true
-          resolve(source)
-        }
-        if (raf) raf(() => settle('raf'))
-        setTimeout(() => settle('timeout'), 100)
-      })
-    suratPrintTrace('RAF_1', { executionId, source: await nextPaintTick() })
-    suratPrintTrace('RAF_2', { executionId, source: await nextPaintTick() })
-    await new Promise<void>((resolve) => setTimeout(resolve, 250))
-
-    frameWindow.focus()
-    suratPrintTrace('PRINT_CALL_START', {
-      executionId,
-      orderNumbers,
-      printTriggered: true,
-    })
-    frameWindow.print()
-    debug.printCalled = true
-    suratPrintTrace('PRINT_CALL_END', {
-      executionId,
-      orderNumbers,
-      printTriggered: true,
-      cleanup: 'none',
-    })
-    // Print sonrası HİÇBİR cleanup yok: iframe DOM'da kalır, pencere
-    // kapatılmaz; Chrome dialogunu kullanıcı kapatır.
-    return debug
+    return await dispatchPrintDocument(printHtml, debug, executionId, orderNumbers)
   } catch (error) {
     if (!(error instanceof BrowserLabelPrintError)) {
       suratPrintTrace('PRINT_ERROR', {
@@ -743,6 +666,175 @@ export async function printCleanLabelDocument(
       })
     }
     throw error
+  } finally {
+    activePrintExecution = null
+  }
+}
+
+
+// ---------------------------------------------------------------------------
+// ORTAK BASKI YAŞAM DÖNGÜSÜ — kalıcı gizli iframe + window.print.
+//
+// HEM CargoFlow HTML şablonu HEM resmî Sürat PNG belgesi BU fonksiyonu
+// kullanır. İkinci pencere/iframe AÇILMAZ, popup KULLANILMAZ, başarılı yolda
+// cleanup YAPILMAZ. Davranış HTML yolundan AYNEN taşınmıştır.
+// ---------------------------------------------------------------------------
+async function dispatchPrintDocument(
+  printHtml: string,
+  debug: BrowserLabelPrintDebug,
+  executionId: string,
+  orderNumbers: string[],
+): Promise<BrowserLabelPrintDebug> {
+  const iframe = ensurePersistentPrintFrame(executionId)
+  const frameDocument = iframe.contentDocument
+  const frameWindow = iframe.contentWindow
+  if (!frameDocument || !frameWindow) {
+    suratPrintTrace('PRINT_ERROR', {
+      executionId,
+      reason: 'iframe-content-unavailable',
+    })
+    return failPrint(debug, 'Baskı iframe belgesi oluşturulamadı.')
+  }
+  debug.printWindowOpened = true
+
+  suratPrintTrace('DOCUMENT_WRITE_START', { executionId })
+  writePrintDocument(frameDocument, printHtml)
+  suratPrintTrace('DOCUMENT_WRITE_END', { executionId })
+  await waitForPrintDocument(frameDocument)
+
+  // Tanı: afterprint/beforeunload yalnız LOGLANIR; hiçbir cleanup yapılmaz.
+  try {
+    frameWindow.onafterprint = () =>
+      suratPrintTrace('AFTERPRINT_FIRED', {
+        executionId,
+        action: 'none',
+        windowClosed: false,
+      })
+    frameWindow.onbeforeunload = () =>
+      suratPrintTrace('WINDOW_BEFOREUNLOAD', { executionId })
+  } catch {
+    // bazı ortamlarda listener atanamayabilir; kritik değil
+  }
+
+  const frameFonts = (
+    frameDocument as Document & { fonts?: { ready?: Promise<unknown> } }
+  ).fonts
+  if (frameFonts?.ready) {
+    await frameFonts.ready
+  }
+  suratPrintTrace('FONTS_READY', { executionId })
+
+  // Kritik (canlı enstrümantasyonla doğrulandı): gizli/0x0 iframe'in kendi
+  // rAF'i Chrome'da HİÇ tetiklenmez; arka plan sekmelerde PARENT rAF de
+  // duraklatılır. Akış RAF beklemesinde asılı kalıyordu. Bu yüzden rAF her
+  // zaman kısa bir timeout ile YARIŞTIRILIR — hangisi önce gelirse akış
+  // ilerler, asla asılı kalmaz.
+  const raf =
+    typeof window !== 'undefined' &&
+    typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame.bind(window)
+      : typeof frameWindow.requestAnimationFrame === 'function'
+        ? frameWindow.requestAnimationFrame.bind(frameWindow)
+        : null
+  const nextPaintTick = (): Promise<'raf' | 'timeout'> =>
+    new Promise((resolve) => {
+      let settled = false
+      const settle = (source: 'raf' | 'timeout') => {
+        if (settled) return
+        settled = true
+        resolve(source)
+      }
+      if (raf) raf(() => settle('raf'))
+      setTimeout(() => settle('timeout'), 100)
+    })
+  suratPrintTrace('RAF_1', { executionId, source: await nextPaintTick() })
+  suratPrintTrace('RAF_2', { executionId, source: await nextPaintTick() })
+  await new Promise<void>((resolve) => setTimeout(resolve, 250))
+
+  frameWindow.focus()
+  suratPrintTrace('PRINT_CALL_START', {
+    executionId,
+    orderNumbers,
+    printTriggered: true,
+  })
+  frameWindow.print()
+  debug.printCalled = true
+  suratPrintTrace('PRINT_CALL_END', {
+    executionId,
+    orderNumbers,
+    printTriggered: true,
+    cleanup: 'none',
+  })
+  // Print sonrası HİÇBİR cleanup yok: iframe DOM'da kalır, pencere
+  // kapatılmaz; Chrome dialogunu kullanıcı kapatır.
+  return debug
+}
+
+// ---------------------------------------------------------------------------
+// RESMÎ SÜRAT ŞABLONU BASKISI
+//
+// render endpoint PNG'si → 100 × 100 mm belge → KALICI gizli iframe →
+// window.print → Chrome yazdırma penceresi.
+//
+// Harici servis çağrısı YOKTUR (PNG zaten CargoFlow sunucusundan gelir).
+// Resmî modda CargoFlow HTML etiketi YENİDEN ÇİZİLMEZ. Dönüş sözleşmesi HTML
+// yoluyla AYNIDIR, bu yüzden jobs[].ok, kısmi batch izolasyonu ve printCount
+// sözleşmesi DEĞİŞMEZ.
+// ---------------------------------------------------------------------------
+export async function printOfficialSuratDocument(
+  pages: OfficialSuratPage[],
+  skipped: OfficialSuratSkip[] = [],
+): Promise<BrowserLabelPrintDebug> {
+  const executionId = `print-official-${++printExecutionCounter}`
+  const orderNumbers = pages.map((page) => String(page.orderNumber ?? ''))
+  const debug: BrowserLabelPrintDebug = {
+    printRequested: true,
+    printMode: 'surat-official-png',
+    labelHtmlGenerated: false,
+    labelHtmlLength: 0,
+    barcodeValue: '',
+    zplAvailable: true,
+    printableContentPreview: '',
+    printWindowOpened: false,
+    printCalled: false,
+    skipped,
+    printedOrderNumbers: [],
+  }
+  suratPrintTrace('PRINT_FLOW_START', {
+    executionId,
+    orderNumbers,
+    activePrintExecution,
+    template: 'surat_official_zpl',
+  })
+  if (activePrintExecution) {
+    return failPrint(
+      debug,
+      'Devam eden bir yazdırma işlemi var; aynı anda ikinci yazdırma başlatılmadı.',
+    )
+  }
+  if (typeof document === 'undefined') {
+    return failPrint(
+      debug,
+      'Tarayıcı baskı belgesi yalnızca kullanıcı arayüzünde açılabilir.',
+    )
+  }
+  if (pages.length === 0) {
+    return failPrint(debug, 'Yazdırılacak etiket bulunamadı.')
+  }
+  activePrintExecution = executionId
+  try {
+    const documentModel = buildOfficialSuratPrintDocument(pages, skipped)
+    debug.labelHtmlGenerated = true
+    debug.labelHtmlLength = documentModel.html.length
+    debug.printedOrderNumbers = documentModel.pages.map((page) => page.orderNumber)
+    // Güvenli önizleme: ham ZPL veya PII TAŞIMAZ.
+    debug.printableContentPreview = `surat-official-png pages=${documentModel.pages.length}`
+    return await dispatchPrintDocument(
+      documentModel.html,
+      debug,
+      executionId,
+      orderNumbers,
+    )
   } finally {
     activePrintExecution = null
   }

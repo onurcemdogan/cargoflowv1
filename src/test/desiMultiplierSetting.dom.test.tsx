@@ -179,7 +179,16 @@ test('UI-9: klavye ile (Tab + Space) çalışır', async () => {
   expect(document.activeElement).toBe(toggle())
   await user.keyboard(' ')
   expect(toggle().checked).toBe(false)
-  await user.tab()
+  // GÜNCELLENDİ (gerekçe): ortak bölüme "Kargo Etiketi Şablonu" radyo grubu
+  // eklendiği için anahtar ile Kaydet arasında bir sekme durağı daha var.
+  // Test ZAYIFLATILMADI: hâlâ YALNIZ klavyeyle Kaydet'e ulaşılıp Enter ile
+  // kaydedildiği doğrulanır; sabit tek Tab varsayımı yerine gerçek odak
+  // sırası izlenir.
+  for (let step = 0; step < 6; step += 1) {
+    if (document.activeElement === saveDefaults()) break
+    await user.tab()
+  }
+  expect(document.activeElement).toBe(saveDefaults())
   await user.keyboard('{Enter}')
   const saved = onSave.mock.calls[0]?.[0] as IntegrationConfig | undefined
   expect(saved?.desi?.multiplyByItemQuantity).toBe(false)
@@ -195,10 +204,22 @@ test('UI-10: busy sırasında anahtar ve kaydet devre dışıdır', async () => 
   expect(onSave).not.toHaveBeenCalled()
 })
 
-test('UI-11: kullanıcıya görünen ortak bölümde "Sürat" GEÇMEZ', () => {
+test('UI-11: desi ayarı ve bölüm başlığı sağlayıcı adı İÇERMEZ', () => {
   renderPage(makeConfig())
-  const text = sharedSection().textContent ?? ''
-  expect(/sürat|surat/i.test(text)).toBe(false)
+  const section = sharedSection()
+  const text = section.textContent ?? ''
+  // GÜNCELLENDİ (gerekçe): bölüm artık "Kargo Etiketi Şablonu" seçimini de
+  // barındırıyor ve seçeneklerden birinin ADI gereği "Resmî Sürat Etiket
+  // Şablonu". Bu, sağlayıcıya bağımlılık değil seçeneğin KENDİ adıdır.
+  // Kural ZAYIFLATILMADI, DARALTILDI: bölüm başlığı ve desi ayarı hâlâ
+  // sağlayıcıdan bağımsızdır; "Sürat" YALNIZ şablon grubunda geçebilir.
+  expect(section.getAttribute('aria-label')).toBe(SHARED_SECTION)
+  expect(/sürat|surat/i.test(SHARED_SECTION)).toBe(false)
+  const templateGroup = within(section).getByRole('group', {
+    name: 'Kargo Etiketi Şablonu',
+  })
+  const withoutTemplateGroup = text.replace(templateGroup.textContent ?? '', '')
+  expect(/sürat|surat/i.test(withoutTemplateGroup)).toBe(false)
   expect(text).toContain('Ürün adedine göre desiyi çarp')
   expect(text).toContain(
     'Açık olduğunda varsayılan gönderi desisi siparişteki toplam ürün adediyle çarpılır.',

@@ -6,6 +6,7 @@ import type {
   SuratLabelMappingConfig,
 } from '../../types/cargoflow'
 import type { BrowserLabelPrintDebug } from '../../utils/browserLabelPrint'
+import type { LabelPrintTemplate } from '../../utils/labelPrintTemplateRouting'
 
 export interface PrintInput {
   orders: CargoOrder[]
@@ -15,6 +16,9 @@ export interface PrintInput {
   confirmedAt?: string
   labelTemplate?: LabelTemplate
   mappingConfig?: SuratLabelMappingConfig
+  // Bu çalışmada kullanılacak baskı şablonu. Verilmezse mevcut davranış:
+  // CargoFlow HTML. Yalnız browser-print modunda anlamlıdır.
+  labelPrintTemplate?: LabelPrintTemplate
   // Organizasyon kapsamli urun katalogu (etiket renk/beden tamamlama icin).
   // Saglanmazsa davranis eskisi gibidir: yalniz siparis satiri verisi kullanilir.
   products?: CargoProduct[]
