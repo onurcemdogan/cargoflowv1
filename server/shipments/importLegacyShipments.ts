@@ -9,6 +9,7 @@ import { homedir } from 'node:os'
 import { shipmentOperations } from '../db/schema.ts'
 import { encryptShipmentPayload } from './shipmentEncryption.ts'
 import { upsertShipment } from './shipmentRepository.ts'
+import { SURAT_PERSISTENCE_PROVIDER } from './suratProvider.ts'
 
 export interface ImportSummary {
   read: number
@@ -75,7 +76,7 @@ async function importOne(
     first(record.carrierSenderNumber, shipment.senderNumber) || null
   const packageId = first(record.packageId, shipment.packageId)
   const marketplace = first(record.marketplace, 'Trendyol')
-  const provider = first(record.provider, 'surat')
+  const provider = first(record.provider, SURAT_PERSISTENCE_PROVIDER)
   if (dryRun) return 'inserted'
   try {
     // Duplicate güvenli atlama: onConflictDoNothing ile mevcut kayıt korunur.

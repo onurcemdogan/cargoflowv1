@@ -11,6 +11,7 @@ import {
   type OperationDb,
 } from './shipmentOperationRepository.ts'
 import { upsertShipment, type RepositoryDb } from './shipmentRepository.ts'
+import { SURAT_PERSISTENCE_PROVIDER } from './suratProvider.ts'
 
 type ServiceDb = OperationDb &
   RepositoryDb & {
@@ -45,7 +46,7 @@ function recordToColumns(
     marketplace: first(record.marketplace, 'Trendyol'),
     packageId: first(record.packageId, shipment.packageId),
     orderNumber: first(record.orderNumber, record.orderId) || null,
-    provider: first(record.provider, 'surat'),
+    provider: first(record.provider, SURAT_PERSISTENCE_PROVIDER),
     operationType: first(record.operation, 'CREATE'),
     idempotencyKey: String(record.idempotencyKey ?? ''),
     status: opStatus,

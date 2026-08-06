@@ -18,6 +18,7 @@ import {
   PRINT_ZPL_SOURCE_MISSING_MESSAGE,
 } from '../shipments/printZplRepository.ts'
 import { loadPrintLineItems } from '../shipments/printZplItems.ts'
+import { SURAT_PERSISTENCE_PROVIDER } from '../shipments/suratProvider.ts'
 import {
   AUGMENTATION_FALLBACK_WARNING,
   type AugmentationStatus,
@@ -108,10 +109,14 @@ export async function renderSuratLabel(
   }
 
   const shipment = (order.shipment ?? {}) as Record<string, unknown>
-  const provider = String(shipment.provider ?? order.cargoProviderName ?? '')
+  // GÖRÜNEN ad YALNIZ doğrulama içindir: pazaryeri/UI değeri ('surat-kargo',
+  // 'Sürat Kargo Marketplace', ...) olabilir ve DB anahtarı DEĞİLDİR.
+  const displayedProvider = String(
+    shipment.provider ?? order.cargoProviderName ?? '',
+  )
   // Sağlayıcı hiç belirtilmemişse (tek sağlayıcılı kurulum) Sürat sayılır;
   // AÇIKÇA başka bir sağlayıcı yazılıysa resmî şablon REDDEDİLİR.
-  if (provider && !isSuratProvider(provider)) {
+  if (displayedProvider && !isSuratProvider(displayedProvider)) {
     throw new SuratRenderError(409, 'not_surat_shipment', NOT_SURAT_SHIPMENT_MESSAGE)
   }
 
@@ -133,7 +138,12 @@ export async function renderSuratLabel(
         organizationId: request.organizationId,
         marketplace,
         packageId,
-        provider: provider || 'surat-kargo',
+        // KANONİK DB ANAHTARI — görünen ad DEĞİL. `shipments.provider` kolonu
+        // exact `eq(...)` ile sorgulanır ve persistence katmanı bu satırı
+        // DAİMA 'surat' ile yazar. Görünüm değeri ('surat-kargo' vb.) buraya
+        // geçirilirse kayıt bulunamaz. Organization/marketplace/packageId
+        // izolasyonu AYNEN exact kalır.
+        provider: SURAT_PERSISTENCE_PROVIDER,
       },
       {
         // TEMBEL: kalıcı printZpl varsa katalog ve sipariş satırları HİÇ

@@ -19,6 +19,7 @@ process.env.CREDENTIAL_ENCRYPTION_KEY ??= 'b'.repeat(64)
 const schema = await import('./db/schema.ts')
 const encryption = await import('./shipments/shipmentEncryption.ts')
 const renderService = await import('./labels/suratLabelRenderService.ts')
+const { SURAT_PERSISTENCE_PROVIDER } = await import('./shipments/suratProvider.ts')
 
 function migrationStatements() {
   const dir = join(here, '..', 'drizzle')
@@ -83,7 +84,13 @@ async function seed(db, over = {}) {
     organizationId: org.id,
     marketplace,
     packageId,
-    provider: over.provider ?? 'surat-kargo',
+    // FIXTURE DÜZELTMESİ (fix/official-surat-canonical-provider):
+    // burada DB'ye 'surat-kargo' yazılıyordu; ÜRETİM ise bu kolona
+    // DAİMA kanonik 'surat' yazar (server/index.mjs create yolu).
+    // Yanlış fixture, görünüm değerini anahtar olarak kullanan lookup
+    // hatasını MASKELİYORDU. İddia GEVŞETİLMEDİ: satır artık üretimle
+    // birebir aynı kanonik değerle yazılır.
+    provider: over.dbProvider ?? SURAT_PERSISTENCE_PROVIDER,
     source: 'local_create',
     status: 'VERIFIED',
     carrierPayloadEncrypted: encryption.encryptShipmentPayload({
@@ -101,7 +108,7 @@ function makeGetOrder(seeded, over = {}) {
       id: 'order-1',
       marketplace: seeded.marketplace,
       packageId: seeded.packageId,
-      shipment: { provider: over.provider ?? 'surat-kargo' },
+      shipment: { provider: over.provider ?? 'surat-kargo' }, // GÖRÜNEN ad
       ...over.order,
     }
   }
@@ -156,7 +163,7 @@ test('RE-3: başka organization ERİŞEMEZ', async () => {
 
 test('RE-4: Sürat OLMAYAN provider REDDEDİLİR', async () => {
   const db = await makeDb()
-  const seeded = await seed(db, { provider: 'baska-kargo' })
+  const seeded = await seed(db, { dbProvider: 'baska-kargo' })
   await assert.rejects(
     () => render(db, seeded, { provider: 'baska-kargo' }),
     (error) =>

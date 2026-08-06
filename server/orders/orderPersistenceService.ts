@@ -16,6 +16,7 @@ import {
 } from './orderRepository.ts'
 import { rowToOrder } from './orderMapper.ts'
 import { findShipment } from '../shipments/shipmentRepository.ts'
+import { SURAT_PERSISTENCE_PROVIDER } from '../shipments/suratProvider.ts'
 import {
   findLatestOperationByPackage,
   findPrintableZplByPackage,
@@ -221,7 +222,7 @@ async function attachShipment(
 ): Promise<Record<string, unknown>> {
   const packageId = String(order.packageId ?? '')
   if (!packageId) return order
-  const shipment = await findShipment(db, organizationId, String(order.marketplace), packageId, 'surat')
+  const shipment = await findShipment(db, organizationId, String(order.marketplace), packageId, SURAT_PERSISTENCE_PROVIDER)
   if (!shipment) return order
   if (shipment.source === 'local_create') {
     const operation = await findLatestOperationByPackage(db, organizationId, packageId)
@@ -507,7 +508,7 @@ export async function markLabelReady(
     organizationId,
     String(orderRow.marketplace),
     String(orderRow.packageId),
-    'surat',
+    SURAT_PERSISTENCE_PROVIDER,
   )
   if (!shipment) {
     // Gönderi kaydı olmadan etiket-hazır olunamaz: önceki durum korunur.
