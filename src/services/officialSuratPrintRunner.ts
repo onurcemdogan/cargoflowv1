@@ -10,6 +10,7 @@
 import type { CargoOrder } from '../types/cargoflow'
 import {
   fetchSuratRenderArtifact,
+  SuratRenderRequestError,
   SURAT_RENDER_UNAVAILABLE_MESSAGE,
 } from './suratLabelRenderClient'
 import {
@@ -55,6 +56,8 @@ export async function printOfficialSuratLabels(
 
   let renderRequested = 0
   let renderSucceeded = 0
+  const renderHttpStatuses: number[] = []
+  let authFailure = false
   for (const order of orders) {
     const orderNumber = String(order.orderNumber ?? order.id ?? '-')
     // Sürat OLMAYAN gönderi için render ucu HİÇ çağrılmaz.
@@ -73,6 +76,12 @@ export async function printOfficialSuratLabels(
       })
     } catch (error) {
       // Bir siparişin hatası DİĞERLERİNİ düşürmez.
+      const renderError =
+        error instanceof SuratRenderRequestError ? error : undefined
+      if (renderError) {
+        renderHttpStatuses.push(renderError.status)
+        if (renderError.code === 'auth_required') authFailure = true
+      }
       skipped.push({
         orderNumber,
         reason:
@@ -83,14 +92,17 @@ export async function printOfficialSuratLabels(
     }
   }
 
-  // GÜVENLİ TELEMETRİ (§9): yalnız şablon, sayım ve mevcut güvenli kimlik
-  // (sipariş numarası). Ham ZPL, imageBase64, müşteri bilgisi, takip numarası
-  // veya şifreli payload LOGLANMAZ.
+  // GÜVENLİ TELEMETRİ (§8): yalnız şablon, sayım, HTTP durumu, auth bayrağı ve
+  // mevcut güvenli kimlik (sipariş numarası). Authorization header değeri,
+  // cookie, ham ZPL, imageBase64, müşteri adı/adres/telefon, takip numarası
+  // veya barkod LOGLANMAZ.
   suratPrintTrace('OFFICIAL_TEMPLATE_ROUTED', {
     template: 'surat_official_zpl',
     orderNumbers: orders.map((order) => String(order.orderNumber ?? '')),
     renderRequested,
     renderSucceeded,
+    renderHttpStatus: renderHttpStatuses,
+    authFailure,
     skipCount: skipped.length,
   })
 
