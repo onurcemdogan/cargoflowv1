@@ -53,9 +53,16 @@ test('MIF-2/3: product-fit YALNIZ browser-print modunda uygulanır', () => {
     app.indexOf('async function handleSuratCreateAndPrintForIds'),
     app.indexOf('async function handlePrintLabelsForIds'),
   )
+  // SÖZLEŞME GENİŞLETİLDİ (fix/official-surat-print-skip) — GEVŞETİLMEDİ.
+  // HTML ürün-sığdırma kuralı CargoFlow HTML BELGESİNE aittir. Artık İKİ
+  // durumda uygulanmaz:
+  //   (1) tarayıcı baskısı değilse (Zebra/native: resmî ZPL byte-for-byte),
+  //   (2) resmî Sürat şablonu seçiliyse (içerik sunucudaki kayıtlı printZpl'den
+  //       PNG olarak gelir; HTML belgesi hiç üretilmez).
+  // Eskiden TEK koşul aranıyordu; bu iddia artık İKİSİNİ birden arar.
   assert.match(
     handler,
-    /resolveFitBlock: \(order\) =>\s*\n?\s*printerSettings\.mode !== 'browser-print'\s*\n?\s*\? null/,
+    /resolveFitBlock: \(order\) =>\s*\n?\s*printerSettings\.mode !== 'browser-print' \|\|\s*\n?\s*templateDecision\.template === 'surat_official_zpl'\s*\n?\s*\? null/,
   )
 })
 

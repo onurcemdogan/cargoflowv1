@@ -89,7 +89,18 @@ export function resolveBrowserPrintJobs(
 
 export class BrowserDownloadPrintProvider implements PrintProvider {
   async print(input: PrintInput): Promise<PrintResult> {
-    const printableOrders = input.orders.filter((order) => order.label)
+    // ŞABLON KARARI, ŞABLONA ÖZEL İÇERİK KOŞULUNDAN ÖNCE.
+    //
+    // KÖK NEDEN (canlı): `order.label` (CargoFlow HTML/ZPL etiketi) varlığı
+    // ŞABLONDAN BAĞIMSIZ ön koşul olarak uygulanıyordu. Resmî Sürat modunda
+    // baskı içeriği sunucudaki kayıtlı printZpl'den PNG olarak gelir; CargoFlow
+    // etiketi ARANMAZ. Aksi hâlde CargoFlow etiketi üretilememiş bir sipariş,
+    // render ucu HİÇ çağrılmadan eleniyordu.
+    const officialSuratTemplate =
+      input.labelPrintTemplate === 'surat_official_zpl'
+    const printableOrders = officialSuratTemplate
+      ? input.orders
+      : input.orders.filter((order) => order.label)
     const content = printableOrders
       .map((order) => order.label?.zplContent)
       .filter(Boolean)

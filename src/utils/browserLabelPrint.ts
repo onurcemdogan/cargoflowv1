@@ -818,7 +818,24 @@ export async function printOfficialSuratDocument(
       'Tarayıcı baskı belgesi yalnızca kullanıcı arayüzünde açılabilir.',
     )
   }
+  // KÖK NEDEN (canlı, resmî şablon): burada sayfa üretilemeyen HER durum
+  // `failPrint` ile fırlatılıyordu. Fırlatılan hata sağlayıcının catch dalında
+  // yakalanıp TÜM işlerin sebebini "Yazdırılacak etiket bulunamadı." yapıyor,
+  // koşucunun sipariş bazında topladığı GERÇEK render sebebini SİLİYORDU.
+  // Artık: render sebebi varsa o sebep KORUNUR (fırlatma yok, baskı da yok);
+  // yalnız hiç sipariş verilmemişse (sayfa da sebep de yok) hata üretilir.
   if (pages.length === 0) {
+    if (skipped.length > 0) {
+      suratPrintTrace('PRINT_SKIPPED_ALL', {
+        executionId,
+        template: 'surat_official_zpl',
+        renderRequested: true,
+        renderSucceeded: false,
+        printDocumentDispatched: false,
+        skipCount: skipped.length,
+      })
+      return debug
+    }
     return failPrint(debug, 'Yazdırılacak etiket bulunamadı.')
   }
   activePrintExecution = executionId

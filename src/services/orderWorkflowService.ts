@@ -2265,16 +2265,32 @@ export class OrderWorkflowService {
     const selected = selectedOrders(orders, selectedIds)
     const skippedWithReasons: Array<{ orderNumber: string; reason: string }> =
       []
+    // ŞABLON KARARI, ŞABLONA ÖZEL İÇERİK KOŞULLARINDAN ÖNCE VERİLİR.
+    //
+    // KÖK NEDEN (canlı, READY Sürat siparişi + "Resmî Sürat Şablonuyla Yazdır"):
+    // aşağıdaki iki adım CargoFlow HTML/ZPL yoluna AİT ön koşullardır ve
+    // şablondan bağımsız uygulanıyordu:
+    //   (1) resolveSuratPrintEligibility — istemcideki ham ZPL / canonical HTML
+    //       alan tamlığını arar,
+    //   (2) labelProvider.generateSingle — CargoFlow etiketini ÜRETİR (ham ZPL
+    //       bulunmayan kayıtta FIRLATIR).
+    // Resmî Sürat modunda baskı içeriği sunucudaki KAYITLI printZpl'den PNG
+    // olarak gelir; bu iki koşulun hiçbiri gerekmez. Uygulandıklarında sipariş
+    // /api/labels/render/surat HİÇ çağrılmadan eleniyordu.
+    const officialSuratTemplate =
+      options.labelPrintTemplate === 'surat_official_zpl'
     const candidates = selected.filter((order) => {
-      const eligibility = resolveSuratPrintEligibility(order)
       const alreadyPrinted =
         order.labelStatus === 'PRINTED' && Boolean(order.label?.printedAt)
-      if (!eligibility.canPrint) {
-        skippedWithReasons.push({
-          orderNumber: order.orderNumber,
-          reason: eligibility.reason,
-        })
-        return false
+      if (!officialSuratTemplate) {
+        const eligibility = resolveSuratPrintEligibility(order)
+        if (!eligibility.canPrint) {
+          skippedWithReasons.push({
+            orderNumber: order.orderNumber,
+            reason: eligibility.reason,
+          })
+          return false
+        }
       }
       if (alreadyPrinted && !options.includePreviouslyPrinted) {
         skippedWithReasons.push({
@@ -2314,6 +2330,25 @@ export class OrderWorkflowService {
 
     const printableOrders: CargoOrder[] = []
     for (const order of candidates) {
+      if (officialSuratTemplate) {
+        // Resmî modda CargoFlow HTML/ZPL etiketi ÜRETİLMEZ. Baskı geçmişi ve
+        // printCount sözleşmesi için taşıyıcı bir etiket kaydı gerekir; kayıt
+        // varsa AYNEN korunur, yoksa ham ZPL TAŞIMAYAN boş bir taşıyıcı
+        // kullanılır (istemciye ham ZPL inmez).
+        printableOrders.push({
+          ...order,
+          label: order.label ?? {
+            id: `surat-official-${order.id}`,
+            labelType: 'zpl',
+            barcodeFormat: 'Code128',
+            barcodeValue: '',
+            templateId: template?.id ?? '',
+            zplContent: '',
+            createdAt: requestedAt,
+          },
+        })
+        continue
+      }
       const shipment = resolveShipmentForLabel(order)
       if (!shipment) continue
       const label = await this.labelProvider.generateSingle({
