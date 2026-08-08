@@ -17,11 +17,15 @@
 //        --output server/fixtures/real-template-masked.zpl
 //   B) Mevcut shipment (salt okunur):
 //      npm run surat:zpl:mask -- --organization-id <id> --package-id <id> \
-//        [--marketplace Trendyol] [--provider surat-kargo] \
+//        [--marketplace Trendyol] [--provider surat] \
 //        --output /secure/real-template-masked.zpl
 //   Ek: --deny-token "<deger>" (tekrarlanabilir), --print-structure
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
+import {
+  isSuratProviderName,
+  SURAT_PERSISTENCE_PROVIDER,
+} from '../shipments/suratProvider.ts'
 import {
   maskZpl,
   verifyStructuralEquality,
@@ -44,11 +48,26 @@ interface Options {
   gbOut?: string
 }
 
+/**
+ * Operatör görünen adı yazsa bile (`surat-kargo`, `Sürat Kargo`) sorgu
+ * KANONİK değere çevrilir. Sürat OLMAYAN bir sağlayıcı adı AYNEN geçer —
+ * sessizce Sürat'a çevrilmez.
+ */
+function canonicalProvider(value: string | undefined): string {
+  const raw = String(value ?? '').trim()
+  if (!raw) return SURAT_PERSISTENCE_PROVIDER
+  return isSuratProviderName(raw) ? SURAT_PERSISTENCE_PROVIDER : raw
+}
+
 function parseArgs(argv: string[]): Options {
   const options: Options = {
     output: 'server/fixtures/real-template-masked.zpl',
     marketplace: 'Trendyol',
-    provider: 'surat-kargo',
+    // KANONİK DB DEĞERİ. Üretim `shipments.provider` kolonuna DAİMA
+    // 'surat' yazar; sorgu exact eq(...) olduğundan 'surat-kargo'
+    // varsayılanı HİÇBİR kaydı bulamıyordu (maskelenmiş gerçek şablonun
+    // üretilememesinin sebebi buydu).
+    provider: SURAT_PERSISTENCE_PROVIDER,
     denyTokens: [],
     printStructure: false,
   }
@@ -60,7 +79,7 @@ function parseArgs(argv: string[]): Options {
     else if (arg === '--organization-id') options.organizationId = next()
     else if (arg === '--package-id') options.packageId = next()
     else if (arg === '--marketplace') options.marketplace = next()
-    else if (arg === '--provider') options.provider = next()
+    else if (arg === '--provider') options.provider = canonicalProvider(next())
     else if (arg === '--deny-token') options.denyTokens.push(String(next() ?? ''))
     else if (arg === '--print-structure') options.printStructure = true
     else if (arg === '--structure-out') options.structureOut = next()

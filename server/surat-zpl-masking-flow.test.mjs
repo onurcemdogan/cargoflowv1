@@ -359,3 +359,48 @@ test('MSK-20: maskelenmiş fixture zebrash ile DETERMİNİSTİK render edilir', 
   assert.equal(first.renderSha256, second.renderSha256, 'render deterministik')
   assert.equal(first.engine.zebrashVersion, 'v1.38.0')
 })
+
+// ═══ MP-1..MP-3: MASKELEME CLI SAĞLAYICI KANONİKLEŞTİRME ════════════════
+//
+// KÖK NEDEN: CLI varsayılanı 'surat-kargo' idi; üretim `shipments.provider`
+// kolonuna DAİMA kanonik 'surat' yazar ve sorgu exact eq(...) kullanır.
+// Bu yüzden komut HİÇBİR kaydı bulamıyor, maskelenmiş gerçek şablon
+// üretilemiyordu. (Render ucundaki fa6b26b hatasıyla AYNI sınıf.)
+
+test('MP-1: CLI varsayılan sağlayıcısı KANONİK değerdir', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { join, dirname } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = dirname(fileURLToPath(import.meta.url))
+  const cli = readFileSync(join(root, 'labels/maskSuratZplCli.ts'), 'utf8')
+  const { SURAT_PERSISTENCE_PROVIDER } = await import(
+    './shipments/suratProvider.ts'
+  )
+  assert.equal(SURAT_PERSISTENCE_PROVIDER, 'surat')
+  assert.match(cli, /provider: SURAT_PERSISTENCE_PROVIDER,/)
+  assert.equal(
+    /provider: 'surat-kargo'/.test(cli),
+    false,
+    'görünen ad varsayılan OLAMAZ',
+  )
+})
+
+test('MP-2: --provider görünen adı KANONİK değere çevrilir', async () => {
+  const { readFileSync } = await import('node:fs')
+  const { join, dirname } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const root = dirname(fileURLToPath(import.meta.url))
+  const cli = readFileSync(join(root, 'labels/maskSuratZplCli.ts'), 'utf8')
+  assert.match(cli, /options\.provider = canonicalProvider\(next\(\)\)/)
+  assert.match(cli, /isSuratProviderName\(raw\) \? SURAT_PERSISTENCE_PROVIDER : raw/)
+})
+
+test('MP-3: Sürat OLMAYAN sağlayıcı sessizce çevrilmez', async () => {
+  const { isSuratProviderName } = await import('./shipments/suratProvider.ts')
+  for (const alias of ['surat', 'surat-kargo', 'Sürat Kargo', 'Sürat Kargo Marketplace']) {
+    assert.equal(isSuratProviderName(alias), true, alias)
+  }
+  for (const foreign of ['Aras', 'Yurtiçi', 'MNG']) {
+    assert.equal(isSuratProviderName(foreign), false, foreign)
+  }
+})
