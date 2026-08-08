@@ -226,8 +226,21 @@ test('OZP-29..OZP-31: ürün satırı resmî içerikle çakışmaz, ^LL dışın
     metrics.footerTop > geometry.contentBottom,
     `footerTop(${metrics.footerTop}) resmî içerik altında olmalı (${geometry.contentBottom})`,
   )
-  // Sol rayın SAĞINDA başlar
-  assert.ok(metrics.footerLeft > geometry.leftRailRight)
+  // DİKEY RAY SÖZLEŞMESİ — GÜÇLENDİRİLDİ, gevşetilmedi.
+  // Eski iddia "footerLeft > rayın sağı" idi; bu, rayın DİKEY uzanımı
+  // ölçülemediği için konulmuş MUHAFAZAKÂR bir vekildi. Ray artık gerçek
+  // kutusuyla ölçülüyor (^FWB alttan üste uzar), bu yüzden footer rayın
+  // ALTINA inip etiketin soluna yaklaşabiliyor (DuruSoft referansı).
+  // Doğru sözleşme KUTULARIN ÇAKIŞMAMASIDIR: ya rayın sağında ya altında.
+  const rightOfRail = metrics.footerLeft >= geometry.leftRailRight
+  const belowRail =
+    geometry.leftRailBottom > 0 && metrics.footerTop >= geometry.leftRailBottom
+  assert.ok(
+    rightOfRail || belowRail,
+    `footer dikey rayla çakışıyor: left=${metrics.footerLeft} ` +
+      `top=${metrics.footerTop} railRight=${geometry.leftRailRight} ` +
+      `railBottom=${geometry.leftRailBottom}`,
+  )
   // 30) ^LL sınırı içinde biter
   assert.ok(
     metrics.footerBottom <= geometry.labelLength,

@@ -31,6 +31,7 @@ export const PRODUCT_LINE_OVERFLOW_MESSAGE =
   'Ürün bilgileri resmî kargo etiketinin alt alanına sığmıyor.'
 
 export type SuratFooterProfileKey =
+  | 'wrapped-mid'
   | 'single-line-standard'
   | 'single-line-compact'
   | 'single-line-dense'
@@ -74,6 +75,10 @@ export const SURAT_FOOTER_PROFILES: SuratFooterProfile[] = [
   //
   // OKUNABİLİRLİK TABANI: 12 dot ≈ 1,5 mm (203 dpi). Bunun ALTINA İNİLMEZ;
   // sığmıyorsa ürün satırı yine EKLENMEZ (sessiz kırpma YOK).
+  // ARA KADEME: 16 → 12 sıçramasını kapatır. Yer varsa DAHA BÜYÜK okunur
+  // fontu (14 dot) iki satırda kullanmak, 12 dot'luk tek satırdan daha
+  // profesyonel görünür — DuruSoft referansı da iki satırlıdır.
+  { key: 'wrapped-mid', fontHeight: 14, fontWidth: 12, maxLinesPerItem: 2, lineGap: 2 },
   { key: 'single-line-micro', fontHeight: 12, fontWidth: 10, maxLinesPerItem: 1, lineGap: 1 },
   { key: 'wrapped-micro', fontHeight: 12, fontWidth: 10, maxLinesPerItem: 2, lineGap: 1 },
 ]
@@ -201,12 +206,22 @@ export interface SuratFooterArea {
 }
 
 export function resolveFooterArea(geometry: ZplGeometry): SuratFooterArea {
-  const x = Math.max(
-    geometry.leftRailRight + FOOTER_LEFT_GAP,
-    FOOTER_LEFT_GAP * 2,
-  )
   const top = geometry.contentBottom + FOOTER_TOP_GAP
   const bottom = geometry.labelLength - FOOTER_BOTTOM_MARGIN
+  // SOL SINIR — DuruSoft referansı footer'ı etiketin sol fiziksel kenarına
+  // yakın başlatır. Bunu yapabilmek için rayın GERÇEK dikey uzanımı bilinir:
+  // dikey "Sipariş No" rayı ^FWB ile alttan üste uzanır, yani `leftRailBottom`
+  // origin'dir ve footer bunun ALTINDA kalıyorsa ray artık yolda DEĞİLDİR.
+  //
+  // GÜVENLİK: genişletme YALNIZ ray ölçülebildiyse VE footer rayın alt
+  // kenarının altında başlıyorsa yapılır. Ölçülemediyse veya hizalar
+  // çakışıyorsa ESKİ muhafazakâr sınır (rayın sağı) korunur — ürün metni
+  // dikey rayın üzerine ASLA binmez.
+  const clearsRail =
+    geometry.leftRailBottom > 0 && top >= geometry.leftRailBottom
+  const x = clearsRail
+    ? FOOTER_LEFT_GAP * 2
+    : Math.max(geometry.leftRailRight + FOOTER_LEFT_GAP, FOOTER_LEFT_GAP * 2)
   return {
     x,
     top,
@@ -290,19 +305,19 @@ export function planSuratFooter(
         fits = false
         break
       }
-      // İki bölümlü biçim: başlık (gerekirse kendi içinde sarar) + meta.
-      const title = buildProductLineTitle(item)
-      const meta = buildProductLineMeta(item)
-      const titleLines = estimateLines(title, profile.fontWidth, area.width)
-      const metaLines = estimateLines(meta, profile.fontWidth, area.width)
-      if (titleLines + metaLines > MAX_PHYSICAL_LINES_PER_ITEM) {
+      // SÜREKLİ AKIŞ (DuruSoft referansı): başlık ile meta arasına ZORLA
+      // satır sonu KOYULMAZ. Tek bir ^FB bloğu metni doğal olarak sarar —
+      // "1 x Ürün Adı (Renk: X, Beden: Y)" ilk satırı doldurur, artan
+      // "[SKU]" alt satıra akar. Eski iki-bloklu biçim ilk satırı yarım
+      // bırakıyordu.
+      //
+      // Satır sayısı ASLA artmaz: sürekli akış, başlık+meta ayrımından her
+      // zaman <= satır kullanır. Bu yüzden mevcut overflow çözümü BOZULMAZ.
+      if (singleLines > MAX_PHYSICAL_LINES_PER_ITEM) {
         fits = false
         break
       }
-      blocks.push([
-        { text: title, lines: titleLines },
-        { text: meta, lines: metaLines },
-      ])
+      blocks.push([{ text: full, lines: singleLines }])
     }
     if (!fits) continue
     const totalLines = blocks.reduce(
