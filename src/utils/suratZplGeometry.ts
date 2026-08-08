@@ -90,6 +90,8 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
   let cursorX = 0
   let cursorY = 0
   let hasCursor = false
+  /** Son konum komutu ^FT miydi (taban çizgisi) yoksa ^FO mu (üst kenar)? */
+  let cursorIsBaseline = false
   let fontHeight = 20
   let fontWidth = 20
   let rotated = false
@@ -112,6 +114,8 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
       const [x, y] = args.split(',')
       cursorX = num(x)
       cursorY = num(y)
+      // ^FT taban çizgisi, ^FO üst kenar konumlandırır (ZPL II).
+      cursorIsBaseline = command === 'FT'
       hasCursor = true
       pending = 'text'
       blockWidth = 0
@@ -215,13 +219,36 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
                 ),
               )
             : 1
-        const textHeight = lines * Math.round(fontHeight * 1.15)
+        const lineHeight = Math.round(fontHeight * 1.15)
+        const textHeight = lines * lineHeight
+        // ^FO vs ^FT: ZPL'de ^FO y ALANIN ÜST kenarıdır, ^FT y ise TABAN
+        // ÇİZGİSİDİR — metin taban çizgisinden YUKARI uzar, aşağıya yalnız
+        // alt uzantı (descender) taşar.
+        //
+        // KÖK NEDEN (canlı 4057121401): ikisi de "üst kenar" sayılıyordu.
+        // Etiketin en altındaki büyük ^FT metni (aktarma satırı, ~44 dot font)
+        // için contentBottom bir font boyu FAZLA ölçülüyor, ürün footer'ına
+        // kalan alan eksiye düşüyor ve augmentation still_overflow veriyordu.
+        //
+        // MUHAFAZAKÂR MODEL: taban çizgisinin ÜSTÜNDE tam font yüksekliği
+        // (gerçek cap height daha küçüktür), ALTINDA %20 descender payı.
+        // Böylece ölçü asla EKSİK çıkmaz; footer resmî içeriğe binmez.
+        // Döndürülmüş metin (dikey sipariş rayı) DOKUNULMADAN bırakılır.
+        const descender = Math.round(fontHeight * 0.2)
+        const top =
+          cursorIsBaseline && !fieldRotated
+            ? Math.max(0, cursorY - fontHeight)
+            : cursorY
+        const height =
+          cursorIsBaseline && !fieldRotated
+            ? fontHeight + (lines - 1) * lineHeight + descender
+            : textHeight
         elements.push({
           // Döndürülmüş metinde (dikey ray) genişlik/yükseklik yer değiştirir.
           x: cursorX,
-          y: cursorY,
+          y: fieldRotated ? cursorY : top,
           width: fieldRotated ? Math.round(fontHeight * 1.15) : lineWidth,
-          height: fieldRotated ? lineWidth : textHeight,
+          height: fieldRotated ? lineWidth : height,
           kind: 'text',
           rotated: fieldRotated,
         })
