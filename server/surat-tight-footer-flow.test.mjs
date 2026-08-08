@@ -242,6 +242,99 @@ test('TF-10: ürün adı, renk, beden ve SKU footer’da GÖRÜNÜR + kontrollü
   assert.equal(/\.\.\.|…/.test(added), false, 'kırpma YOK')
 })
 
+// ═══ TF-12..TF-15: GERÇEK PRODUCTION ŞEKLİ (contentBottom 898) ══════════
+//
+// Canlı diagnostic: contentBottom=898, maxContentBottomToFit=771 →
+// still_overflow. 898 = 706 + 192; burada 192 = ^BXN,8,200 için 8 × 24 ve
+// 706 = DataMatrix'in ^FT konumu. Yani ^FT ile konumlanan 2D kod AŞAĞI
+// doğru sayılıyordu — oysa ^FT TABAN çizgisidir, kod YUKARI uzar.
+
+const PROD_ZPL = [
+  '^XA', '^CI28', '^PW799', '^LL0799', '^LS0',
+  '^FO60,20^GB700,90,2^FS',
+  '^FT80,50^A0N,24,24^FDSube: FERAH^FS',
+  '^FT470,50^A0N,26,26^FDT.No: 10715069128642^FS',
+  '^FT90,300^BY3^BCN,130,Y,N,N^FD01256423147^FS',
+  '^FO60,330^GB700,140,2^FS',
+  '^FT80,360^A0N,24,24^FDSENTETIK ALICI^FS',
+  // Canlı vakadaki DataMatrix: ^FT taban 706, ^BXN,8,200 → 8 × 24 = 192.
+  '^FT90,706^BXN,8,200^FD7270035470417450^FS',
+  '^FT380,660^A0N,40,40^FDKIRIKHAN/05^FS',
+  '^FT380,745^A0N,44,44^FDADANA AKTARMA^FS',
+  '^FWB', '^FT40,700^A0B,18,18^FDSiparis No: 7270035470417450^FS', '^FWN',
+  '^PQ1,0,1,Y', '^XZ',
+].join('\n')
+
+test('TF-12: ^FT + ^BX DataMatrix TABAN çizgisidir (898 → şişme YOK)', async () => {
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const geometry = parseSuratZplGeometry(PROD_ZPL)
+  assert.equal(geometry.labelLength, 799)
+  // Eski hata: 706 + 192 = 898.
+  assert.notEqual(geometry.contentBottom, 898, 'eski şişme tekrarlamamalı')
+  assert.ok(
+    geometry.contentBottom < 771,
+    `canlı eşiğin (maxContentBottomToFit=771) ALTINDA olmalı: ${geometry.contentBottom}`,
+  )
+  // En alttaki gerçek içerik aktarma satırıdır (^FT 745, font 44).
+  assert.ok(geometry.contentBottom >= 745)
+})
+
+test('TF-13: ^FO + ^BX hâlâ ÜST kenardır (davranış değişmedi)', async () => {
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const withFo = parseSuratZplGeometry(
+    PROD_ZPL.replace('^FT90,706^BXN,8,200', '^FO90,706^BXN,8,200'),
+  )
+  const withFt = parseSuratZplGeometry(PROD_ZPL)
+  // ^FO aşağı uzar → 706 + 192 = 898'e kadar ölçülür.
+  assert.equal(withFo.contentBottom, 898, '^FO davranışı KORUNDU')
+  assert.ok(withFt.contentBottom < withFo.contentBottom)
+})
+
+test('TF-14: canlı şekil artık AUGMENTED ve footer içeriğe binmez', async () => {
+  const { deriveAugmentedSuratZpl } = await load('/src/utils/augmentedSuratZpl.ts')
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const derived = deriveAugmentedSuratZpl(PROD_ZPL, [LIVE_ITEM])
+  assert.equal(derived.augmented, true, 'still_overflow BİTTİ')
+  assert.equal(derived.augmentationStatus, 'success')
+  const geometry = parseSuratZplGeometry(PROD_ZPL)
+  assert.ok(derived.metrics.footerTop > geometry.contentBottom, 'içeriğin ALTINDA')
+  assert.ok(derived.metrics.footerBottom <= 799 - 8, 'alt kenar payı korunur')
+  // Kaynak ve tek sayfa sözleşmesi.
+  assert.equal(derived.sourceZpl, PROD_ZPL)
+  assert.equal((derived.printZpl.match(/\^XA/g) ?? []).length, 1)
+  assert.equal((derived.printZpl.match(/\^XZ/g) ?? []).length, 1)
+  assert.equal((derived.printZpl.match(/\^LL0?799/g) ?? []).length, 1)
+  assert.equal((derived.printZpl.match(/\^PW799/g) ?? []).length, 1)
+  // DataMatrix, barkod, T.No ve rota AYNEN duruyor.
+  for (const carrier of [
+    '^FT90,706^BXN,8,200^FD7270035470417450^FS',
+    '^FT90,300^BY3^BCN,130,Y,N,N^FD01256423147^FS',
+    '^FT470,50^A0N,26,26^FDT.No: 10715069128642^FS',
+    '^FT380,745^A0N,44,44^FDADANA AKTARMA^FS',
+  ]) {
+    assert.ok(derived.printZpl.includes(carrier), `bozuldu: ${carrier.slice(0, 22)}`)
+  }
+})
+
+test('TF-15: ^FT + ^BC yorum satırı payı AŞAĞI eklenir, çubuklar YUKARI', async () => {
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const base = ['^XA', '^PW799', '^LL0799', '^FO60,20^GB700,90,2^FS',
+    '^FO90,300^BXN,5,200^FD777^FS',
+    '^FWB', '^FT40,600^A0B,18,18^FDRay^FS', '^FWN']
+  // Yorum satırı ALTA basılır (f=Y, g=N) → aşağı pay VAR.
+  const below = parseSuratZplGeometry(
+    [...base, '^FT100,500^BY3^BCN,130,Y,N,N^FD012^FS', '^XZ'].join('\n'))
+  // Yorum satırı HİÇ basılmaz (f=N) → aşağı pay YOK.
+  const none = parseSuratZplGeometry(
+    [...base, '^FT100,500^BY3^BCN,130,N,N,N^FD012^FS', '^XZ'].join('\n'))
+  assert.ok(
+    below.contentBottom > none.contentBottom,
+    `yorum satırı payı: ${below.contentBottom} > ${none.contentBottom}`,
+  )
+  // Çubuklar YUKARI uzadığı için taban 500'ün çok altına inilmez.
+  assert.ok(none.contentBottom <= 500, `taban aşılmamalı: ${none.contentBottom}`)
+})
+
 test('TF-11: alan gerçekten yetmiyorsa ürün satırı EKLENMEZ (sessiz kırpma yok)', async () => {
   const { deriveAugmentedSuratZpl } = await load('/src/utils/augmentedSuratZpl.ts')
   // İçerik etiketin en dibine kadar inen şablon.

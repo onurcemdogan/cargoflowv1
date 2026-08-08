@@ -90,6 +90,8 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
   let cursorX = 0
   let cursorY = 0
   let hasCursor = false
+  /** ^BC yorum satırı kodun ALTINA mı basılıyor (aşağı yükseklik payı). */
+  let barcodeInterpretationBelow = false
   /** Son konum komutu ^FT miydi (taban çizgisi) yoksa ^FO mu (üst kenar)? */
   let cursorIsBaseline = false
   let fontHeight = 20
@@ -147,6 +149,11 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
       const parts = args.split(',')
       if (/^[BR]/i.test(String(parts[0] ?? ''))) fieldRotated = true
       barcodeHeight = num(parts[1], barcodeHeight || 100)
+      // ^BCo,h,f,g,… → f: yorum satırı basılsın mı, g: KODUN ÜSTÜNE mi.
+      // f=Y ve g=Y DEĞİLSE yorum satırı kodun ALTINA düşer.
+      const printsInterpretation = !/^N/i.test(String(parts[2] ?? 'Y'))
+      const interpretationAbove = /^Y/i.test(String(parts[3] ?? 'N'))
+      barcodeInterpretationBelow = printsInterpretation && !interpretationAbove
       pending = 'barcode'
       continue
     }
@@ -154,6 +161,7 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
       const parts = args.split(',')
       const magnification = num(parts[2], 4)
       barcodeHeight = magnification * 25
+      barcodeInterpretationBelow = false
       pending = 'qr'
       continue
     }
@@ -161,6 +169,7 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
       const parts = args.split(',')
       const moduleHeight = num(parts[1], 6)
       barcodeHeight = moduleHeight * 24
+      barcodeInterpretationBelow = false
       pending = 'qr'
       continue
     }
@@ -188,19 +197,32 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
       if (pending === 'barcode') {
         // Code128: modül genişliği × (11 modül/karakter) + start/stop payı.
         const width = Math.round(barcodeModuleWidth * 11 * (chars + 4))
+        const barHeight = barcodeHeight || 100
+        // ^FT barkodu TABAN çizgisinden konumlandırır: çubuklar YUKARI uzar,
+        // aşağıya yalnız (varsa) yorum satırı taşar. ^FO ise ÜST kenardır.
+        const interpretation = barcodeInterpretationBelow
+          ? Math.round(fontHeight * 1.15)
+          : 0
+        const baselineBar = cursorIsBaseline && !fieldRotated
         elements.push({
           x: cursorX,
-          y: cursorY,
+          y: baselineBar ? Math.max(0, cursorY - barHeight) : cursorY,
           width,
-          height: barcodeHeight || 100,
+          height: baselineBar ? barHeight + interpretation : barHeight,
           kind: 'barcode',
           rotated: fieldRotated,
         })
       } else if (pending === 'qr') {
         const side = barcodeHeight || 100
+        // KÖK NEDEN (canlı 4057121401 — contentBottom 898): ^FT ile
+        // konumlanan DataMatrix (^BXN,8,200 → 8 × 24 = 192 dot) AŞAĞI doğru
+        // sayılıyordu: 706 + 192 = 898. Oysa ^FT matris/QR kodu da TABAN
+        // çizgisinden konumlandırır — kod YUKARI uzar, aşağıya taşmaz
+        // (2D sembolde yorum satırı YOKTUR).
+        const baselineCode = cursorIsBaseline && !fieldRotated
         elements.push({
           x: cursorX,
-          y: cursorY,
+          y: baselineCode ? Math.max(0, cursorY - side) : cursorY,
           width: side,
           height: side,
           kind: 'qr',
