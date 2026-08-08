@@ -111,6 +111,48 @@ export function buildProductLineText(item: SuratProductLineItem): string {
   return `${buildProductLineTitle(item)} ${buildProductLineMeta(item)}`
 }
 
+/**
+ * SUNUM AŞAMASINDA TEKİLLEŞTİRME (DuruSoft referansı).
+ *
+ * AYNI ürünün birden çok sipariş satırı tek satırda toplanır:
+ *   "1 x Elbise (Renk: Lacivert, Beden: 40)" ×2  →  "2 x Elbise (...)"
+ *
+ * BİRLEŞTİRME KOŞULU KATIDIR: ürün adı, renk, beden ve SKU'nun DÖRDÜ DE
+ * aynı olmalıdır. Farklı varyant (renk/beden) veya farklı SKU ASLA
+ * birleştirilmez — etiket yanlış ürün gösteremez.
+ *
+ * Karşılaştırma yalnız boşluk/büyük-küçük harf normalizasyonu yapar; içerik
+ * DEĞİŞTİRİLMEZ. Sıra korunur: ilk görülen satır konumunu tutar (çıktı
+ * DETERMINISTIKTIR). Bu YALNIZ bir sunum işlemidir; sipariş satırları,
+ * stok veya adet hesapları ETKİLENMEZ.
+ */
+export function aggregateProductLineItems(
+  items: SuratProductLineItem[],
+): SuratProductLineItem[] {
+  const key = (item: SuratProductLineItem) =>
+    [
+      clean(item.productName).toLocaleLowerCase('tr'),
+      clean(item.color).toLocaleLowerCase('tr'),
+      clean(item.size).toLocaleLowerCase('tr'),
+      clean(item.sku).toLocaleLowerCase('tr'),
+    ].join('')
+  const order: string[] = []
+  const merged = new Map<string, SuratProductLineItem>()
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item) continue
+    const id = key(item)
+    const quantity = Math.max(1, Math.trunc(Number(item.quantity) || 1))
+    const existing = merged.get(id)
+    if (existing) {
+      existing.quantity += quantity
+      continue
+    }
+    order.push(id)
+    merged.set(id, { ...item, quantity })
+  }
+  return order.map((id) => merged.get(id) as SuratProductLineItem)
+}
+
 // ── Türkçe karakter ──────────────────────────────────────────────────────
 // Kaynak Sürat ZPL'i ^CI28 (UTF-8) kullanıyorsa Türkçe karakterler AYNEN
 // yazılır. Kullanmıyorsa bozuk karakter basmak yerine AÇIK ve DETERMINISTIK
@@ -277,7 +319,11 @@ export function planSuratFooter(
   geometry: ZplGeometry,
 ): SuratFooterPlan {
   const area = resolveFooterArea(geometry)
-  const source = Array.isArray(items) ? items.filter(Boolean) : []
+  // Aynı ürünün tekrar eden satırları TEK satırda toplanır (yalnız sunum).
+  // Farklı varyant/SKU birleşmez; bkz. aggregateProductLineItems.
+  const source = aggregateProductLineItems(
+    Array.isArray(items) ? items.filter(Boolean) : [],
+  )
   if (source.length === 0) {
     return { ok: false, reason: 'Ürün satırı yok.' }
   }
