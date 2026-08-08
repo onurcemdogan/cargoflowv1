@@ -36,6 +36,8 @@ export type SuratFooterProfileKey =
   | 'single-line-dense'
   | 'wrapped-compact'
   | 'wrapped-dense'
+  | 'single-line-micro'
+  | 'wrapped-micro'
 
 export interface SuratFooterProfile {
   key: SuratFooterProfileKey
@@ -55,6 +57,25 @@ export const SURAT_FOOTER_PROFILES: SuratFooterProfile[] = [
   { key: 'single-line-dense', fontHeight: 16, fontWidth: 14, maxLinesPerItem: 1, lineGap: 2 },
   { key: 'wrapped-compact', fontHeight: 18, fontWidth: 16, maxLinesPerItem: 2, lineGap: 3 },
   { key: 'wrapped-dense', fontHeight: 16, fontWidth: 14, maxLinesPerItem: 2, lineGap: 2 },
+  // ── SON ÇARE KADEMELERİ (canlı 4057121401 vakası) ────────────────────
+  // KANIT: gerçek gönderide resmî içerik etiketin çok altına iniyor ve
+  // yukarıdaki beş profilin EN AZ İHTİYACI olan 38 dot bile kalmıyordu →
+  // still_overflow. Ölçüm (106 karakterlik gerçek ürün metni, 731 dot alan):
+  //   single-line-standard/compact/dense : 106 karakter TEK SATIRA sığmıyor
+  //                                        (en fazla 87 kar/satır) → reddedilir
+  //   wrapped-compact                    : 44 dot gerekiyor
+  //   wrapped-dense                      : 38 dot gerekiyor
+  //   single-line-micro                  : 14 dot  (106 kar TEK satıra sığar)
+  //   wrapped-micro                      : 28 dot
+  //
+  // Bu kademeler merdivenin SONUNDADIR: yeri olan etiketlerde ÖNCEKİ profil
+  // aynen seçilir, mevcut çıktı DEĞİŞMEZ. Yalnız daha önce hiç ürün satırı
+  // basılamayan dar etiketlerde devreye girer.
+  //
+  // OKUNABİLİRLİK TABANI: 12 dot ≈ 1,5 mm (203 dpi). Bunun ALTINA İNİLMEZ;
+  // sığmıyorsa ürün satırı yine EKLENMEZ (sessiz kırpma YOK).
+  { key: 'single-line-micro', fontHeight: 12, fontWidth: 10, maxLinesPerItem: 1, lineGap: 1 },
+  { key: 'wrapped-micro', fontHeight: 12, fontWidth: 10, maxLinesPerItem: 2, lineGap: 1 },
 ]
 
 // ── Metin ────────────────────────────────────────────────────────────────
