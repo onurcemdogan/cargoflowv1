@@ -81,6 +81,21 @@ export interface RepairGeometry {
   minRequiredHeight: number | null
   /** Sığmak için contentBottom en fazla kaç olabilirdi. */
   maxContentBottomToFit: number | null
+  /**
+   * KAYNAK ZPL KOMUT ENVANTERİ — yalnız SAYIM ve konum; ham ZPL veya ^FD
+   * verisi İÇERMEZ. "Sağ alt QR bizde neden yok?" gibi soruları veri
+   * sızdırmadan kesin cevaplar: carrier şablonu o alanı içeriyor mu?
+   */
+  source: {
+    code128: number
+    dataMatrix: number
+    qr: number
+    boxes: number
+    /** ^BQ varsa x konumları (dot) — payload YOK. */
+    qrPositions: number[]
+    /** Code128 yorum satırı basılıyor mu (^BC f parametresi). */
+    code128InterpretationLine: boolean
+  }
 }
 
 export interface RepairEntry {
@@ -209,6 +224,26 @@ function describeGeometry(
           FOOTER_BOTTOM_MARGIN -
           FOOTER_TOP_GAP -
           minRequiredHeight,
+    source: describeSourceInventory(sourceZpl),
+  }
+}
+
+/** Kaynak ZPL'in komut envanteri — SAYIM ve konum; veri YOK. */
+function describeSourceInventory(sourceZpl: string): RepairGeometry['source'] {
+  const count = (pattern: RegExp) => (sourceZpl.match(pattern) ?? []).length
+  // ^BQ konumları: hemen ÖNCEKİ ^FO/^FT x değeri (payload okunmaz).
+  const qrPositions: number[] = []
+  for (const match of sourceZpl.matchAll(/\^F[OT](\d+),\d+[^^]*\^BQ/gi)) {
+    qrPositions.push(Number(match[1]))
+  }
+  const bc = /\^BC([NRIB])?,(\d+)?,([YN])?/i.exec(sourceZpl)
+  return {
+    code128: count(/\^BC/gi),
+    dataMatrix: count(/\^BX/gi),
+    qr: count(/\^BQ/gi),
+    boxes: count(/\^GB/gi),
+    qrPositions,
+    code128InterpretationLine: bc ? !/^N$/i.test(String(bc[3] ?? 'Y')) : false,
   }
 }
 

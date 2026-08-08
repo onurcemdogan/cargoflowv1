@@ -520,6 +520,65 @@ test('TF-24: ray ÖLÇÜLEMEZSE muhafazakâr sol sınır KORUNUR', async () => {
   assert.equal(planSuratFooter([LIVE_ITEM], overlapping).area.x, 69)
 })
 
+// ═══ TF-25..TF-28: ÜRÜN TEKİLLEŞTİRME (DuruSoft kompaktlığı) ═══════════
+
+test('TF-25: AYNI ürünün tekrar satırları TEK satırda toplanır', async () => {
+  const { aggregateProductLineItems, buildProductLineText } = await load(
+    '/src/utils/suratZplProductLine.ts')
+  const merged = aggregateProductLineItems([
+    { productName: 'Elbise', quantity: 1, color: 'Lacivert', size: '40', sku: 'S1' },
+    { productName: 'Elbise', quantity: 1, color: 'Lacivert', size: '40', sku: 'S1' },
+  ])
+  assert.equal(merged.length, 1)
+  assert.equal(merged[0].quantity, 2)
+  assert.match(buildProductLineText(merged[0]), /^2 x Elbise /)
+})
+
+test('TF-26: FARKLI varyant/SKU ASLA birleştirilmez', async () => {
+  const { aggregateProductLineItems } = await load(
+    '/src/utils/suratZplProductLine.ts')
+  const base = { productName: 'Elbise', quantity: 1, color: 'Lacivert', size: '40', sku: 'S1' }
+  for (const farkli of [
+    { ...base, color: 'Siyah' },
+    { ...base, size: '42' },
+    { ...base, sku: 'S2' },
+    { ...base, productName: 'Etek' },
+  ]) {
+    const merged = aggregateProductLineItems([base, farkli])
+    assert.equal(merged.length, 2, `birleştirilmemeli: ${JSON.stringify(farkli)}`)
+    assert.equal(merged[0].quantity, 1)
+    assert.equal(merged[1].quantity, 1)
+  }
+})
+
+test('TF-27: tekilleştirme sıra KORUR ve adetleri TOPLAR', async () => {
+  const { aggregateProductLineItems } = await load(
+    '/src/utils/suratZplProductLine.ts')
+  const merged = aggregateProductLineItems([
+    { productName: 'Etek', quantity: 1, color: 'Siyah', size: '38', sku: 'E1' },
+    { productName: 'Elbise', quantity: 2, color: 'Lacivert', size: '40', sku: 'S1' },
+    { productName: 'Etek', quantity: 3, color: 'Siyah', size: '38', sku: 'E1' },
+  ])
+  assert.deepEqual(merged.map((i) => [i.productName, i.quantity]), [
+    ['Etek', 4], ['Elbise', 2],
+  ])
+})
+
+test('TF-28: footer planı tekilleştirilmiş listeyi kullanır (daha kompakt)', async () => {
+  const { planSuratFooter } = await load('/src/utils/suratZplProductLine.ts')
+  const geometry = {
+    ok: true, printWidth: 799, labelLength: 799,
+    leftRailRight: 61, leftRailBottom: 700, contentBottom: 700,
+  }
+  const tekrar = Array.from({ length: 3 }, () => ({
+    productName: 'Elbise', quantity: 1, color: 'Lacivert', size: '40', sku: 'S1',
+  }))
+  const plan = planSuratFooter(tekrar, geometry)
+  assert.equal(plan.ok, true)
+  assert.equal(plan.blocks.length, 1, 'üç satır TEK bloğa indi')
+  assert.match(plan.blocks[0][0].text, /^3 x Elbise /)
+})
+
 test('TF-11: alan gerçekten yetmiyorsa ürün satırı EKLENMEZ (sessiz kırpma yok)', async () => {
   const { deriveAugmentedSuratZpl } = await load('/src/utils/augmentedSuratZpl.ts')
   // İçerik etiketin en dibine kadar inen şablon.
