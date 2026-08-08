@@ -117,15 +117,13 @@ test('TF-2: ^FO ÜST KENAR olarak kalır (davranış değişmedi)', async () => 
 test('TF-3: kompakt kademeler merdivenin SONUNDA; mevcut seçimler DEĞİŞMEZ', async () => {
   const { SURAT_FOOTER_PROFILES, planSuratFooter } = await load(
     '/src/utils/suratZplProductLine.ts')
-  assert.deepEqual(
-    SURAT_FOOTER_PROFILES.map((p) => p.key),
-    [
-      'single-line-standard', 'single-line-compact', 'single-line-dense',
-      'wrapped-compact', 'wrapped-dense',
-      'single-line-micro', 'wrapped-micro',
-    ],
+  // Merdivenin TAM sırası TEK yerde doğrulanır (TF-18); burada yalnız
+  // kompakt kademelerin SONDA olduğu ve tabanın korunduğu kilitlenir.
+  const keys = SURAT_FOOTER_PROFILES.map((p) => p.key)
+  assert.ok(
+    keys.indexOf('wrapped-compact') < keys.indexOf('single-line-micro'),
+    'kompakt kademeler SONDA kalmalı',
   )
-  // Okunabilirlik tabanı: 12 dot'un ALTINA inilmez.
   for (const profile of SURAT_FOOTER_PROFILES) {
     assert.ok(profile.fontHeight >= 12, `çok küçük font: ${profile.key}`)
   }
@@ -221,9 +219,17 @@ test('TF-9: footer resmî içeriğe BİNMEZ ve alt kenar payı korunur', async (
     derived.metrics.footerBottom <= geometry.labelLength - 8,
     `alt kenar payı: ${derived.metrics.footerBottom}`,
   )
-  // Sol dikey raya girmez.
+  // SOL RAY SÖZLEŞMESİ (cila turunda GÜÇLENDİ, gevşemedi): eskiden footer
+  // DAİMA rayın sağında tutuluyordu. Artık gerçek kutu ölçüldüğü için footer
+  // rayın ALTINA da inebilir. Doğru iddia "x > rayın sağı" değil, KUTULARIN
+  // ÇAKIŞMAMASIDIR: ya sağında ya altında.
   const xs = added.map((line) => Number(/\^FO(\d+),/.exec(line)[1]))
-  assert.ok(Math.min(...xs) > geometry.leftRailRight, 'sol ray korunur')
+  const footerTop = Math.min(
+    ...added.map((line) => Number(/\^FO\d+,(\d+)/.exec(line)[1])),
+  )
+  const clearsRail = footerTop >= geometry.leftRailBottom
+  const rightOfRail = Math.min(...xs) >= geometry.leftRailRight
+  assert.ok(clearsRail || rightOfRail, 'dikey ray ile ÇAKIŞMA yok')
 })
 
 test('TF-10: ürün adı, renk, beden ve SKU footer’da GÖRÜNÜR + kontrollü wrap', async () => {
@@ -333,6 +339,185 @@ test('TF-15: ^FT + ^BC yorum satırı payı AŞAĞI eklenir, çubuklar YUKARI', 
   )
   // Çubuklar YUKARI uzadığı için taban 500'ün çok altına inilmez.
   assert.ok(none.contentBottom <= 500, `taban aşılmamalı: ${none.contentBottom}`)
+})
+
+// ═══ TF-16..TF-19: DURUSOFT CİLA TURU (yalnız augmentation katmanı) ═════
+
+const LONG_ITEM = {
+  quantity: 1,
+  productName:
+    'Scuba Secil Detayli Tesettur Lacivert Abiye Elbise Uzun Kollu Dik Yaka Ozel Gun',
+  color: 'Lacivert',
+  size: '40',
+  sku: 'SCUBA-SEC01',
+}
+const ROOMY = {
+  ok: true, printWidth: 799, labelLength: 799,
+  leftRailRight: 61, contentBottom: 700,
+}
+
+test('TF-16: metin TEK sürekli ^FB bloğunda akar (başlık/meta ZORLA ayrılmaz)', async () => {
+  const { planSuratFooter, buildFooterZplCommands } = await load(
+    '/src/utils/suratZplProductLine.ts')
+  const plan = planSuratFooter([LONG_ITEM], ROOMY)
+  assert.equal(plan.ok, true)
+  // Ürün başına TEK blok → DuruSoft gibi doğal sarma.
+  assert.equal(plan.blocks[0].length, 1, 'iki bloklu biçim KALDIRILDI')
+  const commands = buildFooterZplCommands(plan, { utf8: true })
+  assert.equal(commands.length, 1, 'tek ^FB komutu')
+  // Başlık ve meta AYNI bloktadır.
+  assert.match(commands[0], /1 x Scuba .*\(Renk: Lacivert, Beden: 40\) \[SCUBA-SEC01\]/)
+})
+
+test('TF-17: sürekli akış DAHA KOMPAKT (satır sayısı ARTMAZ)', async () => {
+  const { planSuratFooter } = await load('/src/utils/suratZplProductLine.ts')
+  const plan = planSuratFooter([LONG_ITEM], ROOMY)
+  // ÖNCE: başlık 2 satır + meta 1 satır = 3 satır (66 dot).
+  // SONRA: sürekli akış 2 satır (44 dot).
+  assert.equal(plan.blocks[0][0].lines, 2)
+  assert.equal(plan.usedHeight, 44)
+  assert.ok(plan.usedHeight < 66, 'eski üç satırlı düzenden daha kompakt')
+  // Profil DEĞİŞMEDİ: yer olan etiket hâlâ en büyük okunur fontu alır.
+  assert.equal(plan.profile.key, 'wrapped-compact')
+})
+
+test('TF-18: dar alanda ara kademe DAHA BÜYÜK fontu tercih eder', async () => {
+  const { planSuratFooter, SURAT_FOOTER_PROFILES } = await load(
+    '/src/utils/suratZplProductLine.ts')
+  assert.deepEqual(
+    SURAT_FOOTER_PROFILES.map((p) => p.key),
+    [
+      'single-line-standard', 'single-line-compact', 'single-line-dense',
+      'wrapped-compact', 'wrapped-dense',
+      'wrapped-mid', 'single-line-micro', 'wrapped-micro',
+    ],
+  )
+  // Okunabilirlik tabanı korunuyor.
+  for (const profile of SURAT_FOOTER_PROFILES) {
+    assert.ok(profile.fontHeight >= 12, `çok küçük font: ${profile.key}`)
+  }
+  // Canlı dar alan (31 dot): eskiden 12 dot'luk micro seçiliyordu.
+  const tight = parseTight()
+  const plan = planSuratFooter([LIVE_SHORT_ITEM], tight)
+  assert.equal(plan.ok, true)
+  assert.equal(plan.profile.fontHeight, 14, 'daha büyük okunur font seçildi')
+  assert.equal(plan.profile.key, 'wrapped-mid')
+  assert.ok(plan.usedHeight <= plan.area.height)
+})
+
+test('TF-19: cila turu OVERFLOW çözümünü BOZMAZ', async () => {
+  const { deriveAugmentedSuratZpl } = await load('/src/utils/augmentedSuratZpl.ts')
+  // Canlı 898 şekli hâlâ augmented.
+  const live = deriveAugmentedSuratZpl(PROD_ZPL, [LIVE_ITEM])
+  assert.equal(live.augmented, true)
+  assert.equal(live.augmentationStatus, 'success')
+  // Alan gerçekten yoksa yine EKLENMEZ.
+  const noRoom = PROD_ZPL.replace(
+    '^FT380,745^A0N,44,44^FDADANA AKTARMA^FS',
+    '^FO380,782^A0N,44,44^FDADANA AKTARMA^FS',
+  )
+  assert.notEqual(noRoom, PROD_ZPL, 'fixture GERÇEKTEN değişmeli')
+  const blocked = deriveAugmentedSuratZpl(noRoom, [LIVE_ITEM])
+  assert.equal(blocked.augmented, false)
+  assert.equal(blocked.printZpl, noRoom, 'kaynak AYNEN')
+})
+
+// Canlı dar geometri + canlı (kısa) ürün adı.
+const LIVE_SHORT_ITEM = {
+  quantity: 1,
+  productName: 'Scuba Secil Detayli Tesettur Lacivert Elbise',
+  color: 'Lacivert',
+  size: '40',
+  sku: 'SCUBA-SEC01',
+}
+function parseTight() {
+  return {
+    ok: true, printWidth: 799, labelLength: 799,
+    leftRailRight: 61, contentBottom: 754,
+  }
+}
+
+// ═══ TF-20..TF-24: DÖNDÜRÜLMÜŞ RAY GEOMETRİSİ + SOL SINIR ══════════════
+//
+// DuruSoft footer'ı etiketin sol fiziksel kenarına yakın başlar. Bizimki
+// dikey "Sipariş No" rayının sağından başlıyordu, çünkü döndürülmüş metin
+// yön (orientation) gözetmeden origin'den AŞAĞI uzatılıyordu: ^FWB rayı için
+// bu, ^LL'yi (799) aşan sahte bir alt sınır üretiyordu (700 + 312 = 1012).
+// ^FWB alttan üste okunur; ray origin'den YUKARI uzar.
+
+test('TF-20: ^FWB ray gerçek kutusuyla ölçülür (YUKARI uzar)', async () => {
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const geometry = parseSuratZplGeometry(PROD_ZPL)
+  const rail = geometry.elements.filter((element) => element.rotated)
+  assert.equal(rail.length > 0, true, 'ray ölçüldü')
+  // Origin y=700; metin YUKARI uzadığı için kutu 700'ün ÜSTÜNDE kalır.
+  assert.ok(rail[0].y < 700, `ray üste uzamalı: y=${rail[0].y}`)
+  assert.equal(rail[0].y + rail[0].height, 700, 'alt kenar = origin')
+  // Eksenler yer değiştirir: genişlik karakter hücresi, yükseklik metin boyu.
+  assert.ok(rail[0].height > rail[0].width, 'dikey metin: h > w')
+})
+
+test('TF-21: ray alt sınırı ^LL DIŞINA taşmaz (sahte 1012 YOK)', async () => {
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const geometry = parseSuratZplGeometry(PROD_ZPL)
+  assert.equal(geometry.labelLength, 799)
+  assert.notEqual(geometry.leftRailBottom, 1012, 'eski sahte değer')
+  assert.ok(
+    geometry.leftRailBottom > 0 && geometry.leftRailBottom <= geometry.labelLength,
+    `ray alt sınırı etiket içinde olmalı: ${geometry.leftRailBottom}`,
+  )
+  // Hiçbir döndürülmüş öge etiket boyunu aşmamalı.
+  for (const element of geometry.elements.filter((e) => e.rotated)) {
+    assert.ok(
+      element.y + element.height <= geometry.labelLength,
+      `döndürülmüş öge taştı: ${element.y + element.height}`,
+    )
+  }
+})
+
+test('TF-22: footer rayla ÇAKIŞMAZ', async () => {
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const { planSuratFooter } = await load('/src/utils/suratZplProductLine.ts')
+  const geometry = parseSuratZplGeometry(PROD_ZPL)
+  const plan = planSuratFooter([LIVE_ITEM], geometry)
+  assert.equal(plan.ok, true)
+  // Footer ya rayın ALTINDA başlar ya da rayın SAĞINDA kalır.
+  const belowRail = plan.area.top >= geometry.leftRailBottom
+  const rightOfRail = plan.area.x >= geometry.leftRailRight
+  assert.ok(belowRail || rightOfRail, 'ray ile çakışma YOK')
+  assert.equal(belowRail, true, 'bu şekilde footer rayın altındadır')
+})
+
+test('TF-23: footer sol sınırı DuruSoft gibi sola yaklaşır', async () => {
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const { planSuratFooter } = await load('/src/utils/suratZplProductLine.ts')
+  const geometry = parseSuratZplGeometry(PROD_ZPL)
+  const plan = planSuratFooter([LIVE_ITEM], geometry)
+  // ÖNCE: leftRailRight + 8 = 69. SONRA: sol kenar payı.
+  assert.ok(plan.area.x < geometry.leftRailRight, `sola yaklaşmalı: ${plan.area.x}`)
+  assert.equal(plan.area.x, 16)
+  // Daha geniş alan → daha büyük okunur font.
+  assert.ok(plan.area.width > 760, `genişlik arttı: ${plan.area.width}`)
+  // Daha geniş alan → daha büyük okunur font. Cila turu ÖNCESİ bu şekilde
+  // 12 dot'luk micro kademe seçiliyordu.
+  assert.ok(plan.profile.fontHeight >= 14, `font büyüdü: ${plan.profile.fontHeight}`)
+  assert.ok(plan.profile.fontHeight > 12, 'micro kademeden kurtuldu')
+})
+
+test('TF-24: ray ÖLÇÜLEMEZSE muhafazakâr sol sınır KORUNUR', async () => {
+  const { planSuratFooter } = await load('/src/utils/suratZplProductLine.ts')
+  // leftRailBottom = 0 → genişletme YAPILMAZ.
+  const unmeasured = {
+    ok: true, printWidth: 799, labelLength: 799,
+    leftRailRight: 61, leftRailBottom: 0, contentBottom: 700,
+  }
+  assert.equal(planSuratFooter([LIVE_ITEM], unmeasured).area.x, 69)
+  // Footer rayın alt kenarının ÜSTÜNDE kalıyorsa da genişletme YAPILMAZ.
+  const overlapping = {
+    ok: true, printWidth: 799, labelLength: 799,
+    leftRailRight: 61, leftRailBottom: 780, contentBottom: 700,
+  }
+  assert.equal(planSuratFooter([LIVE_ITEM], overlapping).area.x, 69)
 })
 
 test('TF-11: alan gerçekten yetmiyorsa ürün satırı EKLENMEZ (sessiz kırpma yok)', async () => {

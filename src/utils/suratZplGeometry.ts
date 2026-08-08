@@ -40,6 +40,12 @@ export interface ZplGeometry {
   contentBottom: number
   /** Dikey sipariş rayının sağ kenarı (dot) — 0 ise ray bulunamadı. */
   leftRailRight: number
+  /**
+   * Dikey sipariş rayının GERÇEK alt kenarı (dot) — 0 ise ray yok.
+   * Ray ^FWB ile alttan üste uzandığından bu değer origin'in kendisidir;
+   * etiket boyunu (^LL) ASLA aşmaz.
+   */
+  leftRailBottom: number
   /** İçerik alanının en sağ kenarı (dot). */
   contentRight: number
   reason?: string
@@ -71,6 +77,7 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
     elements: [],
     contentBottom: 0,
     leftRailRight: 0,
+    leftRailBottom: 0,
     contentRight: 0,
   }
   if (!zpl.trim()) return { ...empty, reason: 'ZPL boş.' }
@@ -98,6 +105,15 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
   let fontWidth = 20
   let rotated = false
   let fieldRotated = false
+  /**
+   * ^FW / ^A0<o> yönelimi. Döndürülmüş metnin origin'den HANGİ YÖNE
+   * uzadığını belirler:
+   *   R (90° saat yönü)  → aşağı doğru
+   *   B (270°, alttan üste) → YUKARI doğru
+   * Varsayılan yönelim N'dir.
+   */
+  let orientationDefault: 'N' | 'R' | 'I' | 'B' = 'N'
+  let fieldOrientation: 'N' | 'R' | 'I' | 'B' = 'N'
   let barcodeModuleWidth = 2
   let barcodeHeight = 0
   let blockWidth = 0
@@ -109,7 +125,9 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
     const args = token.slice(2)
 
     if (command === 'FW') {
-      rotated = /^[BR]/i.test(args)
+      const fw = String(args ?? '').trim().charAt(0).toUpperCase()
+      orientationDefault = fw === 'R' || fw === 'I' || fw === 'B' ? fw : 'N'
+      rotated = orientationDefault === 'B' || orientationDefault === 'R'
       continue
     }
     if (command === 'FO' || command === 'FT') {
@@ -123,12 +141,23 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
       blockWidth = 0
       blockLines = 1
       fieldRotated = rotated
+      fieldOrientation = orientationDefault
       continue
     }
     if (command === 'A0' || command === 'A@') {
       const parts = args.split(',')
       const orientation = String(parts[0] ?? '').replace(/^[^NRIB]*/i, '')
-      if (/^[BR]/i.test(orientation)) fieldRotated = true
+      // DİKKAT: ^A0N, ^FW ile kurulmuş dönmeyi SIFIRLAMAZ. Mevcut korpusta
+      // dikey ray `^FWB` + `^A0N` biçiminde yazılıyor; N'i sıfırlama saymak
+      // rayı yatay içerik hâline getirir ve ölçümü bozar (bu tespit, tüm
+      // print-zpl-persistence/reprint paketlerinin kırılmasıyla doğrulandı).
+      // Yönelim YALNIZ açık R/I/B ile YÜKSELTİLİR.
+      const glyph = orientation.charAt(0).toUpperCase()
+      if (glyph === 'R' || glyph === 'I' || glyph === 'B') {
+        fieldOrientation = glyph
+      }
+      fieldRotated =
+        fieldRotated || fieldOrientation === 'B' || fieldOrientation === 'R'
       fontHeight = num(parts[1], fontHeight)
       fontWidth = num(parts[2], fontHeight)
       continue
@@ -265,12 +294,28 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
           cursorIsBaseline && !fieldRotated
             ? fontHeight + (lines - 1) * lineHeight + descender
             : textHeight
+        // DÖNDÜRÜLMÜŞ METİN (dikey sipariş rayı): eksenler YER DEĞİŞTİRİR.
+        // Metnin uzunluğu DİKEY eksene, karakter hücresi YATAY eksene düşer.
+        //
+        // KÖK NEDEN (DuruSoft cila turu): yön ne olursa olsun kutu origin'den
+        // AŞAĞI uzatılıyordu. ^FWB (alttan üste okunan) ray için bu, etiket
+        // boyunu (799) AŞAN sahte bir alt sınır üretiyordu (ör. 700 + 312 =
+        // 1012). Ray gerçekte origin'den YUKARI uzar.
+        //
+        //   B (270°, alttan üste) → üst = y − uzunluk, alt = y
+        //   R (90°, saat yönü)    → üst = y,           alt = y + uzunluk
+        const rotatedLength = lineWidth
+        const cellWidth = Math.round(fontHeight * 1.15)
+        const bottomUp = fieldOrientation === 'B'
         elements.push({
-          // Döndürülmüş metinde (dikey ray) genişlik/yükseklik yer değiştirir.
           x: cursorX,
-          y: fieldRotated ? cursorY : top,
-          width: fieldRotated ? Math.round(fontHeight * 1.15) : lineWidth,
-          height: fieldRotated ? lineWidth : height,
+          y: fieldRotated
+            ? bottomUp
+              ? Math.max(0, cursorY - rotatedLength)
+              : cursorY
+            : top,
+          width: fieldRotated ? cellWidth : lineWidth,
+          height: fieldRotated ? rotatedLength : height,
           kind: 'text',
           rotated: fieldRotated,
         })
@@ -324,9 +369,17 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
     (right, element) => Math.max(right, element.x + element.width),
     0,
   )
-  const leftRailRight = elements
-    .filter((element) => element.rotated && element.x <= LEFT_RAIL_MAX_X)
-    .reduce((right, element) => Math.max(right, element.x + element.width), 0)
+  const railElements = elements.filter(
+    (element) => element.rotated && element.x <= LEFT_RAIL_MAX_X,
+  )
+  const leftRailRight = railElements.reduce(
+    (right, element) => Math.max(right, element.x + element.width),
+    0,
+  )
+  const leftRailBottom = railElements.reduce(
+    (bottom, element) => Math.max(bottom, element.y + element.height),
+    0,
+  )
 
   return {
     ok: true,
@@ -335,6 +388,7 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
     elements,
     contentBottom,
     leftRailRight,
+    leftRailBottom,
     contentRight,
   }
 }
