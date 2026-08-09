@@ -88,6 +88,48 @@ export interface PersistedPrintZpl {
 
 export type SupplementalStatus = 'none' | 'ready' | 'geometry_failure'
 
+/**
+ * EK SAYFA ZORUNLULUK EŞİĞİ.
+ *
+ * Toplanmış görüntü satırı sayısı bu değeri AŞIYORSA ürün detay sayfası
+ * OPERASYONEL OLARAK ZORUNLUDUR. O durumda taşıyıcı-only bir artefaktı
+ * "başarılı" saymak, depoda ürün bilgisini SESSİZCE kaybettirir.
+ */
+export const SUPPLEMENTAL_REQUIRED_ABOVE = 2
+
+export const SUPPLEMENTAL_GEOMETRY_FAILURE = 'supplemental_geometry_failure'
+export const SUPPLEMENTAL_VALIDATION_FAILURE = 'supplemental_validation_failure'
+
+/**
+ * BUNDLE INVARIANT — kalıcılık sınırındaki TEK merkezi kontrol.
+ *
+ * Kural: `aggregatedLineCount > SUPPLEMENTAL_REQUIRED_ABOVE` ise
+ *   - durum 'ready' OLMALI
+ *   - en az bir ek sayfa OLMALI
+ *   - sayfa dizisi kendi içinde tutarlı OLMALI
+ * Aksi halde artefakt GEÇERSİZDİR ve KALICI HALE GETİRİLMEZ.
+ *
+ * `<= eşik` durumunda ek sayfa YOKLUĞU normal ve geçerli bir başarıdır.
+ */
+export function verifyBundleInvariants(
+  artifact: PersistedPrintZpl,
+): { ok: true } | { ok: false; reason: string } {
+  const lineCount = artifact.productSnapshot?.aggregatedLineCount ?? 0
+  const labels = artifact.supplementalLabels ?? []
+  if (lineCount > SUPPLEMENTAL_REQUIRED_ABOVE) {
+    if (artifact.supplementalStatus !== 'ready') {
+      return {
+        ok: false,
+        reason: `${lineCount} satır için ek sayfa ZORUNLU (durum: ${artifact.supplementalStatus ?? 'yok'})`,
+      }
+    }
+    if (labels.length === 0) {
+      return { ok: false, reason: `${lineCount} satır için ek sayfa YOK` }
+    }
+  }
+  return verifySupplementalLabels(labels)
+}
+
 export const PRINT_BUNDLE_VERSION = 1
 
 export interface PersistedSupplementalLabel {
@@ -378,15 +420,40 @@ export function buildPrintZplArtifact(
       : []
   const supplementalStatus: SupplementalStatus = !plan.required
     ? 'none'
-    : plan.reason !== null || supplementalLabels.length === 0
+    : supplementalLabels.length === 0
       ? 'geometry_failure'
       : 'ready'
+
+  // ── TAŞIYICI-ONLY BAŞARI YOK ──────────────────────────────────────────
+  // Eşiğin ÜSTÜNDE ek sayfa üretilemediyse bu bir BUNDLE OLUŞTURMA HATASIDIR.
+  // Taşıyıcı-only artefaktı başarılı sayıp kalıcı hale getirmek, depoda ürün
+  // bilgisini SESSİZCE kaybettirirdi. Açık, tipli hata verilir; hiçbir şey
+  // yazılmaz. Mevcut geçerli artefakt varsa ona DOKUNULMAZ (çağıran onu
+  // zaten kalıcı yoldan okur).
+  if (plan.required && supplementalStatus !== 'ready') {
+    throw new Error(
+      `${SUPPLEMENTAL_GEOMETRY_FAILURE}: ${plan.reason ?? 'ek sayfa üretilemedi'}`,
+    )
+  }
+  // Her toplanmış satır sayfalarda TAM OLARAK BİR KEZ temsil edilmeli.
+  const blockTotal = plan.pages.reduce(
+    (total, page) => total + page.blocks.length,
+    0,
+  )
+  if (plan.required && blockTotal !== plan.aggregated.length) {
+    throw new Error(
+      `${SUPPLEMENTAL_VALIDATION_FAILURE}: ${blockTotal}/${plan.aggregated.length} ürün bloğu`,
+    )
+  }
   const verdict = verifySupplementalLabels(supplementalLabels)
   if (!verdict.ok) {
     // Kendi ürettiğimiz sayfalar tutarsızsa YARIM BUNDLE YAZILMAZ.
-    throw new Error(`supplemental_validation_failure: ${verdict.reason}`)
+    throw new Error(`${SUPPLEMENTAL_VALIDATION_FAILURE}: ${verdict.reason}`)
   }
-  return {
+  const result: {
+    artifact: PersistedPrintZpl
+    augmentationStatus: AugmentationStatus
+  } = {
     artifact: {
       printZpl: derived.printZpl,
       printZplLength: derived.printZplLength,
@@ -407,11 +474,17 @@ export function buildPrintZplArtifact(
       renderContract: derived.renderContract,
       ...(derived.composeMode ? { composeMode: derived.composeMode } : {}),
     },
+    // NOT: merkezi bundle invariant'ı aşağıda, döndürmeden ÖNCE uygulanır.
     // Kalıcılık düzeyindeki MEVCUT bayrak (augmented | source_only) korunur;
     // domain sözlüğü AYRICA `augmentationReason` ile taşınır. Paralel bir
     // durum sözlüğü OLUŞTURULMAZ: DTO domain değerlerini kullanır.
     augmentationStatus: derived.augmented ? 'augmented' : 'source_only',
   }
+  const bundleVerdict = verifyBundleInvariants(result.artifact)
+  if (!bundleVerdict.ok) {
+    throw new Error(`${SUPPLEMENTAL_VALIDATION_FAILURE}: ${bundleVerdict.reason}`)
+  }
+  return result
 }
 
 export interface ResolveOptions {

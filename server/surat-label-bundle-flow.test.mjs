@@ -381,27 +381,148 @@ test('PERSIST-12: kalıcı bayt boyutları ölçülür ve raporlanır', () => {
   console.info('  [PERSIST-12] kalıcı bayt ayak izi:', JSON.stringify(rows))
 })
 
-// ═══ PERSIST-13: EK SAYFA PLANI ÜRETİLEMEZSE — GÜVENLİ DAVRANIŞ ══════════
+// ═══ PERSIST-13..17: TAŞIYICI-ONLY BAŞARI YOK ═══════════════════════════
 //
-// PERSIST-9 loader hatasını zorlar; bu test EK SAYFA ÜRETİMİNİN KENDİSİNİN
-// başarısız olduğu yolu kapsar: tek bir ürün bloğu boş sayfaya bile
-// sığmadığında plan üretilmez. Doğru davranış taşıyıcı-only artefakttır —
-// kırpılmış veya yarım ek sayfa DEĞİL.
-test('PERSIST-13: sayfaya sığmayan ürün → taşıyıcı-only, YARIM sayfa YOK', () => {
-  const huge = 'Kelime'.split('').join(' ').repeat(1) // placeholder
-  const monster = Array.from({ length: 3 }, (_, index) =>
+// >2 toplanmış görüntü satırında ürün detay sayfası OPERASYONEL OLARAK
+// ZORUNLUDUR. Ek sayfa üretilemiyorsa taşıyıcı-only artefaktı "başarılı"
+// saymak, 4.000 sipariş/gün çalışan depoda ürün bilgisini SESSİZCE
+// kaybettirir. Bu yüzden: ya TAM bundle, ya AÇIK HATA.
+
+/** Tek bir ürün bloğu boş sayfaya bile sığmayacak kadar uzun. */
+const monsterItems = (count = 3) =>
+  Array.from({ length: count }, (_, index) =>
     item({
       productName: Array.from({ length: 220 }, (_, w) => `Sozcuk${w}`).join(' '),
       sku: `MONSTER-${index + 1}`,
     }),
   )
-  void huge
-  const artifact = build(monster)
-  // Taşıyıcı etiketi NORMAL üretilir.
-  assert.equal((artifact.printZpl.match(/\^XA/g) ?? []).length, 1)
-  // Ek sayfa üretilemedi ve bu AÇIKÇA raporlanır.
-  assert.equal(artifact.supplementalStatus, 'geometry_failure')
-  assert.deepEqual(artifact.supplementalLabels, [])
-  // Sunum özeti yine doğru — bilgi kaybı sessiz değil.
-  assert.equal(artifact.productSnapshot.aggregatedLineCount, 3)
+
+test('PERSIST-13: >2 ürün + geometri hatası → AÇIK HATA, artefakt YAZILMAZ', async () => {
+  // Saf üretim düzeyinde: taşıyıcı-only artefakt DÖNMEZ, hata fırlatır.
+  assert.throws(
+    () => build(monsterItems(3)),
+    /supplemental_geometry_failure/,
+    'taşıyıcı-only başarı OLMAMALI',
+  )
+
+  // Kalıcılık düzeyinde: hiçbir şey yazılmaz.
+  const db = await makeDb()
+  const organizationId = await makeOrg(db, 'bundle-geometry-fail')
+  const key = await seedShipment(db, organizationId, payloadOf())
+  await assert.rejects(
+    repo.resolvePersistedPrintableLabel(db, key, {
+      items: monsterItems(3),
+      now: NOW,
+    }),
+    /supplemental_geometry_failure/,
+  )
+  const stored = await readArtifact(db, organizationId)
+  assert.equal(stored, undefined, 'taşıyıcı-only artefakt bile yazılmamalı')
+})
+
+test('PERSIST-14: <=2 ürün + ek sayfa yok → GEÇERLİ başarı', async () => {
+  for (const items of [[item()], distinct(2), Array.from({ length: 8 }, () => item())]) {
+    const artifact = build(items)
+    assert.equal(artifact.supplementalStatus, 'none')
+    assert.deepEqual(artifact.supplementalLabels, [])
+    assert.ok(artifact.productSnapshot.aggregatedLineCount <= 2)
+    // Merkezi invariant bunu GEÇERLİ sayar.
+    const verdict = repo.verifyBundleInvariants(artifact)
+    assert.equal(verdict.ok, true, verdict.reason ?? '')
+  }
+})
+
+test('PERSIST-15: >2 ürün + boş supplementalLabels → invariant REDDEDER', () => {
+  const artifact = build(distinct(8))
+  assert.equal(repo.verifyBundleInvariants(artifact).ok, true, 'sağlam artefakt')
+
+  // Elle bozulmuş artefakt: eşik üstü ama ek sayfa yok.
+  const stripped = {
+    ...artifact,
+    supplementalLabels: [],
+    supplementalStatus: 'geometry_failure',
+  }
+  const verdict = repo.verifyBundleInvariants(stripped)
+  assert.equal(verdict.ok, false)
+  assert.match(verdict.reason, /ek sayfa ZORUNLU/)
+
+  // Durum 'ready' yazsa bile sayfa yoksa yine reddedilir.
+  const lying = { ...artifact, supplementalLabels: [], supplementalStatus: 'ready' }
+  assert.equal(repo.verifyBundleInvariants(lying).ok, false)
+})
+
+test('PERSIST-16: mevcut geçerli artefakt, başarısız yeniden üretimde DEĞİŞMEZ', async () => {
+  const db = await makeDb()
+  const organizationId = await makeOrg(db, 'bundle-existing-safe')
+  // Önce GEÇERLİ bundle oluştur.
+  const key = await seedShipment(db, organizationId, payloadOf())
+  const created = await repo.resolvePersistedPrintableLabel(db, key, {
+    items: distinct(8),
+    now: NOW,
+  })
+  assert.equal(created.hydrated, true)
+  const before = await readArtifact(db, organizationId)
+
+  // Sonra üretimi patlatacak girdiyle tekrar çağır: kalıcı kayıt VARDIR,
+  // bu yüzden hydration HİÇ denenmez ve baytlar aynen döner.
+  const reprint = await repo.resolvePersistedPrintableLabel(db, key, {
+    items: monsterItems(3),
+    now: '2027-09-09T00:00:00.000Z',
+  })
+  assert.equal(reprint.hydrated, false)
+  assert.equal(reprint.printZpl, created.printZpl)
+  assert.equal(
+    reprint.supplementalLabels.length,
+    created.supplementalLabels.length,
+  )
+  const after = await readArtifact(db, organizationId)
+  assert.equal(after.printZplSha256, before.printZplSha256, 'DB baytları aynı')
+  assert.equal(
+    after.supplementalLabels.length,
+    before.supplementalLabels.length,
+  )
+})
+
+test('PERSIST-17: geometri hatası ASLA hydrated/başarılı sonuç döndürmez', async () => {
+  const db = await makeDb()
+  const organizationId = await makeOrg(db, 'bundle-no-success')
+  const key = await seedShipment(db, organizationId, payloadOf())
+  let resolved = null
+  try {
+    resolved = await repo.resolvePersistedPrintableLabel(db, key, {
+      items: monsterItems(4),
+      now: NOW,
+    })
+  } catch (error) {
+    assert.match(String(error?.message ?? ''), /supplemental_geometry_failure/)
+  }
+  assert.equal(resolved, null, 'başarılı model DÖNMEMELİ')
+  assert.equal(await readArtifact(db, organizationId), undefined)
+})
+
+test('PERSIST-18: eşzamanlı başarı + hata → kazanan korunur, kısmi yazım YOK', async () => {
+  const db = await makeDb()
+  const organizationId = await makeOrg(db, 'bundle-concurrent-fail')
+  const key = await seedShipment(db, organizationId, payloadOf())
+
+  // A tam bundle üretir; B geometri hatası yaşar.
+  const results = await Promise.allSettled([
+    repo.resolvePersistedPrintableLabel(db, key, { items: distinct(8), now: NOW }),
+    repo.resolvePersistedPrintableLabel(db, key, { items: monsterItems(3), now: NOW }),
+  ])
+  const fulfilled = results.filter((entry) => entry.status === 'fulfilled')
+  const rejected = results.filter((entry) => entry.status === 'rejected')
+  assert.equal(fulfilled.length, 1, 'yalnız tam bundle başarılı olur')
+  assert.equal(rejected.length, 1)
+  assert.match(
+    String(rejected[0].reason?.message ?? ''),
+    /supplemental_geometry_failure/,
+  )
+
+  // DB'de KAZANANIN tam bundle'ı var; taşıyıcı-only veya kısmi kayıt YOK.
+  const stored = await readArtifact(db, organizationId)
+  assert.equal(stored.supplementalStatus, 'ready')
+  assert.ok(stored.supplementalLabels.length >= 1)
+  assert.equal(stored.printZplSha256, fulfilled[0].value.printZplSha256)
+  assert.equal(repo.verifyBundleInvariants(stored).ok, true)
 })
