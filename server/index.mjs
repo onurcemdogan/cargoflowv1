@@ -2464,8 +2464,32 @@ if (String(process.env.CARGOFLOW_AUTH_BYPASS ?? '').trim().toLowerCase() === 'tr
   )
 }
 
+// YENİDEN BAŞLATMA MUTABAKATI (Aşama 3B). Hazırlama kuyruğu SÜREÇ İÇİDİR ve
+// PM2 restart'ında kaybolur. Açılışta "taşıyıcı hazır + artefakt yok"
+// kayıtları SINIRLI bir taramayla yeniden kuyruğa alınır. Tarama üst sınırlı
+// olduğu için açılış maliyeti sabittir; sağlayıcıya ÇIKILMAZ ve yeni
+// gönderi/barkod OLUŞTURULMAZ. Hata açılışı ENGELLEMEZ.
+async function reconcileLabelBundlesOnBoot() {
+  if (!isTenantAuthMode()) return
+  try {
+    const [{ getDb }, { reconcilePendingBundles }] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/labelBundlePreparer.ts'),
+    ])
+    const result = await reconcilePendingBundles(getDb())
+    if (result.enqueued > 0) {
+      console.log(
+        `[label-bundle] restart reconciliation: ${result.enqueued}/${result.scanned} kayıt kuyruğa alındı`,
+      )
+    }
+  } catch {
+    // Mutabakat BEST-EFFORT: başarısız olursa ilk baskıda hydration devrede.
+  }
+}
+
 app.listen(port, host, () => {
   console.log(`CargoFlow API listening on http://${host}:${port}`)
+  void reconcileLabelBundlesOnBoot()
 })
 
 async function createSuratShipment(request, response) {
