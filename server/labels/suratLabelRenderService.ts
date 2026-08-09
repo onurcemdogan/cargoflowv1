@@ -14,9 +14,10 @@
 //   - Provider/marketplace çağrısı YOK, yeni shipment YOK.
 //   - Harici render API YOK (zebrash yereldir).
 import {
-  resolvePersistedPrintableLabel,
+  resolvePrintableLabelForServing,
   PRINT_ZPL_SOURCE_MISSING_MESSAGE,
 } from '../shipments/printZplRepository.ts'
+import { buildPrintableJob } from '../../src/utils/printableLabelJob.ts'
 import { loadPrintLineItems } from '../shipments/printZplItems.ts'
 import { SURAT_PERSISTENCE_PROVIDER } from '../shipments/suratProvider.ts'
 import {
@@ -60,8 +61,41 @@ export interface SuratRenderRequest {
   ) => Promise<any>
 }
 
+/**
+ * ÜRÜN DETAY SAYFASI SERVİS EDİLEMEDİĞİNDE gösterilen güvenli uyarı.
+ * Ana kargo etiketini ENGELLEMEZ (fail-open); yalnız eksikliği bildirir.
+ */
+export const PRODUCT_DETAIL_UNAVAILABLE_WARNING =
+  'Ürün detay etiketi hazırlanamadı.'
+
+/** TEK bir fiziksel etiket (100 × 100 mm). Sıra job kurucusundan gelir. */
+export interface SuratRenderPage {
+  kind: 'carrier' | 'product_detail'
+  /** İşteki fiziksel sayfa sırası (1 tabanlı). Taşıyıcı DAİMA 1'dir. */
+  page: number
+  totalPages: number
+  imageBase64: string
+  renderSha256: string
+}
+
+/**
+ * RENDER EDİLEMEYEN sayfa — AÇIKÇA raporlanır.
+ * Sessiz sayfa düşürme YOKTUR: eksik sayfa burada görünür.
+ */
+export interface SuratRenderMissingPage {
+  kind: 'carrier' | 'product_detail'
+  page: number
+  totalPages: number
+  reason: 'render_failed' | 'invalid_page_structure'
+}
+
 export interface SuratRenderDto {
   mimeType: 'image/png'
+  /**
+   * GERİYE UYUMLULUK: taşıyıcı sayfanın görüntüsü. Yeni canonical sözleşme
+   * `pages[]`'tir; bu alan mevcut tek-görüntü tüketicileri kırmamak için
+   * KORUNUR ve DAİMA `pages[0]` (taşıyıcı) ile aynıdır.
+   */
   imageBase64: string
   widthPx: number
   heightPx: number
@@ -93,6 +127,18 @@ export interface SuratRenderDto {
    */
   composeMode: string | null
   warning?: string
+  /**
+   * CANONICAL SÖZLEŞME — sıralı fiziksel sayfalar.
+   * Taşıyıcı HER ZAMAN ilk; ürün detayları 1..N. Eski (tek sayfalık) kayıtta
+   * uzunluk 1'dir. Sıra burada ÜRETİLMEZ: `buildPrintableJob`'dan gelir.
+   */
+  pages: SuratRenderPage[]
+  /** Render edilemeyen sayfalar — sessizce düşürülmez. */
+  missingPages: SuratRenderMissingPage[]
+  /** Kalıcı paket durumu; `fallback_carrier` = geçici taşıyıcı servisi. */
+  printArtifactStatus: 'ready' | 'fallback_carrier'
+  productDetailStatus: 'none' | 'ready' | 'failed'
+  productDetailFailureReason?: string
 }
 
 export class SuratRenderError extends Error {
@@ -144,9 +190,9 @@ export async function renderSuratLabel(
     )
   }
 
-  let model
+  let resolution
   try {
-    model = await resolvePersistedPrintableLabel(
+    resolution = await resolvePrintableLabelForServing(
       request.db,
       {
         organizationId: request.organizationId,
@@ -179,41 +225,142 @@ export async function renderSuratLabel(
     )
   }
 
-  let render
-  try {
-    render = await renderZplToPng({ zpl: model.printZpl })
-  } catch {
-    // Ham ZPL hata mesajına KONMAZ; yaklaşık SVG'ye DÜŞÜLMEZ.
+  const model = resolution.kind === 'artifact' ? resolution.model : null
+  // ── FİZİKSEL SAYFALAR ─────────────────────────────────────────────────
+  // Sıra BURADA ÜRETİLMEZ. Tek canonical kurucu (buildPrintableJob) taşıyıcıyı
+  // ilk sıraya koyar, ek sayfaları 1..N doğrular; render yalnız o sırayı
+  // izler. Ürün toplama, sayfalama ve composer BURADA ÇALIŞMAZ — girdi
+  // KALICI BAYTLARDIR.
+  const job = model
+    ? buildPrintableJob({
+        carrierZpl: model.printZpl,
+        supplementalLabels: model.supplementalLabels ?? [],
+      })
+    : buildPrintableJob({ carrierZpl: resolution.carrierZpl })
+  if (!job.printReady) {
+    throw new SuratRenderError(
+      409,
+      'label_not_ready',
+      PRINT_ZPL_SOURCE_MISSING_MESSAGE,
+    )
+  }
+
+  const pages: SuratRenderPage[] = []
+  const missingPages: SuratRenderMissingPage[] = []
+  let carrierRender: Awaited<ReturnType<typeof renderZplToPng>> | null = null
+  const totalPages = job.pages.length
+  for (const [index, entry] of job.pages.entries()) {
+    const page = index + 1
+    // HER ÇIKTI GÖRÜNTÜSÜ TEK FİZİKSEL ETİKET. Birleşik ZPL tek büyük PNG
+    // gibi render EDİLMEZ; bu yüzden her girdi sayfası tam bir ^XA/^XZ
+    // çerçevesi olmalıdır.
+    const opens = (entry.zpl.match(/\^XA/g) ?? []).length
+    const closes = (entry.zpl.match(/\^XZ/g) ?? []).length
+    if (opens !== 1 || closes !== 1) {
+      if (entry.kind === 'carrier') {
+        throw new SuratRenderError(
+          409,
+          'label_not_ready',
+          PRINT_ZPL_SOURCE_MISSING_MESSAGE,
+        )
+      }
+      missingPages.push({
+        kind: entry.kind,
+        page,
+        totalPages,
+        reason: 'invalid_page_structure',
+      })
+      continue
+    }
+    let render
+    try {
+      render = await renderZplToPng({ zpl: entry.zpl })
+    } catch {
+      // TAŞIYICI render edilemiyorsa basılabilir sonuç YOKTUR.
+      // Ham ZPL hata mesajına KONMAZ; yaklaşık SVG'ye DÜŞÜLMEZ.
+      if (entry.kind === 'carrier') {
+        throw new SuratRenderError(502, 'render_failed', ZPL_RENDER_FAILED_MESSAGE)
+      }
+      // FAIL-OPEN: ek sayfanın hatası GEÇERLİ taşıyıcıyı engellemez, ama
+      // SESSİZCE DÜŞMEZ — hangi sayfanın eksik olduğu açıkça raporlanır.
+      missingPages.push({
+        kind: entry.kind,
+        page,
+        totalPages,
+        reason: 'render_failed',
+      })
+      continue
+    }
+    if (entry.kind === 'carrier') carrierRender = render
+    pages.push({
+      kind: entry.kind,
+      page,
+      totalPages,
+      imageBase64: render.pngBase64,
+      renderSha256: render.renderSha256,
+    })
+  }
+  if (!carrierRender) {
     throw new SuratRenderError(502, 'render_failed', ZPL_RENDER_FAILED_MESSAGE)
   }
 
   // Kalıcılık bayrağı → DOMAIN sözlüğü. Ürün satırı eklendiyse 'success';
   // eklenmediyse kalıcı artefakttaki gerçek NEDEN kullanılır (eski kayıtlarda
   // neden saklanmadığı için 'unavailable' güvenli varsayılandır).
-  const augmentationStatus: AugmentationStatus =
-    model.augmentationStatus === 'augmented'
+  const augmentationStatus: AugmentationStatus = !model
+    ? 'unavailable'
+    : model.augmentationStatus === 'augmented'
       ? 'success'
       : (model.augmentationReason ?? 'unavailable')
 
+  // Ürün detay durumu: hiç gerekmedi mi, tam mı, yoksa eksik mi?
+  const expectedDetailPages = job.productDetailPageCount
+  const renderedDetailPages = pages.filter(
+    (entry) => entry.kind === 'product_detail',
+  ).length
+  const productDetailStatus: 'none' | 'ready' | 'failed' = !model
+    ? 'failed'
+    : expectedDetailPages === 0
+      ? 'none'
+      : renderedDetailPages === expectedDetailPages
+        ? 'ready'
+        : 'failed'
+  const productDetailFailureReason = !model
+    ? resolution.productDetailFailureReason
+    : productDetailStatus === 'failed'
+      ? 'supplemental_render_failure'
+      : undefined
+
+  const warning =
+    productDetailStatus === 'failed'
+      ? PRODUCT_DETAIL_UNAVAILABLE_WARNING
+      : augmentationStatus === 'success'
+        ? undefined
+        : PRODUCT_LINE_FALLBACK_WARNING
+
   return {
     mimeType: 'image/png',
-    imageBase64: render.pngBase64,
-    widthPx: render.widthPx,
-    heightPx: render.heightPx,
-    widthMm: render.widthMm,
-    heightMm: render.heightMm,
-    printZplSha256: model.printZplSha256,
-    renderSha256: render.renderSha256,
+    // GERİYE UYUMLU tek görüntü alanı = TAŞIYICI sayfa (pages[0]).
+    imageBase64: carrierRender.pngBase64,
+    widthPx: carrierRender.widthPx,
+    heightPx: carrierRender.heightPx,
+    widthMm: carrierRender.widthMm,
+    heightMm: carrierRender.heightMm,
+    printZplSha256: model ? model.printZplSha256 : resolution.carrierZplSha256,
+    renderSha256: carrierRender.renderSha256,
     renderEngine: ZPL_RENDERER_PACKAGE,
     renderEngineVersion: ZPL_RENDERER_PACKAGE_VERSION,
-    zebrashVersion: render.engine.zebrashVersion,
+    zebrashVersion: carrierRender.engine.zebrashVersion,
     augmentationStatus,
     // Eski kayıtlarda alan yoktur; o artefaktlar composer'dan ÖNCE
     // üretildiği için augmentation-only'dir.
-    renderContract: model.renderContract ?? 'official_augmented',
-    composeMode: model.composeMode ?? null,
-    ...(augmentationStatus === 'success'
-      ? {}
-      : { warning: PRODUCT_LINE_FALLBACK_WARNING }),
+    renderContract: model?.renderContract ?? 'official_augmented',
+    composeMode: model?.composeMode ?? null,
+    pages,
+    missingPages,
+    printArtifactStatus: model ? 'ready' : 'fallback_carrier',
+    productDetailStatus,
+    ...(productDetailFailureReason ? { productDetailFailureReason } : {}),
+    ...(warning ? { warning } : {}),
   }
 }
