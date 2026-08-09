@@ -663,7 +663,7 @@ function withLongTransferCenter(source, value) {
 test('CF-36: GEÇERLİ 727 + QR çakışması → composer TÜMÜYLE reddeder', async () => {
   const { composeSuratDurusoftLabel } = await composer()
   // 20 karakterlik aktarma merkezi adı QR'ın güvenli bölgesini yer.
-  const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKT')
+  const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKTARMA MERKEZI')
   const result = composeSuratDurusoftLabel(crowded, {
     cargoTrackingNumber: VERIFIED_727,
   })
@@ -688,7 +688,7 @@ test('CF-36: GEÇERLİ 727 + QR çakışması → composer TÜMÜYLE reddeder', 
 
 test('CF-37: çakışma durumunda augmentation zinciri RT-10A sözleşmesine döner', async () => {
   const { deriveAugmentedSuratZpl } = await augment()
-  const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKT')
+  const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKTARMA MERKEZI')
   const derived = deriveAugmentedSuratZpl(
     crowded,
     [{ productName: 'Ornek Urun', quantity: 1, sku: 'SKU-1' }],
@@ -724,7 +724,7 @@ test('CF-38: 727 YOK/GEÇERSİZ ise mevcut iş kuralı korunur (composed sürer)
   }
   // 727 YOKKEN aktarma metni uzun olsa bile composed mod ENGELLENMEZ:
   // QR zaten üretilmeyecektir, geometri çakışması doğmaz.
-  const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKT')
+  const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKTARMA MERKEZI')
   const noQr = composeSuratDurusoftLabel(crowded, {})
   assert.equal(noQr.composed, true)
   assert.equal(noQr.diagnostics.qrRejection, 'no_candidate')

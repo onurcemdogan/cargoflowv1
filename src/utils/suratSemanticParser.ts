@@ -195,8 +195,26 @@ export interface SuratFieldExtraction {
  * ANLAMSIZDIR. Invariant doğrulaması yalnız slotların yerinde, tek ve aynı
  * gövdeyle durduğunu sorar — bunu bu fonksiyon sağlar.
  */
-export function extractSuratSemanticFields(zpl: string): SuratFieldExtraction {
-  return extractFromZplFields(collectZplFields(parseZplDocument(zpl)))
+export interface SuratFieldExpectations {
+  /**
+   * Aktarma merkezi metninin BEKLENEN font genişliği.
+   *
+   * Composed çıktıda bu genişlik, sağ kolona QR sığdırmak için kaynağa göre
+   * DARALTILMIŞ olabilir (transform whitelist madde 5). Doğrulayıcı beklenen
+   * değeri bilmezse kendi bilinçli dönüşümümüzü "font imzası uyuşmuyor" diye
+   * reddeder. Verilmezse kaynaktaki özgün genişlik beklenir.
+   */
+  readonly transferFontWidth?: number
+}
+
+export function extractSuratSemanticFields(
+  zpl: string,
+  expectations: SuratFieldExpectations = {},
+): SuratFieldExtraction {
+  return extractFromZplFields(
+    collectZplFields(parseZplDocument(zpl)),
+    expectations,
+  )
 }
 
 /**
@@ -206,10 +224,18 @@ export function extractSuratSemanticFields(zpl: string): SuratFieldExtraction {
  */
 function extractFromZplFields(
   zplFields: readonly ZplField[],
+  expectations: SuratFieldExpectations = {},
 ): SuratFieldExtraction {
   const fields: Partial<Record<SuratSemanticKey, SuratSemanticField>> = {}
   const errors: string[] = []
-  for (const slot of SLOTS) {
+  for (const baseSlot of SLOTS) {
+    // Yalnız BEKLENTİ değişir; koordinat, komut ailesi ve gövde kontrolü aynı.
+    const slot: SuratSlotSpec =
+      baseSlot.key === 'transferCenter' &&
+      expectations.transferFontWidth !== undefined &&
+      baseSlot.font
+        ? { ...baseSlot, font: { ...baseSlot.font, width: expectations.transferFontWidth } }
+        : baseSlot
     const found = locate(zplFields, slot)
     if ('error' in found) {
       errors.push(found.error)

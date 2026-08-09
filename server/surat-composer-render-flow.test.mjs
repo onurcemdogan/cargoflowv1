@@ -483,3 +483,178 @@ test('VISUAL-4: footer ortak sol aileye yakın ve taşmıyor', async () => {
   assert.ok(right(footer) <= SURAT_GRID.labelEdge - 8, 'footer sağ taşma yok')
   assert.ok(bottom(footer) <= 798, 'footer alt taşma yok')
 })
+
+// ═══ VISUAL-* : ÖLÇÜLEN PARITY DEĞERLERİNİN KİLİTLENMESİ ═════════════════
+//
+// DuruSoft referansıyla karşılaştırmalı ölçüm, dört alanın ZATEN kabul
+// edilebilir olduğunu gösterdi; bu yüzden KOORDİNAT DEĞİŞTİRİLMEDİ.
+// Aşağıdaki testler o değerleri TOLERANSLI biçimde kilitler: amaç snapshot
+// değil, kuralın korunması. Değerler mümkün olduğunca SURAT_GRID ve composer
+// teşhis çıktısından TÜRETİLİR, elle yazılmaz.
+
+const TRANSFER_RE = /\^FT220,705\^A0N,70,50\^FH.\^FD[^^]*\^FS/
+const withTransferCenter = (value) =>
+  zpl.replace(
+    TRANSFER_RE,
+    `^FT220,705^A0N,70,50^FH${String.fromCharCode(92)}^FD${value}^FS`,
+  )
+
+async function composedBitmap(source, items) {
+  const derived = deriveAugmentedSuratZplWithHashes(
+    source,
+    items ?? [{ productName: 'Ornek Urun', quantity: 1, sku: 'S1' }],
+    { compose: { cargoTrackingNumber: VERIFIED_727 } },
+  )
+  assert.equal(derived.renderContract, 'durusoft_composed')
+  const composed = composeSuratDurusoftLabel(source, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  return {
+    bitmap: (await render(derived.printZpl)).bitmap,
+    diagnostics: composed.diagnostics,
+    metrics: derived.metrics,
+  }
+}
+
+test('VISUAL-BARCODE: küçük metin subset-C merkezine oturur, boşluklar güvenli', async () => {
+  const { bitmap, diagnostics } = await composedBitmap(zpl)
+  const body = box(bitmap, 46, 157, 750, 144)
+  const text = box(bitmap, 46, 302, 750, 34)
+  assert.ok(body && text)
+
+  // Merkez, GERÇEK YAZICI (subset C) genişliğinden TÜRETİLİR — renderer'ın
+  // subset-B genişliğinden değil. Teorik merkez = barkod sol + genişlik/2.
+  const theoreticalCentre = body.x + diagnostics.barcodeWidth / 2
+  const renderedCentre = text.x + text.width / 2
+  assert.ok(
+    Math.abs(renderedCentre - theoreticalCentre) <= 2,
+    `metin merkezi ±2 dot: ${renderedCentre} / ${theoreticalCentre}`,
+  )
+  // Dahili yorum satırından belirgin küçük ve barkod bandı içinde.
+  assert.ok(text.height <= 20, `metin yüksekliği: ${text.height}`)
+  assert.ok(text.x >= body.x && right(text) <= right(body))
+  // Boşluklar: barkod tabanı → metin, metin → alıcı kutusu üst çizgisi.
+  assert.ok(text.y - bottom(body) >= 4, 'barkod-metin boşluğu')
+  assert.ok(336 - bottom(text) >= 8, 'metin-alıcı kutusu boşluğu')
+})
+
+test('VISUAL-ADDRESS: bold blok normal adresle aynı çapada ve kutu içinde', async () => {
+  const { bitmap } = await composedBitmap(zpl)
+  const normal1 = box(bitmap, 66, 357, 700, 21)
+  const normal2 = box(bitmap, 66, 378, 700, 21)
+  const bold1 = box(bitmap, 66, 401, 700, 16)
+  const bold2 = box(bitmap, 66, 417, 700, 16)
+  const phone = box(bitmap, 100, 452, 300, 22)
+  assert.ok(normal1 && normal2 && bold1 && bold2 && phone)
+
+  // AYNI SOL ÇAPA — bold, kaynak satırın bayt kopyası olduğu için birebir.
+  assert.equal(bold1.x, normal1.x, 'bold 1 sol çapa')
+  assert.equal(bold2.x, normal2.x, 'bold 2 sol çapa')
+  // Çift vuruş yalnız +1 dot genişletir.
+  assert.ok(Math.abs(bold1.width - normal1.width) <= 2)
+  assert.ok(Math.abs(bold2.width - normal2.width) <= 2)
+  // Doğal devam: normal bloğun hemen altında, aşırı boşluk yok.
+  const gap = bold1.y - bottom(normal2)
+  assert.ok(gap > 0 && gap <= 16, `normal-bold boşluğu: ${gap}`)
+  // TEL satırına ve kutu tabanına taşmaz.
+  assert.ok(bottom(bold2) < phone.y, 'bold blok TEL satırına taşmaz')
+  assert.ok(bottom(bold2) < 476, 'bold blok kutu tabanını aşmaz')
+})
+
+test('VISUAL-BOTTOM: DataMatrix / routing / QR dış marj dengesi', async () => {
+  const { bitmap, diagnostics } = await composedBitmap(zpl)
+  const dataMatrix = box(bitmap, 40, 490, 130, 220)
+  const routing = box(bitmap, 170, 560, 420, 150)
+  const qr = box(
+    bitmap,
+    diagnostics.qrBox.x - 25,
+    diagnostics.qrBox.y - 25,
+    diagnostics.qrBox.size + 60,
+    diagnostics.qrBox.size + 60,
+  )
+  assert.ok(dataMatrix && routing && qr)
+
+  const leftMargin = dataMatrix.x
+  const rightMargin = 799 - right(qr)
+  assert.ok(
+    Math.abs(leftMargin - rightMargin) <= 5,
+    `dış marj simetrisi: sol ${leftMargin} / sağ ${rightMargin}`,
+  )
+  // ÜÇ KOLON gerçekten ayrık.
+  assert.ok(routing.x > right(dataMatrix), 'orta blok DataMatrix sağında')
+  assert.ok(right(routing) < qr.x, 'orta blok QR solunda')
+  assert.ok(!overlaps(dataMatrix, qr))
+  assert.ok(!overlaps(routing, qr))
+  assert.ok(!overlaps(dataMatrix, routing))
+})
+
+test('VISUAL-FOOTER: footer ortak sol rayda, taşma ve kırpma yok', async () => {
+  const { SURAT_GRID } = await _vite.ssrLoadModule(
+    '/src/utils/suratDurusoftComposer.ts',
+  )
+  const { bitmap, metrics } = await composedBitmap(zpl, [
+    {
+      productName: 'Scuba Secil Detayli Tesettur Lacivert Elbise',
+      quantity: 1,
+      color: 'Lacivert',
+      size: '40',
+      sku: 'SCUBA-SEC01',
+    },
+  ])
+  const footer = box(bitmap, 0, metrics.footerTop, 799, 799 - metrics.footerTop)
+  assert.ok(footer)
+  // Dikey rayın ALTINDA olduğu için içerik rayının solunu kullanabilir.
+  assert.ok(footer.x <= 20, `footer sol: ${footer.x}`)
+  assert.ok(footer.x >= 8, 'etiket kenarından güvenli mesafe')
+  assert.ok(footer.x <= SURAT_GRID.contentLeft)
+  assert.ok(right(footer) <= SURAT_GRID.labelEdge - 8, 'sağ taşma yok')
+  assert.ok(bottom(footer) <= 798, 'alt taşma yok')
+  // Alt bölümle güvenli boşluk.
+  assert.ok(metrics.footerTop > metrics.contentBottom, 'footer içeriğin altında')
+  assert.ok(metrics.footerTop - metrics.contentBottom >= 4, 'güvenli boşluk')
+})
+
+test('VISUAL-TOP: üst blok ortak raylarda', async () => {
+  const { SURAT_GRID } = await _vite.ssrLoadModule(
+    '/src/utils/suratDurusoftComposer.ts',
+  )
+  const { bitmap } = await composedBitmap(zpl)
+  const sube = box(bitmap, 46, 56, 300, 30)
+  const tNo = box(bitmap, 440, 56, 340, 30)
+  assert.ok(sube && tNo)
+  // Şube sol içerik rayında başlar, T.No üst kutunun sağ rayında biter.
+  assert.ok(
+    Math.abs(sube.x - SURAT_GRID.contentLeft) <= 3,
+    `Şube sol ray: ${sube.x}`,
+  )
+  assert.ok(right(tNo) <= SURAT_GRID.contentRight, 'T.No sağ rayı aşmaz')
+  assert.ok(right(tNo) >= 750, `T.No sağa yaslı: ${right(tNo)}`)
+  // AYNI BASELINE AİLESİ — üst kenarlar birkaç dot içinde.
+  assert.ok(Math.abs(sube.y - tNo.y) <= 3, 'ortak üst baseline')
+  assert.ok(!overlaps(sube, tNo), 'Şube ve T.No çakışmaz')
+})
+
+test('VISUAL-QR-POLICY: ölçek sınıf bazında deterministik', async () => {
+  // POLİTİKA: common sınıflar mag5 (fiziksel olarak doğrulanmış), geometri
+  // kısıtlı sınıflar mag4, gerçekten sığmayan ad fallback.
+  // Sırf görsel parity için mag5 mag4'e ÇEKİLMEZ (readability > parity).
+  const expected = [
+    ['GEBZE AKTARMA', 5],
+    ['IKITELLI AKTARMA', 5],
+    ['ERZURUM AKTARMA', 4],
+    ['DIYARBAKIR AKTARMA', 4],
+    ['ISTANBUL ANADOLU AKTARMA MERKEZI', null],
+  ]
+  for (const [name, magnification] of expected) {
+    const result = composeSuratDurusoftLabel(withTransferCenter(name), {
+      cargoTrackingNumber: VERIFIED_727,
+    })
+    if (magnification === null) {
+      assert.equal(result.composed, false, name)
+      assert.equal(result.mode, 'fallback_geometry_failure', name)
+      continue
+    }
+    assert.equal(result.composed, true, `${name}: ${result.reason ?? ''}`)
+    assert.equal(result.diagnostics.qrMagnification, magnification, name)
+  }
+})
