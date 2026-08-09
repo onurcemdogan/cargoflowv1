@@ -1,4 +1,68 @@
+import type { ServerPrintContract } from '../utils/persistedLabel'
 import type { LabelPrintTemplate } from '../utils/labelPrintTemplateRouting'
+
+/**
+ * Sunucu baskı özetini KAPALI SÖZLÜKLE normalize eder.
+ *
+ * Bilinmeyen/eksik değer GÜVENLİ tarafa düşer (basılamaz). İstemci burada
+ * karar ÜRETMEZ; yalnız sunucunun kararını tipli hale getirir.
+ *
+ * Sunucu özeti hiç yoksa (eski yanıt biçimi) taşıyıcı ZPL'in varlığından
+ * tek sayfalık sözleşme türetilir — bu, kalıcı artefaktı olmayan ESKİ
+ * kayıtların mevcut reprint davranışını korur.
+ */
+function normalizeServerPrintContract(
+  raw: Record<string, unknown> | null | undefined,
+  zpl: string | null,
+  desi: number | null,
+): ServerPrintContract | null {
+  if (!raw || typeof raw !== 'object') {
+    if (!zpl) return null
+    return {
+      carrierPrintReady: true,
+      printArtifactStatus: 'ready',
+      productDetailStatus: 'none',
+      zpl,
+      desi,
+      supplementalLabels: [],
+    }
+  }
+  const artifactStatus =
+    raw.printArtifactStatus === 'ready' ||
+    raw.printArtifactStatus === 'fallback_carrier'
+      ? raw.printArtifactStatus
+      : 'failed'
+  const detailStatus =
+    raw.productDetailStatus === 'ready' || raw.productDetailStatus === 'none'
+      ? raw.productDetailStatus
+      : 'failed'
+  // Taşıyıcı kapısı: SUNUCUNUN bayrağı. `carrierPrintReady` eski yanıtlarda
+  // yoksa `printReady`ye düşülür; ikisi de yoksa BASILAMAZ.
+  const carrierPrintReady =
+    raw.carrierPrintReady === true ||
+    (raw.carrierPrintReady === undefined && raw.printReady === true)
+  const supplementalLabels = Array.isArray(raw.supplementalLabels)
+    ? (raw.supplementalLabels as Array<Record<string, unknown>>)
+        .map((entry) => ({
+          page: Number(entry?.page ?? 0),
+          totalPages: Number(entry?.totalPages ?? 0),
+          zpl: typeof entry?.zpl === 'string' ? entry.zpl : '',
+          ...(typeof entry?.sha256 === 'string' ? { sha256: entry.sha256 } : {}),
+        }))
+        .filter((entry) => entry.zpl.trim().length > 0)
+    : []
+  return {
+    carrierPrintReady,
+    printArtifactStatus: artifactStatus,
+    productDetailStatus: detailStatus,
+    ...(typeof raw.productDetailFailureReason === 'string'
+      ? { productDetailFailureReason: raw.productDetailFailureReason }
+      : {}),
+    zpl,
+    desi,
+    supplementalLabels,
+  }
+}
 import type { LabelProvider } from '../providers/labels/LabelProvider'
 import type { MarketplaceProvider } from '../providers/marketplace/MarketplaceProvider'
 import type { PrintProvider, PrintResult } from '../providers/printing/PrintProvider'
@@ -602,6 +666,15 @@ export class OrderWorkflowService {
     zpl: string | null
     source: string | null
     desi: number | null
+    /**
+     * SUNUCUNUN BASILABİLİRLİK SÖZLEŞMESİ.
+     *
+     * Baskıya gidecek baytlara ve basılıp basılamayacağına SUNUCU karar
+     * verir; istemci bu sözleşmeyi UYGULAR (bkz. applyServerPrintContract).
+     * Alanlar KAPALI SÖZLÜKTEN okunur; bilinmeyen değer güvenli tarafa
+     * (basılamaz) düşer.
+     */
+    print: ServerPrintContract | null
   } | null> {
     if (!this.authMode) return null
     const response = await fetch(
@@ -614,17 +687,22 @@ export class OrderWorkflowService {
       zpl?: string | null
       source?: string | null
       desi?: number | null
+      print?: Record<string, unknown> | null
       message?: string
     }
     if (!response.ok || payload?.ok === false) {
       throw new Error(String(payload?.message ?? 'Kayıtlı etiket alınamadı.'))
     }
     const desiNum = Number(payload.desi)
+    const zpl =
+      typeof payload.zpl === 'string' && payload.zpl.trim() ? payload.zpl : null
+    const desi = Number.isFinite(desiNum) && desiNum > 0 ? desiNum : null
     return {
       hasPrintableLabel: payload.hasPrintableLabel === true,
-      zpl: typeof payload.zpl === 'string' && payload.zpl.trim() ? payload.zpl : null,
+      zpl,
       source: payload.source ?? null,
-      desi: Number.isFinite(desiNum) && desiNum > 0 ? desiNum : null,
+      desi,
+      print: normalizeServerPrintContract(payload.print, zpl, desi),
     }
   }
 

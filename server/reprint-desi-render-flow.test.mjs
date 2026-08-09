@@ -71,15 +71,34 @@ test('RDP-7: injectPersistedZpl — order’da geçerli desi varsa EZİLMEZ', as
   assert.equal(patched.desi, 3)
 })
 
-test('RDP-8: byte-for-byte — resolvePersistedLabelArtifact aynı ham ZPL’i döndürür (indir=yazdır kaynağı)', async (t) => {
+// SÖZLEŞME DEĞİŞTİ (Aşama 3A/Adım 3): "indir = yazdır" garantisi artık
+// istemcinin AYNI KAYNAĞI seçmesinden değil, ikisinin de AYNI SUNUCU
+// sözleşmesini uygulamasından gelir. İddia zayıflatılmadı: byte-for-byte
+// eşitlik hâlâ kilitli, yalnız kaynağı değişti.
+test('RDP-8: byte-for-byte — indir ve yazdır AYNI sunucu sözleşmesini uygular', async (t) => {
   const vite = await withVite(t)
-  const { resolvePersistedLabelArtifact } = await vite.ssrLoadModule(
-    '/src/utils/persistedLabel.ts',
-  )
+  const { resolvePersistedLabelArtifact, applyServerPrintContract } =
+    await vite.ssrLoadModule('/src/utils/persistedLabel.ts')
   const order = printableOrder()
+
+  // İstemci kaynaktan basılabilir ZPL SEÇMEZ.
   const artifact = resolvePersistedLabelArtifact(order)
-  assert.equal(artifact.zpl, order.shipment.barcodeRaw)
-  assert.equal(artifact.source, 'order.shipment.barcodeRaw')
+  assert.equal(artifact.zpl, null)
+  assert.equal(artifact.source, 'pending-fetch')
+
+  // Sunucu sözleşmesi uygulandığında iki yol da AYNI baytları görür.
+  const contract = {
+    carrierPrintReady: true,
+    printArtifactStatus: 'ready',
+    productDetailStatus: 'none',
+    zpl: order.shipment.barcodeRaw,
+    desi: null,
+    supplementalLabels: [],
+  }
+  const download = applyServerPrintContract(order, contract)
+  const print = applyServerPrintContract(order, contract)
+  assert.equal(download.shipment.barcodeRaw, print.shipment.barcodeRaw)
+  assert.equal(download.shipment.barcodeRaw, contract.zpl)
 })
 
 test('RDP-9: format korunur — 2→2.00, 2.5→2.50, null→-', async (t) => {

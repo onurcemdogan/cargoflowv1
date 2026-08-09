@@ -51,9 +51,11 @@ import { orderPackageIdentity } from './utils/orderCounts'
 import { resolveEffectiveLabelDesi } from './utils/labelDesi'
 import { resolveLabelLayoutBlockReason } from './utils/labelLayoutResolver'
 import {
-  injectPersistedZpl,
+  applyServerPrintContract,
   isReprintEligible,
   resolvePersistedLabelArtifact,
+  stripClientPrintSources,
+  type ServerPrintContract,
 } from './utils/persistedLabel'
 import type {
   AuditLog,
@@ -848,50 +850,47 @@ function App() {
   ): Promise<{ effectiveOrders: CargoOrder[]; unresolved: string[] }> {
     const baseOrders = sourceOrders ?? orders
     const idSet = new Set(orderIds)
-    const patchById = new Map<string, { zpl?: string; desi?: number }>()
+    // BASILABİLİR ÇIKTIYA SUNUCU KARAR VERİR. Bu yüzden artık "ham ZPL
+    // bellekte yok" koşuluna bakılmaz: baskı gerekiyorsa sunucu sözleşmesi
+    // HER ZAMAN alınır. Bellekteki `barcodeRaw` taşıyıcı KAYNAKTIR ve
+    // basılabilir çıktı olarak KULLANILMAZ.
+    const contractById = new Map<string, ServerPrintContract | null>()
+    const blocked = new Set<string>()
     const unresolved: string[] = []
     await Promise.all(
       baseOrders
         .filter((order) => idSet.has(order.id) && isReprintEligible(order))
         .map(async (order) => {
           const artifact = resolvePersistedLabelArtifact(order)
-          const hasDesi =
-            typeof order.desi === 'number' &&
-            Number.isFinite(order.desi) &&
-            order.desi > 0
-          const needsZpl = !artifact.zpl
-          // Kalıcı desi eksikse (reload sonrası order.desi kaybı) etiket "Top
-          // Ds/Kg" alanı "-" olmasın diye desi de uçtan çözülür.
-          const needsDesi = !hasDesi
-          if (!needsZpl && !needsDesi) return
           try {
             const fetched = await workflowService.fetchPersistedLabel(order.id)
-            const patch: { zpl?: string; desi?: number } = {}
-            if (needsZpl && fetched?.zpl) patch.zpl = fetched.zpl
-            if (needsDesi && fetched?.desi != null) patch.desi = fetched.desi
-            if (patch.zpl || patch.desi != null) patchById.set(order.id, patch)
-            // Ham ZPL gerçekten gerekli ama alınamadıysa kontrollü uyarı
-            // (sessiz "-" etiket üretilmez; provider'a çıkılmaz).
-            if (needsZpl && !fetched?.zpl && artifact.hasPrintableLabel) {
-              unresolved.push(order.orderNumber)
+            // `null` = sunucu yetkisi YOK (legacy mod, uç mevcut değil).
+            // Bu durumda mevcut istemci davranışı AYNEN korunur.
+            if (fetched === null) return
+            if (fetched.print?.carrierPrintReady && fetched.print.zpl) {
+              contractById.set(order.id, fetched.print)
+              return
             }
+            // SUNUCU "BASILAMAZ" DEDİ. `technicalZpl` mevcut diye bu karar
+            // EZİLMEZ; istemci kendi fallback'ini ÜRETMEZ.
+            blocked.add(order.id)
+            if (artifact.hasPrintableLabel) unresolved.push(order.orderNumber)
           } catch {
-            if (needsZpl && artifact.hasPrintableLabel) {
-              unresolved.push(order.orderNumber)
-            }
+            // Bilinmeyen hata fail-open ETMEZ: kaynağa düşülmez.
+            blocked.add(order.id)
+            if (artifact.hasPrintableLabel) unresolved.push(order.orderNumber)
           }
         }),
     )
     const effectiveOrders =
-      patchById.size === 0
+      contractById.size === 0 && blocked.size === 0
         ? baseOrders
         : baseOrders.map((order) => {
-            const patch = patchById.get(order.id)
-            if (!patch) return order
-            // Var olan ham ZPL KORUNUR; yalnız eksik alan (ZPL ve/veya desi)
-            // doldurulur. injectPersistedZpl mevcut geçerli desiyi ezmez.
-            const zpl = patch.zpl ?? String(order.shipment?.barcodeRaw ?? '')
-            return injectPersistedZpl(order, zpl, patch.desi ?? null)
+            if (blocked.has(order.id)) return stripClientPrintSources(order)
+            const contract = contractById.get(order.id)
+            if (!contract) return order
+            // Sunucu sözleşmesi UYGULANIR: taşıyıcı baytlar + sayfa sırası.
+            return applyServerPrintContract(order, contract)
           })
     return { effectiveOrders, unresolved }
   }

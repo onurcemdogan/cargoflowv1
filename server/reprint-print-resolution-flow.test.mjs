@@ -147,15 +147,23 @@ test('REP-3: generateSingle kayıtlı ZPL var + desi=DEĞER → yine kayıtlı Z
   assert.ok(label.zplContent.startsWith('^XA'))
 })
 
-test('REP-4: resolvePersistedLabelArtifact — barcodeRaw varsa zpl + source döner', async (t) => {
+// SÖZLEŞME DEĞİŞTİ (Aşama 3A/Adım 3): basılabilir ÇIKTIYI İSTEMCİ SEÇMEZ.
+// `barcodeRaw`/`technicalZpl` taşıyıcı KAYNAKTIR ve yerinde KALIR; ama artık
+// baskıya gidecek baytlar olarak seçilmez — karar sunucunundur. Bu test
+// gevşetilmedi: eskiden "kaynak seçilir" iddiasını kilitliyordu, şimdi
+// "kaynak SEÇİLMEZ ama VERİ KAYBOLMAZ" iddiasını kilitliyor.
+test('REP-4: resolvePersistedLabelArtifact — kaynak SEÇİLMEZ, etiket varlığı bilinir', async (t) => {
   const vite = await withVite(t)
   const { resolvePersistedLabelArtifact, isReprintEligible } =
     await vite.ssrLoadModule('/src/utils/persistedLabel.ts')
   const order = reprintOrder()
   const artifact = resolvePersistedLabelArtifact(order)
   assert.equal(artifact.hasPrintableLabel, true)
-  assert.equal(artifact.zpl, order.shipment.barcodeRaw)
-  assert.equal(artifact.source, 'order.shipment.barcodeRaw')
+  // BASILABİLİR ÇIKTI İSTEMCİDEN GELMEZ.
+  assert.equal(artifact.zpl, null)
+  assert.equal(artifact.source, 'pending-fetch')
+  // Kaynak alanı SİLİNMEZ; teşhis/doğrulama için yerinde durur.
+  assert.ok(String(order.shipment.barcodeRaw ?? '').trim().length > 0)
   assert.equal(isReprintEligible(order), true)
 })
 
