@@ -849,7 +849,13 @@ export async function printOfficialSuratDocument(
     const documentModel = buildOfficialSuratPrintDocument(pages, skipped)
     debug.labelHtmlGenerated = true
     debug.labelHtmlLength = documentModel.html.length
-    debug.printedOrderNumbers = documentModel.pages.map((page) => page.orderNumber)
+    // MÜKERRER SAYIM YOK: bir sipariş birden çok FİZİKSEL sayfa üretebilir
+    // (taşıyıcı + ürün detayları). "Basıldı" muhasebesi SİPARİŞ bazındadır;
+    // aksi hâlde 3 sayfalık tek sipariş üç kez basılmış sayılır ve
+    // label-printed geçişi üç kez tetiklenirdi. Sıra korunur (ilk görülme).
+    debug.printedOrderNumbers = Array.from(
+      new Set(documentModel.pages.map((page) => page.orderNumber)),
+    )
     // Güvenli önizleme: ham ZPL veya PII TAŞIMAZ.
     debug.printableContentPreview = `surat-official-png pages=${documentModel.pages.length}`
     return await dispatchPrintDocument(

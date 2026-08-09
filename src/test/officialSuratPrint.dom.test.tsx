@@ -512,3 +512,323 @@ test('OS-16: augmentation fallback güvenli uyarı taşır, baskıyı BLOKLAMAZ'
   // Uyarı ham ZPL TAŞIMAZ ve etiket YİNE gösterilir.
   expect(node.querySelector('img')).toBeTruthy()
 })
+
+// ═══ 4B: GERÇEK ÇOK SAYFALI BASKI WIRING ══════════════════════════════════
+//
+// Sunucu sıralı `pages[]` döndürür (4A). İstemci bu sırayı DEĞİŞTİRMEZ ve
+// TEK baskı belgesinde TEK window.print() ile basar. Bir sipariş birden çok
+// FİZİKSEL sayfa üretse bile BİR sipariş sayılır.
+
+const multiPageArtifact = (detailCount: number, over = {}) => ({
+  ...ARTIFACT,
+  pages: [
+    {
+      kind: 'carrier',
+      page: 1,
+      totalPages: detailCount + 1,
+      imageBase64: PNG_BASE64,
+      mimeType: 'image/png',
+    },
+    ...Array.from({ length: detailCount }, (_, index) => ({
+      kind: 'product_detail',
+      page: index + 2,
+      totalPages: detailCount + 1,
+      imageBase64: PNG_BASE64,
+      mimeType: 'image/png',
+    })),
+  ],
+  missingPages: [],
+  productDetailStatus: detailCount > 0 ? 'ready' : 'none',
+  printArtifactStatus: 'ready',
+  ...over,
+})
+
+function printHost() {
+  const host = prepareSuratPrintHostSynchronously()
+  expect(host.ready).toBe(true)
+  const frame = document.querySelector(
+    '[data-surat-print-frame]',
+  ) as HTMLIFrameElement
+  const printSpy = vi.fn()
+  ;(frame.contentWindow as unknown as { print: () => void }).print = printSpy
+  ;(frame.contentWindow as unknown as { focus: () => void }).focus = () => {}
+  return { frame, printSpy }
+}
+const pageSections = (frame: HTMLIFrameElement) =>
+  Array.from(
+    frame.contentDocument?.querySelectorAll('.surat-official-page') ?? [],
+  )
+const orderOf = (section: Element) => section.getAttribute('data-order')
+
+test('PRINT-1: tek sayfalı yanıt → TEK sayfa, TEK window.print', async () => {
+  // Eski yanıt biçimi (pages[] YOK) → geriye uyumlu tek taşıyıcı sayfa.
+  stubFetch(() => ARTIFACT)
+  const { printOfficialSuratLabels } = await import(
+    '../services/officialSuratPrintRunner'
+  )
+  const { frame, printSpy } = printHost()
+  const result = await printOfficialSuratLabels([suratOrder()])
+  expect(printSpy).toHaveBeenCalledTimes(1)
+  expect(pageSections(frame)).toHaveLength(1)
+  expect(result.printedOrderNumbers).toHaveLength(1)
+  expect(result.productDetailWarnings).toEqual([])
+}, 20000)
+
+test('PRINT-2/3/4: çok sayfalı yanıt → tek belge, taşıyıcı ilk, sunucu sırası korunur', async () => {
+  stubFetch(() => multiPageArtifact(2))
+  const { printOfficialSuratLabels } = await import(
+    '../services/officialSuratPrintRunner'
+  )
+  const { frame, printSpy } = printHost()
+  const result = await printOfficialSuratLabels([suratOrder()])
+  // TEK KULLANICI TIKLAMASI → TEK BASKI ÇAĞRISI.
+  expect(printSpy).toHaveBeenCalledTimes(1)
+  // 1 taşıyıcı + 2 ürün detayı = 3 FİZİKSEL SAYFA, AYNI belgede.
+  const sections = pageSections(frame)
+  expect(sections).toHaveLength(3)
+  // Sayfaların hepsi aynı siparişe ait; sipariş TEK KEZ basıldı sayılır.
+  expect(sections.map(orderOf)).toEqual([
+    '1000000000000001',
+    '1000000000000001',
+    '1000000000000001',
+  ])
+  expect(result.printedOrderNumbers).toEqual(['1000000000000001'])
+  // Sipariş başına TEK render isteği.
+  expect(fetchCalls).toHaveLength(1)
+}, 20000)
+
+test('PRINT-5: ürün detayı üretilemedi → taşıyıcı BASILIR, uyarı taşınır, ATLANMAZ', async () => {
+  stubFetch(() =>
+    multiPageArtifact(0, {
+      productDetailStatus: 'failed',
+      printArtifactStatus: 'fallback_carrier',
+      missingPages: [
+        {
+          kind: 'product_detail',
+          page: 2,
+          totalPages: 2,
+          reason: 'render_failed',
+        },
+      ],
+      warning: 'Ürün detay etiketi hazırlanamadı.',
+    }),
+  )
+  const { printOfficialSuratLabels } = await import(
+    '../services/officialSuratPrintRunner'
+  )
+  const { frame, printSpy } = printHost()
+  const result = await printOfficialSuratLabels([suratOrder()])
+  // FAIL-OPEN: ana kargo etiketi ENGELLENMEZ.
+  expect(printSpy).toHaveBeenCalledTimes(1)
+  expect(pageSections(frame)).toHaveLength(1)
+  expect(result.printedOrderNumbers).toEqual(['1000000000000001'])
+  // UYARI KAYBOLMAZ ve ATLANAN ile KARIŞTIRILMAZ.
+  expect(result.productDetailWarnings).toHaveLength(1)
+  expect(result.productDetailWarnings[0].reason).toBe(
+    'Ürün detay etiketi hazırlanamadı.',
+  )
+  expect(result.skipped).toEqual([])
+}, 20000)
+
+test('PRINT-6: taşıyıcı yoksa BASKI YOK', async () => {
+  stubFetch(() => ({
+    ok: false,
+    code: 'label_not_ready',
+    message: 'Etiket yok.',
+  }))
+  const { printOfficialSuratLabels } = await import(
+    '../services/officialSuratPrintRunner'
+  )
+  const { frame, printSpy } = printHost()
+  const result = await printOfficialSuratLabels([suratOrder()])
+  expect(printSpy).not.toHaveBeenCalled()
+  expect(pageSections(frame)).toHaveLength(0)
+  expect(result.printedOrderNumbers).toEqual([])
+  expect(result.skipped).toHaveLength(1)
+}, 20000)
+
+// ── PRINT-7/8: HAM ZPL (Zebra local-agent) ────────────────────────────────
+
+const bundleOrder = (orderNumber: string, detailCount: number) =>
+  ({
+    id: `id-${orderNumber}`,
+    orderNumber,
+    shipment: {
+      provider: 'surat-kargo',
+      printBundle: {
+        pages: [
+          { kind: 'carrier', page: 1, zpl: `^XA^FD${orderNumber}-CARRIER^FS^XZ` },
+          ...Array.from({ length: detailCount }, (_, index) => ({
+            kind: 'product_detail',
+            page: index + 2,
+            zpl: `^XA^FD${orderNumber}-DETAY${index + 1}^FS^XZ`,
+          })),
+        ],
+        labelPageCount: detailCount + 1,
+        productDetailPageCount: detailCount,
+      },
+    },
+    // RESMÎ MODDA BİLEREK BOŞ (baskı içeriği sunucudan gelir).
+    label: { id: 'l', labelType: 'zpl', zplContent: '' },
+  }) as unknown as CargoOrder
+
+async function localAgentPrint(orders: CargoOrder[]) {
+  const calls: Array<Record<string, unknown>> = []
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (_url: string, init?: RequestInit) => {
+      calls.push(JSON.parse(String(init?.body ?? '{}')))
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, printJobId: 'zebra-1', jobs: [] }),
+      } as unknown as Response
+    }),
+  )
+  const { BrowserDownloadPrintProvider } = await import(
+    '../providers/printing/BrowserDownloadPrintProvider'
+  )
+  const result = await new BrowserDownloadPrintProvider().print({
+    orders,
+    printerSettings: { mode: 'local-agent', printerName: 'Zebra' },
+    action: 'print',
+    requestedAt: '2026-08-09T00:00:00.000Z',
+    confirmedAt: '2026-08-09T00:00:00.000Z',
+    labelPrintTemplate: 'surat_official_zpl',
+  } as never)
+  return { calls, result }
+}
+
+test('PRINT-7: local-agent çok sayfa → TEK çağrı, canonical sırada combinedZpl', async () => {
+  const { calls } = await localAgentPrint([bundleOrder('A', 2)])
+  // TEK YEREL AJAN ÇAĞRISI.
+  expect(calls).toHaveLength(1)
+  const labels = calls[0].labels as Array<{ orderNumber: string; zpl: string }>
+  expect(labels).toHaveLength(1)
+  const zpl = labels[0].zpl
+  // Taşıyıcı + iki detay TEK ham ZPL işinde.
+  expect((zpl.match(/\^XA/g) ?? []).length).toBe(3)
+  expect((zpl.match(/\^XZ/g) ?? []).length).toBe(3)
+  // CANONICAL SIRA: taşıyıcı ilk, detaylar 1..N.
+  expect(zpl.indexOf('A-CARRIER')).toBeLessThan(zpl.indexOf('A-DETAY1'))
+  expect(zpl.indexOf('A-DETAY1')).toBeLessThan(zpl.indexOf('A-DETAY2'))
+}, 20000)
+
+test('PRINT-8: resmî Sürat + local-agent → BOŞ zplContent gönderilmez', async () => {
+  const { calls } = await localAgentPrint([bundleOrder('B', 1)])
+  const labels = calls[0].labels as Array<{ orderNumber: string; zpl: string }>
+  // KÖK NEDEN KAPANDI: eskiden bilerek boş bırakılan zplContent gidiyordu.
+  expect(labels[0].zpl.trim().length).toBeGreaterThan(0)
+  expect(labels[0].zpl).toContain('B-CARRIER')
+  // İSTEMCİ technicalZpl SEÇİMİNE GERİ DÖNMEZ.
+  const source = calls[0]
+  expect(JSON.stringify(source)).not.toContain('technicalZpl')
+  expect(JSON.stringify(source)).not.toContain('barcodeRaw')
+}, 20000)
+
+// ── BULK ──────────────────────────────────────────────────────────────────
+
+test('BULK-1/2/3: çok gönderi → TEK baskı, gönderi bazında sıra, doğru sayfa sayısı', async () => {
+  const plan = { 'o-a': 1, 'o-b': 0, 'o-c': 2 } as Record<string, number>
+  stubFetch((body) => multiPageArtifact(plan[String(body.orderId)] ?? 0))
+  const { printOfficialSuratLabels } = await import(
+    '../services/officialSuratPrintRunner'
+  )
+  const { frame, printSpy } = printHost()
+  const result = await printOfficialSuratLabels([
+    suratOrder({ id: 'o-a', orderNumber: 'A' } as Partial<CargoOrder>),
+    suratOrder({ id: 'o-b', orderNumber: 'B' } as Partial<CargoOrder>),
+    suratOrder({ id: 'o-c', orderNumber: 'C' } as Partial<CargoOrder>),
+  ])
+  // TEK BASKI İŞİ.
+  expect(printSpy).toHaveBeenCalledTimes(1)
+  // 2 + 1 + 3 = 6 fiziksel sayfa.
+  const sections = pageSections(frame)
+  expect(sections).toHaveLength(6)
+  // GÖNDERİ BAZINDA SIRA — ek sayfalar işin SONUNA toplanmaz.
+  expect(sections.map(orderOf)).toEqual(['A', 'A', 'B', 'C', 'C', 'C'])
+  // BULK-8: her gönderi TEK KEZ sayılır (sayfa başına DEĞİL).
+  expect(result.printedOrderNumbers).toEqual(['A', 'B', 'C'])
+}, 30000)
+
+test('BULK-4/5: geçersiz gönderi diğerlerini BLOKLAMAZ, atlanan AÇIKÇA raporlanır', async () => {
+  stubFetch((body) => {
+    if (body.orderId === 'o-bad') {
+      return { ok: false, code: 'label_not_ready', message: 'Etiket yok.' }
+    }
+    if (body.orderId === 'o-fb') {
+      return multiPageArtifact(0, {
+        productDetailStatus: 'failed',
+        printArtifactStatus: 'fallback_carrier',
+        warning: 'Ürün detay etiketi hazırlanamadı.',
+      })
+    }
+    return multiPageArtifact(1)
+  })
+  const { printOfficialSuratLabels } = await import(
+    '../services/officialSuratPrintRunner'
+  )
+  const { frame, printSpy } = printHost()
+  const result = await printOfficialSuratLabels([
+    suratOrder({ id: 'o-full', orderNumber: 'FULL' } as Partial<CargoOrder>),
+    suratOrder({ id: 'o-fb', orderNumber: 'FB' } as Partial<CargoOrder>),
+    suratOrder({ id: 'o-bad', orderNumber: 'BAD' } as Partial<CargoOrder>),
+  ])
+  expect(printSpy).toHaveBeenCalledTimes(1)
+  // Geçerli 2 gönderi basıldı (2 + 1 sayfa); biri fallback.
+  expect(pageSections(frame)).toHaveLength(3)
+  expect(result.printedOrderNumbers).toEqual(['FULL', 'FB'])
+  // SESSİZ ATLAMA YOK.
+  expect(result.skipped.map((item) => item.orderNumber)).toEqual(['BAD'])
+  expect(result.skipped[0].reason).toBe('Etiket yok.')
+  // Fallback ATLANMADI; yalnız uyarı taşıyor.
+  expect(result.productDetailWarnings.map((item) => item.orderNumber)).toEqual([
+    'FB',
+  ])
+}, 30000)
+
+test('BULK-6/7: hazır baskıda provider-create ve ürün toplama/composer ÇAĞRISI YOK', async () => {
+  stubFetch(() => multiPageArtifact(2))
+  const { printOfficialSuratLabels } = await import(
+    '../services/officialSuratPrintRunner'
+  )
+  printHost()
+  await printOfficialSuratLabels([
+    suratOrder({ id: 'o-a', orderNumber: 'A' } as Partial<CargoOrder>),
+    suratOrder({ id: 'o-b', orderNumber: 'B' } as Partial<CargoOrder>),
+  ])
+  // YALNIZ render ucu çağrılır: shipment create / marketplace ucu YOK.
+  expect(fetchCalls).toHaveLength(2)
+  for (const call of fetchCalls) {
+    expect(call.url).toBe(SURAT_RENDER_ENDPOINT)
+  }
+  // Koşucu ÜRETİM yapmaz — kaynak düzeyinde kilit.
+  const runnerSource = await import('../services/officialSuratPrintRunner?raw')
+  const text = String((runnerSource as { default: string }).default)
+  for (const forbidden of [
+    'aggregateProductLineItems',
+    'planProductDetailPages',
+    'composeSuratDurusoftLabel',
+    'deriveAugmentedSuratZpl',
+    'OrtakBarkodOlustur',
+  ]) {
+    expect(text).not.toContain(forbidden)
+  }
+}, 30000)
+
+test('BULK-8: çok sayfalı gönderi mükerrer sayılmaz', async () => {
+  // Her gönderi 3 fiziksel sayfa üretir; sipariş sayımı yine 3 OLMALI (9 değil).
+  stubFetch(() => multiPageArtifact(2))
+  const { printOfficialSuratLabels } = await import(
+    '../services/officialSuratPrintRunner'
+  )
+  const { frame } = printHost()
+  const result = await printOfficialSuratLabels([
+    suratOrder({ id: 'o-a', orderNumber: 'A' } as Partial<CargoOrder>),
+    suratOrder({ id: 'o-b', orderNumber: 'B' } as Partial<CargoOrder>),
+    suratOrder({ id: 'o-c', orderNumber: 'C' } as Partial<CargoOrder>),
+  ])
+  expect(pageSections(frame)).toHaveLength(9)
+  expect(result.printedOrderNumbers).toEqual(['A', 'B', 'C'])
+  expect(new Set(result.printedOrderNumbers).size).toBe(3)
+}, 30000)
