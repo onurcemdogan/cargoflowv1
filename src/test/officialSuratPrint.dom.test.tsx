@@ -172,8 +172,16 @@ test('OS-3: kayıtlı değer reload sonrası korunur, bilinmeyen değer düşer'
   renderSettings(makeConfig('surat_official_zpl'))
   expect(templateRadio('Resmî Sürat Etiket Şablonu').checked).toBe(true)
   document.body.innerHTML = ''
-  renderSettings(makeConfig('bilinmeyen'))
+  // AÇIKÇA kaydedilmiş eski şablon KORUNUR — varsayılan Sürat'e dönse bile
+  // kullanıcının seçimi sessizce ezilmez (normalize regresyonu).
+  document.body.innerHTML = ''
+  renderSettings(makeConfig('cargoflow_html'))
   expect(templateRadio('CargoFlow Etiket Şablonu').checked).toBe(true)
+  // BİLİNMEYEN değer VARSAYILANA düşer. Varsayılan artık resmî Sürat
+  // şablonudur: ana aksiyon ek seçim istemeden Sürat akışını kullanır.
+  document.body.innerHTML = ''
+  renderSettings(makeConfig('bilinmeyen'))
+  expect(templateRadio('Resmî Sürat Etiket Şablonu').checked).toBe(true)
 })
 
 test('OS-4: şablon değişimi DİĞER settings alanlarını EZMEZ', async () => {

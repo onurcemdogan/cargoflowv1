@@ -149,7 +149,39 @@ const QR_CANDIDATES: readonly SuratQrCandidate[] = [
  */
 const QR_SCOPE_BY = '^BY2,3,10'
 const QR_RENDER_Y_OFFSET = 10
-const QR_PREFERRED_X = 645
+/**
+ * ORTAK YERLEŞİM RAYLARI — taşıyıcının KENDİ `^GB` çizgilerinden türetilmiştir,
+ * uydurulmamıştır. Composer'ın EKLEDİĞİ alanlar bu raylara bağlanır; taşıyıcının
+ * kendi alanları ASLA taşınmaz (semantic invariant).
+ *
+ *   üst kutu      : sol 48  · sağ 766   (^FO48,84 / ^FO766,84)
+ *   alıcı kutusu  : sol 59  · sağ 773   (^FO59,337 / ^FO773,337)
+ *   yatay çizgiler: 84 · 154 · 336 · 476 · 539
+ *
+ * Dış sol referans DataMatrix'in sol kenarıdır (x=59, alıcı kutusu rayıyla
+ * aynı). Simetri kuralı: QR'ın DIŞ SAĞ marjı, DataMatrix'in DIŞ SOL marjına
+ * eşit olmalıdır.
+ */
+export const SURAT_GRID = {
+  contentLeft: 48,
+  contentRight: 775,
+  boxLeft: 59,
+  boxRight: 773,
+  labelEdge: 799,
+} as const
+
+/**
+ * QR'ın tercih edilen sol kenarı, DIŞ MARJ SİMETRİSİNDEN türetilir:
+ * QR sağ kenarı = labelEdge − (DataMatrix dış sol marjı).
+ * Böylece alt bölüm [DataMatrix] [orta blok] [QR] kompozisyonunda iki
+ * makine-okunur kodun dış boşlukları eşitlenir.
+ *
+ * Güvenlik parity'den ÖNCE gelir: yerleşim çözücü bu tercihi yalnız BAŞLANGIÇ
+ * noktası olarak kullanır, komşu metinler gerektirirse QR sağa kaydırılır.
+ */
+function preferredQrLeft(size: number, dataMatrixLeft: number): number {
+  return SURAT_GRID.labelEdge - dataMatrixLeft - size
+}
 /**
  * QR sessiz bölgesi MODÜL cinsindendir (QR spesifikasyonu: 4 modül).
  * Sabit dot yerine magnification ile ölçeklenir: mag 5 → 20 dot, mag 4 → 16.
@@ -349,13 +381,14 @@ export interface SuratQrPlacement {
  */
 export function resolveQrPlacement(
   occupancy: readonly QrOccupancyBox[],
+  dataMatrixLeft: number = SURAT_GRID.boxLeft,
 ): SuratQrPlacement | null {
   for (const [candidateIndex, candidate] of QR_CANDIDATES.entries()) {
     const quietZone = QR_QUIET_MODULES * candidate.magnification
     const bandTop = candidate.y
     const bandBottom = candidate.y + QR_RENDER_Y_OFFSET + candidate.size
     if (bandBottom + quietZone > LABEL_EDGE) continue
-    let requiredLeft = QR_PREFERRED_X
+    let requiredLeft = preferredQrLeft(candidate.size, dataMatrixLeft)
     for (const boxEntry of occupancy) {
       const intersectsVertically =
         boxEntry.top <= bandBottom && bandTop <= boxEntry.bottom
@@ -525,7 +558,10 @@ export function composeSuratDurusoftLabel(
     })
   }
 
-  const placement = resolveQrPlacement(occupancy)
+  const placement = resolveQrPlacement(
+    occupancy,
+    fields.dataMatrixPayload?.field.x ?? SURAT_GRID.boxLeft,
+  )
 
   // E) DOĞRULANMIŞ 727 VARSA QR ZORUNLUDUR. Hiçbir aday güvenli değilse
   //    QR'sız kısmi DuruSoft etiketi üretmek YERİNE composer tümüyle reddeder.

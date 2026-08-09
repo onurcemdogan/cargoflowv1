@@ -6,7 +6,23 @@ import type { CargoOrder } from '../types/cargoflow'
 
 export type LabelPrintTemplate = 'cargoflow_html' | 'surat_official_zpl'
 
-export const DEFAULT_LABEL_PRINT_TEMPLATE: LabelPrintTemplate = 'cargoflow_html'
+/**
+ * VARSAYILAN ŞABLON: resmî Sürat düzeni.
+ *
+ * Ana "Kargo Etiketi Oluştur ve Yazdır" aksiyonu ek bir şablon seçimi
+ * İSTEMEDEN bu şablonu kullanır; backend tarafında akış create → artefakt →
+ * composer uygunluk → (gerekirse) official_augmented fallback → render'dır.
+ *
+ * TAŞIYICI GÜVENLİĞİ BYPASS EDİLMEZ: seçimde Sürat dışı gönderi varsa
+ * `resolveLabelPrintTemplateDecision` mevcut CargoFlow yoluna güvenle döner
+ * (aşağıdaki `fallbackApplied` dalı). Varsayılan tercih yalnız Sürat
+ * gönderilerinde etkilidir.
+ */
+export const DEFAULT_LABEL_PRINT_TEMPLATE: LabelPrintTemplate =
+  'surat_official_zpl'
+
+/** Alternatif (eski) şablon — Gelişmiş İşlemler altından seçilebilir. */
+export const LEGACY_LABEL_PRINT_TEMPLATE: LabelPrintTemplate = 'cargoflow_html'
 
 export const SURAT_ONLY_TEMPLATE_MESSAGE =
   'Resmî Sürat şablonu yalnız Sürat Kargo gönderilerinde kullanılabilir.'
@@ -22,9 +38,12 @@ export const SURAT_TEMPLATE_DESCRIPTION =
   'Sürat Kargo’nun resmî etiket düzenini kullanır ve ürün bilgilerini alt alana ekler.'
 
 export function normalizeLabelPrintTemplate(value: unknown): LabelPrintTemplate {
-  return value === 'surat_official_zpl'
-    ? 'surat_official_zpl'
-    : DEFAULT_LABEL_PRINT_TEMPLATE
+  // Her İKİ şablon da AÇIKÇA tanınır. Yalnız bilinmeyen/eksik değer varsayılana
+  // düşer — aksi halde varsayılan değiştiğinde açık `cargoflow_html` seçimi de
+  // sessizce Sürat'e dönerdi (Gelişmiş İşlemler menüsünü bozardı).
+  if (value === 'surat_official_zpl') return 'surat_official_zpl'
+  if (value === 'cargoflow_html') return 'cargoflow_html'
+  return DEFAULT_LABEL_PRINT_TEMPLATE
 }
 
 /** Baskı alanındaki küçük gösterge metni. */
