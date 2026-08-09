@@ -867,6 +867,53 @@ app.get('/api/orders/:id/label', async (request, response) => {
   }
 })
 
+// POST /api/orders/print-readiness — TOPLU, HAFİF baskı hazırlık durumu.
+//
+// Liste ekranı "bu 25 gönderi basılabilir mi?" sorusunu TEK istekle sorar.
+// ZPL DÖNMEZ (ne taşıyıcı, ne ek sayfa, ne kaynak, ne ham payload); yalnız
+// sayılar ve kapalı sözlük durum değerleri döner. Org yalnız req.auth'tan;
+// başka tenant'ın gönderisi ÇÖZÜLEMEZ ve "bulunamadı" ile aynı cevabı alır
+// (varlık bilgisi sızmaz). YAZMA YOKTUR: hydration tetiklemez.
+app.post('/api/orders/print-readiness', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const raw = request.body?.shipmentIds
+  if (!Array.isArray(raw)) {
+    response.status(400).json({
+      ok: false,
+      code: 'invalid_request',
+      message: 'shipmentIds bir dizi olmalıdır.',
+    })
+    return
+  }
+  try {
+    const { loadPrintReadiness, MAX_READINESS_IDS } = await import(
+      './shipments/printReadinessService.ts'
+    )
+    // SESSİZ KIRPMA YOK: sınır aşılırsa açıkça reddedilir.
+    if (raw.length > MAX_READINESS_IDS) {
+      response.status(400).json({
+        ok: false,
+        code: 'too_many_ids',
+        message: `Tek istekte en fazla ${MAX_READINESS_IDS} gönderi sorgulanabilir.`,
+        limit: MAX_READINESS_IDS,
+      })
+      return
+    }
+    const items = await loadPrintReadiness(
+      context.db,
+      context.organizationId,
+      raw.map((value) => String(value ?? '')),
+    )
+    response.set('Cache-Control', 'private, no-store')
+    response.json({ ok: true, items })
+  } catch {
+    response
+      .status(500)
+      .json({ ok: false, message: 'Baskı hazırlık durumu alınamadı.' })
+  }
+})
+
 // POST /api/labels/render/surat — RESMÎ SÜRAT ETİKETİNİ PNG OLARAK RENDER EDER.
 //
 // Motor: zebrash (zpl-renderer-js@4.0.0) — CargoFlow sunucusunda YEREL çalışır,
