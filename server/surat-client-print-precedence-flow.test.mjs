@@ -169,21 +169,33 @@ test('CLIENT-3: sunucu basılamaz dediyse istemci technicalZpl’e DÜŞMEZ', as
   assert.equal(containsSource(stripClientPrintSources(orderWithSources())), false)
 })
 
-test('CLIENT-3b: App hydration bilinmeyen hatada kaynağa DÜŞMEZ', async () => {
-  const app = readFileSync(join(here, '..', 'src', 'App.tsx'), 'utf8')
-  const start = app.indexOf('async function hydratePersistedLabels')
-  const body = app.slice(start, app.indexOf('\n  // ── BASKI ŞABLONU', start))
-  assert.ok(start > 0, 'hydration bulunmalı')
+// SÖZLEŞME AYNI, KONUM DEĞİŞTİ: hidrasyon App.tsx closure'ından test
+// edilebilir bir modüle çıkarıldı (services/persistedLabelHydration.ts).
+// İddialar GEVŞETİLMEDİ; kodun YENİ yerinde doğrulanıyor. Ayrıca App.tsx'in
+// gerçekten o modülü çağırdığı da kilitleniyor.
+test('CLIENT-3b: hidrasyon bilinmeyen hatada kaynağa DÜŞMEZ', async () => {
+  const body = readFileSync(
+    join(here, '..', 'src', 'services', 'persistedLabelHydration.ts'),
+    'utf8',
+  )
   // Sunucu yetkisi kullanılır.
   assert.ok(body.includes('applyServerPrintContract'))
   assert.ok(body.includes('stripClientPrintSources'))
-  // ESKİ KAPI KALDIRILDI: "ham ZPL bellekte yok" koşuluna göre karar VERİLMEZ.
+  // ESKİ KAPI YOK: "ham ZPL bellekte yok" koşuluna göre karar VERİLMEZ.
   assert.equal(/const needsZpl\s*=\s*!artifact\.zpl/.test(body), false)
   // İstemci kaynaktan basılabilir bayt OKUMAZ.
   assert.equal(/shipment\?\.barcodeRaw/.test(body), false)
   // catch bloğu kaynağa düşmez, engeller.
   const tail = body.slice(body.indexOf('} catch'))
   assert.ok(tail.includes('blocked.add'))
+  // KARDİNALİTE KORUNUR: sipariş listesi filtrelenmez, map edilir.
+  assert.ok(body.includes('baseOrders.map('))
+  assert.equal(/effectiveOrders\s*=\s*baseOrders\.filter/.test(body), false)
+
+  // App.tsx bu modülü GERÇEKTEN kullanır (kopya mantık kalmadı).
+  const app = readFileSync(join(here, '..', 'src', 'App.tsx'), 'utf8')
+  assert.ok(app.includes('persistedLabelHydration'))
+  assert.ok(app.includes('hydratePersistedLabelsFor'))
 })
 
 // ═══ CLIENT-4: ESKİ TEK SAYFA ════════════════════════════════════════════
