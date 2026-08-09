@@ -50,13 +50,8 @@ import {
 import { orderPackageIdentity } from './utils/orderCounts'
 import { resolveEffectiveLabelDesi } from './utils/labelDesi'
 import { resolveLabelLayoutBlockReason } from './utils/labelLayoutResolver'
-import {
-  applyServerPrintContract,
-  isReprintEligible,
-  resolvePersistedLabelArtifact,
-  stripClientPrintSources,
-  type ServerPrintContract,
-} from './utils/persistedLabel'
+import { resolvePersistedLabelArtifact } from './utils/persistedLabel'
+import { hydratePersistedLabels as hydratePersistedLabelsFor } from './services/persistedLabelHydration'
 import type {
   AuditLog,
   ApiDebugLog,
@@ -844,55 +839,24 @@ function App() {
   // KOK NEDEN (canli): tek-buton akisinda create SONRASI guncel siparis
   // listesi React state'e HENUZ yazilmamis oluyordu; bu fonksiyon closure'daki
   // ESKI `orders` uzerinden calisip yeni olusan etiketi GOREMIYORDU.
+  // ÜRETİM SEMANTİĞİ ARTIK TEST EDİLEBİLİR BİR MODÜLDE.
+  //
+  // KÖK SORUN: bu mantık burada closure olarak yaşıyordu ve dışa
+  // aktarılmadığı için gerçek toplu baskı zinciri hiçbir testin görüş
+  // alanında değildi. Davranış DEĞİŞMEDİ; yalnız bağımlılık enjekte
+  // edilebilir hâle geldi (bkz. services/persistedLabelHydration.ts).
   async function hydratePersistedLabels(
     orderIds: string[],
     sourceOrders?: CargoOrder[],
   ): Promise<{ effectiveOrders: CargoOrder[]; unresolved: string[] }> {
-    const baseOrders = sourceOrders ?? orders
-    const idSet = new Set(orderIds)
-    // BASILABİLİR ÇIKTIYA SUNUCU KARAR VERİR. Bu yüzden artık "ham ZPL
-    // bellekte yok" koşuluna bakılmaz: baskı gerekiyorsa sunucu sözleşmesi
-    // HER ZAMAN alınır. Bellekteki `barcodeRaw` taşıyıcı KAYNAKTIR ve
-    // basılabilir çıktı olarak KULLANILMAZ.
-    const contractById = new Map<string, ServerPrintContract | null>()
-    const blocked = new Set<string>()
-    const unresolved: string[] = []
-    await Promise.all(
-      baseOrders
-        .filter((order) => idSet.has(order.id) && isReprintEligible(order))
-        .map(async (order) => {
-          const artifact = resolvePersistedLabelArtifact(order)
-          try {
-            const fetched = await workflowService.fetchPersistedLabel(order.id)
-            // `null` = sunucu yetkisi YOK (legacy mod, uç mevcut değil).
-            // Bu durumda mevcut istemci davranışı AYNEN korunur.
-            if (fetched === null) return
-            if (fetched.print?.carrierPrintReady && fetched.print.zpl) {
-              contractById.set(order.id, fetched.print)
-              return
-            }
-            // SUNUCU "BASILAMAZ" DEDİ. `technicalZpl` mevcut diye bu karar
-            // EZİLMEZ; istemci kendi fallback'ini ÜRETMEZ.
-            blocked.add(order.id)
-            if (artifact.hasPrintableLabel) unresolved.push(order.orderNumber)
-          } catch {
-            // Bilinmeyen hata fail-open ETMEZ: kaynağa düşülmez.
-            blocked.add(order.id)
-            if (artifact.hasPrintableLabel) unresolved.push(order.orderNumber)
-          }
-        }),
+    const result = await hydratePersistedLabelsFor(
+      orderIds,
+      sourceOrders ?? orders,
+      { fetchPersistedLabel: (id) => workflowService.fetchPersistedLabel(id) },
     )
-    const effectiveOrders =
-      contractById.size === 0 && blocked.size === 0
-        ? baseOrders
-        : baseOrders.map((order) => {
-            if (blocked.has(order.id)) return stripClientPrintSources(order)
-            const contract = contractById.get(order.id)
-            if (!contract) return order
-            // Sunucu sözleşmesi UYGULANIR: taşıyıcı baytlar + sayfa sırası.
-            return applyServerPrintContract(order, contract)
-          })
-    return { effectiveOrders, unresolved }
+    // KARDİNALİTE İZİ: üretimde sipariş kaybı tek satırda görünür (PII yok).
+    suratPrintTrace('HYDRATION_CARDINALITY', result.cardinality)
+    return { effectiveOrders: result.effectiveOrders, unresolved: result.unresolved }
   }
 
   // ── BASKI ŞABLONU: TEK KARAR NOKTASI ────────────────────────────────────

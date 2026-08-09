@@ -41,6 +41,21 @@ function isNonSuratShipment(order: CargoOrder): boolean {
 export const PRODUCT_DETAIL_UNAVAILABLE_MESSAGE =
   'Ürün detay etiketi hazırlanamadı.'
 
+/**
+ * SESSİZ SİPARİŞ KAYBI KAPATILDI.
+ *
+ * Sunucu artefaktı hiç fiziksel sayfa üretmediyse (ne `pages[]` ne de
+ * geriye uyumlu tek görüntü) sipariş belgeye HİÇBİR ŞEY katmıyordu ve
+ * `skipped` listesine de girmiyordu. Kullanıcı "3 seçtim, 1 sayfa çıktı,
+ * hata yok" durumunu görüyordu. Artık sipariş AÇIKÇA atlanmış sayılır.
+ *
+ * Bu bir baskı kapısı DEĞİLDİR: diğer geçerli siparişler AYNI belgede
+ * basılmaya devam eder.
+ */
+export const RENDER_PAGES_MISSING_REASON = 'render_pages_missing'
+export const RENDER_PAGES_MISSING_MESSAGE =
+  'Bu sipariş için yazdırılabilir etiket sayfası üretilemedi.'
+
 export interface OfficialSuratPrintResult {
   debug: BrowserLabelPrintDebug
   /** Belgeye GERÇEKTEN giren sipariş numaraları. */
@@ -63,6 +78,7 @@ export async function printOfficialSuratLabels(
   const pages: OfficialSuratPage[] = []
   const skipped: OfficialSuratSkip[] = []
   const productDetailWarnings: OfficialSuratSkip[] = []
+  const skipReasonCounts: Record<string, number> = {}
 
   let renderRequested = 0
   let renderSucceeded = 0
@@ -79,6 +95,13 @@ export async function printOfficialSuratLabels(
       renderRequested += 1
       const artifact = await fetchSuratRenderArtifact(String(order.id ?? ''))
       renderSucceeded += 1
+      // SESSİZ DÜŞME YOK: sayfa üretilemediyse sipariş AÇIKÇA atlanır.
+      if (artifact.pages.length === 0) {
+        skipped.push({ orderNumber, reason: RENDER_PAGES_MISSING_MESSAGE })
+        skipReasonCounts[RENDER_PAGES_MISSING_REASON] =
+          (skipReasonCounts[RENDER_PAGES_MISSING_REASON] ?? 0) + 1
+        continue
+      }
       // CANONICAL KAYNAK `pages[]`. Sıra SUNUCUDA doğrulanmıştır (taşıyıcı
       // ilk, ürün detayları izler) ve BURADA DEĞİŞTİRİLMEZ. Eski yanıt
       // biçiminde istemci tek taşıyıcı sayfa görür → davranış aynı kalır.
@@ -112,6 +135,8 @@ export async function printOfficialSuratLabels(
             ? error.message
             : SURAT_RENDER_UNAVAILABLE_MESSAGE,
       })
+      const code = renderError?.code ?? 'render_request_failed'
+      skipReasonCounts[code] = (skipReasonCounts[code] ?? 0) + 1
     }
   }
 
@@ -126,6 +151,12 @@ export async function printOfficialSuratLabels(
     renderSucceeded,
     renderHttpStatus: renderHttpStatuses,
     authFailure,
+    // KARDİNALİTE — üretimde "3 seçildi, 1 sayfa çıktı" tek satırda görülsün.
+    // PII YOK: yalnız sayılar, kapalı sözlük sebepleri ve sipariş numarası.
+    requestedOrderCount: orders.length,
+    skippedOrderCount: skipped.length,
+    printedLogicalOrderCount: new Set(pages.map((page) => page.orderNumber)).size,
+    skipReasonCounts,
     skipCount: skipped.length,
     productDetailWarningCount: productDetailWarnings.length,
     physicalPageCount: pages.length,
