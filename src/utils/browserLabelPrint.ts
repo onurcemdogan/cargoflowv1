@@ -684,6 +684,8 @@ async function dispatchPrintDocument(
   debug: BrowserLabelPrintDebug,
   executionId: string,
   orderNumbers: string[],
+  /** Resmî Sürat yolunda BEKLENEN fiziksel sayfa sayısı. */
+  expectedPhysicalPages?: number,
 ): Promise<BrowserLabelPrintDebug> {
   const iframe = ensurePersistentPrintFrame(executionId)
   const frameDocument = iframe.contentDocument
@@ -701,6 +703,26 @@ async function dispatchPrintDocument(
   writePrintDocument(frameDocument, printHtml)
   suratPrintTrace('DOCUMENT_WRITE_END', { executionId })
   await waitForPrintDocument(frameDocument)
+
+  // FİZİKSEL SAYFA KARDİNALİTESİ — baskıdan ÖNCE doğrulanır.
+  if (typeof expectedPhysicalPages === 'number') {
+    const images = await waitForLabelImages(frameDocument)
+    const actualPhysicalPages = countOfficialSuratPages(frameDocument)
+    suratPrintTrace('PRINT_DOCUMENT_CARDINALITY', {
+      executionId,
+      expectedPhysicalPages,
+      actualPhysicalPages,
+      imagesTotal: images.total,
+      imagesReady: images.ready,
+    })
+    if (actualPhysicalPages !== expectedPhysicalPages) {
+      // SESSİZ KAYIP YOK: eksik sayfayla baskı YAPILMAZ.
+      return failPrint(
+        debug,
+        `Baskı belgesi eksik oluştu (${actualPhysicalPages}/${expectedPhysicalPages} sayfa).`,
+      )
+    }
+  }
 
   // Tanı: afterprint/beforeunload yalnız LOGLANIR; hiçbir cleanup yapılmaz.
   try {
@@ -863,6 +885,7 @@ export async function printOfficialSuratDocument(
       debug,
       executionId,
       orderNumbers,
+      documentModel.pages.length,
     )
   } finally {
     activePrintExecution = null
@@ -1533,6 +1556,54 @@ function writePrintDocument(targetDocument: Document, html: string): void {
   targetDocument.open()
   targetDocument.write(html)
   targetDocument.close()
+}
+
+/**
+ * BASKI ÖNCESİ SAYFA KARDİNALİTE KİLİDİ + GÖRÜNTÜ YÜKLEME BEKLEMESİ.
+ *
+ * ÜRETİM HATASI (kanıtlı): N PNG render edildiği, DOM'da N bölüm olduğu ve
+ * N sipariş "basıldı" sayıldığı hâlde Chrome TEK sayfa basıyordu. Sebep
+ * belge CSS'iydi (gövde tek etiket boyunda + overflow:hidden). Bu kontrol,
+ * aynı sınıftan bir hatanın bir daha SESSİZ kalmasını engeller: beklenen
+ * ile gerçekleşen fiziksel sayfa sayısı tutmuyorsa BASKI YAPILMAZ.
+ *
+ * Ayrıca tüm etiket görüntüleri yüklenmeden `print()` çağrılmaz; yarı
+ * yüklenmiş belge boş sayfa basardı. Bekleme SINIRLIDIR (asılı kalmaz).
+ */
+async function waitForLabelImages(
+  targetDocument: Document,
+  timeoutMs = 3000,
+): Promise<{ total: number; ready: number }> {
+  const images = Array.from(
+    targetDocument.querySelectorAll<HTMLImageElement>('.surat-official-page img'),
+  )
+  if (images.length === 0) return { total: 0, ready: 0 }
+  let ready = 0
+  await Promise.all(
+    images.map(
+      (image) =>
+        new Promise<void>((resolve) => {
+          if (image.complete) {
+            ready += 1
+            resolve()
+            return
+          }
+          const done = (loaded: boolean) => {
+            if (loaded) ready += 1
+            resolve()
+          }
+          image.addEventListener('load', () => done(true), { once: true })
+          image.addEventListener('error', () => done(false), { once: true })
+          // SINIRLI bekleme: ortam yükleme olayını hiç üretmezse asılmayız.
+          setTimeout(() => done(image.complete), timeoutMs)
+        }),
+    ),
+  )
+  return { total: images.length, ready }
+}
+
+export function countOfficialSuratPages(targetDocument: Document): number {
+  return targetDocument.querySelectorAll('.surat-official-page').length
 }
 
 async function waitForPrintDocument(targetDocument: Document): Promise<void> {
