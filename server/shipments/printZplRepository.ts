@@ -371,7 +371,15 @@ export function attachPrintZplArtifact(
 ): Record<string, unknown> {
   const sourceZpl = pickSourceZpl(carrierPayload)
   if (!sourceZpl.trim()) return carrierPayload
-  const { artifact } = buildPrintZplArtifact(sourceZpl, items, now)
+  // DuruSoft composer İLK ARTEFAKT ÜRETİMİNDE devreye girer. Compose girdisi
+  // AYNI carrier payload'dan çözülür; composer uygun değilse (şablon, semantic,
+  // geometri, invariant, whitelist) sessizce official_augmented'a düşer.
+  const { artifact } = buildPrintZplArtifact(
+    sourceZpl,
+    items,
+    now,
+    resolveComposeInput(carrierPayload),
+  )
   return { ...carrierPayload, printZplArtifact: artifact }
 }
 
