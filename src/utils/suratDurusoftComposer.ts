@@ -67,11 +67,39 @@ const HUMAN_TEXT_GAP = 6
 const RECIPIENT_BOX_TOP = 336
 
 /**
- * `^A0` için karakter ilerlemesinin ÜST SINIRI (genişlik parametresinin katı).
- * Ölçüm: rakamlar 0.482×w, büyük harfler 0.56×w. Üst sınır olarak 0.60
- * kullanılır — sığma kontrolleri bu yüzden temkinli tarafta yanılır.
+ * `^A0` (yerleşik ölçeklenebilir font) KARAKTER İLERLEME TABLOSU.
+ *
+ * Değerler genişlik parametresinin katıdır ve yerel renderer üzerinde
+ * ölçülmüştür (10 tekrarlı ink kutusu / 10). Doğrulama: gerçek aktarma
+ * merkezi adlarında tahmin ile ölçüm arasındaki fark ±2 dot.
+ *
+ * NEDEN TABLO: önceden tek bir üst sınır oranı (0.60) kullanılıyordu. Bu,
+ * dar harfli adlarda genişliği ciddi biçimde ŞİŞİRİYOR ve QR'ı gereksiz yere
+ * reddettiriyordu — üretimde "IKITELLI AKTARMA" gerçekte x=606'da bitiyor,
+ * kaba tahmin ise 700 diyordu ve tüm composed çıktı düşüyordu.
+ *
+ * Tabloda olmayan karakter (küçük harf, Türkçe harfler, semboller) için EN
+ * GENİŞ ölçülen değer kullanılır; böylece tahmin her zaman ÜST SINIR kalır.
  */
-const A0_ADVANCE_RATIO = 0.6
+const A0_ADVANCE: Readonly<Record<string, number>> = {
+  '0': 0.493, '1': 0.483, '2': 0.493, '3': 0.493, '4': 0.493, '5': 0.493,
+  '6': 0.493, '7': 0.493, '8': 0.493, '9': 0.493,
+  A: 0.553, B: 0.543, C: 0.543, D: 0.6, E: 0.49, F: 0.49, G: 0.6, H: 0.6,
+  I: 0.267, J: 0.44, K: 0.547, L: 0.49, M: 0.767, N: 0.6, O: 0.6, P: 0.547,
+  Q: 0.6, R: 0.6, S: 0.547, T: 0.5, U: 0.6, V: 0.55, W: 0.827, X: 0.553,
+  Y: 0.553, Z: 0.493,
+  a: 0.49, b: 0.487, c: 0.437, d: 0.487, e: 0.487, f: 0.273, g: 0.487,
+  h: 0.487, i: 0.263, j: 0.27, k: 0.44, l: 0.263, m: 0.767, n: 0.487,
+  o: 0.487, p: 0.487, q: 0.487, r: 0.327, s: 0.437, t: 0.277, u: 0.487,
+  v: 0.443, w: 0.663, x: 0.443, y: 0.443, z: 0.383,
+  '/': 0.283, '-': 0.773, '.': 0.313, ' ': 0.252, ':': 0.267, ',': 0.313,
+  '(': 0.32, ')': 0.32,
+}
+/** Tabloda bulunmayan karakterler için ölçülen EN GENİŞ ilerleme. */
+const A0_ADVANCE_FALLBACK = 0.827
+/** Ölçüm hatasına karşı güvenlik payı (tahmin ÜST SINIR kalmalı). */
+const A0_WIDTH_SAFETY = 1.03
+const A0_WIDTH_PADDING = 4
 
 /**
  * İndirilmiş TrueType (`^A@…TT0003M_`) için karakter ilerlemesinin üst sınırı.
@@ -83,9 +111,32 @@ const TRUETYPE_ADVANCE_DOTS = 13
 /** Bold adres bloğunun sağ sınırı (alıcı kutusunun sağ dikey çizgisi 773). */
 const BOLD_ADDRESS_RIGHT_LIMIT = 765
 
-/** QR: model 2, magnification 5 → 21 modül × 5 = 105 dot (version 1). */
-const QR_MAGNIFICATION = 5
-const QR_SIZE = 105
+/**
+ * QR ADAYLARI — deterministik arama sırası.
+ *
+ * Version 1 (21 modül) doğrulanmış 727 payload'ı için yeterlidir.
+ * İlk GÜVENLİ aday seçilir; hiçbiri güvenli değilse composer REDDEDER
+ * (QR'sız kısmi DuruSoft etiketi ÜRETİLMEZ).
+ *
+ *   A) mag 5 (105 dot), DuruSoft'un ideal sağ-alt konumu
+ *   B) mag 4 (84 dot),  aynı bant — uzun aktarma adlarında sağa kayabilir
+ *
+ * YÜKSELTİLMİŞ BANT DEĞERLENDİRİLDİ VE REDDEDİLDİ: ödeme ayracı (y=539) ile
+ * aktarma metninin tepesi (y=705−70=635) arasında yalnız ~96 dot vardır. mag 4
+ * QR'ı (84 dot + renderer kayması) oraya sığdırmak quiet-zone'u yok eder, mag 3
+ * ise modül boyutunu 0.375 mm'ye düşürür (termal okunabilirlik sınırının
+ * altı). Bu yüzden aktarma adı gerçekten uzun olduğunda GÜVENLİ yerleşim
+ * YOKTUR ve composer bilinçli olarak fallback'e düşer.
+ */
+interface SuratQrCandidate {
+  readonly magnification: number
+  readonly size: number
+  readonly y: number
+}
+const QR_CANDIDATES: readonly SuratQrCandidate[] = [
+  { magnification: 5, size: 105, y: 596 },
+  { magnification: 4, size: 84, y: 596 },
+]
 /**
  * ZEBRASH SAPMASI: yerel renderer `^BQ`'yu `^FO y + yürürlükteki ^BY yüksekliği`
  * konumuna koyar (ölçüldü: ^BY yokken +10, `^BY4,3,143` yürürlükteyken +143).
@@ -99,8 +150,11 @@ const QR_SIZE = 105
 const QR_SCOPE_BY = '^BY2,3,10'
 const QR_RENDER_Y_OFFSET = 10
 const QR_PREFERRED_X = 645
-const QR_Y = 596
-const QR_QUIET_ZONE = 16
+/**
+ * QR sessiz bölgesi MODÜL cinsindendir (QR spesifikasyonu: 4 modül).
+ * Sabit dot yerine magnification ile ölçeklenir: mag 5 → 20 dot, mag 4 → 16.
+ */
+const QR_QUIET_MODULES = 4
 const LABEL_EDGE = 799
 
 export type SuratComposeMode =
@@ -142,6 +196,9 @@ export interface SuratComposeDiagnostics {
   /** ZPL origin kutusu. Renderer'da y + qrRenderYOffset konumunda görünür. */
   readonly qrBox: { x: number; y: number; size: number } | null
   readonly qrRenderYOffset: number
+  /** Seçilen adayın magnification'ı ve aday listesindeki sırası. */
+  readonly qrMagnification: number | null
+  readonly qrCandidateIndex: number | null
   /**
    * Kaynağa göre fark raporu. Beklenen değerler:
    *   deletions            = 0 (taşıyıcı komutu ASLA silinmez)
@@ -173,8 +230,12 @@ export interface SuratComposedLabel {
 // ═══ YARDIMCILAR ══════════════════════════════════════════════════════════
 
 /** `^A0N,h,w` ile yazılmış metnin genişlik ÜST SINIRI (dot). */
-function estimateA0Width(text: string, fontWidth: number): number {
-  return Math.ceil(text.length * fontWidth * A0_ADVANCE_RATIO)
+export function estimateA0Width(text: string, fontWidth: number): number {
+  let ratio = 0
+  for (const character of text) {
+    ratio += A0_ADVANCE[character] ?? A0_ADVANCE_FALLBACK
+  }
+  return Math.ceil(ratio * fontWidth * A0_WIDTH_SAFETY) + A0_WIDTH_PADDING
 }
 
 /**
@@ -259,6 +320,59 @@ export function diffZplAgainstSource(
   }
   inserted += output.commands.length - cursor
   return { mutations, removed, inserted }
+}
+
+/** DataMatrix işgal kutusu için ölçülmüş üst sınırlar (x59..159, ~216 yükseklik). */
+const DATA_MATRIX_MAX_WIDTH = 140
+const DATA_MATRIX_MAX_HEIGHT = 230
+
+interface QrOccupancyBox {
+  readonly right: number
+  readonly top: number
+  readonly bottom: number
+}
+
+export interface SuratQrPlacement {
+  readonly x: number
+  readonly y: number
+  readonly size: number
+  readonly magnification: number
+  readonly candidateIndex: number
+}
+
+/**
+ * İlk GÜVENLİ QR adayını seçer.
+ *
+ * Bir işgal kutusu YALNIZ QR'ın dikey bandıyla KESİŞİYORSA sol sınırı
+ * kısıtlar — QR'ın çok altında/üstünde kalan bir metin yerleşimi engellemez.
+ * Dikey bant, renderer'ın `^BY` kaynaklı kaymasını da KAPSAR.
+ */
+export function resolveQrPlacement(
+  occupancy: readonly QrOccupancyBox[],
+): SuratQrPlacement | null {
+  for (const [candidateIndex, candidate] of QR_CANDIDATES.entries()) {
+    const quietZone = QR_QUIET_MODULES * candidate.magnification
+    const bandTop = candidate.y
+    const bandBottom = candidate.y + QR_RENDER_Y_OFFSET + candidate.size
+    if (bandBottom + quietZone > LABEL_EDGE) continue
+    let requiredLeft = QR_PREFERRED_X
+    for (const boxEntry of occupancy) {
+      const intersectsVertically =
+        boxEntry.top <= bandBottom && bandTop <= boxEntry.bottom
+      if (!intersectsVertically) continue
+      requiredLeft = Math.max(requiredLeft, boxEntry.right + quietZone)
+    }
+    const maxLeft = LABEL_EDGE - quietZone - candidate.size
+    if (requiredLeft > maxLeft) continue
+    return {
+      x: requiredLeft,
+      y: candidate.y,
+      size: candidate.size,
+      magnification: candidate.magnification,
+      candidateIndex,
+    }
+  }
+  return null
 }
 
 function fallback(
@@ -387,32 +501,48 @@ export function composeSuratDurusoftLabel(
     ),
   })
 
-  // Rota ve aktarma metinlerinin sağ uçlarının ÜST SINIRI; QR bunların
-  // sağında ve quiet-zone kadar uzağında durmalıdır.
-  const occupiedRight = Math.max(
-    route.field.x + estimateA0Width(route.text, route.field.font?.width ?? 0),
-    transfer.field.x + estimateA0Width(transfer.text, transfer.field.font?.width ?? 0),
-  )
-  const requiredLeft = occupiedRight + QR_QUIET_ZONE
-  const maxLeft = LABEL_EDGE - QR_QUIET_ZONE - QR_SIZE
-  const qrLeft = Math.max(QR_PREFERRED_X, requiredLeft)
-  const qrGeometrySafe =
-    qrLeft <= maxLeft &&
-    QR_Y + QR_RENDER_Y_OFFSET + QR_SIZE + QR_QUIET_ZONE <= LABEL_EDGE
+  // Komşu alanların İŞGAL KUTULARI, semantic geometriden türetilir.
+  // Karakter sayısına bağlı sabit eşik YOKTUR: her kutu kendi metni, kendi
+  // font genişliği ve kendi `^FT` taban çizgisinden hesaplanır.
+  const occupancy = [route, transfer, fields.deliveryType, fields.parcelCount]
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .map((entry) => {
+      const font = entry.field.font
+      const height = font?.height ?? 0
+      return {
+        right: entry.field.x + estimateA0Width(entry.text, font?.width ?? 0),
+        top: entry.field.y - height,
+        bottom: entry.field.y,
+      }
+    })
+  // DataMatrix sol alt köşededir; sağ-alt QR ile yarışmaz ama sözleşme gereği
+  // işgal listesine DAHİL EDİLİR.
+  if (fields.dataMatrixPayload) {
+    occupancy.push({
+      right: fields.dataMatrixPayload.field.x + DATA_MATRIX_MAX_WIDTH,
+      top: fields.dataMatrixPayload.field.y - DATA_MATRIX_MAX_HEIGHT,
+      bottom: fields.dataMatrixPayload.field.y,
+    })
+  }
 
-  // E) DOĞRULANMIŞ 727 VARSA QR ZORUNLUDUR. Sığmıyorsa QR'sız kısmi DuruSoft
-  //    etiketi üretmek YERİNE composer tümüyle reddeder.
-  if (qr.payload !== null && !qrGeometrySafe) {
+  const placement = resolveQrPlacement(occupancy)
+
+  // E) DOĞRULANMIŞ 727 VARSA QR ZORUNLUDUR. Hiçbir aday güvenli değilse
+  //    QR'sız kısmi DuruSoft etiketi üretmek YERİNE composer tümüyle reddeder.
+  if (qr.payload !== null && !placement) {
     return fallback(
       'fallback_geometry_failure',
-      'QR güvenli alana sığmıyor (qrRejection=geometry_conflict)',
+      'hiçbir QR adayı güvenli değil (qrRejection=geometry_conflict)',
       sourceZpl,
     )
   }
-  const qrFits = qr.payload !== null
+  const qrFits = qr.payload !== null && placement !== null
   // Kutu ZPL ORIGIN'ini taşır; renderer'da +QR_RENDER_Y_OFFSET kadar aşağıda
   // görünür. Güvenlik kontrolleri iki yorumu da kapsayan bandı kullanır.
-  const qrBox = qrFits ? { x: qrLeft, y: QR_Y, size: QR_SIZE } : null
+  const qrBox =
+    qrFits && placement
+      ? { x: placement.x, y: placement.y, size: placement.size }
+      : null
 
   // ── DÜZENLEMELER ──────────────────────────────────────────────────────
   const document = semantic.document
@@ -446,7 +576,7 @@ export function composeSuratDurusoftLabel(
     }
   })
   // (whitelist 4) doğrulanmış 727 QR.
-  if (qrFits && qr.payload) {
+  if (qrFits && qr.payload && placement) {
     // ^BY DURUM İZOLASYONU. `^BY` stateful'dur ve yerel renderer `^BQ`'nun
     // dikey konumunu yürürlükteki ^BY YÜKSEKLİĞİ kadar kaydırır. Bu yüzden QR
     // ZPL VARSAYILANINA (2,3,10) sabitlenir, ardından yürürlükteki ÖNCEKİ
@@ -457,8 +587,8 @@ export function composeSuratDurusoftLabel(
       .find((command) => command.name === 'BY')
     tail.push(
       ...zplCommands(
-        `${QR_SCOPE_BY}^FO${qrLeft},${QR_Y}` +
-          `^BQN,2,${QR_MAGNIFICATION}^FDLA,${qr.payload}^FS`,
+        `${QR_SCOPE_BY}^FO${placement.x},${placement.y}` +
+          `^BQN,2,${placement.magnification}^FDLA,${qr.payload}^FS`,
       ),
     )
     if (priorBy) {
@@ -528,6 +658,8 @@ export function composeSuratDurusoftLabel(
       qrRejection: qr.payload === null ? qr.rejection : null,
       qrBox,
       qrRenderYOffset: QR_RENDER_Y_OFFSET,
+      qrMagnification: qrFits && placement ? placement.magnification : null,
+      qrCandidateIndex: qrFits && placement ? placement.candidateIndex : null,
       diff: {
         mutations: diff.mutations.length,
         allowedMutations: diff.mutations.length,

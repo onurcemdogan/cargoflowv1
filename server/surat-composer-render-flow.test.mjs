@@ -307,3 +307,70 @@ test('CR-10: hiçbir mürekkep 799×799 dışına çıkmaz', async () => {
   assert.ok(right(all) <= 798, `sağ kenar: ${right(all)}`)
   assert.ok(bottom(all) <= 798, `alt kenar: ${bottom(all)}`)
 })
+
+test('CR-11: uyarlanabilir QR yerleşimi gerçek render’da ÇAKIŞMAZ', async () => {
+  const BS = String.fromCharCode(92)
+  const withTransfer = (value) =>
+    zpl.replace(
+      /\^FT220,705\^A0N,70,50\^FH.\^FD[^^]*\^FS/,
+      `^FT220,705^A0N,70,50^FH${BS}^FD${value}^FS`,
+    )
+  // "IKITELLI AKTARMA" üretimde fallback veren sınıftır; "ERZURUM AKTARMA"
+  // ise ölçek küçültmeyi tetikler. İkisi de render’da doğrulanır.
+  for (const [name, expectedMagnification] of [
+    ['IKITELLI AKTARMA', 5],
+    ['ERZURUM AKTARMA', 4],
+  ]) {
+    const source = withTransfer(name)
+    const derived = deriveAugmentedSuratZplWithHashes(
+      source,
+      [{ productName: 'Ornek Urun', quantity: 2, sku: 'S1' }],
+      { compose: { cargoTrackingNumber: VERIFIED_727 } },
+    )
+    assert.equal(derived.renderContract, 'durusoft_composed', name)
+    const composed = composeSuratDurusoftLabel(source, {
+      cargoTrackingNumber: VERIFIED_727,
+    })
+    const { qrBox, qrMagnification, qrRenderYOffset } = composed.diagnostics
+    assert.equal(qrMagnification, expectedMagnification, `${name} ölçeği`)
+
+    const bitmap = (await render(derived.printZpl)).bitmap
+    const qr = box(bitmap, qrBox.x - 25, qrBox.y - 25, qrBox.size + 60, qrBox.size + 60)
+    assert.ok(qr, `${name}: QR mürekkebi`)
+    assert.equal(qr.width, qrBox.size, `${name}: modül boyutu`)
+    assert.equal(qr.x, qrBox.x, `${name}: X tam ^FO konumunda`)
+
+    // Komşu makine-okunur/metin alanlarıyla ÇAKIŞMA YOK.
+    const quiet = 4 * qrMagnification
+    for (const [label, ...window] of [
+      ['aktarma', 170, 638, 470, 70],
+      ['rota', 170, 590, 420, 46],
+      ['teslim tipi', 300, 560, 340, 42],
+      ['DataMatrix', 40, 490, 120, 220],
+    ]) {
+      const neighbour = box(bitmap, ...window)
+      if (!neighbour) continue
+      assert.ok(!overlaps(qr, neighbour), `${name}: ${label} ile çakışma`)
+      if (right(neighbour) < qr.x) {
+        assert.ok(
+          qr.x - right(neighbour) >= quiet,
+          `${name}: ${label} ile quiet-zone (${qr.x - right(neighbour)} < ${quiet})`,
+        )
+      }
+    }
+    // Etiket sınırı ve quiet-zone.
+    assert.ok(right(qr) + quiet <= 799, `${name}: sağ quiet-zone`)
+    assert.ok(bottom(qr) + quiet <= 799, `${name}: alt quiet-zone`)
+
+    // Ürün footer’ı QR’ın ALTINDA, çakışma yok.
+    const footer = box(bitmap, 0, derived.metrics.footerTop, 799,
+      799 - derived.metrics.footerTop)
+    assert.ok(footer, `${name}: footer`)
+    assert.ok(!overlaps(qr, footer), `${name}: footer çakışması`)
+    assert.ok(bottom(footer) <= 798, `${name}: footer taşması`)
+
+    // Hiçbir mürekkep etiket dışına çıkmaz.
+    const all = box(bitmap, 0, 0, 799, 799)
+    assert.ok(right(all) <= 798 && bottom(all) <= 798, `${name}: taşma`)
+  }
+})

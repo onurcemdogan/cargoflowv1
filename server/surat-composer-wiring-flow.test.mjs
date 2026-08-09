@@ -325,3 +325,122 @@ test('CW-10: utility varsayılanı DEĞİŞMEDİ (CF-34 sözleşmesi)', async ()
   })
   assert.equal(opted.renderContract, 'durusoft_composed')
 })
+
+// ═══ CW-11..CW-14: UYARLANABİLİR QR YERLEŞİMİ ════════════════════════════
+//
+// Üretimde "IKITELLI AKTARMA" taşıyan gerçek gönderi
+// composeMode=fallback_geometry_failure veriyordu. Kök neden yerleşim değil,
+// KABA GENİŞLİK TAHMİNİYDİ: aktarma metni gerçekte x=606'da bitiyor, tek
+// oranlı tahmin ise 700 diyordu. Tahminci karakter tablosuna geçirildi ve
+// yerleşim deterministik aday aramasına dönüştürüldü.
+
+/** Aktarma merkezi adını değiştirilmiş gerçek şablon üretir. */
+function withTransferCenter(value) {
+  const next = zpl.replace(
+    /\^FT220,705\^A0N,70,50\^FH.\^FD[^^]*\^FS/,
+    `^FT220,705^A0N,70,50^FH${BS}^FD${value}^FS`,
+  )
+  assert.notEqual(next, zpl, 'kurgu gerçek fixture ile eşleşmeli')
+  return next
+}
+
+test('CW-11: ÜRETİM VAKASI "IKITELLI AKTARMA" artık composed üretir', () => {
+  const artifact = repo.attachPrintZplArtifact(
+    carrierPayload(withTransferCenter('IKITELLI AKTARMA')),
+    ITEMS,
+    NOW,
+  ).printZplArtifact
+  // Üretimde fallback_geometry_failure veren SINIF.
+  assert.equal(artifact.renderContract, 'durusoft_composed')
+  assert.equal(artifact.composeMode, 'durusoft_composed')
+  assertComposedMarkers(artifact.printZpl)
+  assert.ok(
+    artifact.printZpl.includes(`^BQN,2,5^FDLA,${VERIFIED_727}^FS`),
+    'ideal DuruSoft ölçeği (mag 5) seçilmeli',
+  )
+  // Aktarma merkezi gövdesi AYNEN korunur.
+  assert.ok(artifact.printZpl.includes('^FDIKITELLI AKTARMA^FS'))
+})
+
+test('CW-12: uzunluk sınıfları — yaygın adlar composed, ekstrem ad fallback', async () => {
+  const { composeSuratDurusoftLabel } = await load(
+    '/src/utils/suratDurusoftComposer.ts')
+  const expectations = [
+    ['VAN AKTARMA', true],
+    ['GEBZE AKTARMA', true],
+    ['IKITELLI AKTARMA', true],
+    ['ERZURUM AKTARMA', true],
+    // Gerçekten sığmayan ekstrem ad: güvenli yerleşim YOK.
+    ['ISTANBUL ANADOLU AKTARMA MERKEZI', false],
+  ]
+  for (const [name, shouldCompose] of expectations) {
+    const result = composeSuratDurusoftLabel(withTransferCenter(name), {
+      cargoTrackingNumber: VERIFIED_727,
+    })
+    assert.equal(result.composed, shouldCompose, `${name}: ${result.reason ?? 'composed'}`)
+    if (shouldCompose) {
+      assert.ok(result.diagnostics.qrBox, `${name}: QR üretilmeli`)
+      assert.ok(
+        [4, 5].includes(result.diagnostics.qrMagnification),
+        `${name}: okunabilir modül boyutu`,
+      )
+    } else {
+      assert.equal(result.mode, 'fallback_geometry_failure')
+      assert.equal(result.zpl, withTransferCenter(name), 'kaynak AYNEN')
+    }
+  }
+})
+
+test('CW-13: eşik KARAKTER SAYISINA değil GERÇEK GENİŞLİĞE bağlı', async () => {
+  const { composeSuratDurusoftLabel, estimateA0Width } = await load(
+    '/src/utils/suratDurusoftComposer.ts')
+  // Aynı karakter sayısı, çok farklı genişlik: dar harfler vs geniş harfler.
+  const narrow = 'IIIIIIIIIIIIIIII' // 16 karakter, dar
+  const wide = 'WWWWWWWWWWWWWWWW' // 16 karakter, geniş
+  assert.equal(narrow.length, wide.length)
+  assert.ok(
+    estimateA0Width(wide, 50) > estimateA0Width(narrow, 50) * 2,
+    'tahminci karakter genişliğini AYIRT ETMELİ',
+  )
+  assert.equal(
+    composeSuratDurusoftLabel(withTransferCenter(narrow), {
+      cargoTrackingNumber: VERIFIED_727,
+    }).composed,
+    true,
+    'dar 16 karakter sığar',
+  )
+  assert.equal(
+    composeSuratDurusoftLabel(withTransferCenter(wide), {
+      cargoTrackingNumber: VERIFIED_727,
+    }).composed,
+    false,
+    'geniş 16 karakter sığmaz',
+  )
+})
+
+test('CW-14: uzun aktarma adında ölçek küçülür, quiet-zone korunur', async () => {
+  const { composeSuratDurusoftLabel } = await load(
+    '/src/utils/suratDurusoftComposer.ts')
+  const short = composeSuratDurusoftLabel(withTransferCenter('VAN AKTARMA'), {
+    cargoTrackingNumber: VERIFIED_727,
+  }).diagnostics
+  const long = composeSuratDurusoftLabel(withTransferCenter('ERZURUM AKTARMA'), {
+    cargoTrackingNumber: VERIFIED_727,
+  }).diagnostics
+  assert.equal(short.qrMagnification, 5, 'kısa ad → ideal ölçek')
+  assert.equal(short.qrCandidateIndex, 0)
+  assert.equal(long.qrMagnification, 4, 'uzun ad → küçültülmüş ölçek')
+  assert.equal(long.qrCandidateIndex, 1)
+  // Her iki durumda da etiket içinde ve sağ kenarda quiet-zone var.
+  for (const diagnostics of [short, long]) {
+    const quiet = 4 * diagnostics.qrMagnification
+    assert.ok(
+      diagnostics.qrBox.x + diagnostics.qrBox.size + quiet <= 799,
+      'sağ quiet-zone',
+    )
+    assert.ok(
+      diagnostics.qrBox.y + diagnostics.qrRenderYOffset + diagnostics.qrBox.size + quiet <= 799,
+      'alt quiet-zone',
+    )
+  }
+})
