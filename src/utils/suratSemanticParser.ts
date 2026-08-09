@@ -19,7 +19,7 @@ import {
   type ZplField,
   type ZplFieldKind,
   type ZplOrientation,
-} from './zplCommandModel'
+} from './zplCommandModel.ts'
 
 export interface SuratFontSignature {
   readonly fontId: string
@@ -182,6 +182,54 @@ function locate(
   return { field }
 }
 
+export interface SuratFieldExtraction {
+  readonly fields: Readonly<Partial<Record<SuratSemanticKey, SuratSemanticField>>>
+  readonly errors: readonly string[]
+}
+
+/**
+ * 20 semantic slotu İSKELET SAYIMI YAPMADAN çözer.
+ *
+ * Composed çıktı, kaynağa göre fazladan komut taşır (^BQ, ek metin alanları);
+ * bu yüzden `^FD`/`^BQ` sayımı gibi iskelet kontrolleri çıktı üzerinde
+ * ANLAMSIZDIR. Invariant doğrulaması yalnız slotların yerinde, tek ve aynı
+ * gövdeyle durduğunu sorar — bunu bu fonksiyon sağlar.
+ */
+export function extractSuratSemanticFields(zpl: string): SuratFieldExtraction {
+  return extractFromZplFields(collectZplFields(parseZplDocument(zpl)))
+}
+
+/**
+ * Slot çözümünün çekirdeği. ÖNEMLİ: çağıran kendi `ZplField` listesini verir,
+ * böylece dönen `field` referansları ÇAĞIRANIN belgesine aittir — composer
+ * düzenlemeleri komut kimliğiyle hedeflediği için bu şarttır.
+ */
+function extractFromZplFields(
+  zplFields: readonly ZplField[],
+): SuratFieldExtraction {
+  const fields: Partial<Record<SuratSemanticKey, SuratSemanticField>> = {}
+  const errors: string[] = []
+  for (const slot of SLOTS) {
+    const found = locate(zplFields, slot)
+    if ('error' in found) {
+      errors.push(found.error)
+      continue
+    }
+    const raw = found.field.data ?? ''
+    fields[slot.key] = {
+      key: slot.key,
+      label: slot.label,
+      x: slot.x,
+      y: slot.y,
+      raw,
+      text: decodeFieldHex(raw),
+      empty: raw.trim() === '',
+      field: found.field,
+    }
+  }
+  return { fields, errors }
+}
+
 function unsupported(
   reason: string,
   document: ZplDocument,
@@ -235,22 +283,9 @@ export function resolveSuratSemanticModel(zpl: string): SuratSemanticModel {
   if (count('BQ') !== 0) return fail(`kaynakta beklenmeyen QR var (^BQ ${count('BQ')})`)
 
   // ── 20 semantic alan ──────────────────────────────────────────────────
-  const fields: Partial<Record<SuratSemanticKey, SuratSemanticField>> = {}
-  for (const slot of SLOTS) {
-    const found = locate(zplFields, slot)
-    if ('error' in found) return fail(found.error)
-    const raw = found.field.data ?? ''
-    fields[slot.key] = {
-      key: slot.key,
-      label: slot.label,
-      x: slot.x,
-      y: slot.y,
-      raw,
-      text: decodeFieldHex(raw),
-      empty: raw.trim() === '',
-      field: found.field,
-    }
-  }
+  const extraction = extractFromZplFields(zplFields)
+  if (extraction.errors.length > 0) return fail(extraction.errors[0])
+  const fields = extraction.fields
 
   // ── Composer'ın VERİ olarak bağımlı olduğu alanlar ────────────────────
   if (fields.code128Payload?.empty !== false) {

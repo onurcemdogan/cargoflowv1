@@ -187,7 +187,28 @@ test('RT-9: geometri ölçümü gerçek şablonda tutarlı', async () => {
   )
 })
 
-test('RT-10: gerçek şablonda ürün footer’ı GÜVENLE eklenebilir', async () => {
+// ═══ RT-10A / RT-10B: İKİ AYRI RENDER SÖZLEŞMESİ ═════════════════════════
+//
+// Baskı ZPL'i iki farklı sözleşmeyle üretilebilir ve bunların DOĞRU
+// sözleşmeleri BİRBİRİNDEN FARKLIDIR. Tek bir teste sıkıştırmak, ikisinden
+// birini zayıflatmak zorunda bırakırdı:
+//
+//   RT-10A  official_augmented — kaynak ZPL çıktının BAYT ÖNEKİ olarak durur.
+//           Taşıyıcı komutları hiç değişmez, yalnız sona ürün footer'ı eklenir.
+//           Bu, composer'dan ÖNCEKİ davranışın AYNISIDIR ve hiçbir iddiası
+//           gevşetilmemiştir — altındaki test gövdesi değişmedi.
+//
+//   RT-10B  durusoft_composed — DuruSoft parity için bilinçli layout dönüşümü
+//           uygulanır (^BC yorum satırı Y→N). Bu yüzden bayt-önek iddiası
+//           BURADA GEÇERSİZDİR; yerine DAHA GÜÇLÜ bir sözleşme kanıtlanır:
+//           kaynak artefakt değişmez + 6 semantic invariant + transform
+//           whitelist (beklenmeyen mutasyon/silme = 0) + determinizm.
+//
+// Yani bu ayrım "beklentiyi geçsin diye gevşetme" DEĞİLDİR: RT-10A eski
+// sözleşmeyi aynen korur, RT-10B onun kapsamadığı yeni modu daha sıkı
+// koşullarla bağlar.
+
+test('RT-10A: augmentation-only modda ürün footer’ı GÜVENLE eklenebilir', async () => {
   const { deriveAugmentedSuratZpl } = await load('/src/utils/augmentedSuratZpl.ts')
   const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
   const derived = deriveAugmentedSuratZpl(zpl, [
@@ -216,4 +237,91 @@ test('RT-10: gerçek şablonda ürün footer’ı GÜVENLE eklenebilir', async (
   const geometry = parseSuratZplGeometry(zpl)
   assert.ok(derived.metrics.footerTop > geometry.contentBottom)
   assert.ok(derived.metrics.footerBottom <= 799 - 8)
+  // Bu mod composer'ı ÇALIŞTIRMAZ.
+  assert.equal(derived.renderContract, 'official_augmented')
+  assert.equal(derived.composeMode, null)
+})
+
+test('RT-10B: composed mod kaynağı korur ve whitelist/invariant ile bağlanır', async () => {
+  const { deriveAugmentedSuratZplWithHashes, sha256Hex } = await load(
+    '/src/utils/augmentedSuratZpl.ts')
+  const { verifyPersistedPrintZpl } = await load(
+    '/server/shipments/printZplRepository.ts')
+  const { parseZplDocument } = await load('/src/utils/zplCommandModel.ts')
+  const { diffZplAgainstSource, INVARIANT_KEYS } = await load(
+    '/src/utils/suratDurusoftComposer.ts')
+  const { extractSuratSemanticFields } = await load(
+    '/src/utils/suratSemanticParser.ts')
+
+  const items = [{ productName: 'Ornek Urun', quantity: 1, sku: 'SKU-1' }]
+  const compose = { cargoTrackingNumber: '7271234567890' }
+  const sourceShaBefore = sha256Hex(zpl)
+  const derived = deriveAugmentedSuratZplWithHashes(zpl, items, { compose })
+
+  // — A) SOURCE IMMUTABILITY —
+  assert.equal(derived.renderContract, 'durusoft_composed')
+  assert.equal(derived.composeMode, 'durusoft_composed')
+  assert.equal(derived.sourceZpl, zpl, 'kaynak AYNEN taşınır')
+  assert.equal(sha256Hex(zpl), sourceShaBefore, 'kaynak SHA değişmez')
+  assert.equal(derived.printZplSourceSha256, sourceShaBefore)
+
+  // Composed çıktı kaynağın bayt öneki OLMAK ZORUNDA DEĞİLDİR.
+  assert.notEqual(derived.printZpl, zpl)
+  assert.equal(
+    derived.printZpl.startsWith(zpl.slice(0, zpl.lastIndexOf('^PQ'))),
+    false,
+    'bilinçli dönüşüm nedeniyle bayt-önek iddiası burada geçerli değil',
+  )
+
+  // — C) TRANSFORM WHITELIST —
+  const diff = diffZplAgainstSource(
+    parseZplDocument(zpl),
+    parseZplDocument(derived.printZpl),
+  )
+  assert.equal(diff.removed.length, 0, 'taşıyıcı komutu SİLİNMEZ')
+  assert.equal(diff.mutations.length, 1, 'tek beklenen mutasyon')
+  assert.equal(diff.mutations[0].name, 'BC')
+  assert.ok(diff.mutations[0].from.startsWith('N,,Y,N'))
+  assert.ok(diff.mutations[0].to.startsWith('N,,N,N'))
+  assert.ok(diff.inserted > 0, 'yeni alanlar EKLENİR')
+
+  // — B) SEMANTIC INVARIANTS —
+  const before = extractSuratSemanticFields(zpl).fields
+  const after = extractSuratSemanticFields(derived.printZpl).fields
+  for (const key of INVARIANT_KEYS) {
+    assert.equal(after[key].raw, before[key].raw, `invariant: ${key}`)
+  }
+  // QR gövdesi TAM doğrulanmış değer.
+  assert.ok(derived.printZpl.includes('^BQN,2,5^FDLA,7271234567890^FS'))
+  assert.equal((derived.printZpl.match(/\^BQ/g) ?? []).length, 1)
+  // Tek etiket, sayfa parametreleri sabit.
+  assert.equal((derived.printZpl.match(/\^XA/g) ?? []).length, 1)
+  assert.equal((derived.printZpl.match(/\^XZ/g) ?? []).length, 1)
+  assert.equal((derived.printZpl.match(/\^PW799/g) ?? []).length, 1)
+  assert.equal((derived.printZpl.match(/\^LL0799/g) ?? []).length, 1)
+
+  // — D) DETERMINISM —
+  const again = deriveAugmentedSuratZplWithHashes(zpl, items, { compose })
+  assert.equal(again.printZpl, derived.printZpl, 'bayt bayt aynı')
+  assert.equal(again.printZplSha256, derived.printZplSha256)
+
+  // — IMMUTABLE REPRINT —
+  // Kalıcı kayıt kaynağın SHA'sına bağlanır; kaynak değişmediği sürece
+  // kayıtlı composed artefakt AYNEN geri döner (yeniden compose EDİLMEZ).
+  if (typeof verifyPersistedPrintZpl === 'function') {
+    const verdict = verifyPersistedPrintZpl(
+      {
+        printZpl: derived.printZpl,
+        printZplLength: derived.printZplLength,
+        printZplSha256: derived.printZplSha256,
+        printZplSourceSha256: derived.printZplSourceSha256,
+        printZplVersion: derived.printZplVersion,
+        printZplFooterProfile: derived.printZplFooterProfile,
+        templateFingerprint: derived.templateFingerprint,
+        printZplCreatedAt: '2026-08-09T00:00:00.000Z',
+      },
+      sourceShaBefore,
+    )
+    assert.equal(verdict.ok, true, verdict.reason ?? '')
+  }
 })

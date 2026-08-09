@@ -1,0 +1,309 @@
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import test, { after, before } from 'node:test'
+import { createServer } from 'vite'
+
+import { decodePngToBitmap, measureInkBox } from './labels/pngLandmarks.mjs'
+
+// DURUSOFT COMPOSER — GERÇEK RENDER GEOMETRİSİ.
+//
+// Yerel zebrash motoruyla 799×799 render alınır ve MÜREKKEP KUTULARI ölçülür.
+// Dizgi/snapshot testi değildir: her iddia gerçek piksellere dayanır.
+//
+// ═══ RENDERER SAPMALARI (ölçülmüş, bilinçli olarak assert EDİLMEZ) ════════
+//
+//  1) zebrash `>:` (Code128 subset C) önekini UYGULAMAZ; her zaman subset B
+//     kodlar. Gerçek Zebra subset C kodlar ve barkod DAHA DARDIR. Bu yüzden
+//     barkod altı metnin TAM ORTALANMASI burada assert EDİLMEZ — yalnız
+//     metnin barkodun güvenli yatay bandında kaldığı ve taşmadığı kanıtlanır.
+//     Tam yatay ortalama FİZİKSEL Zebra kabulüyle doğrulanacaktır.
+//
+//  2) zebrash `^BQ`'yu `^FO y + yürürlükteki ^BY yüksekliği` konumuna koyar.
+//     Composer QR'dan hemen önce küçük ve bilinen bir `^BY` yazdığı için fark
+//     10 dot ile sınırlıdır; testler QR'ı bu 10 dotluk belirsizliği KAPSAYAN
+//     bantta doğrular.
+//
+//  3) `^A@…TT0003M_` indirilmiş fontu zebrash'te YOK; yedek fontla çizilir.
+//     Bold adres bloğu kaynak satırların BAYT KOPYASI olduğu için genişlik
+//     karşılaştırmaları iki blok arasında yapılır (mutlak değere bağlı değil).
+
+const here = dirname(fileURLToPath(import.meta.url))
+const zpl = readFileSync(
+  join(here, 'fixtures', 'real-template-masked.zpl'),
+  'utf8',
+)
+const VERIFIED_727 = '7271234567890'
+
+let _vite
+let renderZplToPng
+let composeSuratDurusoftLabel
+let deriveAugmentedSuratZplWithHashes
+
+before(async () => {
+  _vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+  })
+  ;({ renderZplToPng } = await _vite.ssrLoadModule(
+    '/server/labels/zplRenderService.ts',
+  ))
+  ;({ composeSuratDurusoftLabel } = await _vite.ssrLoadModule(
+    '/src/utils/suratDurusoftComposer.ts',
+  ))
+  ;({ deriveAugmentedSuratZplWithHashes } = await _vite.ssrLoadModule(
+    '/src/utils/augmentedSuratZpl.ts',
+  ))
+})
+after(async () => {
+  if (_vite) await _vite.close()
+})
+
+async function render(source) {
+  const result = await renderZplToPng({ zpl: source })
+  return {
+    bitmap: decodePngToBitmap(Buffer.from(result.pngBase64, 'base64')),
+    widthPx: result.widthPx,
+    heightPx: result.heightPx,
+    renderSha256: result.renderSha256,
+  }
+}
+
+const box = (bitmap, x, y, width, height) =>
+  measureInkBox(bitmap, { x, y, width, height })
+
+const right = (b) => b.x + b.width - 1
+const bottom = (b) => b.y + b.height - 1
+
+/** İki kutu kesişiyor mu (kapsayıcı sınırlar). */
+function overlaps(a, b) {
+  return (
+    a.x <= right(b) && b.x <= right(a) && a.y <= bottom(b) && b.y <= bottom(a)
+  )
+}
+
+// Kaynak şablonun DEĞİŞMEMESİ gereken mürekkep işaretleri. Pencereler kutu
+// kenar çizgilerini (x=59 / x=773 dikey kuralları) DIŞLAR.
+const CARRIER_LANDMARKS = [
+  ['code128 gövde', 46, 157, 750, 144],
+  ['adres satırı 1', 66, 357, 700, 21],
+  ['adres satırı 2', 66, 378, 700, 21],
+  // Pencere y=341'den başlar: kaynaktaki DAHİLİ yorum satırı y=340'a kadar
+  // uzanıp alıcı adı bandına giriyor. Yorum satırı composed modda bilinçli
+  // olarak kaldırıldığı için ölçüme dahil edilmemelidir; y≥341'de iki render
+  // birebir aynıdır (ölçüldü).
+  ['alıcı adı', 66, 341, 700, 14],
+  ['alıcı tel', 100, 452, 300, 22],
+  ['il / ilçe', 500, 452, 270, 22],
+  ['rota', 170, 590, 420, 46],
+  ['aktarma', 170, 638, 420, 70],
+  ['DataMatrix', 40, 490, 120, 220],
+]
+
+test('CR-1: composed çıktı 799×799 tek etiket olarak render edilir', async () => {
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  assert.equal(composed.composed, true, composed.reason ?? '')
+  const { widthPx, heightPx } = await render(composed.zpl)
+  assert.equal(widthPx, 799)
+  assert.equal(heightPx, 799)
+})
+
+test('CR-2: taşıyıcı işaretleri compose sonrası AYNI piksellerde', async () => {
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  const before = (await render(zpl)).bitmap
+  const afterBitmap = (await render(composed.zpl)).bitmap
+  for (const [name, ...window] of CARRIER_LANDMARKS) {
+    const a = box(before, ...window)
+    const b = box(afterBitmap, ...window)
+    assert.ok(a, `${name}: kaynakta mürekkep olmalı`)
+    assert.deepEqual(
+      { x: b.x, y: b.y, width: b.width, height: b.height },
+      { x: a.x, y: a.y, width: a.width, height: a.height },
+      `${name} kayması YOK`,
+    )
+  }
+})
+
+test('CR-3: barkod altı sayı KÜÇÜLÜR ve güvenli bantta kalır', async () => {
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  // Pencere y=335'te BİTER: y=336'daki alıcı kutusu üst çizgisi her iki
+  // render'da da tam genişlikte mürekkep bırakır ve karşılaştırmayı anlamsız
+  // kılardı. Dahili yorum satırı gerçekte y=340'a kadar uzanıyor; pencere onu
+  // kırptığı için "küçüldü" iddiası TEMKİNLİ tarafta kalır (gerçek fark daha
+  // büyüktür).
+  const builtIn = box((await render(zpl)).bitmap, 46, 302, 750, 34)
+  const custom = box((await render(composed.zpl)).bitmap, 46, 302, 750, 34)
+  assert.ok(builtIn && custom, 'iki modda da sayı basılmalı')
+
+  // DuruSoft hedefi: daha küçük ve daha ince.
+  assert.ok(
+    custom.height < builtIn.height,
+    `yükseklik küçülmeli: ${custom.height} < ${builtIn.height}`,
+  )
+  assert.ok(
+    custom.width < builtIn.width,
+    `genişlik küçülmeli: ${custom.width} < ${builtIn.width}`,
+  )
+
+  // Barkodun yatay bandı içinde ve alıcı kutusunun ÜSTÜNDE.
+  const body = box((await render(composed.zpl)).bitmap, 46, 157, 750, 144)
+  assert.ok(custom.x >= body.x, 'metin barkodun solundan taşmaz')
+  assert.ok(right(custom) <= right(body), 'metin barkodun sağından taşmaz')
+  assert.ok(bottom(custom) < 336, 'metin alıcı kutusuna değmez')
+  assert.ok(custom.y > 300, 'metin barkodun altında')
+})
+
+test('CR-4: bold adres bloğu ayrılmış slotlara yazılır ve TAŞMAZ', async () => {
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  const bitmap = (await render(composed.zpl)).bitmap
+  // 401..452: kaynakta BOŞ olan bold bölge (alıcı kutusu tabanı 476).
+  const bold = box(bitmap, 66, 401, 700, 52)
+  assert.ok(bold, 'bold adres bloğu basılmalı')
+  assert.ok(bold.x >= 63, 'sol kenar slot x’inde başlar')
+  assert.ok(right(bold) <= 765, `sağ sınırı aşmaz: ${right(bold)}`)
+  assert.ok(bottom(bold) < 476, 'alıcı kutusu tabanını aşmaz')
+
+  // Kaynak adres satırları AYNEN durur (çift blok, tek blok değil).
+  const sourceLine = box(bitmap, 66, 357, 700, 21)
+  assert.ok(sourceLine, 'normal adres korunur')
+  assert.ok(
+    !overlaps(sourceLine, bold),
+    'bold blok normal adresin üstüne binmez',
+  )
+  // Bold blok, kaynak satırın BAYT KOPYASI + 1 dot: genişlik farkı küçük olmalı.
+  const boldFirst = box(bitmap, 66, 401, 700, 16)
+  assert.ok(boldFirst, 'bold ilk satır')
+  assert.ok(
+    Math.abs(boldFirst.width - sourceLine.width) <= 2,
+    `bold satır kaynak satırla aynı genişlikte olmalı: ${boldFirst.width} / ${sourceLine.width}`,
+  )
+})
+
+test('CR-5: QR sağ altta, etiket içinde, quiet-zone korunmuş', async () => {
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  const { qrBox, qrRenderYOffset } = composed.diagnostics
+  assert.ok(qrBox, 'QR üretilmeli')
+  const bitmap = (await render(composed.zpl)).bitmap
+  const qr = box(bitmap, qrBox.x - 20, qrBox.y - 20, qrBox.size + 60, qrBox.size + 60)
+  assert.ok(qr, 'QR mürekkebi ölçülmeli')
+
+  assert.equal(qr.x, qrBox.x, 'X tam ^FO konumunda')
+  assert.equal(qr.width, qrBox.size, 'modül boyutu (mag 5 → 105 dot)')
+  assert.equal(qr.height, qrBox.size)
+  // Y, renderer sapmasını KAPSAYAN bantta.
+  assert.ok(
+    qr.y >= qrBox.y && qr.y <= qrBox.y + qrRenderYOffset,
+    `QR y bandı: ${qr.y} ∈ [${qrBox.y}, ${qrBox.y + qrRenderYOffset}]`,
+  )
+  // Etiket içinde ve quiet-zone korunmuş.
+  assert.ok(right(qr) <= 799 - 16, `sağ quiet-zone: ${right(qr)}`)
+  assert.ok(bottom(qr) <= 799 - 16, `alt quiet-zone: ${bottom(qr)}`)
+})
+
+test('CR-6: QR hiçbir taşıyıcı öğesiyle ÇAKIŞMAZ', async () => {
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  const bitmap = (await render(composed.zpl)).bitmap
+  const { qrBox, qrRenderYOffset } = composed.diagnostics
+  // İki renderer yorumunu da kapsayan EN KÖTÜ DURUM kutusu.
+  const worstCase = {
+    x: qrBox.x,
+    y: qrBox.y,
+    width: qrBox.size,
+    height: qrBox.size + qrRenderYOffset,
+  }
+  for (const [name, ...window] of CARRIER_LANDMARKS) {
+    const landmark = box(bitmap, ...window)
+    assert.ok(
+      !overlaps(worstCase, landmark),
+      `QR ${name} ile çakışmamalı (${landmark.x}..${right(landmark)} / ${landmark.y}..${bottom(landmark)})`,
+    )
+  }
+  // Dikey ray (sol kenar) ve etiket sınırı.
+  const rail = box(bitmap, 0, 200, 48, 560)
+  if (rail) assert.ok(!overlaps(worstCase, rail), 'QR dikey rayla çakışmaz')
+})
+
+test('CR-7: doğrulanmış değer yoksa QR BASILMAZ', async () => {
+  const composed = composeSuratDurusoftLabel(zpl, {})
+  assert.equal(composed.composed, true, 'composer yine de çalışır')
+  assert.equal(composed.diagnostics.qrBox, null)
+  assert.equal(composed.diagnostics.qrRejection, 'no_candidate')
+  const bitmap = (await render(composed.zpl)).bitmap
+  assert.equal(
+    box(bitmap, 600, 560, 199, 200),
+    null,
+    'sağ alt bölgede mürekkep OLMAMALI',
+  )
+})
+
+test('CR-8: ürün footer’ı QR’ın ALTINA yerleşir, çakışma yok', async () => {
+  const derived = deriveAugmentedSuratZplWithHashes(
+    zpl,
+    [
+      {
+        productName: 'Scuba Secil Detayli Tesettur Lacivert Elbise',
+        quantity: 2,
+        color: 'Lacivert',
+        size: '40',
+        sku: 'SCUBA-SEC01',
+      },
+    ],
+    { compose: { cargoTrackingNumber: VERIFIED_727 } },
+  )
+  assert.equal(derived.renderContract, 'durusoft_composed')
+  assert.equal(derived.augmentationStatus, 'success', 'footer eklenmeli')
+  const bitmap = (await render(derived.printZpl)).bitmap
+
+  const footer = box(
+    bitmap,
+    0,
+    derived.metrics.footerTop,
+    799,
+    799 - derived.metrics.footerTop,
+  )
+  assert.ok(footer, 'footer mürekkebi olmalı')
+  assert.ok(bottom(footer) <= 798, 'footer etiket dışına taşmaz')
+
+  const qrBoxDiag = { x: 645, y: 596, size: 105 }
+  const qr = box(bitmap, qrBoxDiag.x - 5, qrBoxDiag.y - 5, qrBoxDiag.size + 25, qrBoxDiag.size + 30)
+  assert.ok(qr, 'QR footer eklendikten sonra da basılmalı')
+  assert.ok(
+    footer.y > bottom(qr),
+    `footer QR’ın altında başlamalı: ${footer.y} > ${bottom(qr)}`,
+  )
+})
+
+test('CR-9: composed render DETERMİNİSTİK (aynı girdi → aynı PNG)', async () => {
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  const first = await render(composed.zpl)
+  const second = await render(composed.zpl)
+  assert.equal(first.renderSha256, second.renderSha256)
+})
+
+test('CR-10: hiçbir mürekkep 799×799 dışına çıkmaz', async () => {
+  const derived = deriveAugmentedSuratZplWithHashes(
+    zpl,
+    [{ productName: 'Ornek Urun', quantity: 1, sku: 'SKU-1' }],
+    { compose: { cargoTrackingNumber: VERIFIED_727 } },
+  )
+  const { bitmap } = await render(derived.printZpl)
+  const all = box(bitmap, 0, 0, 799, 799)
+  assert.ok(all.x >= 0 && all.y >= 0)
+  assert.ok(right(all) <= 798, `sağ kenar: ${right(all)}`)
+  assert.ok(bottom(all) <= 798, `alt kenar: ${bottom(all)}`)
+})

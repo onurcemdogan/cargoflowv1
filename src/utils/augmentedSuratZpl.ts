@@ -23,6 +23,12 @@ import {
   type SuratProductLineItem,
 } from './suratZplProductLine.ts'
 
+import {
+  composeSuratDurusoftLabel,
+  type SuratComposeInput,
+  type SuratComposeMode,
+} from './suratDurusoftComposer.ts'
+
 export const PRINT_ZPL_VERSION = 'surat-product-line-v1'
 
 export type AugmentedZplFallbackReason =
@@ -65,6 +71,19 @@ export interface AugmentedSuratZpl {
   templateFingerprint: string
   /** Ürün satırı gerçekten eklendi mi. */
   augmented: boolean
+  /**
+   * Baskı ZPL'i hangi SÖZLEŞMEYLE üretildi.
+   *   'official_augmented' → kaynak ZPL çıktının BAYT ÖNEKİ olarak durur
+   *                          (RT-10A); taşıyıcı komutları hiç değişmez.
+   *   'durusoft_composed'  → DuruSoft parity dönüşümü uygulandı (RT-10B);
+   *                          kaynak artefakt değişmez, semantic invariant ve
+   *                          transform whitelist ile doğrulanır.
+   */
+  renderContract: 'official_augmented' | 'durusoft_composed'
+  /** Composer denendiyse sonucu; denenmediyse null. */
+  composeMode: SuratComposeMode | null
+  /** Composer fallback'e düştüyse güvenli teknik sebep. */
+  composeReason?: string
   /** Ek özellik sonucu; baskıyı BLOKLAMAZ. */
   augmentationStatus: AugmentationStatus
   fallbackReason?: AugmentedZplFallbackReason
@@ -96,20 +115,46 @@ function resolveInsertionIndex(zpl: string): number {
   return finalXz
 }
 
+export interface DeriveAugmentedOptions {
+  /**
+   * Verilirse DuruSoft composer DENENİR. Verilmezse davranış eskisiyle
+   * BİREBİR aynıdır (augmentation-only, RT-10A sözleşmesi).
+   */
+  compose?: SuratComposeInput
+}
+
 export function deriveAugmentedSuratZpl(
   rawSourceZpl: unknown,
   items: SuratProductLineItem[],
+  options: DeriveAugmentedOptions = {},
 ): AugmentedSuratZpl {
   const sourceZpl = String(rawSourceZpl ?? '')
+  // COMPOSER: yalnız açıkça istendiğinde denenir. Kaynak dizgi DEĞİŞMEZ;
+  // composer başarısız olursa taban kaynak ZPL olarak kalır (fail-safe).
+  const composition = options.compose
+    ? composeSuratDurusoftLabel(sourceZpl, options.compose)
+    : null
+  const composed = composition?.composed === true
+  const baseZpl = composed && composition ? composition.zpl : sourceZpl
+  const composeFields = {
+    renderContract: composed
+      ? ('durusoft_composed' as const)
+      : ('official_augmented' as const),
+    composeMode: composition?.mode ?? null,
+    ...(composition && !composed
+      ? { composeReason: composition.reason ?? undefined }
+      : {}),
+  }
   const base: AugmentedSuratZpl = {
-    printZpl: sourceZpl,
+    printZpl: baseZpl,
     sourceZpl,
-    printZplLength: sourceZpl.length,
+    printZplLength: baseZpl.length,
     printZplVersion: PRINT_ZPL_VERSION,
     printZplFooterProfile: null,
     templateFingerprint: '',
-    augmented: false,
+    augmented: composed,
     augmentationStatus: 'unavailable',
+    ...composeFields,
   }
   if (!sourceZpl.trim()) {
     return {
@@ -119,8 +164,10 @@ export function deriveAugmentedSuratZpl(
     }
   }
 
-  const geometry = parseSuratZplGeometry(sourceZpl)
-  const fingerprint = resolveSuratTemplateFingerprint(sourceZpl, geometry)
+  // Geometri ve footer yerleşimi COMPOSED taban üzerinden hesaplanır: QR
+  // eklenmişse footer onun ALTINA konumlanır.
+  const geometry = parseSuratZplGeometry(baseZpl)
+  const fingerprint = resolveSuratTemplateFingerprint(baseZpl, geometry)
   const withFingerprint = { ...base, templateFingerprint: fingerprint.signature }
   if (!fingerprint.supported) {
     return {
@@ -154,7 +201,7 @@ export function deriveAugmentedSuratZpl(
   }
 
   // Kaynak ^CI28 (UTF-8) kullanıyorsa Türkçe karakterler AYNEN yazılır.
-  const utf8 = /\^CI28/i.test(sourceZpl)
+  const utf8 = /\^CI28/i.test(baseZpl)
   const commands = buildFooterZplCommands(plan, { utf8 })
   if (commands.length === 0) {
     return {
@@ -164,14 +211,14 @@ export function deriveAugmentedSuratZpl(
     }
   }
 
-  const insertAt = resolveInsertionIndex(sourceZpl)
+  const insertAt = resolveInsertionIndex(baseZpl)
   if (insertAt < 0) {
     return { ...withFingerprint, fallbackReason: 'unsupported_template' }
   }
-  const head = sourceZpl.slice(0, insertAt)
-  const tail = sourceZpl.slice(insertAt)
+  const head = baseZpl.slice(0, insertAt)
+  const tail = baseZpl.slice(insertAt)
   // Kaynağın satır sonu biçimini KORU (CRLF/LF).
-  const newline = sourceZpl.includes('\r\n') ? '\r\n' : '\n'
+  const newline = baseZpl.includes('\r\n') ? '\r\n' : '\n'
   const needsLeadingBreak = head.length > 0 && !/\r?\n$/.test(head)
   const printZpl =
     head +
@@ -189,6 +236,7 @@ export function deriveAugmentedSuratZpl(
     templateFingerprint: fingerprint.signature,
     augmented: true,
     augmentationStatus: 'success',
+    ...composeFields,
     metrics: {
       contentBottom: geometry.contentBottom,
       footerTop: plan.area.top,
@@ -296,8 +344,9 @@ export interface AugmentedSuratZplWithHashes extends AugmentedSuratZpl {
 export function deriveAugmentedSuratZplWithHashes(
   rawSourceZpl: unknown,
   items: SuratProductLineItem[],
+  options: DeriveAugmentedOptions = {},
 ): AugmentedSuratZplWithHashes {
-  const derived = deriveAugmentedSuratZpl(rawSourceZpl, items)
+  const derived = deriveAugmentedSuratZpl(rawSourceZpl, items, options)
   return {
     ...derived,
     printZplSha256: sha256Hex(derived.printZpl),
