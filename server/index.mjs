@@ -867,6 +867,53 @@ app.get('/api/orders/:id/label', async (request, response) => {
   }
 })
 
+// POST /api/orders/print-readiness — TOPLU, HAFİF baskı hazırlık durumu.
+//
+// Liste ekranı "bu 25 gönderi basılabilir mi?" sorusunu TEK istekle sorar.
+// ZPL DÖNMEZ (ne taşıyıcı, ne ek sayfa, ne kaynak, ne ham payload); yalnız
+// sayılar ve kapalı sözlük durum değerleri döner. Org yalnız req.auth'tan;
+// başka tenant'ın gönderisi ÇÖZÜLEMEZ ve "bulunamadı" ile aynı cevabı alır
+// (varlık bilgisi sızmaz). YAZMA YOKTUR: hydration tetiklemez.
+app.post('/api/orders/print-readiness', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const raw = request.body?.shipmentIds
+  if (!Array.isArray(raw)) {
+    response.status(400).json({
+      ok: false,
+      code: 'invalid_request',
+      message: 'shipmentIds bir dizi olmalıdır.',
+    })
+    return
+  }
+  try {
+    const { loadPrintReadiness, MAX_READINESS_IDS } = await import(
+      './shipments/printReadinessService.ts'
+    )
+    // SESSİZ KIRPMA YOK: sınır aşılırsa açıkça reddedilir.
+    if (raw.length > MAX_READINESS_IDS) {
+      response.status(400).json({
+        ok: false,
+        code: 'too_many_ids',
+        message: `Tek istekte en fazla ${MAX_READINESS_IDS} gönderi sorgulanabilir.`,
+        limit: MAX_READINESS_IDS,
+      })
+      return
+    }
+    const items = await loadPrintReadiness(
+      context.db,
+      context.organizationId,
+      raw.map((value) => String(value ?? '')),
+    )
+    response.set('Cache-Control', 'private, no-store')
+    response.json({ ok: true, items })
+  } catch {
+    response
+      .status(500)
+      .json({ ok: false, message: 'Baskı hazırlık durumu alınamadı.' })
+  }
+})
+
 // POST /api/labels/render/surat — RESMÎ SÜRAT ETİKETİNİ PNG OLARAK RENDER EDER.
 //
 // Motor: zebrash (zpl-renderer-js@4.0.0) — CargoFlow sunucusunda YEREL çalışır,
@@ -2417,8 +2464,37 @@ if (String(process.env.CARGOFLOW_AUTH_BYPASS ?? '').trim().toLowerCase() === 'tr
   )
 }
 
+// YENİDEN BAŞLATMA MUTABAKATI (Aşama 3B). Hazırlama kuyruğu SÜREÇ İÇİDİR ve
+// PM2 restart'ında kaybolur. Açılışta "taşıyıcı hazır + artefakt yok"
+// kayıtları SINIRLI bir taramayla yeniden kuyruğa alınır. Tarama üst sınırlı
+// olduğu için açılış maliyeti sabittir; sağlayıcıya ÇIKILMAZ ve yeni
+// gönderi/barkod OLUŞTURULMAZ. Hata açılışı ENGELLEMEZ.
+async function reconcileLabelBundlesOnBoot() {
+  if (!isTenantAuthMode()) return
+  try {
+    const [{ getDb }, preparer] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/labelBundlePreparer.ts'),
+    ])
+    const db = getDb()
+    const result = await preparer.reconcilePendingBundles(db)
+    if (result.enqueued > 0) {
+      console.log(
+        `[label-bundle] restart reconciliation: ${result.enqueued}/${result.scanned} kayıt kuyruğa alındı`,
+      )
+    }
+    // PERİYODİK MUTABAKAT: kuyruk taşması veya kaçırılan enqueue sonrası
+    // kalan kayıtlar BİR SONRAKİ RESTART'I beklemez. Tur sınırlı, imleçli
+    // (keyset) ve `unref` edilmiş zamanlayıcıyla; hot-loop yapmaz.
+    preparer.startPeriodicReconciliation(db)
+  } catch {
+    // Mutabakat BEST-EFFORT: başarısız olursa ilk baskıda hydration devrede.
+  }
+}
+
 app.listen(port, host, () => {
   console.log(`CargoFlow API listening on http://${host}:${port}`)
+  void reconcileLabelBundlesOnBoot()
 })
 
 async function createSuratShipment(request, response) {

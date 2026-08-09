@@ -165,6 +165,12 @@ export async function writeOperationRecord(
       columns.packageId,
       record,
     )
+    // ARKA PLAN HAZIRLAMA (Aşama 3B): artefakt bu yazımda üretilemediyse
+    // (satır/katalog yoktu, geçici hata) kayıt legacy hydration yoluna
+    // düşer ve gecikme İLK BASKI anında kullanıcıya yansır. Bunun yerine
+    // gönderi arka plan kuyruğuna alınır. Kuyruk SÜREÇ İÇİ ve SINIRLIDIR;
+    // sağlayıcıya ÇIKMAZ, yeni gönderi/barkod OLUŞTURMAZ.
+    const needsBackgroundPrepare = !('printZplArtifact' in carrierPayload)
     await db.transaction(async (tx) => {
       await upsertCreateOperation(tx, columns)
       await upsertShipment(tx, {
@@ -190,6 +196,32 @@ export async function writeOperationRecord(
         carrierPayload,
       })
     })
+    // Kuyruğa alma YAZIMDAN SONRA ve transaction DIŞINDA yapılır: hazırlama
+    // işçisi kaydı okuyabilsin. Hata create sonucunu ETKİLEMEZ.
+    if (needsBackgroundPrepare) {
+      try {
+        const { enqueueBundlePreparation } = await import(
+          './labelBundlePreparer.ts'
+        )
+        const enqueued = enqueueBundlePreparation(db, {
+          organizationId,
+          marketplace: columns.marketplace,
+          packageId: columns.packageId,
+          provider: columns.provider,
+        })
+        // KUYRUK DOLU → iş KAYBOLMAZ. Kayıt DB'de "taşıyıcı hazır +
+        // artefakt yok" durumunda kalır; bu SOURCE-OF-TRUTH'tur ve
+        // periyodik mutabakat onu sonraki sınırlı turda alır. Burada
+        // yalnız görünürlük sağlanır; create sonucu ETKİLENMEZ.
+        if (!enqueued) {
+          console.warn(
+            '[label-bundle] hazırlama kuyruğu dolu; kayıt mutabakata bırakıldı',
+          )
+        }
+      } catch {
+        // Arka plan hazırlama BEST-EFFORT: ilk baskıda hydration devrede.
+      }
+    }
     return
   }
   await upsertCreateOperation(db, columns)

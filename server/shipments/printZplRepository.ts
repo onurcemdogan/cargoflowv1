@@ -30,6 +30,12 @@ import {
   type AugmentationStatus as DomainAugmentationStatus,
 } from '../../src/utils/augmentedSuratZpl.ts'
 import type { SuratProductLineItem } from '../../src/utils/suratZplProductLine.ts'
+import {
+  buildProductDetailLabels,
+  planProductDetailPages,
+  type ProductDetailContext,
+} from '../../src/utils/suratProductDetailLabel.ts'
+import { validateCarrierSourceZpl } from './carrierSourceFallback.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -64,6 +70,115 @@ export interface PersistedPrintZpl {
   renderContract?: 'official_augmented' | 'durusoft_composed'
   /** Composer denendiyse sonucu (fallback sebebi dahil). */
   composeMode?: string
+  /**
+   * BUNDLE SÖZLEŞMESİ SÜRÜMÜ. Ürün detay sayfalarının biçimi ileride
+   * değişirse eski kalıcı kayıtların nasıl okunacağı bu alanla belirlenir.
+   * Taşıyıcı `printZpl` sözleşmesini ETKİLEMEZ.
+   */
+  bundleVersion?: number
+  /**
+   * EK ÜRÜN DETAY SAYFALARI — taşıyıcı etiketinden AYRI fiziksel sayfalar.
+   * Eski kayıtlarda YOKTUR ve reprint'te SENTEZLENMEZ (immutable reprint).
+   */
+  supplementalLabels?: PersistedSupplementalLabel[]
+  /** Ek sayfa durumu: yok · hazır · geometri nedeniyle üretilemedi. */
+  supplementalStatus?: SupplementalStatus
+  /** Minimal sunum özeti (tam ürün listesi ZPL içinde, İKİ KEZ tutulmaz). */
+  productSnapshot?: { aggregatedLineCount: number; totalQuantity: number }
+}
+
+export type SupplementalStatus = 'none' | 'ready' | 'geometry_failure'
+
+/**
+ * EK SAYFA ZORUNLULUK EŞİĞİ.
+ *
+ * Toplanmış görüntü satırı sayısı bu değeri AŞIYORSA ürün detay sayfası
+ * OPERASYONEL OLARAK ZORUNLUDUR. O durumda taşıyıcı-only bir artefaktı
+ * "başarılı" saymak, depoda ürün bilgisini SESSİZCE kaybettirir.
+ */
+export const SUPPLEMENTAL_REQUIRED_ABOVE = 2
+
+export const SUPPLEMENTAL_GEOMETRY_FAILURE = 'supplemental_geometry_failure'
+export const SUPPLEMENTAL_VALIDATION_FAILURE = 'supplemental_validation_failure'
+
+export type SupplementalFailureCode =
+  | typeof SUPPLEMENTAL_GEOMETRY_FAILURE
+  | typeof SUPPLEMENTAL_VALIDATION_FAILURE
+
+/**
+ * EK SAYFA KATMANINA AİT TİPLİ HATA.
+ *
+ * Serving katmanındaki fail-open YALNIZ bu sınıfa açılır. Tipli olmasının
+ * nedeni sözdizimsel değil GÜVENLİKSELDİR: mesaj eşleştirmesi kullanılsaydı,
+ * ürün yükleyicisinden veya ayrıştırıcıdan gelen ve tesadüfen aynı metni
+ * taşıyan HERHANGİ bir hata "yardımcı katman hatası" sanılıp fail-open
+ * tetikleyebilirdi. Bilinmeyen hata fail-open ETMEZ.
+ */
+export class SupplementalLabelError extends Error {
+  readonly code: SupplementalFailureCode
+  constructor(code: SupplementalFailureCode, detail: string) {
+    super(`${code}: ${detail}`)
+    this.name = 'SupplementalLabelError'
+    this.code = code
+  }
+}
+
+/**
+ * Fail-open ALLOWLIST — kapalı sözlük.
+ *
+ * Modül sınırları arasında `instanceof` güvenilmez olabileceği için (aynı
+ * dosya iki kez yüklenebilir) marka alanları okunur. Düz `Error` bu kontrolü
+ * GEÇEMEZ.
+ */
+export function isSupplementalLabelFailure(
+  error: unknown,
+): error is SupplementalLabelError {
+  const candidate = error as { name?: unknown; code?: unknown } | null
+  if (!candidate || candidate.name !== 'SupplementalLabelError') return false
+  return (
+    candidate.code === SUPPLEMENTAL_GEOMETRY_FAILURE ||
+    candidate.code === SUPPLEMENTAL_VALIDATION_FAILURE
+  )
+}
+
+/**
+ * BUNDLE INVARIANT — kalıcılık sınırındaki TEK merkezi kontrol.
+ *
+ * Kural: `aggregatedLineCount > SUPPLEMENTAL_REQUIRED_ABOVE` ise
+ *   - durum 'ready' OLMALI
+ *   - en az bir ek sayfa OLMALI
+ *   - sayfa dizisi kendi içinde tutarlı OLMALI
+ * Aksi halde artefakt GEÇERSİZDİR ve KALICI HALE GETİRİLMEZ.
+ *
+ * `<= eşik` durumunda ek sayfa YOKLUĞU normal ve geçerli bir başarıdır.
+ */
+export function verifyBundleInvariants(
+  artifact: PersistedPrintZpl,
+): { ok: true } | { ok: false; reason: string } {
+  const lineCount = artifact.productSnapshot?.aggregatedLineCount ?? 0
+  const labels = artifact.supplementalLabels ?? []
+  if (lineCount > SUPPLEMENTAL_REQUIRED_ABOVE) {
+    if (artifact.supplementalStatus !== 'ready') {
+      return {
+        ok: false,
+        reason: `${lineCount} satır için ek sayfa ZORUNLU (durum: ${artifact.supplementalStatus ?? 'yok'})`,
+      }
+    }
+    if (labels.length === 0) {
+      return { ok: false, reason: `${lineCount} satır için ek sayfa YOK` }
+    }
+  }
+  return verifySupplementalLabels(labels)
+}
+
+export const PRINT_BUNDLE_VERSION = 1
+
+export interface PersistedSupplementalLabel {
+  kind: 'product_detail'
+  page: number
+  totalPages: number
+  zpl: string
+  sha256: string
 }
 
 export type AugmentationStatus = 'augmented' | 'source_only'
@@ -128,7 +243,74 @@ function readPersisted(
     ...(typeof block.composeMode === 'string'
       ? { composeMode: block.composeMode }
       : {}),
+    // BUNDLE ALANLARI — eski kayıtlarda YOKTUR. Burada ASLA sentezlenmez:
+    // ek sayfa üretmek YALNIZ ilk artefakt oluşturmanın işidir.
+    ...(Number.isFinite(Number(block.bundleVersion))
+      ? { bundleVersion: Number(block.bundleVersion) }
+      : {}),
+    ...(Array.isArray(block.supplementalLabels)
+      ? { supplementalLabels: readSupplementalLabels(block.supplementalLabels) }
+      : {}),
+    ...(block.supplementalStatus === 'ready' ||
+    block.supplementalStatus === 'none' ||
+    block.supplementalStatus === 'geometry_failure'
+      ? { supplementalStatus: block.supplementalStatus }
+      : {}),
+    ...(block.productSnapshot && typeof block.productSnapshot === 'object'
+      ? {
+          productSnapshot: {
+            aggregatedLineCount: Number(
+              (block.productSnapshot as Record<string, unknown>)
+                .aggregatedLineCount ?? 0,
+            ),
+            totalQuantity: Number(
+              (block.productSnapshot as Record<string, unknown>).totalQuantity ??
+                0,
+            ),
+          },
+        }
+      : {}),
   }
+}
+
+/** Kalıcı ek sayfaları SIRASIYLA okur; bozuk kayıtları sessizce yutmaz. */
+function readSupplementalLabels(raw: unknown[]): PersistedSupplementalLabel[] {
+  const pages: PersistedSupplementalLabel[] = []
+  for (const entry of raw) {
+    const item = (entry ?? {}) as Record<string, unknown>
+    const zpl = readString(item.zpl)
+    if (item.kind !== 'product_detail' || !zpl.trim()) continue
+    pages.push({
+      kind: 'product_detail',
+      page: Number(item.page ?? 0),
+      totalPages: Number(item.totalPages ?? 0),
+      zpl,
+      sha256: readString(item.sha256),
+    })
+  }
+  return pages
+}
+
+/**
+ * Ek sayfa dizisinin KENDİ İÇİNDE tutarlı olduğunu doğrular.
+ * Sıra dizideki konumdan okunur; DB'den gelen sıralamaya güvenilmez, dizi
+ * sırası ile `page` alanı BİRBİRİNİ doğrular.
+ */
+export function verifySupplementalLabels(
+  labels: readonly PersistedSupplementalLabel[],
+): { ok: true } | { ok: false; reason: string } {
+  for (const [index, label] of labels.entries()) {
+    if (label.page !== index + 1) {
+      return { ok: false, reason: `sayfa sırası bozuk (${label.page})` }
+    }
+    if (label.totalPages !== labels.length) {
+      return { ok: false, reason: `toplam sayfa uyuşmuyor (${label.totalPages})` }
+    }
+    if (sha256Hex(label.zpl) !== label.sha256) {
+      return { ok: false, reason: `sayfa ${label.page} hash uyuşmuyor` }
+    }
+  }
+  return { ok: true }
 }
 
 /**
@@ -235,18 +417,86 @@ export function resolveComposeInput(
   }
 }
 
+/** Ek sayfa başlığı için bağlamı KALICI payload'dan çözer. */
+export function resolveProductDetailContext(
+  payload: Record<string, unknown>,
+): ProductDetailContext {
+  return {
+    orderNumber: readCandidate(payload, 'orderNumber') ?? '',
+    packageId: readCandidate(payload, 'packageId') ?? '',
+    recipient:
+      readCandidate(payload, 'aliciAdi') ??
+      readCandidate(payload, 'recipientName') ??
+      readCandidate(payload, 'alici') ??
+      '',
+  }
+}
+
 export function buildPrintZplArtifact(
   sourceZpl: string,
   items: SuratProductLineItem[],
   createdAt: string,
   compose?: { cargoTrackingNumber?: string; ozelKargoTakipNo?: string },
+  productContext?: ProductDetailContext,
 ): { artifact: PersistedPrintZpl; augmentationStatus: AugmentationStatus } {
   const derived = deriveAugmentedSuratZplWithHashes(
     sourceZpl,
     items,
     compose ? { compose } : {},
   )
-  return {
+  // ── EK ÜRÜN DETAY SAYFALARI ───────────────────────────────────────────
+  // ATOMİKLİK: her şey ÖNCE bellekte üretilir ve doğrulanır; artefakt tek bir
+  // JSON bloğu olarak TEK yazımda kalıcı olur. Yarım bundle YAZILAMAZ.
+  // PNG YOKTUR: bu yol yalnız ZPL + hash üretir.
+  const plan = planProductDetailPages(items)
+  const supplementalLabels: PersistedSupplementalLabel[] =
+    plan.required && plan.reason === null && productContext
+      ? buildProductDetailLabels(plan, productContext).map((label) => ({
+          kind: 'product_detail' as const,
+          page: label.page,
+          totalPages: label.totalPages,
+          zpl: label.zpl,
+          sha256: sha256Hex(label.zpl),
+        }))
+      : []
+  const supplementalStatus: SupplementalStatus = !plan.required
+    ? 'none'
+    : supplementalLabels.length === 0
+      ? 'geometry_failure'
+      : 'ready'
+
+  // ── TAŞIYICI-ONLY BAŞARI YOK ──────────────────────────────────────────
+  // Eşiğin ÜSTÜNDE ek sayfa üretilemediyse bu bir BUNDLE OLUŞTURMA HATASIDIR.
+  // Taşıyıcı-only artefaktı başarılı sayıp kalıcı hale getirmek, depoda ürün
+  // bilgisini SESSİZCE kaybettirirdi. Açık, tipli hata verilir; hiçbir şey
+  // yazılmaz. Mevcut geçerli artefakt varsa ona DOKUNULMAZ (çağıran onu
+  // zaten kalıcı yoldan okur).
+  if (plan.required && supplementalStatus !== 'ready') {
+    throw new SupplementalLabelError(
+      SUPPLEMENTAL_GEOMETRY_FAILURE,
+      plan.reason ?? 'ek sayfa üretilemedi',
+    )
+  }
+  // Her toplanmış satır sayfalarda TAM OLARAK BİR KEZ temsil edilmeli.
+  const blockTotal = plan.pages.reduce(
+    (total, page) => total + page.blocks.length,
+    0,
+  )
+  if (plan.required && blockTotal !== plan.aggregated.length) {
+    throw new SupplementalLabelError(
+      SUPPLEMENTAL_VALIDATION_FAILURE,
+      `${blockTotal}/${plan.aggregated.length} ürün bloğu`,
+    )
+  }
+  const verdict = verifySupplementalLabels(supplementalLabels)
+  if (!verdict.ok) {
+    // Kendi ürettiğimiz sayfalar tutarsızsa YARIM BUNDLE YAZILMAZ.
+    throw new SupplementalLabelError(SUPPLEMENTAL_VALIDATION_FAILURE, verdict.reason)
+  }
+  const result: {
+    artifact: PersistedPrintZpl
+    augmentationStatus: AugmentationStatus
+  } = {
     artifact: {
       printZpl: derived.printZpl,
       printZplLength: derived.printZplLength,
@@ -257,14 +507,30 @@ export function buildPrintZplArtifact(
       templateFingerprint: derived.templateFingerprint,
       printZplCreatedAt: createdAt,
       augmentationReason: derived.augmentationStatus,
+      bundleVersion: PRINT_BUNDLE_VERSION,
+      supplementalLabels,
+      supplementalStatus,
+      productSnapshot: {
+        aggregatedLineCount: plan.aggregated.length,
+        totalQuantity: plan.quantityTotal,
+      },
       renderContract: derived.renderContract,
       ...(derived.composeMode ? { composeMode: derived.composeMode } : {}),
     },
+    // NOT: merkezi bundle invariant'ı aşağıda, döndürmeden ÖNCE uygulanır.
     // Kalıcılık düzeyindeki MEVCUT bayrak (augmented | source_only) korunur;
     // domain sözlüğü AYRICA `augmentationReason` ile taşınır. Paralel bir
     // durum sözlüğü OLUŞTURULMAZ: DTO domain değerlerini kullanır.
     augmentationStatus: derived.augmented ? 'augmented' : 'source_only',
   }
+  const bundleVerdict = verifyBundleInvariants(result.artifact)
+  if (!bundleVerdict.ok) {
+    throw new SupplementalLabelError(
+      SUPPLEMENTAL_VALIDATION_FAILURE,
+      bundleVerdict.reason,
+    )
+  }
+  return result
 }
 
 export interface ResolveOptions {
@@ -325,6 +591,7 @@ export async function resolvePersistedPrintableLabel(
     items,
     options.now ?? new Date().toISOString(),
     resolveComposeInput(payload),
+    resolveProductDetailContext(payload),
   )
   const won = await compareAndSetArtifact(db, key, encrypted, {
     ...payload,
@@ -362,6 +629,93 @@ export async function resolvePersistedPrintableLabel(
   }
 }
 
+/* ═══ SERVING SINIRI — FAIL-OPEN ═══════════════════════════════════════════
+ *
+ * PERSISTENCE ile SERVING burada AYRILIR ve bu ayrım KRİTİKTİR:
+ *
+ *   PERSISTENCE (yukarısı): >2 toplanmış satırda ek sayfa üretilemiyorsa
+ *     BAŞARILI ARTEFAKT YOKTUR. Taşıyıcı-only bir bundle ASLA yazılmaz.
+ *     `verifyBundleInvariants` ve `SupplementalLabelError` bunu korur.
+ *
+ *   SERVING (burası): aynı durumda ana kargo etiketi YİNE DE basılabilir —
+ *     ama YALNIZ kimliği KANITLANMIŞ taşıyıcı kaynaktan ve YALNIZ o baskı
+ *     isteği için. Hiçbir şey kalıcı hale GELMEZ.
+ *
+ * Fail-open bu yüzden bir "kurtarma yazımı" değil, GEÇİCİ bir servis
+ * sonucudur. Kalıcılık invariant'ı gevşetilmez.
+ */
+
+/** Serving sonucu: ya tam artefakt, ya doğrulanmış GEÇİCİ taşıyıcı fallback. */
+export type PrintableResolution =
+  | { kind: 'artifact'; model: PrintableLabelModel }
+  | {
+      kind: 'carrier_fallback'
+      /** Doğrulanmış taşıyıcı KAYNAK ZPL — kalıcı DEĞİL. */
+      carrierZpl: string
+      carrierZplSha256: string
+      /** Ek sayfaların NEDEN yok olduğu (tipli). */
+      productDetailFailureReason: SupplementalFailureCode
+    }
+
+/**
+ * BASKI SERVİSİNİN TEK GİRİŞİ.
+ *
+ * Öncelik sırası:
+ *   1. Geçerli kalıcı artefakt (varsa HER ZAMAN kazanır; kaynak ZPL'e
+ *      bakılmaz, hydration çalışmaz).
+ *   2. Hydration ile üretilen TAM artefakt.
+ *   3. Yalnız ek sayfa katmanı çöktüyse: kimliği doğrulanmış taşıyıcı kaynak.
+ *   4. Aksi halde BLOCK.
+ *
+ * Bozuk KALICI artefakt (3) kapsamında DEĞİLDİR: o ayrı bir sınıftır ve
+ * kaynağa düşmez — immutable artefaktın bozulması sessizce telafi edilmez.
+ */
+export async function resolvePrintableLabelForServing(
+  db: Db,
+  key: ShipmentKey,
+  options: ResolveOptions,
+): Promise<PrintableResolution> {
+  try {
+    return {
+      kind: 'artifact',
+      model: await resolvePersistedPrintableLabel(db, key, options),
+    }
+  } catch (error) {
+    // ALLOWLIST: yalnız ürün detay (yardımcı) katmanının TİPLİ hatası.
+    // Kaynak eksikliği, SHA uyuşmazlığı, ayrıştırıcı bozulması ve BİLİNMEYEN
+    // hatalar buradan GEÇEMEZ; oldukları gibi yukarı çıkar.
+    if (!isSupplementalLabelFailure(error)) throw error
+
+    const row = await loadRow(db, key)
+    if (!row) throw error
+    const payload = (decryptShipmentPayload(
+      (row.carrierPayloadEncrypted ?? null) as string | null,
+    ) ?? {}) as Record<string, unknown>
+    const sourceZpl = pickSourceZpl(payload)
+    // KİMLİK KANITI: canonical kolonlar (şifresiz) ile etiketin İÇİNDEKİ
+    // T.No / Code128 birebir uyuşmalı. Uyuşmuyorsa veya doğrulanamıyorsa
+    // yanlış sipariş etiketi basma riski vardır → BLOCK.
+    const verdict = validateCarrierSourceZpl(sourceZpl, {
+      trackingNumber: row.trackingNumber as string | null,
+      barcode: row.barcode as string | null,
+    })
+    if (!verdict.ok) {
+      // Her iki tipli sebep de taşınır: ek sayfa NEDEN çöktü ve taşıyıcı
+      // kaynak NEDEN kabul edilmedi. İkisi de kapalı sözlükten; ham ZPL,
+      // takip numarası veya müşteri verisi İÇERMEZ.
+      throw new Error(`${verdict.reason} (${error.code})`, { cause: error })
+    }
+    // GEÇİCİ: burada compareAndSetArtifact ÇAĞRILMAZ. Taşıyıcı-only bir
+    // artefakt yazmak, Aşama 2 invariant'ını delerdi.
+    return {
+      kind: 'carrier_fallback',
+      carrierZpl: sourceZpl,
+      carrierZplSha256: sha256Hex(sourceZpl),
+      productDetailFailureReason: error.code,
+    }
+  }
+}
+
 // Yeni create akışı için: kalıcı kaydı technicalZpl ile AYNI payload yazımında
 // hazırlar. Kaynak alanlara DOKUNULMAZ.
 export function attachPrintZplArtifact(
@@ -379,6 +733,7 @@ export function attachPrintZplArtifact(
     items,
     now,
     resolveComposeInput(carrierPayload),
+    resolveProductDetailContext(carrierPayload),
   )
   return { ...carrierPayload, printZplArtifact: artifact }
 }

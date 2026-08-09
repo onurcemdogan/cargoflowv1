@@ -222,10 +222,36 @@ test('RE-6: DTO ham ZPL veya şifreli payload İÇERMEZ', async () => {
     'printZplSha256', 'renderEngine', 'renderEngineVersion', 'renderSha256',
     'widthMm', 'widthPx', 'zebrashVersion', 'warning',
     'renderContract', 'composeMode',
+    // ÇOK SAYFALI SÖZLEŞME (4A). Hepsi sayı veya KAPALI SÖZLÜK; serbest
+    // metin veya müşteri verisi taşıyamaz (aşağıda bağlanır).
+    'pages', 'missingPages', 'printArtifactStatus', 'productDetailStatus',
+    'productDetailFailureReason',
   ])
   for (const key of Object.keys(dto)) {
     assert.ok(allowed.has(key), `DTO'da beklenmeyen alan: ${key}`)
   }
+  // Sayfa nesneleri de KAPALI: yeni bir alan sessizce eklenemez.
+  const pageKeys = new Set([
+    'kind', 'page', 'totalPages', 'imageBase64', 'renderSha256',
+  ])
+  for (const page of dto.pages ?? []) {
+    for (const key of Object.keys(page)) {
+      assert.ok(pageKeys.has(key), `sayfada beklenmeyen alan: ${key}`)
+    }
+    assert.ok(['carrier', 'product_detail'].includes(page.kind))
+    assert.equal(Number.isInteger(page.page), true)
+  }
+  const missingKeys = new Set(['kind', 'page', 'totalPages', 'reason'])
+  for (const missing of dto.missingPages ?? []) {
+    for (const key of Object.keys(missing)) {
+      assert.ok(missingKeys.has(key), `eksik sayfada beklenmeyen alan: ${key}`)
+    }
+    assert.ok(
+      ['render_failed', 'invalid_page_structure'].includes(missing.reason),
+    )
+  }
+  assert.ok(['ready', 'fallback_carrier'].includes(dto.printArtifactStatus))
+  assert.ok(['none', 'ready', 'failed'].includes(dto.productDetailStatus))
   // Yeni teşhis alanları KAPALI SÖZLÜKTEN gelir; serbest metin sızamaz.
   assert.ok(
     ['official_augmented', 'durusoft_composed'].includes(dto.renderContract),

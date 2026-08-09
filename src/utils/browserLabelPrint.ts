@@ -786,7 +786,13 @@ export async function printOfficialSuratDocument(
   skipped: OfficialSuratSkip[] = [],
 ): Promise<BrowserLabelPrintDebug> {
   const executionId = `print-official-${++printExecutionCounter}`
-  const orderNumbers = pages.map((page) => String(page.orderNumber ?? ''))
+  // BİR SİPARİŞ ARTIK BİRDEN ÇOK FİZİKSEL SAYFA üretebilir (taşıyıcı + ürün
+  // detayları). Sipariş kimlikleri TEKİLLEŞTİRİLİR: aksi hâlde 8 ürünlü tek
+  // sipariş, sayım ve "basıldı" işaretlemesinde birden çok kez görünürdü.
+  // Sıra KORUNUR (ilk görülme).
+  const orderNumbers = Array.from(
+    new Set(pages.map((page) => String(page.orderNumber ?? ''))),
+  )
   const debug: BrowserLabelPrintDebug = {
     printRequested: true,
     printMode: 'surat-official-png',
@@ -843,7 +849,13 @@ export async function printOfficialSuratDocument(
     const documentModel = buildOfficialSuratPrintDocument(pages, skipped)
     debug.labelHtmlGenerated = true
     debug.labelHtmlLength = documentModel.html.length
-    debug.printedOrderNumbers = documentModel.pages.map((page) => page.orderNumber)
+    // MÜKERRER SAYIM YOK: bir sipariş birden çok FİZİKSEL sayfa üretebilir
+    // (taşıyıcı + ürün detayları). "Basıldı" muhasebesi SİPARİŞ bazındadır;
+    // aksi hâlde 3 sayfalık tek sipariş üç kez basılmış sayılır ve
+    // label-printed geçişi üç kez tetiklenirdi. Sıra korunur (ilk görülme).
+    debug.printedOrderNumbers = Array.from(
+      new Set(documentModel.pages.map((page) => page.orderNumber)),
+    )
     // Güvenli önizleme: ham ZPL veya PII TAŞIMAZ.
     debug.printableContentPreview = `surat-official-png pages=${documentModel.pages.length}`
     return await dispatchPrintDocument(

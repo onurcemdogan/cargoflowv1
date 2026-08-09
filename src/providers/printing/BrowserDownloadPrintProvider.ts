@@ -5,6 +5,7 @@ import {
   printCleanLabelDocument,
 } from '../../utils/browserLabelPrint'
 import { printOfficialSuratLabels } from '../../services/officialSuratPrintRunner'
+import { buildBatchPrintableJob } from '../../utils/printableLabelJob'
 import { NOT_IN_PRINT_DOCUMENT_MESSAGE } from '../../utils/suratPrintFailureReasons'
 
 // Browser-print başarısı TEKNİK koşullara bağlıdır; kullanıcıdan ayrıca baskı
@@ -186,16 +187,46 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
       }
     }
 
+    // ── HAM ZPL (Zebra local-agent) ──────────────────────────────────────
+    //
+    // KÖK NEDEN (4B'de kapatıldı): resmî Sürat modunda `label.zplContent`
+    // BİLEREK boş bırakılıyor (baskı içeriği sunucudan gelir). Bu yol ise
+    // körlemesine `zplContent` gönderdiği için yazıcıya BOŞ ZPL gidiyordu.
+    //
+    // Artık sunucu yetkili kalıcı baskı paketi kullanılır: taşıyıcı + ürün
+    // detay sayfaları TEK ham ZPL işinde, TEK canonical kurucudan (sıra
+    // orada doğrulanır) ve TEK çağrıda. İstemci `technicalZpl` seçimine
+    // GERİ DÖNMEZ.
+    const labels = printableOrders.map((order) => {
+      const bundle = order.shipment?.printBundle
+      const pages = Array.isArray(bundle?.pages) ? bundle.pages : []
+      if (pages.length > 0) {
+        const job = buildBatchPrintableJob([
+          {
+            carrierZpl: pages[0]?.zpl ?? '',
+            supplementalLabels: pages.slice(1).map((page, index) => ({
+              kind: 'product_detail',
+              page: index + 1,
+              totalPages: pages.length - 1,
+              zpl: page?.zpl ?? '',
+            })),
+          },
+        ])
+        // Paket tutarsızsa KISMİ baskı YOK: boş içerik gönderilir ve
+        // yerel ajan bunu başarısız iş olarak raporlar.
+        if (job.printReady) {
+          return { orderNumber: order.orderNumber, zpl: job.combinedZpl }
+        }
+      }
+      return { orderNumber: order.orderNumber, zpl: order.label?.zplContent }
+    })
     try {
       const response = await fetch('/api/printing/zebra/raw', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           printerName: input.printerSettings.printerName,
-          labels: printableOrders.map((order) => ({
-            orderNumber: order.orderNumber,
-            zpl: order.label?.zplContent,
-          })),
+          labels,
         }),
       })
       const data = await response.json()

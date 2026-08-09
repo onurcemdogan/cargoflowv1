@@ -35,6 +35,76 @@ export interface SuratRenderArtifact {
   augmentationStatus: string
   /** Ürün satırı eklenemediyse GÜVENLİ uyarı (PII/ZPL içermez). */
   warning?: string
+  /**
+   * CANONICAL SÖZLEŞME — sıralı fiziksel sayfalar (4A).
+   * Taşıyıcı HER ZAMAN ilk; ürün detayları izler. Sıra SUNUCUDA
+   * doğrulanmıştır ve istemci tarafından DEĞİŞTİRİLMEZ.
+   *
+   * Eski yanıt biçiminde alan yoktur; o durumda tek taşıyıcı sayfadan
+   * oluşan bir liste türetilir (geriye uyumluluk).
+   */
+  pages: SuratRenderArtifactPage[]
+  /** Render edilemeyen sayfalar — sessizce düşürülmez. */
+  missingPages: SuratRenderMissingPage[]
+  productDetailStatus: 'none' | 'ready' | 'failed'
+  printArtifactStatus: 'ready' | 'fallback_carrier'
+}
+
+export interface SuratRenderArtifactPage {
+  kind: 'carrier' | 'product_detail'
+  page: number
+  totalPages: number
+  imageBase64: string
+  mimeType: string
+}
+
+export interface SuratRenderMissingPage {
+  kind: 'carrier' | 'product_detail'
+  page: number
+  totalPages: number
+  reason: string
+}
+
+/**
+ * Sunucunun sıralı sayfalarını okur.
+ *
+ * ESKİ YANIT BİÇİMİ (pages[] yok): tek taşıyıcı sayfadan oluşan liste
+ * türetilir — mevcut tek sayfalık baskı davranışı BİREBİR korunur.
+ * Sıra veya eksik sayfa BURADA TAMAMLANMAZ; istemci sunucunun verdiğini
+ * olduğu gibi kullanır.
+ */
+function readRenderPages(
+  payload: Record<string, unknown>,
+): SuratRenderArtifactPage[] {
+  const mimeType = String(payload.mimeType ?? 'image/png')
+  const raw = Array.isArray(payload.pages) ? payload.pages : []
+  const pages = (raw as Array<Record<string, unknown>>)
+    .map((entry) => ({
+      kind: entry?.kind === 'product_detail' ? 'product_detail' : 'carrier',
+      page: Number(entry?.page ?? 0),
+      totalPages: Number(entry?.totalPages ?? 0),
+      imageBase64: typeof entry?.imageBase64 === 'string' ? entry.imageBase64 : '',
+      mimeType: String(entry?.mimeType ?? mimeType),
+    }))
+    .filter((entry) => entry.imageBase64.length > 0) as SuratRenderArtifactPage[]
+  if (pages.length > 0) return pages
+  const carrier = String(payload.imageBase64 ?? '')
+  if (!carrier) return []
+  return [
+    { kind: 'carrier', page: 1, totalPages: 1, imageBase64: carrier, mimeType },
+  ]
+}
+
+function readMissingPages(
+  payload: Record<string, unknown>,
+): SuratRenderMissingPage[] {
+  const raw = Array.isArray(payload.missingPages) ? payload.missingPages : []
+  return (raw as Array<Record<string, unknown>>).map((entry) => ({
+    kind: entry?.kind === 'carrier' ? 'carrier' : 'product_detail',
+    page: Number(entry?.page ?? 0),
+    totalPages: Number(entry?.totalPages ?? 0),
+    reason: String(entry?.reason ?? 'render_failed'),
+  }))
 }
 
 /** Motor hatasında gösterilecek GÜVENLİ mesaj — yaklaşık SVG'ye DÜŞÜLMEZ. */
@@ -211,6 +281,18 @@ export async function fetchSuratRenderArtifact(
     ...(typeof payload.warning === 'string' && payload.warning
       ? { warning: payload.warning }
       : {}),
+    // SIRA SUNUCUDAN GELİR: istemci yeniden sıralamaz, tamamlamaz.
+    pages: readRenderPages(payload),
+    missingPages: readMissingPages(payload),
+    productDetailStatus:
+      payload.productDetailStatus === 'ready' ||
+      payload.productDetailStatus === 'failed'
+        ? payload.productDetailStatus
+        : 'none',
+    printArtifactStatus:
+      payload.printArtifactStatus === 'fallback_carrier'
+        ? 'fallback_carrier'
+        : 'ready',
   }
   artifactCache.set(key, {
     orderId: key,

@@ -17,6 +17,8 @@ import {
 import { rowToOrder } from './orderMapper.ts'
 import { findShipment } from '../shipments/shipmentRepository.ts'
 import { SURAT_PERSISTENCE_PROVIDER } from '../shipments/suratProvider.ts'
+import { buildPrintableJob } from '../../src/utils/printableLabelJob.ts'
+import { sha256Hex } from '../../src/utils/augmentedSuratZpl.ts'
 import {
   findLatestOperationByPackage,
   findPrintableZplByPackage,
@@ -348,7 +350,49 @@ export interface PersistedLabelResult {
   print?: PrintableLabelSummary | null
 }
 
+/** Baskı paketindeki tek bir ek fiziksel sayfa. */
+export interface PrintableSupplementalPage {
+  kind: 'product_detail'
+  page: number
+  totalPages: number
+  zpl: string
+  sha256?: string
+}
+
 export interface PrintableLabelSummary {
+  /**
+   * TAM baskı işi kurulabiliyor mu? Paket bozuksa (hash uyuşmazlığı, eksik
+   * sayfa, bozuk sıra) FALSE olur ve taşıyıcı sayfa TEK BAŞINA servis
+   * EDİLMEZ — Aşama 2'deki "taşıyıcı-only başarı yok" kuralının serving
+   * karşılığıdır.
+   */
+  printReady: boolean
+  /**
+   * ANA KARGO ETİKETİ basılabilir mi? `printReady` ile AYNI değeri taşır ve
+   * baskı kapısıdır; ayrı isim, çağıranın hangi soruyu sorduğunu AÇIK kılar.
+   *
+   * ÜRÜN POLİTİKASI (fail-open): yardımcı ürün detay katmanının çökmesi ana
+   * etiketi ENGELLEMEZ. Engelleyen tek şey, YANLIŞ etiket basma riskidir —
+   * bozuk kalıcı paket, kimlik uyuşmazlığı, doğrulanamayan kaynak.
+   */
+  carrierPrintReady: boolean
+  /**
+   * `fallback_carrier`: TAM paket kurulamadı, ancak kimliği KANITLANMIŞ
+   * taşıyıcı kaynak servis edildi. Bu sonuç KALICI DEĞİLDİR — DB'ye hiçbir
+   * artefakt yazılmamıştır.
+   */
+  printArtifactStatus: 'ready' | 'failed' | 'fallback_carrier'
+  /** Yalnız güvenli, tipli sebep; iç ayrıntı SIZDIRILMAZ. */
+  printArtifactFailureReason?: string
+  /** Ürün detay sayfalarının durumu — taşıyıcıdan BAĞIMSIZ raporlanır. */
+  productDetailStatus: 'none' | 'ready' | 'failed'
+  /** Tipli sebep; yalnız `productDetailStatus === 'failed'` iken bulunur. */
+  productDetailFailureReason?: string
+  /** Taşıyıcı DAHİL toplam fiziksel sayfa sayısı. */
+  labelPageCount: number
+  productDetailPageCount: number
+  /** Kalıcı ek sayfalar — canonical sırayla. Eski kayıtta boş dizi. */
+  supplementalLabels: PrintableSupplementalPage[]
   printZplSha256: string
   printZplSourceSha256: string
   printZplVersion: string
@@ -420,7 +464,11 @@ export async function resolvePersistedLabel(
   let printModel: PrintableLabelSummary | null = null
   if (zpl) {
     const [
-      { resolvePersistedPrintableLabel, PRINT_ZPL_SOURCE_MISMATCH_MESSAGE },
+      {
+        resolvePrintableLabelForServing,
+        PRINT_ZPL_SOURCE_MISMATCH_MESSAGE,
+        PRINT_ZPL_SOURCE_MISSING_MESSAGE,
+      },
       { loadPrintLineItems },
     ] = await Promise.all([
       import('../shipments/printZplRepository.ts'),
@@ -436,8 +484,9 @@ export async function resolvePersistedLabel(
     // kaydından çözülen ZPL) MEVCUT davranış korunur ve ham kaynak döner.
     // TEK İSTİSNA: kaynak/print SHA uyuşmazlığı — bu SESSİZCE yutulmaz.
     let model = null
+    let fallback = null
     try {
-      model = await resolvePersistedPrintableLabel(
+      const resolution = await resolvePrintableLabelForServing(
         db,
         { organizationId, marketplace, packageId, provider },
         {
@@ -447,15 +496,96 @@ export async function resolvePersistedLabel(
             loadPrintLineItems(db, organizationId, marketplace, packageId),
         },
       )
+      if (resolution.kind === 'artifact') model = resolution.model
+      else fallback = resolution
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
       if (message === PRINT_ZPL_SOURCE_MISMATCH_MESSAGE) throw error
-      // Kalıcı model yok: mevcut (eski) ham ZPL davranışı korunur.
+      if (message !== PRINT_ZPL_SOURCE_MISSING_MESSAGE) {
+        // TİPLİ ENGEL: ek sayfa çöktü VE taşıyıcı kaynak doğrulanamadı
+        // (kimlik uyuşmuyor / yapı bozuk / canonical değer yok). Yanlış
+        // etiket basma riski vardır → kaynağa DÜŞÜLMEZ, baskı KAPALI.
+        zpl = ''
+        printModel = {
+          printReady: false,
+          carrierPrintReady: false,
+          printArtifactStatus: 'failed',
+          printArtifactFailureReason: message || 'print_artifact_failed',
+          productDetailStatus: 'failed',
+          labelPageCount: 0,
+          productDetailPageCount: 0,
+          supplementalLabels: [],
+          printZplSha256: '',
+          printZplSourceSha256: '',
+          printZplVersion: '',
+          footerProfile: null,
+          templateFingerprint: '',
+          augmentationStatus: 'source_only',
+          renderMode: 'raw-zpl',
+        }
+      }
+      // PRINT_ZPL_SOURCE_MISSING: canonical gönderi satırı YOK (gerçek eski
+      // kayıt). MEVCUT davranış korunur — ham kaynak tek sayfa olarak döner.
+    }
+    if (fallback) {
+      // FAIL-OPEN: ürün detay katmanı çöktü, taşıyıcı kimliği KANITLANDI.
+      // Ana etiket basılır; ek sayfa yoktur ve bu AÇIKÇA bildirilir.
+      // DB'ye hiçbir şey yazılmadı (bkz. resolvePrintableLabelForServing).
+      zpl = fallback.carrierZpl
+      source = 'shipment.carrierSourceFallback'
+      printModel = {
+        printReady: true,
+        carrierPrintReady: true,
+        printArtifactStatus: 'fallback_carrier',
+        productDetailStatus: 'failed',
+        productDetailFailureReason: fallback.productDetailFailureReason,
+        labelPageCount: 1,
+        productDetailPageCount: 0,
+        supplementalLabels: [],
+        printZplSha256: fallback.carrierZplSha256,
+        printZplSourceSha256: fallback.carrierZplSha256,
+        printZplVersion: '',
+        footerProfile: null,
+        templateFingerprint: '',
+        augmentationStatus: 'source_only',
+        renderMode: 'raw-zpl',
+      }
     }
     if (model) {
-    zpl = model.printZpl
+    // Sayfalar KALICI baytlardan gelir: burada ürün toplama, sayfalama,
+    // composer veya PNG YOKTUR. Tek merkezi kurucu kullanılır.
+    const job = buildPrintableJob({
+      carrierZpl: model.printZpl,
+      supplementalLabels: model.supplementalLabels ?? [],
+      hash: sha256Hex,
+    })
+    // TAM İŞ YA DA HİÇ: paket bozuksa taşıyıcı sayfa tek başına servis
+    // edilmez; `zpl` boş bırakılır ve printReady=false ile bildirilir.
+    zpl = job.printReady ? model.printZpl : ''
     source = 'shipment.printZplArtifact'
     printModel = {
+      printReady: job.printReady,
+      // BOZUK KALICI PAKET fail-open kapsamında DEĞİLDİR: immutable artefaktın
+      // bozulması kaynağa düşerek sessizce telafi edilmez, baskı KAPANIR.
+      carrierPrintReady: job.printReady,
+      printArtifactStatus: job.printReady ? 'ready' : 'failed',
+      ...(job.reason ? { printArtifactFailureReason: job.reason } : {}),
+      productDetailStatus: !job.printReady
+        ? 'failed'
+        : (model.supplementalLabels ?? []).length > 0
+          ? 'ready'
+          : 'none',
+      labelPageCount: job.labelPageCount,
+      productDetailPageCount: job.productDetailPageCount,
+      supplementalLabels: job.pages
+        .filter((page) => page.kind === 'product_detail')
+        .map((page) => ({
+          kind: 'product_detail' as const,
+          page: page.page,
+          totalPages: job.productDetailPageCount,
+          zpl: page.zpl,
+          ...(page.sha256 ? { sha256: page.sha256 } : {}),
+        })),
       printZplSha256: model.printZplSha256,
       printZplSourceSha256: model.printZplSourceSha256,
       printZplVersion: model.printZplVersion,

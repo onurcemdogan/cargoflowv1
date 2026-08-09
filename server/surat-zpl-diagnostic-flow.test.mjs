@@ -343,10 +343,13 @@ test('SZD-13: label sağlayıcı technicalZpl\'i resmî ZPL olarak kullanır', a
   assert.equal(label.zplContent, OFFICIAL_ZPL, 'byte-for-byte provider ZPL')
   assert.equal(label.zplSource, 'surat.ortakBarkod.BarcodeRaw')
   assert.equal((label.zplContent.match(/\^XA/g) ?? []).length, 1)
-  // Önizleme/print/reprint aynı artefaktı çözer.
+  // SÖZLEŞME (Aşama 3A/Adım 3): sağlayıcı katmanı DEĞİŞMEDİ — yukarıdaki
+  // byte-for-byte iddiası aynen geçerli. Değişen tek şey İSTEMCİNİN artık
+  // basılabilir çıktıyı kaynaktan SEÇMEMESİ; etiketin VARLIĞI yine bilinir.
   const artifact = resolvePersistedLabelArtifact(order)
   assert.equal(artifact.hasPrintableLabel, true)
-  assert.equal(artifact.zpl, OFFICIAL_ZPL)
+  assert.equal(artifact.zpl, null, 'basılabilir çıktı istemciden SEÇİLMEZ')
+  assert.equal(artifact.source, 'pending-fetch')
 })
 
 // ── salt okunurluk + gerçek DB yolu ───────────────────────────────────────
