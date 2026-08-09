@@ -381,6 +381,17 @@ async function runPreparation(injectionConcurrency: number) {
   let maxQueueDepth = 0
   let rejected = 0
   const lag = startLagSampler()
+  // HTTP-BENZERİ PROBE: 50 ms'de bir çalışması BEKLENEN bir zamanlayıcı.
+  // Kaçırılan tik sayısı, sunucunun cevap veremediği süreyi temsil eder.
+  const probe = { ticks: 0, gaps: [] as number[] }
+  let probeLast = performance.now()
+  const probeTimer = setInterval(() => {
+    const now = performance.now()
+    probe.ticks += 1
+    probe.gaps.push(now - probeLast)
+    probeLast = now
+  }, 50)
+  probeTimer.unref?.()
   const started = performance.now()
 
   // ÜRETİCİ: kuyruk sınırına saygı duyar. Kuyruk doluysa iş DÜŞÜRÜLMEZ;
@@ -414,6 +425,7 @@ async function runPreparation(injectionConcurrency: number) {
   await Promise.all(producers)
   await preparer.drainBundlePreparation()
   const totalMs = performance.now() - started
+  clearInterval(probeTimer)
   const lagResult = lag.stop()
   rssPeak = Math.max(rssPeak, rss())
 
@@ -442,6 +454,13 @@ async function runPreparation(injectionConcurrency: number) {
     alreadyReady: stats.alreadyReady,
     failedJobs: stats.failed,
     eventLoopLag: lagResult,
+    responsivenessProbe: {
+      expectedTicks: Math.floor(totalMs / 50),
+      actualTicks: probe.ticks,
+      maxGapMs: Number(Math.max(0, ...probe.gaps).toFixed(2)),
+      p95GapMs: percentile(probe.gaps, 95),
+      p50GapMs: percentile(probe.gaps, 50),
+    },
     rssBeforeMb: mb(rssBefore),
     rssPeakMb: mb(rssPeak),
     rssAfterMb: mb(rssAfter),
@@ -721,7 +740,11 @@ async function runQueueSaturation() {
   }
   const statsAtPeak = preparer.bundlePrepareStats()
   await preparer.drainBundlePreparation()
-  const audit = await auditArtifacts(db)
+  const auditAfterBurst = await auditArtifacts(db)
+  // GERİ KAZANIM: reddedilen adaylar DB'de "taşıyıcı hazır + artefakt yok"
+  // olarak durur. Periyodik mutabakatın sınırlı turları onları alır.
+  const recovery = await preparer.reconcileUntilDrained(db)
+  const auditAfterRecovery = await auditArtifacts(db)
   const rssAfter = rss()
   await pglite.close()
   return {
@@ -730,9 +753,17 @@ async function runQueueSaturation() {
     refused,
     rejectedCounter: statsAtPeak.rejected,
     dedupedCounter: statsAtPeak.deduped,
-    preparedArtifacts: audit.withArtifact,
-    lostOrders: seeded.keys.length - audit.withArtifact - audit.withoutArtifact,
-    unpreparedAfterDrain: audit.withoutArtifact,
+    preparedAfterBurst: auditAfterBurst.withArtifact,
+    unpreparedAfterBurst: auditAfterBurst.withoutArtifact,
+    recoveryCycles: recovery.cycles,
+    preparedAfterRecovery: auditAfterRecovery.withArtifact,
+    remainingEligibleAfterRecovery: auditAfterRecovery.withoutArtifact,
+    permanentFailureFixtures: 0,
+    lostPreparationCandidates:
+      seeded.keys.length -
+      auditAfterRecovery.withArtifact -
+      auditAfterRecovery.withoutArtifact,
+    audit: auditAfterRecovery,
     rssBeforeMb: mb(rssBefore),
     rssAfterMb: mb(rssAfter),
   }
@@ -741,27 +772,33 @@ async function runQueueSaturation() {
 // ── MUTABAKAT SINIRI ──────────────────────────────────────────────────────
 
 async function runReconciliationLimit() {
-  const { pglite, db } = await makeDb()
-  const pending = 260
-  const seeded = await seedDataset(db, pending, { seed: 31337 })
-  preparer.__resetBundlePreparer()
-  const first = await preparer.reconcilePendingBundles(db)
-  await preparer.drainBundlePreparation()
-  const auditAfterFirst = await auditArtifacts(db)
-  preparer.__resetBundlePreparer()
-  const second = await preparer.reconcilePendingBundles(db)
-  await preparer.drainBundlePreparation()
-  const auditAfterSecond = await auditArtifacts(db)
-  await pglite.close()
+  const results: any[] = []
+  for (const pending of [260, 1000]) {
+    const { pglite, db } = await makeDb()
+    await seedDataset(db, pending, { seed: 31337 + pending })
+    preparer.__resetBundlePreparer()
+    const first = await preparer.reconcilePendingBundles(db)
+    await preparer.drainBundlePreparation()
+    const afterFirst = await auditArtifacts(db)
+    // Sonraki SINIRLI turlar imleçle ilerler; aynı ilk 200'e takılmaz.
+    const drained = await preparer.reconcileUntilDrained(db)
+    const afterDrain = await auditArtifacts(db)
+    await pglite.close()
+    results.push({
+      pendingRecords: pending,
+      scanLimit: preparer.RECONCILE_SCAN_LIMIT,
+      firstCycle: first,
+      remainingAfterFirstCycle: afterFirst.withoutArtifact,
+      cyclesToDrain: drained.cycles,
+      remainingAfterDrain: afterDrain.withoutArtifact,
+      preparedTotal: afterDrain.withArtifact,
+      audit: afterDrain,
+    })
+  }
   return {
-    pendingRecords: pending,
-    scanLimit: preparer.RECONCILE_SCAN_LIMIT,
-    firstBoot: first,
-    remainingAfterFirstBoot: auditAfterFirst.withoutArtifact,
-    secondBoot: second,
-    remainingAfterSecondBoot: auditAfterSecond.withoutArtifact,
-    automaticRetriggerBetweenBoots: false,
-    seededOrders: seeded.keys.length,
+    periodicIntervalMs: preparer.RECONCILE_INTERVAL_MS,
+    bootOnly: false,
+    results,
   }
 }
 
@@ -779,16 +816,28 @@ async function runPermanentFailure() {
   }
   const totalMs = performance.now() - started
   const stats = preparer.bundlePrepareStats()
+  // MUTABAKAT DÖNGÜSÜ HOT-LOOP YARATIYOR MU? Sınırlı turlar kalıcı hatalı
+  // kayıtları görür ama tur sayısı ÜST SINIRLIDIR ve turlar arasında
+  // periyot beklenir; sürekli CPU/DB dövülmez.
+  preparer.__resetBundlePreparer()
+  const cycleStart = performance.now()
+  const drained = await preparer.reconcileUntilDrained(db, { maxCycles: 10 })
+  const cycleMs = performance.now() - cycleStart
+  const cycleStats = preparer.bundlePrepareStats()
   const audit = await auditArtifacts(db)
   await pglite.close()
   return {
     records: seeded.keys.length,
     rounds,
     attempts: stats.failed,
-    backoff: 'YOK — her tur tüm kayıtlar yeniden denenir',
+    backoff: 'YOK — kalıcı hatalı kayıt her mutabakat turunda yeniden denenir',
     msPerAttempt: Number((totalMs / Math.max(1, stats.failed)).toFixed(2)),
     totalSeconds: Number((totalMs / 1000).toFixed(2)),
     persistedArtifacts: audit.withArtifact,
+    reconcileCycles: drained.cycles,
+    reconcileAttempts: cycleStats.failed,
+    reconcileSeconds: Number((cycleMs / 1000).toFixed(2)),
+    hotLoop: drained.cycles >= 10,
   }
 }
 

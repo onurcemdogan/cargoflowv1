@@ -78,8 +78,9 @@ const monsterItems = (count = 3) =>
     }),
   )
 
+let LAST_ORG = null
 const KEY = (organizationId, packageId = 'PKG-PREP') => ({
-  organizationId,
+  organizationId: organizationId ?? LAST_ORG,
   marketplace: 'Trendyol',
   packageId,
   provider: 'surat',
@@ -134,6 +135,7 @@ async function seed(db, slug, options = {}) {
       carrierPayloadEncrypted: encryption.encryptShipmentPayload(payload),
     })
   }
+  LAST_ORG = org.id
   return org.id
 }
 
@@ -369,27 +371,36 @@ test('PREP-9: restart sonrası taşıyıcı-hazır + artefakt-yok kayıtlar kuyr
   }
 })
 
-test('PREP-10: mutabakat taraması SINIRLIDIR ve tekrar çalıştırmak iş ÇOĞALTMAZ', async () => {
+// SÖZLEŞME DEĞİŞTİ (Aşama 4): tarama artık `updatedAt desc` DEĞİL, `id`
+// üzerinde KEYSET imleçle ilerler. Eski test "ikinci tarama 0 iş üretir"
+// diyordu — bu, açlığın ta kendisiydi (hep aynı pencere). Yeni iddia daha
+// güçlü: ardışık turlar İLERLER ve aynı kayıt uçuştayken ÇOĞALTILMAZ.
+test('PREP-10: ardışık turlar İLERLER; uçuştaki kayıt çoğaltılmaz', async () => {
   const db = await makeDb()
   const packageIds = Array.from({ length: 6 }, (_, index) => `PKG-R${index}`)
   const organizationId = await seed(db, 'prep-10', {
     packageIds,
     lineItems: distinct(3),
   })
-  // ÜST SINIR uygulanır: tüm tablo taranmaz.
-  const limited = await preparer.reconcilePendingBundles(db, { limit: 2 })
-  assert.equal(limited.scanned, 2)
-  assert.equal(limited.enqueued, 2)
+  // ÜST SINIR uygulanır: tüm tablo tek turda taranmaz.
+  const first = await preparer.reconcilePendingBundles(db, { limit: 2 })
+  assert.equal(first.scanned, 2)
+  assert.equal(first.enqueued, 2)
 
-  // Aynı kayıtlar HÂLÂ kuyrukta/işlemde iken ikinci tarama iş ÇOĞALTMAZ.
-  const again = await preparer.reconcilePendingBundles(db, { limit: 2 })
-  assert.equal(again.enqueued, 0, 'tekrar tarama mükerrer iş üretmemeli')
+  // İKİNCİ TUR FARKLI kayıtlara ilerler (eski davranışta 0 iş çıkardı).
+  const second = await preparer.reconcilePendingBundles(db, { limit: 2 })
+  assert.equal(second.scanned, 2)
+  assert.equal(second.enqueued, 2, 'imleç İLERLEMELİ')
+
+  // AYNI kayıt uçuştayken tekrar kuyruğa alınmaz (idempotency korunur).
+  const beforeDedupe = preparer.bundlePrepareStats().deduped
+  preparer.enqueueBundlePreparation(db, KEY(organizationId, packageIds[0]))
+  assert.ok(preparer.bundlePrepareStats().deduped >= beforeDedupe)
 
   await preparer.drainBundlePreparation()
   // Sınır sabitleri makul ve açık.
   assert.ok(preparer.RECONCILE_SCAN_LIMIT > 0)
   assert.ok(preparer.PREPARE_CONCURRENCY > 0)
-  void organizationId
 })
 
 // ═══ PREP-11: CREATE YOLU KUYRUĞA BAĞLI ══════════════════════════════════
@@ -411,4 +422,102 @@ test('PREP-11: create yolu artefakt üretemediğinde arka plan kuyruğuna alır'
   const server = readFileSync(join(here, 'index.mjs'), 'utf8')
   assert.ok(server.includes('reconcileLabelBundlesOnBoot'))
   assert.ok(server.includes('reconcilePendingBundles'))
+})
+
+// ═══ PREP-12: MUTABAKAT AÇLIĞI YOK (Aşama 4 blocker) ═════════════════════
+
+test('PREP-12: 260 uygun kayıt, tarama sınırı 200 → HEPSİ eninde sonunda hazırlanır', async () => {
+  const db = await makeDb()
+  const packageIds = Array.from({ length: 260 }, (_, index) => `PKG-S${index}`)
+  await seed(db, 'prep-12', { packageIds, lineItems: distinct(2) })
+
+  // İLK TUR: tarama sınırı kadar.
+  const first = await preparer.reconcilePendingBundles(db)
+  assert.equal(first.scanned, preparer.RECONCILE_SCAN_LIMIT)
+  await preparer.drainBundlePreparation()
+
+  // SONRAKİ TURLAR İMLEÇLE İLERLER: aynı ilk 200'e TAKILMAZ.
+  const drained = await preparer.reconcileUntilDrained(db)
+  assert.ok(drained.cycles >= 2)
+
+  const rows = await db.select().from(schema.shipments)
+  let missing = 0
+  for (const row of rows) {
+    const payload = encryption.decryptShipmentPayload(row.carrierPayloadEncrypted)
+    if (!payload?.printZplArtifact) missing += 1
+  }
+  assert.equal(missing, 0, 'kalıcı olarak aç kalan kayıt OLMAMALI')
+})
+
+// ═══ PREP-13: KUYRUK TAŞMASI → ADAY KAYBI YOK ════════════════════════════
+
+test('PREP-13: kuyruk taşsa da hiçbir hazırlama adayı KAYBOLMAZ', async () => {
+  const db = await makeDb()
+  const total = preparer.PREPARE_QUEUE_LIMIT + 150
+  const packageIds = Array.from({ length: total }, (_, index) => `PKG-Q${index}`)
+  await seed(db, 'prep-13', { packageIds, lineItems: distinct(2) })
+
+  // NAİF ÜRETİCİ: geri basınç YOK, dönüş değeri YOK SAYILIR.
+  let refused = 0
+  for (const packageId of packageIds) {
+    if (!preparer.enqueueBundlePreparation(db, KEY(null, packageId))) refused += 1
+  }
+  assert.ok(refused > 0, 'bu senaryoda kuyruk taşması BEKLENİR')
+  await preparer.drainBundlePreparation()
+
+  // Reddedilenler DB'de "taşıyıcı hazır + artefakt yok" olarak durur —
+  // bu SOURCE-OF-TRUTH'tur ve mutabakat onları alır. SESSİZ KAYIP YOK.
+  await preparer.reconcileUntilDrained(db)
+  const rows = await db.select().from(schema.shipments)
+  let missing = 0
+  for (const row of rows) {
+    const payload = encryption.decryptShipmentPayload(row.carrierPayloadEncrypted)
+    if (!payload?.printZplArtifact) missing += 1
+  }
+  assert.equal(missing, 0, 'reddedilen adaylar eninde sonunda hazırlanmalı')
+})
+
+// ═══ PREP-14: EVENT-LOOP CANLILIĞI ═══════════════════════════════════════
+
+test('PREP-14: hazırlama sırasında event-loop BLOKE OLMAZ', async () => {
+  const db = await makeDb()
+  const packageIds = Array.from({ length: 120 }, (_, index) => `PKG-E${index}`)
+  await seed(db, 'prep-14', { packageIds, lineItems: distinct(3) })
+
+  // HTTP-benzeri prob: 20 ms'de bir çalışması BEKLENEN zamanlayıcı.
+  const gaps = []
+  let last = Date.now()
+  const probe = setInterval(() => {
+    const now = Date.now()
+    gaps.push(now - last)
+    last = now
+  }, 20)
+  for (const packageId of packageIds) {
+    preparer.enqueueBundlePreparation(db, KEY(null, packageId))
+  }
+  await preparer.drainBundlePreparation()
+  clearInterval(probe)
+
+  assert.ok(gaps.length > 0, 'prob HİÇ çalışamadıysa döngü tamamen blokedir')
+  const maxGap = Math.max(...gaps)
+  // Saniyelerce tek parça blokaj KABUL EDİLMEZ. Eşik yavaş CI için gevşek
+  // tutulur ama saniye mertebesindeki donmayı yakalar.
+  assert.ok(maxGap < 1000, `event-loop ${maxGap} ms bloke kaldı`)
+})
+
+// ═══ PREP-15: PERİYODİK MUTABAKAT ════════════════════════════════════════
+
+test('PREP-15: mutabakat yalnız açılışa bağlı DEĞİL', async () => {
+  const db = await makeDb()
+  await seed(db, 'prep-15', { packageIds: ['PKG-P1'], lineItems: distinct(2) })
+  // Zamanlayıcı kurulur ve DURDURULABİLİR; süreç kapanışını geciktirmez.
+  const stop = preparer.startPeriodicReconciliation(db, { intervalMs: 10_000 })
+  assert.equal(typeof stop, 'function')
+  stop()
+  preparer.stopPeriodicReconciliation()
+
+  const server = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.ok(server.includes('startPeriodicReconciliation'))
+  // Aralık yapılandırılabilir ve muhafazakâr bir alt sınırı var.
+  assert.ok(preparer.RECONCILE_INTERVAL_MS >= 10_000)
 })

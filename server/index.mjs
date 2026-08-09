@@ -2472,16 +2472,21 @@ if (String(process.env.CARGOFLOW_AUTH_BYPASS ?? '').trim().toLowerCase() === 'tr
 async function reconcileLabelBundlesOnBoot() {
   if (!isTenantAuthMode()) return
   try {
-    const [{ getDb }, { reconcilePendingBundles }] = await Promise.all([
+    const [{ getDb }, preparer] = await Promise.all([
       import('./db/client.ts'),
       import('./shipments/labelBundlePreparer.ts'),
     ])
-    const result = await reconcilePendingBundles(getDb())
+    const db = getDb()
+    const result = await preparer.reconcilePendingBundles(db)
     if (result.enqueued > 0) {
       console.log(
         `[label-bundle] restart reconciliation: ${result.enqueued}/${result.scanned} kayıt kuyruğa alındı`,
       )
     }
+    // PERİYODİK MUTABAKAT: kuyruk taşması veya kaçırılan enqueue sonrası
+    // kalan kayıtlar BİR SONRAKİ RESTART'I beklemez. Tur sınırlı, imleçli
+    // (keyset) ve `unref` edilmiş zamanlayıcıyla; hot-loop yapmaz.
+    preparer.startPeriodicReconciliation(db)
   } catch {
     // Mutabakat BEST-EFFORT: başarısız olursa ilk baskıda hydration devrede.
   }

@@ -203,12 +203,21 @@ export async function writeOperationRecord(
         const { enqueueBundlePreparation } = await import(
           './labelBundlePreparer.ts'
         )
-        enqueueBundlePreparation(db, {
+        const enqueued = enqueueBundlePreparation(db, {
           organizationId,
           marketplace: columns.marketplace,
           packageId: columns.packageId,
           provider: columns.provider,
         })
+        // KUYRUK DOLU → iş KAYBOLMAZ. Kayıt DB'de "taşıyıcı hazır +
+        // artefakt yok" durumunda kalır; bu SOURCE-OF-TRUTH'tur ve
+        // periyodik mutabakat onu sonraki sınırlı turda alır. Burada
+        // yalnız görünürlük sağlanır; create sonucu ETKİLENMEZ.
+        if (!enqueued) {
+          console.warn(
+            '[label-bundle] hazırlama kuyruğu dolu; kayıt mutabakata bırakıldı',
+          )
+        }
       } catch {
         // Arka plan hazırlama BEST-EFFORT: ilk baskıda hydration devrede.
       }
