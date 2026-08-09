@@ -29,6 +29,7 @@ import {
   describeLabelPrintTemplate,
   isSuratShipmentOrder,
   normalizeLabelPrintTemplate,
+  DEFAULT_LABEL_PRINT_TEMPLATE,
   resolveLabelPrintTemplateDecision,
   type LabelPrintTemplate,
 } from './utils/labelPrintTemplateRouting'
@@ -902,9 +903,16 @@ function App() {
   const organizationLabelPrintTemplate = normalizeLabelPrintTemplate(
     integrationConfig.desi?.labelPrintTemplate,
   )
+  // Gösterge ANA AKSİYONUN gerçekte kullanacağı şablonu yazar. Organizasyon
+  // ayarını yazmak yanıltıcı olurdu: ayar "CargoFlow" görünürken ana buton
+  // Sürat basıyordu (üretimde görülen hata).
   const labelPrintTemplateIndicator = describeLabelPrintTemplate(
-    organizationLabelPrintTemplate,
+    DEFAULT_LABEL_PRINT_TEMPLATE,
   )
+  // TEK KARAR NOKTASI — hem toplu hem tekil primary akış buradan geçer.
+  // Override YOKSA niyet PRIMARY'dir: ana aksiyon Sürat gönderileri için
+  // her zaman resmî Sürat şablonunu kullanır ve organizasyon ayarı bunu
+  // EZEMEZ. Override VARSA niyet ADVANCED'dir ve yalnız o çalışmaya uygulanır.
   function resolveRunLabelTemplate(
     runOrders: CargoOrder[],
     templateOverride?: LabelPrintTemplate,
@@ -913,6 +921,7 @@ function App() {
       organizationTemplate: organizationLabelPrintTemplate,
       templateOverride,
       orders: runOrders,
+      intent: templateOverride === undefined ? 'primary' : 'advanced',
     })
   }
 

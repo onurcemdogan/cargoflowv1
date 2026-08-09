@@ -208,18 +208,13 @@ test('UI-11: desi ayarı ve bölüm başlığı sağlayıcı adı İÇERMEZ', ()
   renderPage(makeConfig())
   const section = sharedSection()
   const text = section.textContent ?? ''
-  // GÜNCELLENDİ (gerekçe): bölüm artık "Kargo Etiketi Şablonu" seçimini de
-  // barındırıyor ve seçeneklerden birinin ADI gereği "Resmî Sürat Etiket
-  // Şablonu". Bu, sağlayıcıya bağımlılık değil seçeneğin KENDİ adıdır.
-  // Kural ZAYIFLATILMADI, DARALTILDI: bölüm başlığı ve desi ayarı hâlâ
-  // sağlayıcıdan bağımsızdır; "Sürat" YALNIZ şablon grubunda geçebilir.
+  // GÜNCELLENDİ (gerekçe): şablon seçicisi Ayarlar'dan KALDIRILDI, dolayısıyla
+  // ona verilen muafiyet gereksiz kaldı. Kural ORİJİNAL SIKI HÂLİNE döndü:
+  // bölümün TAMAMI sağlayıcı adından bağımsızdır. Bu bir gevşetme değil,
+  // önceki daraltmanın GERİ ALINMASIDIR.
   expect(section.getAttribute('aria-label')).toBe(SHARED_SECTION)
   expect(/sürat|surat/i.test(SHARED_SECTION)).toBe(false)
-  const templateGroup = within(section).getByRole('group', {
-    name: 'Kargo Etiketi Şablonu',
-  })
-  const withoutTemplateGroup = text.replace(templateGroup.textContent ?? '', '')
-  expect(/sürat|surat/i.test(withoutTemplateGroup)).toBe(false)
+  expect(/sürat|surat/i.test(text)).toBe(false)
   expect(text).toContain('Ürün adedine göre desiyi çarp')
   expect(text).toContain(
     'Açık olduğunda varsayılan gönderi desisi siparişteki toplam ürün adediyle çarpılır.',
