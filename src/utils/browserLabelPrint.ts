@@ -786,7 +786,13 @@ export async function printOfficialSuratDocument(
   skipped: OfficialSuratSkip[] = [],
 ): Promise<BrowserLabelPrintDebug> {
   const executionId = `print-official-${++printExecutionCounter}`
-  const orderNumbers = pages.map((page) => String(page.orderNumber ?? ''))
+  // BİR SİPARİŞ ARTIK BİRDEN ÇOK FİZİKSEL SAYFA üretebilir (taşıyıcı + ürün
+  // detayları). Sipariş kimlikleri TEKİLLEŞTİRİLİR: aksi hâlde 8 ürünlü tek
+  // sipariş, sayım ve "basıldı" işaretlemesinde birden çok kez görünürdü.
+  // Sıra KORUNUR (ilk görülme).
+  const orderNumbers = Array.from(
+    new Set(pages.map((page) => String(page.orderNumber ?? ''))),
+  )
   const debug: BrowserLabelPrintDebug = {
     printRequested: true,
     printMode: 'surat-official-png',

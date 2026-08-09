@@ -37,11 +37,20 @@ function isNonSuratShipment(order: CargoOrder): boolean {
   return provider.length > 0 && !/surat|sürat/i.test(provider)
 }
 
+/** Ürün detay sayfası servis edilemedi — ANA etiket engellenmez. */
+export const PRODUCT_DETAIL_UNAVAILABLE_MESSAGE =
+  'Ürün detay etiketi hazırlanamadı.'
+
 export interface OfficialSuratPrintResult {
   debug: BrowserLabelPrintDebug
   /** Belgeye GERÇEKTEN giren sipariş numaraları. */
   printedOrderNumbers: string[]
   skipped: OfficialSuratSkip[]
+  /**
+   * Ana etiketi BASILAN ama ürün detay sayfası eksik kalan gönderiler.
+   * Atlanan (skipped) DEĞİLDİR: bunlar basıldı, yalnız eksik bilgiyle.
+   */
+  productDetailWarnings: OfficialSuratSkip[]
 }
 
 /**
@@ -53,6 +62,7 @@ export async function printOfficialSuratLabels(
 ): Promise<OfficialSuratPrintResult> {
   const pages: OfficialSuratPage[] = []
   const skipped: OfficialSuratSkip[] = []
+  const productDetailWarnings: OfficialSuratSkip[] = []
 
   let renderRequested = 0
   let renderSucceeded = 0
@@ -69,11 +79,24 @@ export async function printOfficialSuratLabels(
       renderRequested += 1
       const artifact = await fetchSuratRenderArtifact(String(order.id ?? ''))
       renderSucceeded += 1
-      pages.push({
-        orderNumber,
-        imageBase64: artifact.imageBase64,
-        mimeType: artifact.mimeType,
-      })
+      // CANONICAL KAYNAK `pages[]`. Sıra SUNUCUDA doğrulanmıştır (taşıyıcı
+      // ilk, ürün detayları izler) ve BURADA DEĞİŞTİRİLMEZ. Eski yanıt
+      // biçiminde istemci tek taşıyıcı sayfa görür → davranış aynı kalır.
+      for (const page of artifact.pages) {
+        pages.push({
+          orderNumber,
+          imageBase64: page.imageBase64,
+          mimeType: page.mimeType,
+        })
+      }
+      // FAIL-OPEN: ürün detay sayfası eksikse ANA etiket basılır, ama
+      // eksiklik kullanıcıya GÖRÜNÜR olur — sessiz kayıp YOK.
+      if (artifact.productDetailStatus === 'failed') {
+        productDetailWarnings.push({
+          orderNumber,
+          reason: artifact.warning ?? PRODUCT_DETAIL_UNAVAILABLE_MESSAGE,
+        })
+      }
     } catch (error) {
       // Bir siparişin hatası DİĞERLERİNİ düşürmez.
       const renderError =
@@ -104,11 +127,14 @@ export async function printOfficialSuratLabels(
     renderHttpStatus: renderHttpStatuses,
     authFailure,
     skipCount: skipped.length,
+    productDetailWarningCount: productDetailWarnings.length,
+    physicalPageCount: pages.length,
   })
 
   const debug = await printOfficialSuratDocument(pages, skipped)
   return {
     debug,
+    productDetailWarnings,
     printedOrderNumbers: debug.printCalled
       ? (debug.printedOrderNumbers ?? [])
       : [],

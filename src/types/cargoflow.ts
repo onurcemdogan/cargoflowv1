@@ -246,6 +246,21 @@ export interface Shipment {
   technicalZpl?: string
   technicalZplSha256?: string
   technicalZplLength?: number
+  /**
+   * SUNUCU YETKİLİ BASKI PAKETİ — sıralı fiziksel sayfalar.
+   *
+   * `applyServerPrintContract` tarafından yazılır; taşıyıcı DAİMA ilk sırada,
+   * ürün detayları izler. Sıra istemcide ÜRETİLMEZ, yalnız taşınır.
+   * Kalıcı artefakta GERİ YAZILMAZ (türev, bellekte yaşar).
+   */
+  printBundle?: {
+    pages: Array<{ kind: 'carrier' | 'product_detail'; page: number; zpl: string }>
+    labelPageCount: number
+    productDetailPageCount: number
+    printArtifactStatus?: string
+    productDetailStatus?: string
+    productDetailFailureReason?: string
+  }
   zplSource?:
     | 'surat.ortakBarkod.BarcodeRaw'
     | 'surat.KargoBarkoduSiparis.PdfBarkod'
