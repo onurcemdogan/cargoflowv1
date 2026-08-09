@@ -531,9 +531,17 @@ test('CF-30: QR komutu ve gövdesi doğrulanmış değere EŞİT', async () => {
   const result = composeSuratDurusoftLabel(zpl, { ozelKargoTakipNo: VERIFIED_727 })
   assert.ok(result.zpl.includes(`^BQN,2,5^FDLA,${VERIFIED_727}^FS`))
   assert.equal((result.zpl.match(/\^BQ/g) ?? []).length, 1)
-  assert.deepEqual(result.diagnostics.qrBox, { x: 645, y: 596, size: 105 })
+  // Konum SABİT DEĞİL, DIŞ MARJ SİMETRİSİNDEN türetilir:
+  //   QR sağ kenarı = labelEdge − DataMatrix dış sol marjı
+  // Böylece alt bölümde DataMatrix ile QR dış boşlukları eşitlenir.
+  const { SURAT_GRID } = await composer()
+  const { fields } = (await parser()).resolveSuratSemanticModel(zpl)
+  const expectedX =
+    SURAT_GRID.labelEdge - fields.dataMatrixPayload.field.x - 105
+  assert.equal(expectedX, 635, 'gerçek şablonda simetrik konum')
+  assert.deepEqual(result.diagnostics.qrBox, { x: expectedX, y: 596, size: 105 })
   // QR'dan hemen önce kapsam ^BY'si yazılır (renderer sapmasını 10 dota sınırlar).
-  assert.ok(result.zpl.includes('^BY2,3,10^FO645,596^BQN,2,5'))
+  assert.ok(result.zpl.includes(`^BY2,3,10^FO${expectedX},596^BQN,2,5`))
   // Uyuşmayan iki kaynak → QR YOK, composer yine çalışır.
   const clash = composeSuratDurusoftLabel(zpl, {
     cargoTrackingNumber: VERIFIED_727,
@@ -746,7 +754,8 @@ test('CF-39: ^BY durumu QR’dan sonra GERİ YÜKLENİR (sızıntı yok)', async
     'QR sonrası durum QR öncesiyle BİREBİR aynı',
   )
   // Geçici durum yalnız QR alanını sarar.
-  assert.ok(result.zpl.includes('^BY2,3,10^FO645,596^BQN,2,5'))
+  const { x: qrX, y: qrY } = result.diagnostics.qrBox
+  assert.ok(result.zpl.includes(`^BY2,3,10^FO${qrX},${qrY}^BQN,2,5`))
   assert.ok(
     result.zpl.includes(`^FDLA,${VERIFIED_727}^FS^BY4,3,143`),
     'geri yükleme QR alanının HEMEN ardından',

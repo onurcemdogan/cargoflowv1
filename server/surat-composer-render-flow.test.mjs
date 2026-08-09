@@ -342,10 +342,14 @@ test('CR-11: uyarlanabilir QR yerleşimi gerçek render’da ÇAKIŞMAZ', async 
 
     // Komşu makine-okunur/metin alanlarıyla ÇAKIŞMA YOK.
     const quiet = 4 * qrMagnification
+    // Komşu ölçüm pencereleri QR'ın SOLUNDA biter: QR dış marj simetrisi
+    // gereği sola kayabildiği için sabit genişlikli pencereler QR mürekkebini
+    // komşunun kutusuna KATIYORDU (yanlış çakışma raporu).
+    const widthTo = (from) => Math.max(1, qr.x - from - 1)
     for (const [label, ...window] of [
-      ['aktarma', 170, 638, 470, 70],
-      ['rota', 170, 590, 420, 46],
-      ['teslim tipi', 300, 560, 340, 42],
+      ['aktarma', 170, 638, widthTo(170), 70],
+      ['rota', 170, 590, widthTo(170), 46],
+      ['teslim tipi', 300, 560, widthTo(300), 42],
       ['DataMatrix', 40, 490, 120, 220],
     ]) {
       const neighbour = box(bitmap, ...window)
@@ -373,4 +377,109 @@ test('CR-11: uyarlanabilir QR yerleşimi gerçek render’da ÇAKIŞMAZ', async 
     const all = box(bitmap, 0, 0, 799, 799)
     assert.ok(right(all) <= 798 && bottom(all) <= 798, `${name}: taşma`)
   }
+})
+
+// ═══ VISUAL-1..4: ORTAK RAY / SİMETRİ ÖLÇÜMLERİ ══════════════════════════
+//
+// Yalnız "çakışma yok" demek yeterli değil; dengeyi SAYISALLAŞTIRIR.
+// Toleranslıdır: font rasterizasyonu ±birkaç dot oynayabilir.
+//
+// SINIR: DuruSoft referans GÖRSELİ bu doğrulamalarda KULLANILMADI (bu turda
+// erişilemedi). Raylar taşıyıcının KENDİ `^GB` çizgilerinden türetilmiştir;
+// iddialar "referansa benziyor" değil, "kendi ızgarasına oturuyor" biçimindedir.
+
+const TOL = 4
+
+test('VISUAL-1: composer’ın eklediği alanlar ORTAK RAYLARA oturur', async () => {
+  const { SURAT_GRID } = await _vite.ssrLoadModule(
+    '/src/utils/suratDurusoftComposer.ts',
+  )
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  const bitmap = (await render(composed.zpl)).bitmap
+
+  // Barkod ve altındaki insan-okunur metin AYNI sol raydan başlar.
+  const body = box(bitmap, 46, 157, 750, 144)
+  const humanText = box(bitmap, 46, 302, 750, 34)
+  assert.equal(body.x, SURAT_GRID.contentLeft, 'barkod sol rayda')
+  assert.ok(
+    humanText.x >= body.x && right(humanText) <= right(body),
+    'insan metni barkod bandı içinde',
+  )
+
+  // Normal adres ile bold tekrar AYNI sol çapada.
+  const normalAddress = box(bitmap, 66, 357, 700, 21)
+  const boldAddress = box(bitmap, 66, 401, 700, 16)
+  assert.ok(
+    Math.abs(boldAddress.x - normalAddress.x) <= 2,
+    `bold adres normal adresle aynı sol çapada: ${boldAddress.x} / ${normalAddress.x}`,
+  )
+})
+
+test('VISUAL-2: alıcı kutusu içeriği kutu raylarının İÇİNDE dengeli', async () => {
+  const { SURAT_GRID } = await _vite.ssrLoadModule(
+    '/src/utils/suratDurusoftComposer.ts',
+  )
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  const bitmap = (await render(composed.zpl)).bitmap
+  for (const [name, ...window] of [
+    ['alıcı adı', 66, 341, 700, 14],
+    ['adres 1', 66, 357, 700, 21],
+    ['adres 2', 66, 378, 700, 21],
+    ['bold adres', 66, 401, 700, 52],
+    ['alıcı tel', 100, 452, 300, 22],
+  ]) {
+    const entry = box(bitmap, ...window)
+    if (!entry) continue
+    assert.ok(entry.x > SURAT_GRID.boxLeft, `${name} sol rayın içinde`)
+    assert.ok(right(entry) < SURAT_GRID.boxRight, `${name} sağ rayın içinde`)
+  }
+})
+
+test('VISUAL-3: alt bölüm [DataMatrix] [orta] [QR] dengesi', async () => {
+  const composed = composeSuratDurusoftLabel(zpl, {
+    cargoTrackingNumber: VERIFIED_727,
+  })
+  const bitmap = (await render(composed.zpl)).bitmap
+  const { qrBox } = composed.diagnostics
+  const dataMatrix = box(bitmap, 40, 490, 130, 220)
+  const qr = box(bitmap, qrBox.x - 25, qrBox.y - 25, qrBox.size + 60, qrBox.size + 60)
+  const centre = box(bitmap, 170, 560, 420, 150)
+  assert.ok(dataMatrix && qr && centre, 'üç blok da basılmalı')
+
+  // DIŞ MARJ SİMETRİSİ: QR'ın sağ marjı DataMatrix'in sol marjına eşit
+  // (komşu metin QR'ı sağa itmediyse).
+  const leftMargin = dataMatrix.x
+  const rightMargin = 799 - right(qr)
+  assert.ok(
+    Math.abs(leftMargin - rightMargin) <= TOL,
+    `dış marj simetrisi: sol ${leftMargin} / sağ ${rightMargin}`,
+  )
+  // Orta blok İKİ KODUN ARASINDA kalır.
+  assert.ok(centre.x > right(dataMatrix), 'orta blok DataMatrix’in sağında')
+  assert.ok(right(centre) < qr.x, 'orta blok QR’ın solunda')
+})
+
+test('VISUAL-4: footer ortak sol aileye yakın ve taşmıyor', async () => {
+  const { SURAT_GRID } = await _vite.ssrLoadModule(
+    '/src/utils/suratDurusoftComposer.ts',
+  )
+  const derived = deriveAugmentedSuratZplWithHashes(
+    zpl,
+    [{ productName: 'Scuba Secil Detayli Tesettur Elbise', quantity: 2, sku: 'S1' }],
+    { compose: { cargoTrackingNumber: VERIFIED_727 } },
+  )
+  const bitmap = (await render(derived.printZpl)).bitmap
+  const footer = box(bitmap, 0, derived.metrics.footerTop, 799,
+    799 - derived.metrics.footerTop)
+  assert.ok(footer, 'footer basılmalı')
+  // Footer dikey rayın ALTINDA olduğu için içerik rayının SOLUNU kullanabilir;
+  // yine de etiket kenarından güvenli mesafede kalır.
+  assert.ok(footer.x >= 8, `footer sol kenar payı: ${footer.x}`)
+  assert.ok(footer.x <= SURAT_GRID.contentLeft, 'footer en geniş satırı kullanır')
+  assert.ok(right(footer) <= SURAT_GRID.labelEdge - 8, 'footer sağ taşma yok')
+  assert.ok(bottom(footer) <= 798, 'footer alt taşma yok')
 })
