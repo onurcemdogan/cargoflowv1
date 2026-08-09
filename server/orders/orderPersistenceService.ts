@@ -17,6 +17,8 @@ import {
 import { rowToOrder } from './orderMapper.ts'
 import { findShipment } from '../shipments/shipmentRepository.ts'
 import { SURAT_PERSISTENCE_PROVIDER } from '../shipments/suratProvider.ts'
+import { buildPrintableJob } from '../../src/utils/printableLabelJob.ts'
+import { sha256Hex } from '../../src/utils/augmentedSuratZpl.ts'
 import {
   findLatestOperationByPackage,
   findPrintableZplByPackage,
@@ -348,7 +350,31 @@ export interface PersistedLabelResult {
   print?: PrintableLabelSummary | null
 }
 
+/** Baskı paketindeki tek bir ek fiziksel sayfa. */
+export interface PrintableSupplementalPage {
+  kind: 'product_detail'
+  page: number
+  totalPages: number
+  zpl: string
+  sha256?: string
+}
+
 export interface PrintableLabelSummary {
+  /**
+   * TAM baskı işi kurulabiliyor mu? Paket bozuksa (hash uyuşmazlığı, eksik
+   * sayfa, bozuk sıra) FALSE olur ve taşıyıcı sayfa TEK BAŞINA servis
+   * EDİLMEZ — Aşama 2'deki "taşıyıcı-only başarı yok" kuralının serving
+   * karşılığıdır.
+   */
+  printReady: boolean
+  printArtifactStatus: 'ready' | 'failed'
+  /** Yalnız güvenli, tipli sebep; iç ayrıntı SIZDIRILMAZ. */
+  printArtifactFailureReason?: string
+  /** Taşıyıcı DAHİL toplam fiziksel sayfa sayısı. */
+  labelPageCount: number
+  productDetailPageCount: number
+  /** Kalıcı ek sayfalar — canonical sırayla. Eski kayıtta boş dizi. */
+  supplementalLabels: PrintableSupplementalPage[]
   printZplSha256: string
   printZplSourceSha256: string
   printZplVersion: string
@@ -453,9 +479,32 @@ export async function resolvePersistedLabel(
       // Kalıcı model yok: mevcut (eski) ham ZPL davranışı korunur.
     }
     if (model) {
-    zpl = model.printZpl
+    // Sayfalar KALICI baytlardan gelir: burada ürün toplama, sayfalama,
+    // composer veya PNG YOKTUR. Tek merkezi kurucu kullanılır.
+    const job = buildPrintableJob({
+      carrierZpl: model.printZpl,
+      supplementalLabels: model.supplementalLabels ?? [],
+      hash: sha256Hex,
+    })
+    // TAM İŞ YA DA HİÇ: paket bozuksa taşıyıcı sayfa tek başına servis
+    // edilmez; `zpl` boş bırakılır ve printReady=false ile bildirilir.
+    zpl = job.printReady ? model.printZpl : ''
     source = 'shipment.printZplArtifact'
     printModel = {
+      printReady: job.printReady,
+      printArtifactStatus: job.printReady ? 'ready' : 'failed',
+      ...(job.reason ? { printArtifactFailureReason: job.reason } : {}),
+      labelPageCount: job.labelPageCount,
+      productDetailPageCount: job.productDetailPageCount,
+      supplementalLabels: job.pages
+        .filter((page) => page.kind === 'product_detail')
+        .map((page) => ({
+          kind: 'product_detail' as const,
+          page: page.page,
+          totalPages: job.productDetailPageCount,
+          zpl: page.zpl,
+          ...(page.sha256 ? { sha256: page.sha256 } : {}),
+        })),
       printZplSha256: model.printZplSha256,
       printZplSourceSha256: model.printZplSourceSha256,
       printZplVersion: model.printZplVersion,
