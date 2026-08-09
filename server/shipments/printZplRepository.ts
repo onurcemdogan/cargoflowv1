@@ -55,6 +55,15 @@ export interface PersistedPrintZpl {
    * Eski kayıtlarda bulunmaz (opsiyonel).
    */
   augmentationReason?: DomainAugmentationStatus
+  /**
+   * Artefaktın hangi RENDER SÖZLEŞMESİYLE üretildiği. Reprint'te yeniden
+   * türetme YAPILMADAN raporlanabilsin diye kalıcı tutulur.
+   * Eski kayıtlarda bulunmaz → 'official_augmented' varsayılır (doğrudur:
+   * composer'dan önce üretilen her artefakt augmentation-only'dir).
+   */
+  renderContract?: 'official_augmented' | 'durusoft_composed'
+  /** Composer denendiyse sonucu (fallback sebebi dahil). */
+  composeMode?: string
 }
 
 export type AugmentationStatus = 'augmented' | 'source_only'
@@ -111,6 +120,13 @@ function readPersisted(
     // Eski kayıtlarda YOKTUR; okunamıyorsa undefined kalır.
     ...(typeof block.augmentationReason === 'string'
       ? { augmentationReason: block.augmentationReason as DomainAugmentationStatus }
+      : {}),
+    ...(block.renderContract === 'durusoft_composed' ||
+    block.renderContract === 'official_augmented'
+      ? { renderContract: block.renderContract }
+      : {}),
+    ...(typeof block.composeMode === 'string'
+      ? { composeMode: block.composeMode }
       : {}),
   }
 }
@@ -189,12 +205,47 @@ async function compareAndSetArtifact(
   return Array.isArray(result) ? result.length > 0 : false
 }
 
+// QR adayları payload'ın canonical konumlarından okunur. Yanlış konumdan
+// okunan bir değer TEHLİKESİZDİR: resolveSuratQrPayload `727…` biçimini
+// doğrulamayan her adayı reddeder ve QR üretilmez.
+const QR_CANDIDATE_SCOPES = ['', 'shipment', 'order'] as const
+
+function readCandidate(
+  payload: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  for (const scope of QR_CANDIDATE_SCOPES) {
+    const container =
+      scope === ''
+        ? payload
+        : ((payload[scope] ?? {}) as Record<string, unknown>)
+    const value = readString(container?.[key])
+    if (value.trim()) return value
+  }
+  return undefined
+}
+
+/** Kalıcı payload'dan DuruSoft composer girdisini çözer. */
+export function resolveComposeInput(
+  payload: Record<string, unknown>,
+): { cargoTrackingNumber?: string; ozelKargoTakipNo?: string } {
+  return {
+    cargoTrackingNumber: readCandidate(payload, 'cargoTrackingNumber'),
+    ozelKargoTakipNo: readCandidate(payload, 'ozelKargoTakipNo'),
+  }
+}
+
 export function buildPrintZplArtifact(
   sourceZpl: string,
   items: SuratProductLineItem[],
   createdAt: string,
+  compose?: { cargoTrackingNumber?: string; ozelKargoTakipNo?: string },
 ): { artifact: PersistedPrintZpl; augmentationStatus: AugmentationStatus } {
-  const derived = deriveAugmentedSuratZplWithHashes(sourceZpl, items)
+  const derived = deriveAugmentedSuratZplWithHashes(
+    sourceZpl,
+    items,
+    compose ? { compose } : {},
+  )
   return {
     artifact: {
       printZpl: derived.printZpl,
@@ -206,6 +257,8 @@ export function buildPrintZplArtifact(
       templateFingerprint: derived.templateFingerprint,
       printZplCreatedAt: createdAt,
       augmentationReason: derived.augmentationStatus,
+      renderContract: derived.renderContract,
+      ...(derived.composeMode ? { composeMode: derived.composeMode } : {}),
     },
     // Kalıcılık düzeyindeki MEVCUT bayrak (augmented | source_only) korunur;
     // domain sözlüğü AYRICA `augmentationReason` ile taşınır. Paralel bir
@@ -271,6 +324,7 @@ export async function resolvePersistedPrintableLabel(
     sourceZpl,
     items,
     options.now ?? new Date().toISOString(),
+    resolveComposeInput(payload),
   )
   const won = await compareAndSetArtifact(db, key, encrypted, {
     ...payload,

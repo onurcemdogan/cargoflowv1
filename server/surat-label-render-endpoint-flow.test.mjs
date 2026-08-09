@@ -214,14 +214,35 @@ test('RE-6: DTO ham ZPL veya şifreli payload İÇERMEZ', async () => {
     assert.equal(forbidden in dto, false, `yasak alan: ${forbidden}`)
   }
   // İzin verilen alanlar (warning YALNIZ fallback durumunda bulunur).
+  // renderContract/composeMode: baskı ZPL'inin hangi sözleşmeyle üretildiğini
+  // raporlar. Serbest metin DEĞİLDİR — aşağıda KAPALI SÖZLÜK ile bağlanır, bu
+  // yüzden müşteri verisi taşıyamaz.
   const allowed = new Set([
     'augmentationStatus', 'heightMm', 'heightPx', 'imageBase64', 'mimeType',
     'printZplSha256', 'renderEngine', 'renderEngineVersion', 'renderSha256',
     'widthMm', 'widthPx', 'zebrashVersion', 'warning',
+    'renderContract', 'composeMode',
   ])
   for (const key of Object.keys(dto)) {
     assert.ok(allowed.has(key), `DTO'da beklenmeyen alan: ${key}`)
   }
+  // Yeni teşhis alanları KAPALI SÖZLÜKTEN gelir; serbest metin sızamaz.
+  assert.ok(
+    ['official_augmented', 'durusoft_composed'].includes(dto.renderContract),
+    `renderContract kapalı sözlükte olmalı: ${dto.renderContract}`,
+  )
+  assert.ok(
+    dto.composeMode === null ||
+      [
+        'durusoft_composed',
+        'fallback_unknown_template',
+        'fallback_semantic_failure',
+        'fallback_geometry_failure',
+        'fallback_invariant_failure',
+        'fallback_whitelist_violation',
+      ].includes(dto.composeMode),
+    `composeMode kapalı sözlükte olmalı: ${dto.composeMode}`,
+  )
 })
 
 // ═══ RE-7..RE-11: KALICILIK, DETERMİNİZM, YAN ETKİSİZLİK ══════════════════

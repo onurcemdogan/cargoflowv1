@@ -1,0 +1,4 @@
+# ZPL fixture'lari BAYT BAYT korunur: satir sonu normalizasyonu (autocrlf)
+# uygulanmaz. Gercek Surat sablonunun CRLF yapisi ve SHA256 dogrulamasi
+# platformdan bagimsiz ayni kalmalidir.
+*.zpl -text

@@ -78,6 +78,20 @@ export interface SuratRenderDto {
    * paralel durum sözlüğü YOKTUR.
    */
   augmentationStatus: AugmentationStatus
+  /**
+   * Baskı ZPL'inin RENDER SÖZLEŞMESİ. Teşhis içindir; HAM ZPL, payload veya
+   * müşteri alanı İÇERMEZ.
+   *   'official_augmented' → resmî ZPL + güvenli ürün footer'ı
+   *   'durusoft_composed'  → DuruSoft parity dönüşümü uygulandı
+   */
+  renderContract: 'official_augmented' | 'durusoft_composed'
+  /**
+   * Composer sonucu: 'durusoft_composed' veya fallback nedeni
+   * (fallback_unknown_template | fallback_semantic_failure |
+   *  fallback_geometry_failure | fallback_invariant_failure |
+   *  fallback_whitelist_violation). Denenmediyse null.
+   */
+  composeMode: string | null
   warning?: string
 }
 
@@ -194,6 +208,10 @@ export async function renderSuratLabel(
     renderEngineVersion: ZPL_RENDERER_PACKAGE_VERSION,
     zebrashVersion: render.engine.zebrashVersion,
     augmentationStatus,
+    // Eski kayıtlarda alan yoktur; o artefaktlar composer'dan ÖNCE
+    // üretildiği için augmentation-only'dir.
+    renderContract: model.renderContract ?? 'official_augmented',
+    composeMode: model.composeMode ?? null,
     ...(augmentationStatus === 'success'
       ? {}
       : { warning: PRODUCT_LINE_FALLBACK_WARNING }),
