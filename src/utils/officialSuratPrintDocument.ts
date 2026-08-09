@@ -48,17 +48,29 @@ export function buildOfficialSuratPrintDocument(
     '<!doctype html><html lang="tr"><head><meta charset="utf-8" />',
     '<title>Surat Etiket</title><style>',
     '@page { size: 100mm 100mm; margin: 0; }',
+    // KÖK NEDEN (üretim, "2 sipariş seçtim 1 sayfa çıktı"):
+    // `body` TEK etiket boyunda (height:100mm) ve `overflow:hidden` idi.
+    // İlk `.surat-official-page` gövdeyi tamamen dolduruyor, 2..N sayfalar
+    // gövdenin DIŞINA taşıp KIRPILIYORDU. Render, DOM ve muhasebe N
+    // gösterirken Chrome yalnız 1 fiziksel sayfa basıyordu. jsdom layout
+    // uygulamadığı için DOM sayan testler bunu GÖREMİYORDU.
+    //
+    // Gövde artık sayfa sayısına göre BÜYÜR; kırpma YOKTUR. Etiket
+    // geometrisi (100 × 100 mm) DEĞİŞMEDİ — o `.surat-official-page`
+    // ve `@page` üzerinde durur.
     'html, body {',
-    '  width: 100mm; height: 100mm; margin: 0; padding: 0; overflow: hidden;',
-    '  background: #fff;',
+    '  width: 100mm; margin: 0; padding: 0; background: #fff;',
     '}',
     '.surat-official-page {',
     '  width: 100mm; height: 100mm; margin: 0; padding: 0; overflow: hidden;',
+    '  display: block; position: static;',
     '  page-break-inside: avoid; break-inside: avoid;',
+    // HER etiket KENDİ fiziksel sayfasıdır.
+    '  page-break-after: always; break-after: page;',
     '}',
-    // Son sayfadan SONRA page-break KONMAZ.
-    '.surat-official-page + .surat-official-page {',
-    '  page-break-before: always; break-before: page;',
+    // SONDA boş sayfa üretilmez.
+    '.surat-official-page:last-child {',
+    '  page-break-after: auto; break-after: auto;',
     '}',
     '.surat-official-page img {',
     '  display: block; width: 100mm; height: 100mm;',

@@ -348,3 +348,134 @@ test('REAL-BULK-WIRING-4: basılamaz sipariş diğerlerini DÜŞÜRMEZ', async (
     expect(ok?.shipment?.barcodeRaw).toBe(`^XA^FD${id}^FS^XZ`)
   }
 }, 30000)
+
+// ═══ CHROME ÇOK SAYFALI BASKI BELGESİ ════════════════════════════════════
+//
+// ÜRETİM HATASI: N PNG render ediliyor, DOM'da N bölüm var, N sipariş
+// "basıldı" sayılıyor — ama Chrome TEK sayfa basıyordu.
+//
+// KÖK NEDEN: belge CSS'inde `html, body { height: 100mm; overflow: hidden }`.
+// İlk etiket gövdeyi dolduruyor, 2..N sayfalar taşıp KIRPILIYORDU.
+// jsdom layout uygulamadığı için DOM sayan testler bunu göremiyordu; bu
+// yüzden aşağıdaki testler CSS SÖZLEŞMESİNİ doğrudan kilitler.
+
+async function buildDoc(pageCount: number) {
+  const { buildOfficialSuratPrintDocument } = await import(
+    '../utils/officialSuratPrintDocument'
+  )
+  return buildOfficialSuratPrintDocument(
+    Array.from({ length: pageCount }, (_, index) => ({
+      orderNumber: `ORD-${index}`,
+      imageBase64: PNG_BASE64,
+      mimeType: 'image/png',
+    })),
+  )
+}
+
+function styleOf(html: string): string {
+  return html.slice(html.indexOf('<style>'), html.indexOf('</style>'))
+}
+
+test('CHROME-BULK-DOCUMENT-1: gövde sayfaları KIRPMAZ (kök neden regresyonu)', async () => {
+  const doc = await buildDoc(2)
+  const style = styleOf(doc.html)
+
+  // GÖVDE artık tek etiket boyunda DEĞİL ve kırpmıyor.
+  const bodyRule = style.slice(style.indexOf('html, body'), style.indexOf('.surat-official-page'))
+  expect(bodyRule).not.toContain('height: 100mm')
+  expect(bodyRule).not.toContain('overflow: hidden')
+
+  // Etiket geometrisi KORUNDU.
+  expect(style).toContain('@page { size: 100mm 100mm; margin: 0; }')
+  expect(style).toContain('width: 100mm; height: 100mm')
+
+  // Sayfalar normal akışta, üst üste bindirilmiyor.
+  expect(style).toContain('position: static')
+  expect(style).not.toContain('position: absolute')
+  expect(style).not.toContain('position: fixed')
+
+  // HER etiket kendi fiziksel sayfası; SONDA boş sayfa yok.
+  expect(style).toContain('page-break-after: always')
+  expect(style).toContain('break-after: page')
+  expect(style).toContain('.surat-official-page:last-child')
+  expect(style).toContain('break-after: auto')
+
+  // İkinci sayfayı gizleyebilecek kural YOK.
+  expect(style).not.toContain('display: none')
+  expect(style).not.toContain(':not(:first-child)')
+})
+
+test('CHROME-BULK-DOCUMENT-2: 2 ve 3 sipariş → 2 ve 3 fiziksel bölüm', async () => {
+  for (const count of [2, 3]) {
+    const doc = await buildDoc(count)
+    expect(doc.pages).toHaveLength(count)
+    const sections = doc.html.match(/class="surat-official-page"/g) ?? []
+    expect(sections).toHaveLength(count)
+    const images = doc.html.match(/<img /g) ?? []
+    expect(images).toHaveLength(count)
+    // Her bölüm KENDİ siparişini taşır.
+    for (let index = 0; index < count; index += 1) {
+      expect(doc.html).toContain(`data-order="ORD-${index}"`)
+    }
+  }
+})
+
+test('CHROME-BULK-DOCUMENT-3: 6 fiziksel sayfa tek belgede ve SIRADA', async () => {
+  const { buildOfficialSuratPrintDocument } = await import(
+    '../utils/officialSuratPrintDocument'
+  )
+  const plan = [
+    ['A', 'A'],
+    ['B', 'B'],
+    ['B', 'B-detail'],
+    ['C', 'C'],
+    ['C', 'C-detail1'],
+    ['C', 'C-detail2'],
+  ]
+  const doc = buildOfficialSuratPrintDocument(
+    plan.map(([orderNumber]) => ({
+      orderNumber,
+      imageBase64: PNG_BASE64,
+      mimeType: 'image/png',
+    })),
+  )
+  expect(doc.pages).toHaveLength(6)
+  expect((doc.html.match(/class="surat-official-page"/g) ?? [])).toHaveLength(6)
+  // Gönderi bazında sıra korunur: ek sayfalar sona TOPLANMAZ.
+  const orders = Array.from(doc.html.matchAll(/data-order="([^"]+)"/g)).map(
+    (match) => match[1],
+  )
+  expect(orders).toEqual(['A', 'B', 'B', 'C', 'C', 'C'])
+})
+
+test('CHROME-BULK-DOCUMENT-4: eksik sayfa belgeye sızmaz, kalanlar basılır', async () => {
+  const { buildOfficialSuratPrintDocument } = await import(
+    '../utils/officialSuratPrintDocument'
+  )
+  const doc = buildOfficialSuratPrintDocument(
+    [
+      { orderNumber: 'A', imageBase64: PNG_BASE64, mimeType: 'image/png' },
+      { orderNumber: 'C', imageBase64: PNG_BASE64, mimeType: 'image/png' },
+    ],
+    [{ orderNumber: 'B', reason: 'render_pages_missing' }],
+  )
+  expect(doc.pages).toHaveLength(2)
+  expect((doc.html.match(/class="surat-official-page"/g) ?? [])).toHaveLength(2)
+  // Atlanan sipariş AÇIKÇA taşınır.
+  expect(doc.skipped.map((item) => item.orderNumber)).toEqual(['B'])
+})
+
+test('CHROME-BULK-DOCUMENT-5: baskı öncesi kardinalite kilidi var', async () => {
+  const module = await import('../utils/browserLabelPrint?raw')
+  const source = String((module as { default: string }).default)
+  // Beklenen ve gerçekleşen fiziksel sayfa sayısı KARŞILAŞTIRILIR.
+  expect(source).toContain('PRINT_DOCUMENT_CARDINALITY')
+  expect(source).toContain('actualPhysicalPages !== expectedPhysicalPages')
+  // Görüntüler yüklenmeden print çağrılmaz.
+  expect(source).toContain('waitForLabelImages')
+  // Belge iframe'e TEK kez yazılır; sipariş/sayfa döngüsü içinde write YOK.
+  // (host hazirligindaki placeholder yazimi ayridir ve sayfa uretmez.)
+  expect(source.match(/writePrintDocument\(frameDocument, printHtml\)/g) ?? []).toHaveLength(1)
+  // Tek baskı çağrısı noktası.
+  expect((source.match(/frameWindow\.print\(\)/g) ?? []).length).toBeLessThanOrEqual(1)
+})
