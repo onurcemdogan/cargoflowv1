@@ -136,66 +136,79 @@ function renderSettings(config: IntegrationConfig) {
 }
 const sharedSection = () =>
   screen.getByRole('region', { name: 'Kargo ve Etiket Varsayılanları' })
-const templateRadio = (name: string) =>
-  within(sharedSection()).getByRole('radio', {
-    name: new RegExp(name),
-  }) as HTMLInputElement
+// ── 1-4: AYAR EKRANI ───────────────────────────────────────────────────────
+//
+// ŞABLON SEÇİCİSİ AYARLAR EKRANINDAN KALDIRILDI.
+//
+// Ana aksiyon ("Kargo Etiketi Oluştur ve Yazdır") Sürat gönderileri için HER
+// ZAMAN resmî Sürat şablonunu kullanır ve organizasyon ayarı bunu EZEMEZ.
+// Kullanıcıya "varsayılan şablon" seçtirip ana aksiyonun onu yok sayması
+// yanıltıcı olurdu; bu yüzden seçici gösterilmez.
+//
+// OS-1..OS-3 seçicinin DAVRANIŞINI ölçüyordu ve konusu ortadan kalktı.
+// Yerlerine seçicinin BULUNMADIĞINI ve kayıtlı config değerinin BOZULMADAN
+// taşındığını kanıtlayan testler geldi. OS-4'ün asıl amacı (kaydetmek diğer
+// alanları ezmiyor) KORUNDU, yalnız etkileşim başka bir kontrole taşındı.
 
-// ── 1-5: AYAR ──────────────────────────────────────────────────────────────
-
-test('OS-1: ayar yoksa CargoFlow şablonu seçilidir', () => {
+test('OS-1: Ayarlar ekranında şablon seçicisi GÖSTERİLMEZ', () => {
   renderSettings(makeConfig())
-  expect(templateRadio('CargoFlow Etiket Şablonu').checked).toBe(true)
-  expect(templateRadio('Resmî Sürat Etiket Şablonu').checked).toBe(false)
-  const text = sharedSection().textContent ?? ''
-  expect(text).toContain(
-    'CargoFlow tarafından oluşturulan mevcut ürün detaylı etiket tasarımı.',
-  )
-  expect(text).toContain(
-    'Sürat Kargo’nun resmî etiket düzenini kullanır ve ürün bilgilerini alt alana ekler.',
-  )
-})
-
-test('OS-2: iki şablon da kaydedilebilir', async () => {
-  const user = userEvent.setup()
-  const { onSave } = renderSettings(makeConfig())
-  await user.click(templateRadio('Resmî Sürat Etiket Şablonu'))
-  await user.click(screen.getByRole('button', { name: 'Varsayılanları Kaydet' }))
+  const section = sharedSection()
   expect(
-    (onSave.mock.calls[0][0] as IntegrationConfig).desi?.labelPrintTemplate,
-  ).toBe('surat_official_zpl')
+    within(section).queryByRole('group', { name: 'Kargo Etiketi Şablonu' }),
+  ).toBeNull()
+  expect(
+    within(section).queryByRole('radio', {
+      name: /CargoFlow Etiket Şablonu/,
+    }),
+  ).toBeNull()
+  expect(
+    within(section).queryByRole('radio', {
+      name: /Resmî Sürat Etiket Şablonu/,
+    }),
+  ).toBeNull()
 })
 
-test('OS-3: kayıtlı değer reload sonrası korunur, bilinmeyen değer düşer', () => {
-  const { unmount } = render(<div />)
-  unmount()
-  renderSettings(makeConfig('surat_official_zpl'))
-  expect(templateRadio('Resmî Sürat Etiket Şablonu').checked).toBe(true)
-  document.body.innerHTML = ''
-  // AÇIKÇA kaydedilmiş eski şablon KORUNUR — varsayılan Sürat'e dönse bile
-  // kullanıcının seçimi sessizce ezilmez (normalize regresyonu).
-  document.body.innerHTML = ''
-  renderSettings(makeConfig('cargoflow_html'))
-  expect(templateRadio('CargoFlow Etiket Şablonu').checked).toBe(true)
-  // BİLİNMEYEN değer VARSAYILANA düşer. Varsayılan artık resmî Sürat
-  // şablonudur: ana aksiyon ek seçim istemeden Sürat akışını kullanır.
-  document.body.innerHTML = ''
-  renderSettings(makeConfig('bilinmeyen'))
-  expect(templateRadio('Resmî Sürat Etiket Şablonu').checked).toBe(true)
+test('OS-2: kayıtlı config değeri seçici olmadan da BOZULMADAN taşınır', async () => {
+  // Geriye uyumluluk: eski `labelPrintTemplate` değeri config modelinde
+  // KORUNUR. DB migration YOKTUR; kaydetmek onu silmez veya değiştirmez.
+  const user = userEvent.setup()
+  for (const stored of ['cargoflow_html', 'surat_official_zpl']) {
+    document.body.innerHTML = ''
+    const { onSave } = renderSettings(makeConfig(stored))
+    await user.click(
+      screen.getByRole('button', { name: 'Varsayılanları Kaydet' }),
+    )
+    const saved = onSave.mock.calls[0][0] as IntegrationConfig
+    expect(saved.desi?.labelPrintTemplate).toBe(stored)
+  }
 })
 
-test('OS-4: şablon değişimi DİĞER settings alanlarını EZMEZ', async () => {
+test('OS-3: kaydetmek şablon değerini UYDURMAZ ve DEĞİŞTİRMEZ', async () => {
+  // Seçici olmadığı için kaydetmek bu alana hiçbir şey yazmamalı: giriş ne
+  // ise çıkış da o olmalı (uydurma değer YOK, sessiz değişiklik YOK).
   const user = userEvent.setup()
   const config = makeConfig()
   const { onSave } = renderSettings(config)
-  await user.click(templateRadio('Resmî Sürat Etiket Şablonu'))
+  await user.click(screen.getByRole('button', { name: 'Varsayılanları Kaydet' }))
+  const saved = onSave.mock.calls[0][0] as IntegrationConfig
+  expect(saved.desi?.labelPrintTemplate).toBe(config.desi?.labelPrintTemplate)
+})
+
+test('OS-4: kaydetmek DİĞER settings alanlarını EZMEZ', async () => {
+  const user = userEvent.setup()
+  const config = makeConfig()
+  const { onSave } = renderSettings(config)
+  // Etkileşim şablon radio'sundan desi anahtarına taşındı; iddia aynı.
+  await user.click(
+    within(sharedSection()).getByRole('switch', { name: /Ürün adedine göre/i }),
+  )
   await user.click(screen.getByRole('button', { name: 'Varsayılanları Kaydet' }))
   const saved = onSave.mock.calls[0][0] as IntegrationConfig
   expect(saved.desi?.defaultUnitDesi).toBe(2)
-  expect(saved.desi?.multiplyByItemQuantity).toBe(false)
   expect(saved.trendyol).toEqual(config.trendyol)
   expect(saved.surat.kullaniciAdi).toBe(config.surat.kullaniciAdi)
 })
+
 
 test('OS-5: geçici seçim organizasyon ayarını DEĞİŞTİRMEZ', () => {
   // Karar fonksiyonu override'ı yalnız o çalışmaya uygular.

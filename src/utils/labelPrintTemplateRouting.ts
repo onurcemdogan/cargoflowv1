@@ -80,10 +80,27 @@ export interface LabelPrintTemplateDecision {
   blockedReason?: string
 }
 
+/**
+ * AKSİYON NİYETİ — iki farklı kullanıcı niyeti AYRI otoriteye sahiptir.
+ *
+ *   'primary'  → "Kargo Etiketi Oluştur ve Yazdır" ana aksiyonu.
+ *                Sürat gönderileri için HER ZAMAN resmî Sürat şablonu.
+ *                Organizasyon ayarı / eski tercih bu kararı EZEMEZ.
+ *   'advanced' → Gelişmiş İşlemler içinden AÇIK şablon seçimi.
+ *                Yalnız o çalışmaya uygulanır, kalıcı tercih yazmaz.
+ */
+export type LabelPrintIntent = 'primary' | 'advanced'
+
 export interface LabelPrintTemplateInput {
+  /**
+   * Organizasyon ayarı. YALNIZ 'advanced' niyetinde okunur; 'primary'
+   * niyetinde bilinçli olarak YOK SAYILIR (bkz. resolver).
+   */
   organizationTemplate?: unknown
   templateOverride?: LabelPrintTemplate
   orders: CargoOrder[]
+  /** Verilmezse geriye uyumluluk için 'advanced' varsayılır. */
+  intent?: LabelPrintIntent
 }
 
 /**
@@ -102,9 +119,18 @@ export function resolveLabelPrintTemplateDecision(
     input.organizationTemplate,
   )
   const overridden = input.templateOverride !== undefined
+  // ANA AKSİYON, ORGANİZASYON AYARINI OKUMAZ.
+  //
+  // Üretimde görülen hata tam olarak buydu: kayıtlı `cargoflow_html` tercihi
+  // ana butonu sessizce eski şablona düşürüyordu. Kullanıcıya "varsayılan
+  // şablon" seçtirip ana aksiyonun onu yok sayması yanıltıcı olacağı için
+  // ayar normal Ayarlar ekranından da KALDIRILDI; burada yalnız açık
+  // (advanced) seçim yolunda geriye uyumluluk için okunmaya devam eder.
   const requested = overridden
     ? normalizeLabelPrintTemplate(input.templateOverride)
-    : organizationTemplate
+    : input.intent === 'primary'
+      ? DEFAULT_LABEL_PRINT_TEMPLATE
+      : organizationTemplate
 
   if (requested !== 'surat_official_zpl') {
     return { template: 'cargoflow_html', overridden, fallbackApplied: false }

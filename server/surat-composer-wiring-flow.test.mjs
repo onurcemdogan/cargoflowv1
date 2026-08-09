@@ -444,3 +444,42 @@ test('CW-14: uzun aktarma adında ölçek küçülür, quiet-zone korunur', asyn
     )
   }
 })
+
+// ═══ CW-15: PRIMARY ŞABLON NİYETİ KABLOLAMASI ════════════════════════════
+//
+// Bu oturumda İKİ KEZ "yardımcı doğru, kablolama yanlış" hatası yaşandı:
+// composer üretimde hiç çağrılmadı, sonra ana buton eski şablonu açtı.
+// Her ikisinde de birim testleri geçiyordu çünkü çağıranın ne gönderdiğini
+// hiçbir test iddia etmiyordu. Bu test tam olarak onu kilitler.
+
+test('CW-15: App primary/advanced niyetini AÇIKÇA geçirir', () => {
+  const app = readFileSync(join(here, '..', 'src', 'App.tsx'), 'utf8')
+
+  // Override YOKSA niyet PRIMARY, VARSA advanced.
+  assert.match(
+    app,
+    /intent:\s*templateOverride === undefined \? 'primary' : 'advanced'/,
+    'resolveRunLabelTemplate niyeti açıkça geçirmeli',
+  )
+  // Araç çubuğu göstergesi organizasyon ayarından DEĞİL, primary şablondan
+  // türetilmeli (aksi halde "CargoFlow" yazarken Sürat basılırdı).
+  assert.match(
+    app,
+    /const labelPrintTemplateIndicator = describeLabelPrintTemplate\(\s*DEFAULT_LABEL_PRINT_TEMPLATE,\s*\)/,
+  )
+  assert.equal(
+    /describeLabelPrintTemplate\(\s*organizationLabelPrintTemplate,\s*\)/.test(app),
+    false,
+    'gösterge organizasyon ayarını YAZMAMALI',
+  )
+  // Ayarlar ekranındaki şablon seçicisi KALDIRILDI.
+  const settings = readFileSync(
+    join(here, '..', 'src', 'pages', 'IntegrationsPage.tsx'),
+    'utf8',
+  )
+  assert.equal(
+    settings.includes('name="label-print-template"'),
+    false,
+    'Ayarlar ekranında şablon radio grubu OLMAMALI',
+  )
+})
