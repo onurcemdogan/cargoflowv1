@@ -139,7 +139,13 @@ function assertComposedMarkers(printZpl) {
     printZpl.includes(`^FT64,417^A@N,15,10,TT0003M_^FH${BS}^CI17^F8^FD`),
     'bold adres çift vuruşu',
   )
-  assert.ok(printZpl.includes(`^BQN,2,5^FDLA,${VERIFIED_727}^FS`), 'QR')
+  // Ölçek UYARLANABİLİR (mag 5 ideal, uzun aktarma adında mag 4).
+  // İddia ölçekten BAĞIMSIZ, gövde ise EXACT doğrulanmış değerdir.
+  assert.match(
+    printZpl,
+    new RegExp("\\^BQN,2,[45]\\^FDLA," + VERIFIED_727 + "\\^FS"),
+    'QR',
+  )
   assert.equal((printZpl.match(/\^BQ/g) ?? []).length, 1)
   assert.match(printZpl, /\^FB\d+,\d+,\d+,L/, 'ürün footer’ı')
 }
@@ -285,7 +291,7 @@ test('CW-8: GEÇERLİ 727 + QR geometri çakışması → official_augmented', (
   // etiketi üretmek YASAK → composer tümüyle reddeder.
   const crowded = zpl.replace(
     /\^FT220,705\^A0N,70,50\^FH.\^FD[^^]*\^FS/,
-    `^FT220,705^A0N,70,50^FH${BS}^FDISTANBUL ANADOLU AKT^FS`,
+    `^FT220,705^A0N,70,50^FH${BS}^FDISTANBUL ANADOLU AKTARMA MERKEZI^FS`,
   )
   assert.notEqual(crowded, zpl, 'kurgu gerçek fixture ile eşleşmeli')
   const artifact = repo.attachPrintZplArtifact(
@@ -482,4 +488,69 @@ test('CW-15: App primary/advanced niyetini AÇIKÇA geçirir', () => {
     false,
     'Ayarlar ekranında şablon radio grubu OLMAMALI',
   )
+})
+
+// ═══ CW-16..CW-17: ÜÇ KOLON DENGESİ / UZUN AKTARMA ADI ═══════════════════
+//
+// ÜRETİM VAKASI: transferCenter = "DIYARBAKIR AKTARMA" (18 karakter).
+// Ölçüm: tahmini genişlik 489 → sağ uç 709. mag5 için gereken sol kenar 729
+// (max 674), mag4 için 725 (max 699) → İKİ ADAY DA elenip composer tümüyle
+// fallback'e düşüyordu; etikette QR, bold adres ve küçük barkod metni yoktu.
+//
+// Çözüm: orta kolon (rota + aktarma) sağ sınırı QR quiet-zone'undan önce
+// bitmeli. Aktarma metninin FONT GENİŞLİĞİ, QR sığana kadar kademeli daraltılır.
+// Gövde, yükseklik ve konum DEĞİŞMEZ.
+
+test('CW-16: ÜRETİM VAKASI "DIYARBAKIR AKTARMA" artık composed üretir', () => {
+  const artifact = repo.attachPrintZplArtifact(
+    carrierPayload(withTransferCenter('DIYARBAKIR AKTARMA')),
+    ITEMS,
+    NOW,
+  ).printZplArtifact
+  assert.equal(artifact.renderContract, 'durusoft_composed')
+  assert.equal(artifact.composeMode, 'durusoft_composed')
+  // DÖRTLÜ AYNI ANDA: küçük barkod metni + bold adres + QR + footer.
+  assertComposedMarkers(artifact.printZpl)
+  // Aktarma GÖVDESİ değişmez; yalnız font genişliği daralır.
+  assert.ok(artifact.printZpl.includes('^FDDIYARBAKIR AKTARMA^FS'))
+  assert.match(artifact.printZpl, /\^FT220,705\^A0N,70,(4[0-9])\^FH/)
+  assert.equal(artifact.printZpl.includes('^FT220,705^A0N,70,50^FH'), false)
+})
+
+test('CW-17: yaygın aktarma adları compose olur, aşırı uzun ad fallback kalır', async () => {
+  const { composeSuratDurusoftLabel } = await load(
+    '/src/utils/suratDurusoftComposer.ts')
+  const cases = [
+    ['VAN AKTARMA', true],
+    ['GEBZE AKTARMA', true],
+    ['IKITELLI AKTARMA', true],
+    ['ERZURUM AKTARMA', true],
+    ['DIYARBAKIR AKTARMA', true],
+    ['ISTANBUL ANADOLU AKTARMA MERKEZI', false],
+  ]
+  for (const [name, shouldCompose] of cases) {
+    const result = composeSuratDurusoftLabel(withTransferCenter(name), {
+      cargoTrackingNumber: VERIFIED_727,
+    })
+    assert.equal(result.composed, shouldCompose, `${name}: ${result.reason ?? 'ok'}`)
+    if (!shouldCompose) {
+      assert.equal(result.mode, 'fallback_geometry_failure')
+      continue
+    }
+    const { qrBox, transferFontWidth, transferFontWidthNative } = result.diagnostics
+    // Daraltma YALNIZ gerektiğinde ve YALNIZ daralma yönünde.
+    assert.ok(transferFontWidth <= transferFontWidthNative, name)
+    assert.ok(transferFontWidth >= 40, `${name}: okunabilirlik tabanı`)
+    // ÜÇ KOLON: orta blok QR'ın quiet-zone'undan ÖNCE biter.
+    const { estimateA0Width } = await load('/src/utils/suratDurusoftComposer.ts')
+    const transferRight = 220 + estimateA0Width(name, transferFontWidth)
+    const quiet = 4 * result.diagnostics.qrMagnification
+    assert.ok(
+      transferRight + quiet <= qrBox.x,
+      `${name}: orta kolon QR'a taşıyor (${transferRight} + ${quiet} > ${qrBox.x})`,
+    )
+    // QR etiket içinde ve DataMatrix'in sağında.
+    assert.ok(qrBox.x > 199, `${name}: QR DataMatrix'in sağında`)
+    assert.ok(qrBox.x + qrBox.size + quiet <= 799, `${name}: sağ quiet-zone`)
+  }
 })

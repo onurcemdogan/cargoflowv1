@@ -20,6 +20,10 @@
 //      3. mevcut adres satırlarından türetilmiş bold tekrar alanları
 //      4. doğrulanmış 727 değerinden sağ-alt ^BQ QR (+ onu çevreleyen
 //         geçici ^BY durum komutları)
+//      5. aktarma merkezi metninin FONT GENİŞLİĞİNİN daraltılması — YALNIZ
+//         sağ kolona QR sığdırmak için, YALNIZ gerektiği kadar ve yalnız
+//         okunabilirlik tabanına kadar. GÖVDE (^FD) DEĞİŞMEZ, yükseklik
+//         DEĞİŞMEZ, konum DEĞİŞMEZ.
 //    Bunların dışında HİÇBİR taşıyıcı komutu değişmez: beklenmeyen mutasyon
 //    veya silme sayısı 0 olmalıdır (`diffZplAgainstSource`).
 //
@@ -48,6 +52,7 @@ import {
   BOLD_ADDRESS_X,
   extractSuratSemanticFields,
   resolveSuratSemanticModel,
+  type SuratFieldExpectations,
   type SuratSemanticKey,
   type SuratSemanticModel,
 } from './suratSemanticParser.ts'
@@ -110,6 +115,22 @@ const TRUETYPE_ADVANCE_DOTS = 13
 
 /** Bold adres bloğunun sağ sınırı (alıcı kutusunun sağ dikey çizgisi 773). */
 const BOLD_ADDRESS_RIGHT_LIMIT = 765
+
+/**
+ * ALT BÖLÜM ÜÇ KOLON: [DataMatrix] [rota + aktarma] [QR]
+ *
+ * Orta kolonun sağ sınırı QR'ın quiet-zone'undan ÖNCE bitmelidir. Aktarma
+ * merkezi adı uzun olduğunda metin bu sınırı aşar ve QR'a yer kalmaz —
+ * üretimde "DIYARBAKIR AKTARMA" tam olarak bunu yaşattı (sağ uç 709,
+ * mag5 için gereken sol kenar 729 > 674).
+ *
+ * Çözüm: aktarma metninin FONT GENİŞLİĞİ, QR sığana kadar kademeli daraltılır.
+ * Gövde, yükseklik ve konum DEĞİŞMEZ; yalnız `^A0` genişlik parametresi.
+ * Taban değeri okunabilirlik için yerleştirilmiştir: 70 dot yükseklikte 40
+ * genişlik hâlâ iri ve net bir başlıktır (referanstaki kısa adlar zaten
+ * daraltmaya HİÇ girmez, yerel görünüm korunur).
+ */
+const TRANSFER_FONT_WIDTH_STEPS: readonly number[] = [46, 43, 40]
 
 /**
  * QR ADAYLARI — deterministik arama sırası.
@@ -231,6 +252,9 @@ export interface SuratComposeDiagnostics {
   /** Seçilen adayın magnification'ı ve aday listesindeki sırası. */
   readonly qrMagnification: number | null
   readonly qrCandidateIndex: number | null
+  /** Aktarma metninin uygulanan font genişliği ve özgün değeri. */
+  readonly transferFontWidth: number
+  readonly transferFontWidthNative: number
   /**
    * Kaynağa göre fark raporu. Beklenen değerler:
    *   deletions            = 0 (taşıyıcı komutu ASLA silinmez)
@@ -537,31 +561,49 @@ export function composeSuratDurusoftLabel(
   // Komşu alanların İŞGAL KUTULARI, semantic geometriden türetilir.
   // Karakter sayısına bağlı sabit eşik YOKTUR: her kutu kendi metni, kendi
   // font genişliği ve kendi `^FT` taban çizgisinden hesaplanır.
-  const occupancy = [route, transfer, fields.deliveryType, fields.parcelCount]
-    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
-    .map((entry) => {
-      const font = entry.field.font
-      const height = font?.height ?? 0
-      return {
-        right: entry.field.x + estimateA0Width(entry.text, font?.width ?? 0),
-        top: entry.field.y - height,
-        bottom: entry.field.y,
-      }
-    })
-  // DataMatrix sol alt köşededir; sağ-alt QR ile yarışmaz ama sözleşme gereği
-  // işgal listesine DAHİL EDİLİR.
-  if (fields.dataMatrixPayload) {
-    occupancy.push({
-      right: fields.dataMatrixPayload.field.x + DATA_MATRIX_MAX_WIDTH,
-      top: fields.dataMatrixPayload.field.y - DATA_MATRIX_MAX_HEIGHT,
-      bottom: fields.dataMatrixPayload.field.y,
-    })
+  const transferNativeWidth = transfer.field.font?.width ?? 0
+  const buildOccupancy = (transferWidth: number) => {
+    const boxes = [route, transfer, fields.deliveryType, fields.parcelCount]
+      .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+      .map((entry) => {
+        const font = entry.field.font
+        const height = font?.height ?? 0
+        const width =
+          entry === transfer ? transferWidth : (font?.width ?? 0)
+        return {
+          right: entry.field.x + estimateA0Width(entry.text, width),
+          top: entry.field.y - height,
+          bottom: entry.field.y,
+        }
+      })
+    // DataMatrix sol alt köşededir; sağ-alt QR ile yarışmaz ama sözleşme
+    // gereği işgal listesine DAHİL EDİLİR.
+    if (fields.dataMatrixPayload) {
+      boxes.push({
+        right: fields.dataMatrixPayload.field.x + DATA_MATRIX_MAX_WIDTH,
+        top: fields.dataMatrixPayload.field.y - DATA_MATRIX_MAX_HEIGHT,
+        bottom: fields.dataMatrixPayload.field.y,
+      })
+    }
+    return boxes
   }
 
-  const placement = resolveQrPlacement(
-    occupancy,
-    fields.dataMatrixPayload?.field.x ?? SURAT_GRID.boxLeft,
-  )
+  // Önce ÖZGÜN tipografiyle dene; yalnız QR sığmıyorsa aktarma metnini
+  // kademeli daralt. Kısa adlarda hiç daraltma OLMAZ.
+  const dataMatrixLeft = fields.dataMatrixPayload?.field.x ?? SURAT_GRID.boxLeft
+  const widthSteps = [
+    transferNativeWidth,
+    ...TRANSFER_FONT_WIDTH_STEPS.filter((step) => step < transferNativeWidth),
+  ]
+  let placement: SuratQrPlacement | null = null
+  let transferWidth = transferNativeWidth
+  for (const candidateWidth of widthSteps) {
+    placement = resolveQrPlacement(buildOccupancy(candidateWidth), dataMatrixLeft)
+    if (placement) {
+      transferWidth = candidateWidth
+      break
+    }
+  }
 
   // E) DOĞRULANMIŞ 727 VARSA QR ZORUNLUDUR. Hiçbir aday güvenli değilse
   //    QR'sız kısmi DuruSoft etiketi üretmek YERİNE composer tümüyle reddeder.
@@ -634,6 +676,28 @@ export function composeSuratDurusoftLabel(
     }
   }
 
+  // (whitelist 5) Aktarma metninin font GENİŞLİĞİ daraltıldıysa uygula.
+  // Yükseklik, konum ve gövde DEĞİŞMEZ.
+  const transferFontCommand = transfer.field.fontCommand
+  if (
+    qrFits &&
+    transferWidth !== transferNativeWidth &&
+    transferFontCommand &&
+    transfer.field.font
+  ) {
+    const { orientation, height } = transfer.field.font
+    edits.push({
+      type: 'replace',
+      target: transferFontCommand,
+      commands: [
+        {
+          name: transferFontCommand.name,
+          args: `${orientation ?? 'N'},${height},${transferWidth}`,
+        },
+      ],
+    })
+  }
+
   const pq = document.commands.find((command) => command.name === 'PQ')
   const xz = document.commands.find((command) => command.name === 'XZ')
   const anchor = pq ?? xz
@@ -654,15 +718,34 @@ export function composeSuratDurusoftLabel(
       sourceZpl,
     )
   }
-  const unexpected = diff.mutations.filter(
-    (mutation) =>
-      !(
-        mutation.name === 'BC' &&
-        mutation.from.startsWith('N,,Y,N') &&
-        mutation.to.startsWith('N,,N,N') &&
-        mutation.from.slice('N,,Y,N'.length) === mutation.to.slice('N,,N,N'.length)
-      ),
-  )
+  const allowedTransferFont =
+    transferWidth !== transferNativeWidth && transfer.field.font
+      ? {
+          from: `${transfer.field.font.orientation ?? 'N'},${transfer.field.font.height},${transferNativeWidth}`,
+          to: `${transfer.field.font.orientation ?? 'N'},${transfer.field.font.height},${transferWidth}`,
+        }
+      : null
+  const unexpected = diff.mutations.filter((mutation) => {
+    // (1) Code128 yorum satırı bayrağı Y → N
+    if (
+      mutation.name === 'BC' &&
+      mutation.from.startsWith('N,,Y,N') &&
+      mutation.to.startsWith('N,,N,N') &&
+      mutation.from.slice('N,,Y,N'.length) === mutation.to.slice('N,,N,N'.length)
+    ) {
+      return false
+    }
+    // (5) Aktarma metninin font GENİŞLİĞİ — yalnız DARALMA, aynı yükseklik.
+    if (
+      allowedTransferFont &&
+      mutation.name === transferFontCommand?.name &&
+      mutation.from === allowedTransferFont.from &&
+      mutation.to === allowedTransferFont.to
+    ) {
+      return false
+    }
+    return true
+  })
   if (unexpected.length > 0) {
     return fallback(
       'fallback_whitelist_violation',
@@ -672,7 +755,9 @@ export function composeSuratDurusoftLabel(
   }
 
   // ── B) SEMANTIC INVARIANT DOĞRULAMASI ─────────────────────────────────
-  const verdict = verifySuratOutputInvariants(semantic, outputZpl, qr.payload)
+  const verdict = verifySuratOutputInvariants(semantic, outputZpl, qr.payload, {
+    transferFontWidth: transferWidth,
+  })
   if (!verdict.ok) {
     return fallback('fallback_invariant_failure', verdict.reason, sourceZpl)
   }
@@ -696,6 +781,8 @@ export function composeSuratDurusoftLabel(
       qrRenderYOffset: QR_RENDER_Y_OFFSET,
       qrMagnification: qrFits && placement ? placement.magnification : null,
       qrCandidateIndex: qrFits && placement ? placement.candidateIndex : null,
+      transferFontWidth: qrFits ? transferWidth : transferNativeWidth,
+      transferFontWidthNative: transferNativeWidth,
       diff: {
         mutations: diff.mutations.length,
         allowedMutations: diff.mutations.length,
@@ -720,8 +807,9 @@ export function verifySuratOutputInvariants(
   source: SuratSemanticModel,
   outputZpl: string,
   expectedQrPayload: string | null = null,
+  expectations: SuratFieldExpectations = {},
 ): SuratInvariantVerdict {
-  const extraction = extractSuratSemanticFields(outputZpl)
+  const extraction = extractSuratSemanticFields(outputZpl, expectations)
   if (extraction.errors.length > 0) {
     return { ok: false, reason: `çıktıda alan çözülemedi: ${extraction.errors[0]}` }
   }
