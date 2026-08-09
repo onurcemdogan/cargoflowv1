@@ -832,3 +832,112 @@ test('BULK-8: çok sayfalı gönderi mükerrer sayılmaz', async () => {
   expect(result.printedOrderNumbers).toEqual(['A', 'B', 'C'])
   expect(new Set(result.printedOrderNumbers).size).toBe(3)
 }, 30000)
+
+// ═══ DISPATCH: "BASKIYA GÖNDERİLDİ" MUHASEBESİ ════════════════════════════
+//
+// `persistLabelPrinted` (POST /api/orders/:id/label-printed) YALNIZ
+// `printResult.jobs[].ok === true` olan siparişler için, SİPARİŞ BAŞINA BİR
+// KEZ çağrılır. Bu muhasebenin girdisi `resolveBrowserPrintJobs`'tur ve o da
+// `debug.printedOrderNumbers` kümesini okur.
+//
+// TERMİNOLOJİ: tarayıcı baskısında fiziksel yazıcı onayı YOKTUR; bu yüzden
+// kullanıcıya "Yazdırıldı" DEĞİL "Baskıya Gönderildi" denir.
+
+/** Baskı kararını üreten saf fonksiyon — dispatch muhasebesinin girdisi. */
+async function dispatchDecision(orders: CargoOrder[]) {
+  const { printOfficialSuratLabels } = await import(
+    '../services/officialSuratPrintRunner'
+  )
+  const { resolveBrowserPrintJobs } = await import(
+    '../providers/printing/BrowserDownloadPrintProvider'
+  )
+  const run = await printOfficialSuratLabels(orders)
+  const jobs = resolveBrowserPrintJobs(
+    run.debug,
+    orders.map((order) => order.orderNumber),
+  ).jobs
+  // Üretimdeki kapı: `successfulPrintableOrders` bu kümeden türer ve her
+  // öğesi için persistLabelPrinted BİR KEZ çağrılır.
+  const dispatched = jobs.filter((job) => job.ok).map((job) => job.orderNumber)
+  return { run, jobs, dispatched }
+}
+
+test('DISPATCH-1: 3 fiziksel sayfalı TEK sipariş → tam 1 dispatch', async () => {
+  stubFetch(() => multiPageArtifact(2))
+  printHost()
+  const { run, dispatched } = await dispatchDecision([suratOrder()])
+  // Sayfa sayısı 3 ama SİPARİŞ muhasebesi 1.
+  expect(run.debug.printedOrderNumbers).toEqual(['1000000000000001'])
+  expect(dispatched).toEqual(['1000000000000001'])
+  expect(dispatched).toHaveLength(1)
+}, 20000)
+
+test('DISPATCH-2: taşıyıcı fallback başarıyla gönderildi → tam 1 dispatch', async () => {
+  stubFetch(() =>
+    multiPageArtifact(0, {
+      productDetailStatus: 'failed',
+      printArtifactStatus: 'fallback_carrier',
+      warning: 'Ürün detay etiketi hazırlanamadı.',
+    }),
+  )
+  printHost()
+  const { run, dispatched } = await dispatchDecision([suratOrder()])
+  // Ürün detayı eksik olsa da ana etiket gönderildi → durum geçişi YAPILIR.
+  expect(dispatched).toEqual(['1000000000000001'])
+  expect(run.productDetailWarnings).toHaveLength(1)
+  expect(run.skipped).toEqual([])
+}, 20000)
+
+test('DISPATCH-3: atlanan/geçersiz gönderi → 0 dispatch', async () => {
+  stubFetch(() => ({
+    ok: false,
+    code: 'label_not_ready',
+    message: 'Etiket yok.',
+  }))
+  printHost()
+  const { run, jobs, dispatched } = await dispatchDecision([suratOrder()])
+  expect(dispatched).toEqual([])
+  expect(jobs.every((job) => job.ok === false)).toBe(true)
+  expect(run.debug.printedOrderNumbers).toEqual([])
+  // Sessiz atlama YOK: sebep taşınır.
+  expect(run.skipped).toHaveLength(1)
+}, 20000)
+
+test('DISPATCH-4: toplu 49 basılan + 1 atlanan → tam 49 TEKİL geçiş', async () => {
+  const orders = Array.from({ length: 50 }, (_, index) =>
+    suratOrder({
+      id: `o-${index}`,
+      orderNumber: `ORD-${index}`,
+    } as Partial<CargoOrder>),
+  )
+  stubFetch((body) => {
+    if (body.orderId === 'o-49') {
+      return { ok: false, code: 'label_not_ready', message: 'Etiket yok.' }
+    }
+    // Her geçerli gönderi 3 FİZİKSEL sayfa üretir.
+    return multiPageArtifact(2)
+  })
+  printHost()
+  const { run, dispatched } = await dispatchDecision(orders)
+  // 49 × 3 = 147 fiziksel sayfa, ama 49 SİPARİŞ geçişi.
+  expect(dispatched).toHaveLength(49)
+  expect(new Set(dispatched).size).toBe(49)
+  expect(dispatched).not.toContain('ORD-49')
+  // MÜKERRER ÇAĞRI YOK: dedupe sıra koruyarak yapılır.
+  expect(run.debug.printedOrderNumbers).toEqual(
+    orders.slice(0, 49).map((order) => order.orderNumber),
+  )
+  // Atlanan AÇIKÇA raporlanır.
+  expect(run.skipped.map((item) => item.orderNumber)).toEqual(['ORD-49'])
+}, 60000)
+
+test('DISPATCH-5: kullanıcı metni "Baskıya Gönderildi" — fiziksel başarı iddiası YOK', async () => {
+  const source = await import('../services/orderWorkflowService?raw')
+  const text = String((source as { default: string }).default)
+  // Baskı sonucu mesajları artık kesin fiziksel başarı İDDİA ETMEZ.
+  expect(text).toContain('etiket baskıya gönderildi')
+  expect(text).not.toContain('etiket yazdırıldı')
+  expect(text).not.toContain('etiket tekrar basıldı.')
+  // Kanonik durum ve uç DEĞİŞMEDİ (migration yok).
+  expect(text).toContain('label-printed')
+})

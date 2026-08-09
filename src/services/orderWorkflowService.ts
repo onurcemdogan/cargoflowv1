@@ -2657,8 +2657,8 @@ export class OrderWorkflowService {
         action: 'Etiket basıldı',
         level: 'success',
         details: isReprint
-          ? `Etiket tekrar basıldı. Toplam baskı: ${printCount}.`
-          : 'Etiket Zebra yazıcıya başarıyla gönderildi.',
+          ? `Etiket tekrar baskıya gönderildi. Toplam baskı: ${printCount}.`
+          : 'Etiket baskıya gönderildi.',
         orderNumber: currentOrder.orderNumber,
       })
     }
@@ -2685,12 +2685,12 @@ export class OrderWorkflowService {
             : 'success',
         message: `${
           failedPrintableOrders.length > 0
-            ? `${successfulPrintableOrders.length} etiket yazdırıldı, ${failedPrintableOrders.length} etiket gönderilemedi. Başarısız etiketlerin durumu değiştirilmedi.`
+            ? `${successfulPrintableOrders.length} etiket baskıya gönderildi, ${failedPrintableOrders.length} etiket gönderilemedi. Başarısız etiketlerin durumu değiştirilmedi.`
             : successfulPrintableOrders.some(
                   (order) => order.labelStatus === 'PRINTED',
                 )
-              ? `${successfulPrintableOrders.length} etiket tekrar basıldı.`
-              : `${successfulPrintableOrders.length} etiket yazdırıldı.`
+              ? `${successfulPrintableOrders.length} etiket tekrar baskıya gönderildi.`
+              : `${successfulPrintableOrders.length} etiket baskıya gönderildi.`
         }${skippedSummary}`,
         bulkActionDebug: buildBulkActionDebug(
           'PRINT_LABELS',
