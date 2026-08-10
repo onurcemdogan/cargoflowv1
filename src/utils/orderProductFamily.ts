@@ -265,3 +265,132 @@ export function buildRepeatedProductOrderIds(
   }
   return repeated
 }
+
+// ═══ AYNI ÜRÜN SİPARİŞİ — GÖRÜNÜM GRUPLAMASI ══════════════════════════════
+//
+// YALNIZ SUNUM. Filtre SEMANTİĞİ ve KAPSAMI DEĞİŞMEZ: hangi siparişlerin
+// görüneceğine `buildRepeatedProductOrderIds` karar verir, burada yalnız
+// SIRALAMA yapılır ki aynı ürün ailesinin farklı bedenleri yan yana dursun.
+//
+// Sipariş TEK gruba atanır (çok ürünlü sipariş listede bir kez görünür):
+// kendi aileleri arasında kapsamda EN ÇOK siparişi olan aile birincil kabul
+// edilir; eşitlikte aile anahtarı artan sırada. Bu kural kalem sırasından
+// BAĞIMSIZDIR → deterministiktir.
+
+export interface SameProductGroupHeader {
+  key: string
+  productName: string
+  color: string
+  /** Gruptaki DISTINCT sipariş sayısı. */
+  orderCount: number
+  /** Grubun bu ailedeki toplam adedi. */
+  totalQuantity: number
+  /** Artan sıralı beden listesi (beden GRUP ANAHTARINA girmez). */
+  sizes: string[]
+}
+
+export interface SameProductGroupingResult {
+  /** Aynı aile bitişik olacak şekilde YENİDEN SIRALANMIŞ liste. */
+  orders: CargoOrder[]
+  /** orderId → ait olduğu grup başlığı (her sipariş için doludur). */
+  headerByOrderId: Map<string, SameProductGroupHeader>
+  groups: SameProductGroupHeader[]
+}
+
+export function groupOrdersBySameProductFamily(
+  orders: CargoOrder[],
+): SameProductGroupingResult {
+  const familyOrderIds = new Map<string, Set<string>>()
+  for (const order of orders) {
+    const orderId = orderIdentity(order)
+    if (!orderId) continue
+    for (const item of order.items ?? []) {
+      const key = resolveProductFamilyKey(item)
+      const bucket = familyOrderIds.get(key) ?? new Set<string>()
+      bucket.add(orderId)
+      familyOrderIds.set(key, bucket)
+    }
+  }
+
+  const primaryKeyByOrderId = new Map<string, string>()
+  for (const order of orders) {
+    const orderId = orderIdentity(order)
+    if (!orderId) continue
+    let bestKey = ''
+    let bestCount = -1
+    for (const item of order.items ?? []) {
+      const key = resolveProductFamilyKey(item)
+      const count = familyOrderIds.get(key)?.size ?? 0
+      if (count > bestCount || (count === bestCount && key < bestKey)) {
+        bestKey = key
+        bestCount = count
+      }
+    }
+    primaryKeyByOrderId.set(orderId, bestKey || `order:${orderId}`)
+  }
+
+  const buckets = new Map<
+    string,
+    {
+      header: SameProductGroupHeader
+      orders: CargoOrder[]
+      sizes: Set<string>
+    }
+  >()
+  for (const order of orders) {
+    const orderId = orderIdentity(order)
+    if (!orderId) continue
+    const key = primaryKeyByOrderId.get(orderId) ?? ''
+    const matching = (order.items ?? []).filter(
+      (item) => resolveProductFamilyKey(item) === key,
+    )
+    const sample = matching[0] ?? order.items?.[0]
+    let bucket = buckets.get(key)
+    if (!bucket) {
+      bucket = {
+        header: {
+          key,
+          productName: sample?.productName || 'Ürün bilgisi yok',
+          color: String(sample?.color ?? '').trim(),
+          orderCount: 0,
+          totalQuantity: 0,
+          sizes: [],
+        },
+        orders: [],
+        sizes: new Set<string>(),
+      }
+      buckets.set(key, bucket)
+    }
+    bucket.orders.push(order)
+    bucket.header.orderCount += 1
+    for (const item of matching) {
+      bucket.header.totalQuantity += Math.max(0, Number(item.quantity) || 0)
+      const size = String(item.size ?? '').trim()
+      if (size) bucket.sizes.add(size)
+    }
+  }
+
+  const ordered = Array.from(buckets.values()).sort(
+    (left, right) =>
+      right.header.orderCount - left.header.orderCount ||
+      right.header.totalQuantity - left.header.totalQuantity ||
+      left.header.productName.localeCompare(right.header.productName, 'tr-TR') ||
+      left.header.key.localeCompare(right.header.key),
+  )
+
+  const result: CargoOrder[] = []
+  const headerByOrderId = new Map<string, SameProductGroupHeader>()
+  const groups: SameProductGroupHeader[] = []
+  for (const bucket of ordered) {
+    bucket.header.sizes = Array.from(bucket.sizes).sort((left, right) =>
+      left.localeCompare(right, 'tr-TR', { numeric: true }),
+    )
+    groups.push(bucket.header)
+    for (const order of bucket.orders) {
+      // Giriş sırası (mevcut sıralama) grup İÇİNDE korunur → stabil.
+      result.push(order)
+      headerByOrderId.set(orderIdentity(order), bucket.header)
+    }
+  }
+  return { orders: result, headerByOrderId, groups }
+}
