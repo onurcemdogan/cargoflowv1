@@ -2492,10 +2492,41 @@ async function reconcileLabelBundlesOnBoot() {
   }
 }
 
+// RETENTION HOUSEKEEPING: YALNIZ ORDER_HOUSEKEEPING_ENABLED=true/1 iken
+// kurulur. Bayrak tanımsız/false ise zamanlayıcı KURULMAZ → boot yazması
+// YOK, periyodik yazma YOK. Tur sınırlıdır (batch), örtüşmez ve hata
+// uygulamayı DÜŞÜRMEZ. İş kuralları orderRetention.ts'te kalır.
+async function startRetentionHousekeepingOnBoot() {
+  if (!isTenantAuthMode()) return
+  try {
+    const [{ getDb }, scheduler] = await Promise.all([
+      import('./db/client.ts'),
+      import('./orders/retentionScheduler.ts'),
+    ])
+    const handle = scheduler.startRetentionScheduler(getDb())
+    if (handle.started) {
+      console.log('[retention] housekeeping zamanlayıcısı etkin')
+    }
+  } catch {
+    // BEST-EFFORT: zamanlayıcı kurulamazsa uygulama normal çalışmaya devam
+    // eder; retention yazması yapılmaz.
+  }
+}
+
 app.listen(port, host, () => {
   console.log(`CargoFlow API listening on http://${host}:${port}`)
   void reconcileLabelBundlesOnBoot()
+  void startRetentionHousekeepingOnBoot()
 })
+
+// Kapanışta yeni tur başlatılmaz (mevcut zamanlayıcı temizlenir).
+for (const signal of ['SIGTERM', 'SIGINT']) {
+  process.on(signal, () => {
+    void import('./orders/retentionScheduler.ts')
+      .then((scheduler) => scheduler.stopRetentionScheduler())
+      .catch(() => undefined)
+  })
+}
 
 async function createSuratShipment(request, response) {
   const order = request.body?.order

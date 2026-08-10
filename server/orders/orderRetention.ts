@@ -60,12 +60,40 @@ export const MARKETPLACE_FORWARD_STATUSES = [
 ] as const
 
 export interface RetentionPolicy {
+  /**
+   * OTOMATİK YAZMA ANAHTARI (activation guard).
+   *
+   * PRODUCTION-SAFE VARSAYILAN: FALSE. Tanımsız/false/0 iken hiçbir otomatik
+   * baseline/archive/purge YAZMASI yapılmaz — boot writer da, periyodik writer
+   * da. Yalnız açıkça 'true'/'1' verildiğinde etkinleşir.
+   *
+   * Salt okunur denetim (`npm run orders:retention:check`) bu bayraktan
+   * BAĞIMSIZDIR ve kapalıyken de çalışır.
+   *
+   * Bu YALNIZ bir etkinleştirme kapısıdır: retention iş kuralları (uygunluk
+   * yüklemleri, 4/90 gün, batch boyutları) DEĞİŞMEZ.
+   */
+  housekeepingEnabled: boolean
   baselineBatchSize: number
   archiveAfterDays: number
   purgeAfterDays: number
   archiveBatchSize: number
   purgeBatchSize: number
   intervalMs: number
+}
+
+/**
+ * ORDER_HOUSEKEEPING_ENABLED: yalnız açık onay etkinleştirir.
+ *   undefined / '' / 'false' / '0' / başka her şey → FALSE (güvenli varsayılan)
+ *   'true' / '1'                                   → TRUE
+ */
+export function isHousekeepingEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const raw = String(env.ORDER_HOUSEKEEPING_ENABLED ?? '')
+    .trim()
+    .toLowerCase()
+  return raw === 'true' || raw === '1'
 }
 
 function positiveInt(value: unknown, fallback: number): number {
@@ -78,6 +106,7 @@ export function resolveRetentionPolicy(
   env: Record<string, string | undefined> = process.env,
 ): RetentionPolicy {
   return {
+    housekeepingEnabled: isHousekeepingEnabled(env),
     baselineBatchSize: positiveInt(
       env.ORDER_ACTIVITY_BASELINE_BATCH_SIZE,
       DEFAULT_BASELINE_BATCH_SIZE,
@@ -505,6 +534,24 @@ export async function runRetentionCycle(
   const counts = await inspectRetention(db, policy, now)
   let purged = 0
   let failed = 0
+
+  // ACTIVATION GUARD. Bayrak kapalıyken tur SALT OKUNUR çalışır: uygunluk
+  // sayıları raporlanır, HİÇBİR baseline/archive/purge yazması yapılmaz.
+  // Böylece cycle yanlışlıkla (boot veya zamanlayıcı) çağrılsa bile üretim
+  // verisi DEĞİŞMEZ.
+  if (!policy.housekeepingEnabled) {
+    return {
+      scanned: counts.scanned,
+      baselineEligible: counts.baselineEligible,
+      baselined: 0,
+      archiveEligible: counts.archiveEligible,
+      archived: 0,
+      purgeEligible: counts.purgeEligible,
+      purged: 0,
+      failed: 0,
+      durationMs: Math.max(0, clock() - startedAt),
+    }
+  }
 
   // 1) BASELINE — retention saati olmayan tarihsel kayıtlara şimdi'yi yaz.
   const baselineResult = await applyActivityBaseline(db, policy, now)
