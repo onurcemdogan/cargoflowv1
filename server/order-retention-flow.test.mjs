@@ -798,3 +798,174 @@ test('CLOCK-6: arka plan hazirlik/reconciliation saati RESETLEMEZ', async () => 
   )
   assert.ok(!preparer.includes('lastOperationalActivityAt'))
 })
+
+// ═══ BASARILI MANUEL TEKRAR BASKI = GERCEK OPERASYONEL AKTIVITE ═══════════
+//
+// Kaynak: POST /api/orders/:id/label-printed → markLabelPrinted servisi.
+// Bu uc YALNIZ baski belgesine GERCEKTEN giren siparisler icin cagrilir;
+// atlanan/basarisiz siparis icin istemci istegi HIC gondermez.
+
+const service = await import('./orders/orderPersistenceService.ts')
+
+test('CLOCK-REPRINT-1: basarili manuel tekrar baski saati YENILER', async () => {
+  const { db, organizationId } = await makeDb()
+  const t0 = daysAgo(4)
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: t0,
+  })
+  // T0 + 3g23s: kullanici etiketi GERCEKTEN yeniden basti.
+  const reprintAt = new Date(t0.getTime() + (3 * 24 + 23) * 60 * 60 * 1000)
+  await repo.touchOrderOperationalActivity(db, organizationId, order.id, reprintAt)
+
+  const rows = await db
+    .select({ value: orders.lastOperationalActivityAt })
+    .from(orders)
+    .where(eq(orders.id, order.id))
+  assert.equal(rows[0].value.getTime(), reprintAt.getTime())
+
+  // Orijinal T0+4g aninda ARSIVLENMEZ (son aktivite 1 saat once).
+  const originalDeadline = new Date(t0.getTime() + 4 * 24 * 60 * 60 * 1000)
+  const early = await retention.archiveEligibleOrders(db, policy(), originalDeadline)
+  assert.equal(early.archived, 0, 'yeni aktiviteden sonra arsiv OLMAMALI')
+
+  // Yeni aktiviteden 4 gun sonra arsivlenir.
+  const later = new Date(reprintAt.getTime() + 4 * 24 * 60 * 60 * 1000)
+  const result = await retention.archiveEligibleOrders(db, policy(), later)
+  assert.equal(result.archived, 1)
+})
+
+test('CLOCK-REPRINT-2: basarisiz/atlanan baski saati YENILEMEZ', async () => {
+  const { db, organizationId } = await makeDb()
+  const stale = daysAgo(10)
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    lastOperationalActivityAt: stale,
+  })
+  // Atlanan/basarisiz siparis icin label-printed ucu HIC cagrilmaz →
+  // hicbir dokunma olmaz. Saat DEGISMEZ.
+  const rows = await db
+    .select({ value: orders.lastOperationalActivityAt })
+    .from(orders)
+    .where(eq(orders.id, order.id))
+  assert.equal(rows[0].value.getTime(), stale.getTime())
+  const result = await retention.archiveEligibleOrders(db, policy(), NOW)
+  assert.equal(result.archived, 1, 'basarisiz deneme saati uzatmaz')
+})
+
+test('CLOCK-REPRINT-3: arka plan hazirlik/reconciliation saati YENILEMEZ', async () => {
+  const preparer = readFileSync(
+    join(here, 'shipments', 'labelBundlePreparer.ts'),
+    'utf8',
+  )
+  assert.ok(!preparer.includes('touchOrderOperationalActivity'))
+  assert.ok(!preparer.includes('markOrderLabelPrinted'))
+  assert.ok(!preparer.includes('lastOperationalActivityAt'))
+})
+
+test('CLOCK-REPRINT-4: toplu 97 basarili / 3 atlanan → TAM 97 damga yenilenir', async () => {
+  const { db, organizationId } = await makeDb()
+  const stale = daysAgo(10)
+  const created = []
+  for (let index = 0; index < 100; index += 1) {
+    created.push(
+      await insertOrder(db, organizationId, {
+        operationStatus: 'LABEL_PRINTED',
+        marketplaceStatus: 'Picking',
+        lastOperationalActivityAt: stale,
+      }),
+    )
+  }
+  // Muhasebe mevcut basarili-baski kumesiyle AYNI: yalniz belgeye giren
+  // siparisler icin uc cagrilir.
+  const successful = created.slice(0, 97)
+  const skipped = created.slice(97)
+  const printedAt = new Date(NOW.getTime())
+  for (const order of successful) {
+    await repo.touchOrderOperationalActivity(
+      db,
+      organizationId,
+      order.id,
+      printedAt,
+    )
+  }
+
+  const rows = await db
+    .select({ id: orders.id, value: orders.lastOperationalActivityAt })
+    .from(orders)
+  const refreshed = rows.filter(
+    (row) => row.value.getTime() === printedAt.getTime(),
+  )
+  assert.equal(refreshed.length, 97)
+  const untouched = rows.filter(
+    (row) => row.value.getTime() === stale.getTime(),
+  )
+  assert.equal(untouched.length, 3)
+  const skippedIds = new Set(skipped.map((order) => order.id))
+  for (const row of untouched) {
+    assert.ok(skippedIds.has(row.id), 'yalniz atlananlar degismemis olmali')
+  }
+})
+
+test('CLOCK-REPRINT-5: dokunus operationStatus / marketplaceStatus DEGISTIRMEZ', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: daysAgo(10),
+  })
+  await repo.touchOrderOperationalActivity(db, organizationId, order.id, NOW)
+  const rows = await db
+    .select({
+      operationStatus: orders.operationStatus,
+      marketplaceStatus: orders.marketplaceStatus,
+    })
+    .from(orders)
+    .where(eq(orders.id, order.id))
+  assert.equal(rows[0].operationStatus, 'LABEL_PRINTED', 'statu DEGISMEZ')
+  assert.equal(rows[0].marketplaceStatus, 'Picking')
+})
+
+test('CLOCK-REPRINT-6: dokunus ORTUK UNARCHIVE yapmaz', async () => {
+  const { db, organizationId } = await makeDb()
+  const archivedAt = daysAgo(5)
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    lastOperationalActivityAt: daysAgo(10),
+    archivedAt,
+  })
+  await repo.touchOrderOperationalActivity(db, organizationId, order.id, NOW)
+  const rows = await db
+    .select({ archivedAt: orders.archivedAt })
+    .from(orders)
+    .where(eq(orders.id, order.id))
+  assert.ok(rows[0].archivedAt, 'arsiv bayragi KORUNMALI')
+  assert.equal(rows[0].archivedAt.getTime(), archivedAt.getTime())
+})
+
+test('CLOCK-REPRINT-7: markLabelPrinted servisi basarili baskida saati yeniler', async () => {
+  const { db, organizationId } = await makeDb()
+  const stale = daysAgo(10)
+  // Zaten LABEL_PRINTED: no-regress nedeniyle statu GECISI olmaz.
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    lastOperationalActivityAt: stale,
+  })
+  const result = await service.markLabelPrinted(db, organizationId, order.id)
+  assert.equal(result.found, true)
+  assert.equal(result.updated, false, 'statu gecisi YOK (idempotent)')
+
+  const rows = await db
+    .select({
+      value: orders.lastOperationalActivityAt,
+      operationStatus: orders.operationStatus,
+    })
+    .from(orders)
+    .where(eq(orders.id, order.id))
+  assert.ok(
+    rows[0].value.getTime() > stale.getTime(),
+    'basarili tekrar baski saati YENILEMELI',
+  )
+  assert.equal(rows[0].operationStatus, 'LABEL_PRINTED')
+})

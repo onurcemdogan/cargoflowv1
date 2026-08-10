@@ -570,6 +570,33 @@ const LABEL_PRINTED_FORWARD_STATES = [
 // - Zaten LABEL_PRINTED / ileri statü → idempotent (updated=false, ok, regress yok).
 // - Henüz yazdırılabilir etiket yok (LABEL_READY değil) → reason='label_required'.
 // marketplaceStatus'e DOKUNMAZ; yeni shipment/barkod OLUŞTURMAZ.
+// BAŞARILI MANUEL BASKI/TEKRAR BASKI = GERÇEK OPERASYONEL AKTİVİTE.
+//
+// Durum GEÇİŞİ DEĞİLDİR: sipariş zaten LABEL_PRINTED olabilir (no-regress
+// nedeniyle markOrderLabelPrinted yazmaz). Buna rağmen kullanıcı etiketi
+// gerçekten yeniden bastıysa retention saati YENİLENMELİDİR; aksi hâlde son
+// bir saat içinde elle basılan bir sipariş 4 günlük kurala takılıp
+// arşivlenebilirdi.
+//
+// YALNIZ `last_operational_activity_at` (+ updatedAt) yazar:
+//   · operation_status      DEĞİŞMEZ  (yeni statü/regresyon YOK)
+//   · archived_at           DEĞİŞMEZ  (örtük unarchive YOK)
+//   · marketplace_status    DEĞİŞMEZ
+// Tenant-scoped. Kayıt yoksa false döner.
+export async function touchOrderOperationalActivity(
+  db: Db,
+  organizationId: string,
+  orderId: string,
+  now: Date = new Date(),
+): Promise<{ touched: boolean }> {
+  const updated = await db
+    .update(orders)
+    .set({ lastOperationalActivityAt: now, updatedAt: now })
+    .where(and(eq(orders.organizationId, organizationId), eq(orders.id, orderId)))
+    .returning({ id: orders.id })
+  return { touched: updated.length > 0 }
+}
+
 export async function markOrderLabelPrinted(
   db: Db,
   organizationId: string,

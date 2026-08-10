@@ -11,6 +11,7 @@ import {
   findOrdersInRange,
   markOrderLabelPrinted,
   markOrderLabelReady,
+  touchOrderOperationalActivity,
   upsertMarketplaceOrders,
   type OrderFilters,
 } from './orderRepository.ts'
@@ -698,6 +699,13 @@ export async function markLabelPrinted(
       order: null,
     }
   }
+  // BAŞARILI BASKI AKTİVİTE DOKUNUŞU. Bu uç YALNIZ baskı belgesine GERÇEKTEN
+  // giren siparişler için çağrılır (atlanan/başarısız sipariş için istemci bu
+  // isteği HİÇ göndermez — bkz. PRINT-STATUS-2). Bu yüzden buraya ulaşmak
+  // "başarılı manuel baskı/tekrar baskı" kanıtıdır ve retention saatini
+  // yeniler. Zaten LABEL_PRINTED olan sipariş için de geçerlidir: durum
+  // geçişi olmasa da gerçek kullanıcı operasyonudur.
+  await touchOrderOperationalActivity(db, organizationId, orderId)
   const order = await getOrder(db, organizationId, orderId)
   return {
     found: true,
