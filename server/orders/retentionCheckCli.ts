@@ -31,9 +31,14 @@ async function main(): Promise<void> {
       purgeAfterDays: policy.purgeAfterDays,
       archiveBatchSize: policy.archiveBatchSize,
       purgeBatchSize: policy.purgeBatchSize,
+      baselineBatchSize: policy.baselineBatchSize,
       intervalMs: policy.intervalMs,
     },
     scanned: counts.scanned,
+    // Retention saati OLMAYAN tarihsel etiket-aşamalı kayıtlar: ilk yazma
+    // turunda bunlara baseline (şimdi) yazılacak, 4 gün SONRA arşiv adayı
+    // olacaklar. Eski tarih UYDURULMAZ.
+    baselineEligible: counts.baselineEligible,
     archiveEligible: counts.archiveEligible,
     purgeEligible: counts.purgeEligible,
     // Aktivite damgası olmayan etiket-aşamalı ESKİ kayıtlar. Bunlar otomatik

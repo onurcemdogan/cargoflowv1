@@ -27,6 +27,7 @@ type Db = {
 
 export const DEFAULT_ARCHIVE_AFTER_DAYS = 4
 export const DEFAULT_PURGE_AFTER_DAYS = 90
+export const DEFAULT_BASELINE_BATCH_SIZE = 200
 export const DEFAULT_ARCHIVE_BATCH_SIZE = 200
 export const DEFAULT_PURGE_BATCH_SIZE = 200
 /** 6 saat: 4 günlük SLA için fazlasıyla yeterli, DB'yi yormaz. */
@@ -59,6 +60,7 @@ export const MARKETPLACE_FORWARD_STATUSES = [
 ] as const
 
 export interface RetentionPolicy {
+  baselineBatchSize: number
   archiveAfterDays: number
   purgeAfterDays: number
   archiveBatchSize: number
@@ -76,6 +78,10 @@ export function resolveRetentionPolicy(
   env: Record<string, string | undefined> = process.env,
 ): RetentionPolicy {
   return {
+    baselineBatchSize: positiveInt(
+      env.ORDER_ACTIVITY_BASELINE_BATCH_SIZE,
+      DEFAULT_BASELINE_BATCH_SIZE,
+    ),
     archiveAfterDays: positiveInt(
       env.ORDER_AUTO_ARCHIVE_DAYS,
       DEFAULT_ARCHIVE_AFTER_DAYS,
@@ -131,8 +137,88 @@ function purgeEligibilityWhere(cutoff: Date) {
   return and(isNotNull(orders.archivedAt), lte(orders.archivedAt, cutoff))
 }
 
+// ═══ GÜVENLİ BASELINE ═════════════════════════════════════════════════════
+//
+// Feature devreye girmeden ÖNCE oluşmuş etiket-aşamalı kayıtlarda retention
+// saati NULL'dur. Gerçek tarihsel baskı/hazır zamanı ŞEMADA YOKTUR (audit
+// edildi) → ESKİ TARİH UYDURULMAZ. Bunun yerine bu kayıtlara baseline anı
+// yazılır: sipariş 30 gündür Etiket Basıldı olsa bile saati baseline'dan
+// başlar ve 4 gün DAHA bekler. Böylece eski backlog eventually temizlenir,
+// ama hiçbir operasyon tarihi uydurulmuş olmaz.
+//
+// KAPSAM ARŞİV KURALIYLA AYNIDIR: yalnız LABEL_READY/LABEL_PRINTED ve
+// pazaryeri ileri/terminal DEĞİLSE. Yani Trendyol Shipped (DuruSoft gibi
+// harici sağlayıcı vakaları dâhil), Delivered, iptal/iade, çözülmemiş
+// (NEW/BARCODE_WAITING) ve zaten arşivli kayıtlar baseline ALMAZ.
+function baselineEligibilityWhere() {
+  return and(
+    isNull(orders.archivedAt),
+    isNull(orders.lastOperationalActivityAt),
+    inArray(orders.operationStatus, [...AUTO_ARCHIVE_OPERATION_STATUSES]),
+    sql`(${orders.marketplaceStatus} is null or ${orders.marketplaceStatus} not in ${MARKETPLACE_FORWARD_STATUSES})`,
+  )
+}
+
+/**
+ * SINIRLI baseline turu. Keyset (orders.id ASC) ile ilerler, restart-safe:
+ * "baseline tamamlandı" bellek bayrağı YOKTUR — uygunluk her turda DB
+ * gerçeğinden yeniden hesaplanır (yazılan kayıt artık NULL olmadığı için
+ * kümeden düşer, starvation olmaz).
+ */
+export async function applyActivityBaseline(
+  db: Db,
+  policy: RetentionPolicy,
+  baselineNow: Date = new Date(),
+  cursor?: string,
+): Promise<{ baselined: number; scanned: number; nextCursor?: string }> {
+  const database = db as unknown as {
+    select: (fields?: unknown) => {
+      from: (table: unknown) => {
+        where: (clause: unknown) => {
+          orderBy: (order: unknown) => {
+            limit: (n: number) => Promise<{ id: string }[]>
+          }
+        }
+      }
+    }
+    update: (table: unknown) => {
+      set: (values: unknown) => {
+        where: (clause: unknown) => {
+          returning: (fields: unknown) => Promise<{ id: string }[]>
+        }
+      }
+    }
+  }
+  const base = baselineEligibilityWhere()
+  const candidates = await database
+    .select({ id: orders.id })
+    .from(orders)
+    .where(cursor ? and(base, gt(orders.id, cursor)) : base)
+    .orderBy(asc(orders.id))
+    .limit(policy.baselineBatchSize)
+  if (candidates.length === 0) return { baselined: 0, scanned: 0 }
+
+  const ids = candidates.map((row) => row.id)
+  const updated = await database
+    .update(orders)
+    .set({ lastOperationalActivityAt: baselineNow, updatedAt: baselineNow })
+    // IDEMPOTENT: yalnız hâlâ NULL olan kayıtlara yazar.
+    .where(and(inArray(orders.id, ids), isNull(orders.lastOperationalActivityAt)))
+    .returning({ id: orders.id })
+
+  return {
+    baselined: updated.length,
+    scanned: candidates.length,
+    nextCursor:
+      candidates.length === policy.baselineBatchSize
+        ? ids[ids.length - 1]
+        : undefined,
+  }
+}
+
 export interface RetentionCounts {
   scanned: number
+  baselineEligible: number
   archiveEligible: number
   purgeEligible: number
   nullActivityBacklog: number
@@ -182,6 +268,7 @@ export async function inspectRetention(
 
   const [
     scanned,
+    baselineEligible,
     archiveEligible,
     purgeEligible,
     nullActivityBacklog,
@@ -189,6 +276,7 @@ export async function inspectRetention(
     oldestPurge,
   ] = await Promise.all([
     countOf(sql`true`),
+    countOf(baselineEligibilityWhere()),
     countOf(archiveEligibilityWhere(archiveCutoff)),
     countOf(purgeEligibilityWhere(purgeCutoff)),
     // Aktivite damgası OLMAYAN etiket-aşamalı eski kayıtlar: otomatik arşive
@@ -209,6 +297,7 @@ export async function inspectRetention(
 
   return {
     scanned,
+    baselineEligible,
     archiveEligible,
     purgeEligible,
     nullActivityBacklog,
@@ -392,6 +481,8 @@ export async function purgeOrderRecord(
 
 export interface HousekeepingReport {
   scanned: number
+  baselineEligible: number
+  baselined: number
   archiveEligible: number
   archived: number
   purgeEligible: number
@@ -412,13 +503,20 @@ export async function runRetentionCycle(
 ): Promise<HousekeepingReport> {
   const startedAt = clock()
   const counts = await inspectRetention(db, policy, now)
-  let archived = 0
   let purged = 0
   let failed = 0
 
-  const archiveResult = await archiveEligibleOrders(db, policy, now)
-  archived += archiveResult.archived
+  // 1) BASELINE — retention saati olmayan tarihsel kayıtlara şimdi'yi yaz.
+  const baselineResult = await applyActivityBaseline(db, policy, now)
 
+  // 2) ARŞİV — YALNIZ lastOperationalActivityAt üzerinden. Bu turda baseline
+  //    alan kayıt otomatik olarak korunur: saati `now` olduğu için
+  //    `<= now - 4 gün` koşulunu SAĞLAMAZ. Eski orderDate hiçbir yerde
+  //    arşiv gerekçesi DEĞİLDİR.
+  const archiveResult = await archiveEligibleOrders(db, policy, now)
+  const archived = archiveResult.archived
+
+  // 3) PURGE — yalnız arşivlenmiş + retention süresi dolmuş kayıtlar.
   const candidates = await findPurgeCandidates(db, policy, now)
   for (const candidate of candidates) {
     try {
@@ -433,6 +531,8 @@ export async function runRetentionCycle(
 
   return {
     scanned: counts.scanned,
+    baselineEligible: counts.baselineEligible,
+    baselined: baselineResult.baselined,
     archiveEligible: counts.archiveEligible,
     archived,
     purgeEligible: counts.purgeEligible,

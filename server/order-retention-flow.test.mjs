@@ -538,3 +538,263 @@ test('POLICY: varsayılanlar 4 gün / 90 gün / 200 / 6 saat', async () => {
   assert.equal(custom.purgeBatchSize, 25)
   assert.equal(custom.intervalMs, 3_600_000)
 })
+
+// ═══ GÜVENLİ BASELINE ═════════════════════════════════════════════════════
+
+test('BASELINE-1: tarihsel labelPrinted + NULL saat → baseline adayı', async () => {
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    orderDate: daysAgo(30),
+    lastOperationalActivityAt: null,
+  })
+  const counts = await retention.inspectRetention(db, policy(), NOW)
+  assert.equal(counts.baselineEligible, 1)
+  const result = await retention.applyActivityBaseline(db, policy(), NOW)
+  assert.equal(result.baselined, 1)
+  const rows = await db
+    .select({ value: orders.lastOperationalActivityAt })
+    .from(orders)
+  assert.equal(rows[0].value.getTime(), NOW.getTime(), 'baseline = simdi')
+})
+
+test('BASELINE-2: tarihsel labelReady + NULL saat → baseline adayı', async () => {
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_READY',
+    lastOperationalActivityAt: null,
+  })
+  const result = await retention.applyActivityBaseline(db, policy(), NOW)
+  assert.equal(result.baselined, 1)
+})
+
+test('BASELINE-3: Shipped/handedToCargo + NULL → baseline adayı DEGIL', async () => {
+  const { db, organizationId } = await makeDb()
+  for (const marketplaceStatus of ['Shipped', 'AtCollectionPoint', 'Delivered']) {
+    await insertOrder(db, organizationId, {
+      operationStatus: 'LABEL_PRINTED',
+      marketplaceStatus,
+      lastOperationalActivityAt: null,
+    })
+  }
+  const counts = await retention.inspectRetention(db, policy(), NOW)
+  assert.equal(counts.baselineEligible, 0, 'pazaryeri ileri durumu baseline almaz')
+  const result = await retention.applyActivityBaseline(db, policy(), NOW)
+  assert.equal(result.baselined, 0)
+})
+
+test('BASELINE-4: barcodeWaiting/new + NULL → baseline adayı DEGIL', async () => {
+  const { db, organizationId } = await makeDb()
+  for (const operationStatus of ['NEW', 'BARCODE_WAITING']) {
+    await insertOrder(db, organizationId, {
+      operationStatus,
+      lastOperationalActivityAt: null,
+    })
+  }
+  const result = await retention.applyActivityBaseline(db, policy(), NOW)
+  assert.equal(result.baselined, 0, 'cozulmemis kayit baseline almaz')
+})
+
+test('BASELINE-4b: zaten arsivli kayit baseline ALMAZ', async () => {
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    lastOperationalActivityAt: null,
+    archivedAt: daysAgo(5),
+  })
+  const result = await retention.applyActivityBaseline(db, policy(), NOW)
+  assert.equal(result.baselined, 0)
+})
+
+test('BASELINE-5: T0 baseline → T0+3g23s AKTIF kalir', async () => {
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    orderDate: daysAgo(400),
+    lastOperationalActivityAt: null,
+  })
+  const t0 = new Date(NOW.getTime())
+  await retention.applyActivityBaseline(db, policy(), t0)
+  const almost = new Date(t0.getTime() + (3 * 24 + 23) * 60 * 60 * 1000)
+  const result = await retention.archiveEligibleOrders(db, policy(), almost)
+  assert.equal(result.archived, 0, 'saat baselineden sayilir, orderDateten DEGIL')
+})
+
+test('BASELINE-6: T0 baseline → T0+4g arsiv adayi', async () => {
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    orderDate: daysAgo(400),
+    lastOperationalActivityAt: null,
+  })
+  const t0 = new Date(NOW.getTime())
+  await retention.applyActivityBaseline(db, policy(), t0)
+  const later = new Date(t0.getTime() + 4 * 24 * 60 * 60 * 1000)
+  const result = await retention.archiveEligibleOrders(db, policy(), later)
+  assert.equal(result.archived, 1)
+})
+
+test('BASELINE-CYCLE: baseline alan kayit AYNI turda arsivlenmez', async () => {
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    orderDate: daysAgo(400),
+    lastOperationalActivityAt: null,
+  })
+  const report = await retention.runRetentionCycle(db, policy(), NOW)
+  assert.equal(report.baselined, 1)
+  assert.equal(report.archived, 0, 'eski orderDate arsiv gerekcesi DEGIL')
+  const rows = await db.select({ archivedAt: orders.archivedAt }).from(orders)
+  assert.equal(rows[0].archivedAt, null)
+})
+
+test('BASELINE-7: 1000 uygun / batch 200 → hepsi baseline, starvation 0', async () => {
+  const { db, organizationId } = await makeDb()
+  await db.insert(orders).values(
+    Array.from({ length: 1000 }, (_, index) => ({
+      organizationId,
+      marketplace: 'Trendyol',
+      packageId: `BASE-${index}`,
+      orderNumber: `BASE-ORD-${index}`,
+      marketplaceStatus: 'Picking',
+      operationStatus: 'LABEL_PRINTED',
+      orderDate: daysAgo(60),
+      lastOperationalActivityAt: null,
+    })),
+  )
+  let total = 0
+  for (let cycle = 0; cycle < 12; cycle += 1) {
+    const result = await retention.applyActivityBaseline(db, policy(), NOW)
+    total += result.baselined
+    if (result.baselined === 0) break
+  }
+  assert.equal(total, 1000)
+})
+
+test('BASELINE-8: turlar arasi restart → DB gercedinden devam, idempotent', async () => {
+  const { db, organizationId } = await makeDb()
+  await db.insert(orders).values(
+    Array.from({ length: 300 }, (_, index) => ({
+      organizationId,
+      marketplace: 'Trendyol',
+      packageId: `RS-${index}`,
+      orderNumber: `RS-ORD-${index}`,
+      marketplaceStatus: 'Picking',
+      operationStatus: 'LABEL_PRINTED',
+      orderDate: daysAgo(60),
+      lastOperationalActivityAt: null,
+    })),
+  )
+  const first = await retention.applyActivityBaseline(db, policy(), NOW)
+  assert.equal(first.baselined, 200)
+  // "Restart": cursor UNUTULUR, bellek bayragi YOK.
+  const second = await retention.applyActivityBaseline(db, policy(), NOW)
+  assert.equal(second.baselined, 100, 'kalanlar DB gercedinden bulunur')
+  const third = await retention.applyActivityBaseline(db, policy(), NOW)
+  assert.equal(third.baselined, 0, 'idempotent')
+})
+
+test('BASELINE-POLICY: ORDER_ACTIVITY_BASELINE_BATCH_SIZE yapilandirilabilir', async () => {
+  assert.equal(retention.resolveRetentionPolicy({}).baselineBatchSize, 200)
+  assert.equal(
+    retention.resolveRetentionPolicy({
+      ORDER_ACTIVITY_BASELINE_BATCH_SIZE: '25',
+    }).baselineBatchSize,
+    25,
+  )
+})
+
+// ═══ AKTIVITE SAATI RESET KONTROLU ════════════════════════════════════════
+
+test('CLOCK-1: ilk gercek LABEL_READY gecisi saati yazar', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'BARCODE_WAITING',
+  })
+  const result = await repo.markOrderLabelReady(db, organizationId, order.id)
+  assert.equal(result.updated, true)
+  const rows = await db
+    .select({ value: orders.lastOperationalActivityAt })
+    .from(orders)
+    .where(eq(orders.id, order.id))
+  assert.ok(rows[0].value)
+})
+
+test('CLOCK-2: LABEL_READY → LABEL_READY reconciliation saati DEGISTIRMEZ', async () => {
+  const { db, organizationId } = await makeDb()
+  const stale = daysAgo(10)
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_READY',
+    lastOperationalActivityAt: stale,
+  })
+  const result = await repo.markOrderLabelReady(db, organizationId, order.id)
+  assert.equal(result.updated, false, 'no-regress: yazma OLMAMALI')
+  const rows = await db
+    .select({ value: orders.lastOperationalActivityAt })
+    .from(orders)
+    .where(eq(orders.id, order.id))
+  assert.equal(
+    rows[0].value.getTime(),
+    stale.getTime(),
+    '4 gunluk saat reconciliation ile RESETLENMEZ',
+  )
+})
+
+test('CLOCK-3: rutin marketplace sync saati DEGISTIRMEZ', async () => {
+  const updateSet = mapper.marketplaceUpdateSet({
+    orderNumber: 'ORD-1',
+    packageId: 'PKG-1',
+    marketplaceStatus: 'Picking',
+    orderDate: NOW.toISOString(),
+  })
+  assert.ok(!('lastOperationalActivityAt' in updateSet))
+})
+
+test('CLOCK-4: LABEL_READY → LABEL_PRINTED basarili baski saati TAZELER', async () => {
+  const { db, organizationId } = await makeDb()
+  const stale = daysAgo(10)
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_READY',
+    lastOperationalActivityAt: stale,
+  })
+  const result = await repo.markOrderLabelPrinted(db, organizationId, order.id)
+  assert.equal(result.updated, true)
+  const rows = await db
+    .select({ value: orders.lastOperationalActivityAt })
+    .from(orders)
+    .where(eq(orders.id, order.id))
+  assert.ok(rows[0].value.getTime() > stale.getTime())
+})
+
+test('CLOCK-5: zaten LABEL_PRINTED iken tekrar baski saati TAZELEMEZ', async () => {
+  // MEVCUT URUN SOZLESMESI: markOrderLabelPrinted YALNIZ LABEL_READY'den yazar.
+  // Tekrar yazdirma kanonik bir durum GECISI degildir → saat tazelenmez.
+  // Bu ayni zamanda arsivin suresiz ertelenmesini onler.
+  const { db, organizationId } = await makeDb()
+  const stale = daysAgo(10)
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    lastOperationalActivityAt: stale,
+  })
+  const result = await repo.markOrderLabelPrinted(db, organizationId, order.id)
+  assert.equal(result.updated, false)
+  const rows = await db
+    .select({ value: orders.lastOperationalActivityAt })
+    .from(orders)
+    .where(eq(orders.id, order.id))
+  assert.equal(rows[0].value.getTime(), stale.getTime())
+})
+
+test('CLOCK-6: arka plan hazirlik/reconciliation saati RESETLEMEZ', async () => {
+  // Kanit: arka plan hazirlayici orders tablosuna HIC yazmaz.
+  const preparer = readFileSync(
+    join(here, 'shipments', 'labelBundlePreparer.ts'),
+    'utf8',
+  )
+  assert.ok(
+    !preparer.includes('markOrderLabelReady'),
+    'arka plan hazirlik LABEL_READY gecisi tetiklemez',
+  )
+  assert.ok(!preparer.includes('lastOperationalActivityAt'))
+})
