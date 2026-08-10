@@ -188,10 +188,15 @@ test('sipariş persistence A-V: izolasyon, sayfalama, operasyon koruması, şifr
   const archived = rRows.find((o) => o.packageId === 'R-2')
   assert.ok(archived.archivedAt, 'R-2 arşivlendi')
 
-  // M) Tekrar görülen sipariş arşivden çıkar (unarchive).
+  // M) SÖZLEŞME DEĞİŞTİ (retention lifecycle): rutin marketplace sync artık
+  // `archivedAt`e DOKUNMAZ. Eskiden tekrar görülen sipariş her sync'te
+  // arşivden çıkıyordu; bu, zaman tabanlı otomatik arşivi sürekli geri alırdı
+  // (BLOCKER 2). Arşivden çıkarma artık YALNIZ explicit restore yolunun işidir.
+  // Pazaryeri statüsü güncellenmeye DEVAM eder; yalnız arşiv bayrağı korunur.
   await service.persistSyncResult(db, orgR, [makeOrder({ packageId: 'R-1' }), makeOrder({ packageId: 'R-2' })], { complete: true })
-  const unarchived = (await db.select().from(schema.orders).where(eq(schema.orders.packageId, 'R-2')))[0]
-  assert.equal(unarchived.archivedAt, null, 'tekrar görülen sipariş arşivden çıkar')
+  const reseen = (await db.select().from(schema.orders).where(eq(schema.orders.packageId, 'R-2')))[0]
+  assert.ok(reseen.archivedAt, 'tekrar görülmek TEK BAŞINA arşivden çıkarmaz')
+  assert.ok(reseen.lastSeenAt, 'ama sipariş yeniden görüldü olarak damgalanır')
 
   // N) Restart kalıcılığı: yeni db örneği aynı veriyi okur.
   const db2 = drizzle(pglite, { schema })

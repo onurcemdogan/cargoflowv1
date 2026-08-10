@@ -162,8 +162,13 @@ export function marketplaceUpdateSet(
     ),
     rawPayloadEncrypted: encryptOrderPayload(order.rawOrder ?? order),
     lastSeenAt: new Date(),
-    // Tekrar görülen sipariş arşivden çıkarılır (kanıtlı fresh görülme).
-    archivedAt: null,
+    // BLOCKER 2 DÜZELTMESİ: rutin marketplace sync `archivedAt`e DOKUNMAZ.
+    // Eskiden burada `archivedAt: null` vardı; sync penceresinde duran her
+    // sipariş HER sync'te arşivden çıkıyordu → zaman tabanlı otomatik arşiv
+    // sürekli geri alınırdı. Arşivden çıkarma artık YALNIZ explicit
+    // restore/unarchive kod yolunun işidir. Pazaryeri statüsünün değişmesi
+    // (ör. Picking → Shipped) TEK BAŞINA unarchive sebebi DEĞİLDİR; arşiv
+    // görünümünde güncel statü zaten görülür.
     updatedAt: new Date(),
   }
 }

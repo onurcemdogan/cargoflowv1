@@ -1,0 +1,1 @@
+ALTER TABLE "orders" ADD COLUMN "last_operational_activity_at" timestamp with time zone;
