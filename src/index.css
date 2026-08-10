@@ -4522,8 +4522,10 @@ button:disabled {
 .dashboard-sales-chart-card { grid-column: span 5; }
 .dashboard-city-card { grid-column: span 4; }
 .dashboard-marketplace-card { grid-column: span 3; }
-.dashboard-operation-flow-card { grid-column: span 8; }
-.dashboard-picking-card { grid-column: span 4; }
+.dashboard-operation-flow-card { grid-column: span 12; }
+/* TOPLANACAK ÜRÜNLER artık dar sağ kolon DEĞİL: Operasyon Akışı'nın altında
+   tam genişlik bir bölüm. Grid/max-width sistemi korunur (12 kolon). */
+.dashboard-picking-card { grid-column: span 12; }
 .dashboard-top-products-card { grid-column: span 5; }
 .dashboard-recent-ops-card { grid-column: span 7; }
 
@@ -4698,34 +4700,70 @@ button:disabled {
 .dashboard-operation-flow small { min-height: 25px; font-size: 8.5px; text-align: center; }
 .dashboard-operation-flow strong { font-size: 18px; }
 
-.dashboard-picking-list { padding: 7px 11px 10px; display: grid; max-height: 340px; overflow-y: auto; }
-/* Ürün ailesi satırı: üst grup + beden alt kırılımı (mevcut kart dili korunur). */
-.dashboard-picking-family { padding: 6px 0; display: grid; gap: 5px; border-bottom: 1px solid #edf1f5; }
-.dashboard-picking-family:last-child { border-bottom: 0; }
-.dashboard-picking-family-head {
-  min-height: 34px;
+.dashboard-picking-list { padding: 4px 14px 12px; display: grid; }
+
+/* GENİŞ YATAY SATIR: görsel · kimlik · toplamlar · bedenler · aşama · aksiyon.
+   Küçük 4 satırlık iç pencere KALDIRILDI; bölüm doğal sayfa yüksekliğinde akar. */
+.picking-row {
+  padding: 10px 0;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) auto;
+  grid-template-columns: 46px minmax(160px, 1.6fr) auto minmax(0, 2fr) auto auto;
   align-items: center;
-  gap: 8px;
+  gap: 14px;
+  border-bottom: 1px solid #edf1f5;
 }
-.dashboard-picking-family-title { min-width: 0; display: grid; gap: 2px; }
-.dashboard-picking-family-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
-.dashboard-picking-family-title small { color: var(--muted); font-size: 8px; }
-.dashboard-picking-sizes { display: flex; flex-wrap: wrap; gap: 5px; padding-left: 42px; }
-.dashboard-picking-size {
+.picking-row-image,
+.picking-row-image-placeholder {
+  width: 46px;
+  height: 46px;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #f8fafc;
+}
+.picking-row-identity { min-width: 0; display: grid; gap: 3px; }
+.picking-row-identity strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+.picking-row-identity small { color: var(--muted); font-size: 9.5px; }
+.picking-row-totals { display: grid; gap: 2px; justify-items: start; white-space: nowrap; }
+.picking-row-totals b { color: #0f766e; font-size: 12px; }
+.picking-row-totals small { color: var(--muted); font-size: 9.5px; }
+.picking-row-sizes { display: flex; flex-wrap: wrap; gap: 6px; }
+.picking-size-chip {
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
-  padding: 2px 6px;
+  gap: 5px;
+  padding: 3px 8px;
   border: 1px solid #e2e8f0;
   border-radius: 999px;
   background: #f8fafc;
 }
-.dashboard-picking-size b { color: #0f172a; font-size: 9px; }
-.dashboard-picking-size i { color: #0f766e; font-style: normal; font-size: 8px; }
-.dashboard-picking-stages { display: flex; flex-wrap: wrap; gap: 8px; padding-left: 42px; color: var(--muted); font-size: 8px; }
-.dashboard-picking-stages b { color: #0f172a; font-size: 8px; }
+.picking-size-chip b { color: #0f172a; font-size: 10px; }
+.picking-size-chip i { color: #0f766e; font-style: normal; font-size: 9px; }
+.picking-row-stages {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+.picking-row-stages b { color: #0f172a; font-size: 9.5px; }
+.picking-row-action { white-space: nowrap; }
+.picking-row-orders { padding: 0 0 12px; }
+.picking-more-notice {
+  margin-top: 10px;
+  padding: 9px 11px;
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+.picking-more-notice strong { color: #0f172a; }
 
 .dashboard-table-wrap { width: 100%; overflow-x: auto; }
 .dashboard-compact-table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
@@ -4830,6 +4868,29 @@ button:disabled {
   .dashboard-picking-card,
   .dashboard-top-products-card,
   .dashboard-recent-ops-card { grid-column: span 12; }
+}
+
+/* Tablet: satır iki kata bölünür, kart yapısı korunur. */
+@media (max-width: 1100px) {
+  .picking-row {
+    grid-template-columns: 46px minmax(0, 1fr) auto auto;
+    row-gap: 8px;
+  }
+  .picking-row-sizes { grid-column: 2 / -1; }
+  .picking-row-stages { grid-column: 2 / -1; }
+}
+
+/* Mobil: ürün ailesi başına DİKEY kart. */
+@media (max-width: 720px) {
+  .picking-row {
+    grid-template-columns: 46px minmax(0, 1fr);
+    align-items: start;
+  }
+  .picking-row-totals,
+  .picking-row-sizes,
+  .picking-row-stages,
+  .picking-row-action { grid-column: 2 / -1; }
+  .picking-row-action { justify-self: start; }
 }
 
 @media (max-width: 720px) {

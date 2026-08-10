@@ -607,3 +607,61 @@ test('SAME-PRODUCT-GROUP-7: filtre KAPSAMI değişmedi (all → gruplama yok)', 
   const result = await grouped(repeated.visibleOrders)
   assert.deepEqual(result.orders.map((entry) => entry.id), ['a', 'b'])
 })
+
+// ═══ YERLEŞİM SÖZLEŞMESİ (SALT SUNUM) ═════════════════════════════════════
+
+test('PICKING-UX-LAYOUT: Toplanacak Ürünler TAM GENİŞLİK, dar sağ kolon YOK', async () => {
+  const { readFileSync } = await import('node:fs')
+  const css = readFileSync('src/index.css', 'utf8')
+  assert.ok(
+    css.includes('.dashboard-picking-card { grid-column: span 12; }'),
+    'picking kartı 12 kolon (tam genişlik) olmalı',
+  )
+  assert.ok(
+    !css.includes('.dashboard-picking-card { grid-column: span 4; }'),
+    'dar sağ kolon (span 4) kaldırılmalı',
+  )
+  assert.ok(
+    !css.includes('max-height: 340px'),
+    'küçük iç scroll penceresi kaldırılmalı',
+  )
+  // Operasyon Akışı korunur ve kendi satırında tam genişliktir.
+  assert.ok(css.includes('.dashboard-operation-flow-card { grid-column: span 12; }'))
+
+  const page = readFileSync('src/pages/DashboardPage.tsx', 'utf8')
+  const opsIndex = page.indexOf('dashboard-analytics-row-ops')
+  const pickingIndex = page.indexOf('dashboard-picking-row')
+  assert.ok(opsIndex > 0 && pickingIndex > 0, 'iki bölüm de bulunmalı')
+  assert.ok(
+    opsIndex < pickingIndex,
+    "Toplanacak Ürünler, Operasyon Akışının ALTINDA olmalı",
+  )
+  // Operasyon Akışı kaldırılmadı.
+  assert.ok(page.includes('title="Operasyon Akışı"'))
+})
+
+test('PICKING-UX-PURE: sunum bileşeni İŞ KURALI içermez', async () => {
+  const { readFileSync } = await import('node:fs')
+  // Yorum satırları AYIKLANIR: sözleşme KODA bakar, açıklamaya değil.
+  const card = readFileSync('src/components/PickingProductsCard.tsx', 'utf8')
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((row) => !row.trim().startsWith('//'))
+    .join('\n')
+  for (const forbidden of [
+    'isPickingEligible',
+    'resolveProductFamilyKey',
+    'buildProductFamilyIndex',
+    'classifyOrderForTabs',
+    'LABEL_PRINTED',
+    'fetch(',
+  ]) {
+    assert.ok(
+      !card.includes(forbidden),
+      `sunum bileşeni ${forbidden} kullanmamalı`,
+    )
+  }
+  // Hazır veriyi yeniden gruplayan/filtreleyen tarama YOK.
+  assert.ok(!card.includes('orders.filter('), 'yeni sipariş taraması yok')
+  assert.ok(!card.includes('products.filter('), 'yeni ürün taraması yok')
+})
