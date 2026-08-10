@@ -1,10 +1,17 @@
 import type { CargoOrder, CargoProduct, OrderItem } from '../types/cargoflow'
 import {
   classifyOrderForTabs,
+  dashboardOperationStageLabel,
+  isPickingEligible,
   orderMatchesDashboardAction,
   resolveDashboardOperationStage,
+  resolvePickingStage,
   type DashboardOperationStage,
 } from '../utils/orderClassification'
+import {
+  buildProductFamilyIndex,
+  type ProductFamilyGroup,
+} from '../utils/orderProductFamily'
 import { resolveOrderActionCapabilities } from '../utils/orderActionCapabilities'
 import { displayOrderNumber } from '../utils/orderDisplay'
 import { resolveProductImageCandidates } from '../utils/productImage'
@@ -165,8 +172,45 @@ export interface DashboardOperationStep {
     | 'delivered'
 }
 
-export interface DashboardPickingProduct extends DashboardTopProduct {
+// ÜRÜN AİLESİ SATIRI (beden bağımsız üst grup + beden alt kırılımı).
+// Etiket footer aggregation'ı ETKİLENMEZ; orada kimlik strict kalır
+// (ürün + SKU + renk + BEDEN).
+export interface DashboardPickingVariant {
+  sizeKey: string
+  size: string
+  quantity: number
   orderCount: number
+  orderIds: string[]
+}
+
+export interface DashboardPickingOrderRef {
+  orderId: string
+  displayOrderNumber: string
+  customerName: string
+  size: string
+  quantity: number
+  orderDate?: string
+  operationStatusLabel: string
+  labelReady: boolean
+  carrier: string
+}
+
+export interface DashboardPickingProduct {
+  key: string
+  productName: string
+  color: string
+  sku: string
+  barcode: string
+  /** Beden bağımsız TOPLAM adet. */
+  quantity: number
+  /** DISTINCT logical order sayısı (quantity DEĞİL). */
+  orderCount: number
+  imageCandidates: string[]
+  variants: DashboardPickingVariant[]
+  /** Kanonik aşama dağılımı (Etiket Hazır / Barkod Bekliyor / …). */
+  stageBreakdown: Array<{ stage: DashboardOperationStage; label: string; count: number }>
+  orders: DashboardPickingOrderRef[]
+  identitySource: string
 }
 
 export interface DashboardRecentOperation {
@@ -247,6 +291,14 @@ export interface DashboardViewModel {
     mode: 'readonly-products'
     title: string
     products: DashboardPickingProduct[]
+    /** Uygun TÜM aile sayısı (gösterilen kısım kırpılmış olabilir). */
+    totalFamilyCount: number
+    /** Gösterilmeyen aile sayısı — SESSİZ kırpma YOK. */
+    hiddenFamilyCount: number
+    /** Toplanacak DISTINCT sipariş sayısı. */
+    orderCount: number
+    /** Toplanacak toplam adet. */
+    totalQuantity: number
   }
   recentOperations: DashboardRecentOperation[]
   latestSyncAt?: string
@@ -414,11 +466,11 @@ export function buildDashboardViewModel({
   // alt kümesidir (huni içi), ayrıca gösterilir.
   const openOperations =
     stageCounts.open + stageCounts.barcodeWaiting + stageCounts.error
-  // Toplama listesi (picking) kapsamı DEĞİŞMEZ: mevcut açık-operasyon tanımı
-  // (isOpenOperation) korunur; yalnız sayaçlar canonical aşamadan türetilir.
-  const openOrders = classified
-    .filter(({ state }) => state.isOpenOperation)
-    .map(({ order }) => order)
+  // NOT: Toplama listesi (picking) ARTIK `isOpenOperation` kullanmaz. O
+  // predicate yalnız "süreç kapandı mı" sorusunu yanıtlıyordu ve LABEL_PRINTED
+  // siparişleri DIŞARIDA BIRAKMIYORDU (processClosed'da yok) → basılmış
+  // siparişler toplama listesinde kalıyordu. Yeni kapsam kanonik
+  // `isPickingEligible` ile tanımlıdır (bkz. buildPickingLists).
   const operationalSummary = {
     openOperations,
     barcodeWaiting: stageCounts.barcodeWaiting,
@@ -533,14 +585,7 @@ export function buildDashboardViewModel({
         filterTarget: 'delivered',
       },
     ],
-    pickingLists: {
-      mode: 'readonly-products',
-      title: 'Toplanacak Ürünler',
-      products: buildPickingProducts(
-        openOrders,
-        products,
-      ).slice(0, 10),
-    },
+    pickingLists: buildPickingLists(uniqueOrders, products),
     recentOperations: buildRecentOperations(uniqueOrders, products).slice(0, 10),
     latestSyncAt: latestSyncAt ?? resolveLatestSyncAt(uniqueOrders),
   }
@@ -1167,17 +1212,120 @@ function buildTopProducts(
     .sort((left, right) => right.quantity - left.quantity || right.revenue - left.revenue)
 }
 
-function buildPickingProducts(
+const PICKING_DISPLAY_LIMIT = 50
+
+/**
+ * TOPLANACAK ÜRÜNLER.
+ *
+ * Kapsam: TÜM sipariş kümesi kanonik `isPickingEligible` ile süzülür —
+ * dönem/gün daraltması YOKTUR ve satış disposition'ı UYGULANMAZ (bu bir
+ * operasyon kuyruğudur, satış raporu değil).
+ *
+ * Gruplama: ürün AİLESİ (beden bağımsız) + beden alt kırılımı.
+ * Karmaşıklık: sipariş × kalem üzerinde TEK geçiş (eski kod ürün × sipariş ×
+ * kalem iç içe tarıyordu).
+ */
+function buildPickingLists(
   orders: CargoOrder[],
   products: CargoProduct[],
-): DashboardPickingProduct[] {
-  const topProducts = buildTopProducts(orders, products)
-  return topProducts.map((product) => ({
-    ...product,
-    orderCount: orders.filter((order) =>
-      order.items.some((item) => dashboardProductKey(item) === product.key),
-    ).length,
-  }))
+): DashboardViewModel['pickingLists'] {
+  const eligible = orders.filter(isPickingEligible)
+  const families = buildProductFamilyIndex(eligible, resolvePickingStage)
+  const orderLookup = new Map<string, CargoOrder>()
+  for (const order of eligible) {
+    orderLookup.set(String(order.id || order.orderNumber || ''), order)
+  }
+  const pickingOrderIds = new Set<string>()
+  let totalQuantity = 0
+  for (const family of families) {
+    totalQuantity += family.totalQuantity
+    for (const orderId of family.orderIds) pickingOrderIds.add(orderId)
+  }
+  const visible = families
+    .slice(0, PICKING_DISPLAY_LIMIT)
+    .map((family) => toPickingProduct(family, orderLookup, products))
+  return {
+    mode: 'readonly-products',
+    title: 'Toplanacak Ürünler',
+    products: visible,
+    totalFamilyCount: families.length,
+    hiddenFamilyCount: Math.max(0, families.length - visible.length),
+    orderCount: pickingOrderIds.size,
+    totalQuantity,
+  }
+}
+
+function toPickingProduct(
+  family: ProductFamilyGroup,
+  orderLookup: Map<string, CargoOrder>,
+  products: CargoProduct[],
+): DashboardPickingProduct {
+  const stageBreakdown = Object.entries(family.stageCounts)
+    .map(([stage, count]) => ({
+      stage: stage as DashboardOperationStage,
+      label: dashboardOperationStageLabel(stage as DashboardOperationStage),
+      count,
+    }))
+    .sort((left, right) => right.count - left.count)
+  const seenOrders = new Set<string>()
+  const orderRefs: DashboardPickingOrderRef[] = []
+  for (const ref of family.orderRefs) {
+    // Aynı sipariş aynı ailede birden çok kalem taşıyabilir → sipariş
+    // kimliğiyle dedupe; adet birleştirilir.
+    const existing = orderRefs.find((entry) => entry.orderId === ref.orderId)
+    if (existing) {
+      existing.quantity += ref.quantity
+      if (!existing.size.includes(ref.size)) {
+        existing.size = `${existing.size}, ${ref.size}`
+      }
+      continue
+    }
+    if (seenOrders.has(ref.orderId)) continue
+    seenOrders.add(ref.orderId)
+    const order = orderLookup.get(ref.orderId)
+    const state = order ? classifyOrderForTabs(order) : undefined
+    orderRefs.push({
+      orderId: ref.orderId,
+      displayOrderNumber: order ? displayOrderNumber(order) : ref.orderId,
+      // Yalnız mevcut güvenli gösterim; ek PII (adres/telefon) TAŞINMAZ.
+      customerName: String(order?.customerName ?? '').trim(),
+      size: ref.size,
+      quantity: ref.quantity,
+      orderDate: order?.orderDate || order?.createdAt,
+      operationStatusLabel: order
+        ? dashboardOperationStageLabel(resolvePickingStage(order))
+        : '',
+      labelReady: Boolean(state?.isLabelReady),
+      carrier: String(order?.cargoProviderName ?? '').trim(),
+    })
+  }
+  return {
+    key: family.key,
+    productName: family.productName,
+    color: family.color,
+    sku: firstString(
+      family.sampleItem.merchantSku,
+      family.sampleItem.sku,
+      family.sampleItem.stockCode,
+    ),
+    barcode: String(family.sampleItem.barcode || '').trim(),
+    quantity: family.totalQuantity,
+    orderCount: family.orderCount,
+    imageCandidates: resolveProductImageCandidates(
+      family.sampleItem,
+      products,
+    ).map((candidate) => candidate.url),
+    variants: family.variants.map((variant) => ({
+      sizeKey: variant.sizeKey,
+      size: variant.size,
+      quantity: variant.quantity,
+      orderCount: variant.orderIds.length,
+      orderIds: variant.orderIds,
+    })),
+    stageBreakdown,
+    orders: orderRefs,
+    identitySource: family.identitySource,
+  }
 }
 
 function buildActionRequired(

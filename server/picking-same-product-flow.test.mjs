@@ -1,0 +1,491 @@
+import assert from 'node:assert/strict'
+import test, { after, before } from 'node:test'
+import { createServer } from 'vite'
+
+// TOPLANACAK ÜRÜNLER + AYNI ÜRÜN SİPARİŞİ.
+//
+// Bu paket YALNIZ operasyon görünürlüğü/filtrelemesini kilitler. Sürat
+// etiket/footer aggregation'ı kapsam DIŞINDADIR ve buradan beslenmez:
+// orada kimlik strict kalır (ürün + SKU + renk + BEDEN).
+
+let vite
+
+before(async () => {
+  vite = await createServer({
+    server: { middlewareMode: true },
+    appType: 'custom',
+    logLevel: 'silent',
+  })
+})
+
+after(async () => {
+  await vite?.close()
+})
+
+const load = (path) => vite.ssrLoadModule(path)
+
+const FAMILY = '/src/utils/orderProductFamily.ts'
+const CLASSIFICATION = '/src/utils/orderClassification.ts'
+const VIEW_MODEL = '/src/dashboard/dashboardViewModel.ts'
+
+/** Aynı kanonik ürün (contentId), renk/beden dışarıdan verilir. */
+function line({
+  id = 'l1',
+  contentId = 'C-100',
+  color = 'Lacivert',
+  size = '36',
+  quantity = 1,
+  sku = undefined,
+  barcode = undefined,
+  productName = 'Scuba Secil Detayli Tesettur Elbise',
+} = {}) {
+  return {
+    id,
+    productName,
+    sku: sku ?? `SKU-${size}`,
+    merchantSku: sku ?? `SKU-${size}`,
+    barcode: barcode ?? `BC-${size}`,
+    quantity,
+    color,
+    size,
+    productContentId: contentId,
+  }
+}
+
+/**
+ * Varsayılan: LABEL_READY (etiket hazır, BASILMAMIŞ) → toplama kapsamında.
+ * `stage` ile kapanmış durumlar üretilebilir.
+ */
+function order(id, items, overrides = {}) {
+  return {
+    id,
+    orderNumber: `ORD-${id}`,
+    marketplace: 'Trendyol',
+    packageId: `PKG-${id}`,
+    customerName: 'SENTETIK ALICI',
+    city: 'İstanbul',
+    district: 'Kadıköy',
+    orderDate: '2026-08-01T10:00:00.000Z',
+    status: 'Created',
+    marketplaceStatus: 'Created',
+    operationStatus: 'LABEL_READY',
+    labelStatus: 'READY',
+    items,
+    shipment: {
+      provider: 'surat-kargo',
+      lifecycleStatus: 'LABEL_READY_AWAITING_ACCEPTANCE',
+      dispatchRegistrationConfirmed: true,
+      barcodeRaw: `^XA^FD${id}^FS^XZ`,
+      barcode: `BARCODE-${id}`,
+      zplReady: true,
+      printEnabled: true,
+    },
+    ...overrides,
+  }
+}
+
+const printed = (id, items) =>
+  order(id, items, {
+    operationStatus: 'LABEL_PRINTED',
+    labelStatus: 'PRINTED',
+  })
+
+async function pickingOf(orders) {
+  const { buildDashboardViewModel } = await load(VIEW_MODEL)
+  const model = buildDashboardViewModel({
+    orders,
+    products: [],
+    selectedPeriod: { key: 'today' },
+    now: new Date('2026-08-10T09:00:00.000Z'),
+  })
+  return model.pickingLists
+}
+
+function familyRow(picking, productNamePart = 'Scuba') {
+  return picking.products.find((product) =>
+    product.productName.includes(productNamePart),
+  )
+}
+
+// ═══ PICKING ══════════════════════════════════════════════════════════════
+
+test('PICKING-1: LABEL_PRINTED olmayan aktif sipariş listede', async () => {
+  const picking = await pickingOf([order('a', [line({ quantity: 2 })])])
+  const row = familyRow(picking)
+  assert.ok(row, 'ürün ailesi satırı üretilmeli')
+  assert.equal(row.quantity, 2)
+  assert.equal(row.orderCount, 1)
+})
+
+test('PICKING-2: LABEL_PRINTED toplama hesabında YOK', async () => {
+  const picking = await pickingOf([printed('a', [line({ quantity: 2 })])])
+  assert.equal(picking.products.length, 0)
+  assert.equal(picking.orderCount, 0)
+  assert.equal(picking.totalQuantity, 0)
+})
+
+test('PICKING-3: iptal/teslim/iade/arşiv toplama hesabında YOK', async () => {
+  const closed = [
+    order('cancel', [line()], {
+      status: 'Cancelled',
+      marketplaceStatus: 'Cancelled',
+      operationStatus: 'CANCELLED',
+    }),
+    order('delivered', [line()], {
+      status: 'Delivered',
+      marketplaceStatus: 'Delivered',
+      operationStatus: 'DELIVERED',
+    }),
+    order('returned', [line()], {
+      status: 'Returned',
+      marketplaceStatus: 'Returned',
+      operationStatus: 'RETURNED',
+    }),
+    order('archived', [line()], { archived: true, archivedAt: '2026-07-01' }),
+  ]
+  const picking = await pickingOf(closed)
+  assert.equal(picking.products.length, 0, 'kapanmış siparişler toplanmaz')
+})
+
+test('PICKING-4: 36+40+42 tek ailede toplanır, beden kırılımı doğru', async () => {
+  const picking = await pickingOf([
+    order('a', [line({ size: '36', quantity: 9 })]),
+    order('b', [line({ size: '40', quantity: 6 })]),
+    order('c', [line({ size: '42', quantity: 10 })]),
+  ])
+  assert.equal(picking.products.length, 1, 'beden aileyi BÖLMEZ')
+  const row = picking.products[0]
+  assert.equal(row.quantity, 25)
+  assert.equal(row.orderCount, 3)
+  const bySize = Object.fromEntries(
+    row.variants.map((variant) => [variant.size, variant.quantity]),
+  )
+  assert.deepEqual(bySize, { 36: 9, 40: 6, 42: 10 })
+})
+
+test('PICKING-5: aynı canonical ürün farklı renk → AYRI aile', async () => {
+  const picking = await pickingOf([
+    order('a', [line({ color: 'Lacivert', size: '36' })]),
+    order('b', [line({ color: 'Bordo', size: '40' })]),
+  ])
+  assert.equal(picking.products.length, 2, 'renk ayrı üründür')
+  assert.equal(new Set(picking.products.map((p) => p.key)).size, 2)
+})
+
+test('PICKING-6: baskıda atlanan sipariş listede KALIR', async () => {
+  // 3 seçildi · 2 başarıyla LABEL_PRINTED · 1 atlandı (durum değişmedi).
+  const picking = await pickingOf([
+    printed('a', [line({ size: '36', quantity: 1 })]),
+    printed('b', [line({ size: '40', quantity: 1 })]),
+    order('c', [line({ size: '42', quantity: 1 })]),
+  ])
+  assert.equal(picking.orderCount, 1)
+  const row = picking.products[0]
+  assert.equal(row.quantity, 1)
+  assert.deepEqual(
+    row.orders.map((entry) => entry.orderId),
+    ['c'],
+  )
+})
+
+test('PICKING-7: başarılı LABEL_PRINTED adedi ANINDA düşürür', async () => {
+  const before = await pickingOf([
+    order('a', [line({ size: '36', quantity: 8 })]),
+    order('b', [line({ size: '40', quantity: 2 })]),
+  ])
+  assert.equal(familyRow(before).quantity, 10)
+  // Aynı veri kümesi, b baskıya gönderildi → yeniden hesap.
+  const after = await pickingOf([
+    order('a', [line({ size: '36', quantity: 8 })]),
+    printed('b', [line({ size: '40', quantity: 2 })]),
+  ])
+  assert.equal(familyRow(after).quantity, 8, '10 → 8 düşmeli')
+  assert.equal(familyRow(after).orderCount, 1)
+})
+
+test('PICKING-8: aynı bedende birden çok sipariş → adet ve DISTINCT sipariş doğru', async () => {
+  const picking = await pickingOf([
+    order('a', [line({ size: '42', quantity: 3 })]),
+    order('b', [line({ size: '42', quantity: 4 })]),
+  ])
+  const row = picking.products[0]
+  assert.equal(row.quantity, 7)
+  assert.equal(row.orderCount, 2)
+  const variant = row.variants.find((entry) => entry.size === '42')
+  assert.equal(variant.quantity, 7)
+  assert.equal(variant.orderCount, 2)
+})
+
+test('PICKING-9: kırpma SESSİZ değildir (gizlenen aile sayısı raporlanır)', async () => {
+  const many = Array.from({ length: 60 }, (_, index) =>
+    order(`o${index}`, [
+      line({
+        contentId: `C-${index}`,
+        productName: `Urun ${index}`,
+        quantity: 60 - index,
+      }),
+    ]),
+  )
+  const picking = await pickingOf(many)
+  assert.equal(picking.totalFamilyCount, 60)
+  assert.equal(
+    picking.hiddenFamilyCount,
+    60 - picking.products.length,
+    'gizlenen aile sayısı açıkça bildirilmeli',
+  )
+  assert.ok(picking.hiddenFamilyCount > 0)
+})
+
+test('PICKING-10: operasyon durum özeti kanonik aşamalardan türer', async () => {
+  const picking = await pickingOf([
+    order('ready', [line({ size: '36' })]),
+    order('waiting', [line({ size: '40' })], {
+      operationStatus: 'NEW',
+      labelStatus: 'NONE',
+      shipment: undefined,
+    }),
+  ])
+  const row = picking.products[0]
+  const stages = Object.fromEntries(
+    row.stageBreakdown.map((entry) => [entry.stage, entry.count]),
+  )
+  assert.equal(stages.labelReady, 1)
+  assert.ok(
+    (stages.barcodeWaiting ?? 0) + (stages.open ?? 0) === 1,
+    'barkod bekleyen sipariş kanonik aşamada sayılmalı',
+  )
+})
+
+// ═══ SAME PRODUCT FILTER ══════════════════════════════════════════════════
+
+const DATE_FILTER = { preset: 'all', timezone: 'Europe/Istanbul' }
+
+async function visible(orders, overrides = {}) {
+  const { buildVisibleOrders } = await load(CLASSIFICATION)
+  return buildVisibleOrders({
+    persistentOrders: orders,
+    selectedTab: 'all',
+    marketplaceFilter: 'all',
+    operationStatusFilter: 'all',
+    cargoFilter: 'all',
+    dateFilter: DATE_FILTER,
+    searchQuery: '',
+    now: new Date('2026-08-10T09:00:00.000Z'),
+    ...overrides,
+  })
+}
+
+const idsOf = (result) => result.visibleOrders.map((order) => order.id).sort()
+
+test('SAME-PRODUCT-1: 36/40/42 → üç sipariş de repeated', async () => {
+  const orders = [
+    order('a', [line({ size: '36' })]),
+    order('b', [line({ size: '40' })]),
+    order('c', [line({ size: '42' })]),
+  ]
+  const result = await visible(orders, { sameProductFilter: 'repeated' })
+  assert.deepEqual(idsOf(result), ['a', 'b', 'c'])
+})
+
+test('SAME-PRODUCT-2: Lacivert vs Bordo AYRI grup', async () => {
+  const orders = [
+    order('a', [line({ color: 'Lacivert', size: '36' })]),
+    order('b', [line({ color: 'Lacivert', size: '40' })]),
+    order('c', [line({ color: 'Bordo', size: '40' })]),
+  ]
+  const repeated = await visible(orders, { sameProductFilter: 'repeated' })
+  assert.deepEqual(idsOf(repeated), ['a', 'b'], 'Bordo eşleşmemeli')
+  const unique = await visible(orders, { sameProductFilter: 'unique' })
+  assert.deepEqual(idsOf(unique), ['c'])
+})
+
+test('SAME-PRODUCT-3: tek sipariş quantity=5 tekrar SAYILMAZ', async () => {
+  const orders = [order('a', [line({ quantity: 5 })])]
+  const repeated = await visible(orders, { sameProductFilter: 'repeated' })
+  assert.deepEqual(idsOf(repeated), [], 'adet tekrar değildir')
+  const unique = await visible(orders, { sameProductFilter: 'unique' })
+  assert.deepEqual(idsOf(unique), ['a'])
+})
+
+test('SAME-PRODUCT-4: beden bazlı farklı SKU/barkod aynı grubu BOZMAZ', async () => {
+  const orders = [
+    order('a', [line({ size: '36', sku: 'SKU-A-36', barcode: 'BC-A-36' })]),
+    order('b', [line({ size: '42', sku: 'SKU-A-42', barcode: 'BC-A-42' })]),
+  ]
+  const result = await visible(orders, { sameProductFilter: 'repeated' })
+  assert.deepEqual(idsOf(result), ['a', 'b'])
+})
+
+test('SAME-PRODUCT-5: çok ürünlü sipariş listede BİR KEZ görünür', async () => {
+  // 'multi' hem X hem Y ailesinde tekrar ediyor; yine de tek satır.
+  const orders = [
+    order('multi', [
+      line({ id: 'x', contentId: 'C-X', size: '36' }),
+      line({ id: 'y', contentId: 'C-Y', size: '40', productName: 'Abiye Gri' }),
+    ]),
+    order('x2', [line({ id: 'x', contentId: 'C-X', size: '38' })]),
+    order('y2', [
+      line({ id: 'y', contentId: 'C-Y', size: '42', productName: 'Abiye Gri' }),
+    ]),
+  ]
+  const result = await visible(orders, { sameProductFilter: 'repeated' })
+  const ids = result.visibleOrders.map((entry) => entry.id)
+  assert.equal(ids.filter((id) => id === 'multi').length, 1, 'tekrar YOK')
+  assert.deepEqual([...ids].sort(), ['multi', 'x2', 'y2'])
+})
+
+test('SAME-PRODUCT-6: Yeni Siparişler sekmesiyle doğru compose', async () => {
+  const orders = [
+    order('a', [line({ size: '36' })], {
+      operationStatus: 'NEW',
+      labelStatus: 'NONE',
+      shipment: undefined,
+    }),
+    order('b', [line({ size: '40' })], {
+      operationStatus: 'NEW',
+      labelStatus: 'NONE',
+      shipment: undefined,
+    }),
+    order('c', [line({ color: 'Bordo', size: '40' })], {
+      operationStatus: 'NEW',
+      labelStatus: 'NONE',
+      shipment: undefined,
+    }),
+    order('d', [
+      line({ contentId: 'C-999', productName: 'Baska Urun', size: '38' }),
+    ]),
+  ]
+  const result = await visible(orders, {
+    selectedTab: 'newOrders',
+    sameProductFilter: 'repeated',
+  })
+  assert.deepEqual(idsOf(result), ['a', 'b'], 'C ve D görünmemeli')
+})
+
+test('SAME-PRODUCT-7: şehir/tarih/pazaryeri filtreleriyle doğru kesişim', async () => {
+  const orders = [
+    order('a', [line({ size: '36' })], { city: 'İstanbul' }),
+    order('b', [line({ size: '40' })], { city: 'İstanbul' }),
+    // Aynı ürün ama BAŞKA şehir: şehir filtresi kapsamı daralttığı için
+    // 'c' hem görünmez hem de tekrar hesabına GİRMEZ.
+    order('c', [line({ size: '42' })], { city: 'Ankara' }),
+  ]
+  const scoped = await visible(orders, {
+    cityFilter: 'İstanbul',
+    sameProductFilter: 'repeated',
+  })
+  assert.deepEqual(idsOf(scoped), ['a', 'b'])
+
+  // Şehir Ankara + repeated: kapsamda tek sipariş kalır → tekrar YOK.
+  const ankara = await visible(orders, {
+    cityFilter: 'Ankara',
+    sameProductFilter: 'repeated',
+  })
+  assert.deepEqual(idsOf(ankara), [])
+})
+
+test('SAME-PRODUCT-8: mevcut filtre davranışları BOZULMAZ (all = değişmez)', async () => {
+  const orders = [
+    order('a', [line({ size: '36' })]),
+    order('b', [line({ size: '40' })]),
+  ]
+  const base = await visible(orders)
+  const explicit = await visible(orders, { sameProductFilter: 'all' })
+  assert.deepEqual(idsOf(base), idsOf(explicit))
+  assert.equal(base.visibleOrders.length, 2)
+})
+
+// ═══ CANLI DURUM SENARYOSU ════════════════════════════════════════════════
+
+test('LIVE-RECOMPUTE: A/B basıldı, C atlandı → toplama YALNIZ C, filtre yeniden hesaplanır', async () => {
+  const initial = [
+    order('a', [line({ size: '36', quantity: 1 })]),
+    order('b', [line({ size: '40', quantity: 1 })]),
+    order('c', [line({ size: '42', quantity: 1 })]),
+  ]
+  const startPicking = await pickingOf(initial)
+  assert.equal(startPicking.orderCount, 3)
+  const startRepeated = await visible(initial, {
+    sameProductFilter: 'repeated',
+  })
+  assert.deepEqual(idsOf(startRepeated), ['a', 'b', 'c'])
+
+  // A ve B başarıyla LABEL_PRINTED; C atlandı (durumu değişmedi).
+  const afterPrint = [
+    printed('a', [line({ size: '36', quantity: 1 })]),
+    printed('b', [line({ size: '40', quantity: 1 })]),
+    order('c', [line({ size: '42', quantity: 1 })]),
+  ]
+  const endPicking = await pickingOf(afterPrint)
+  assert.equal(endPicking.orderCount, 1, 'yalnız C toplanacak')
+  assert.deepEqual(
+    endPicking.products[0].orders.map((entry) => entry.orderId),
+    ['c'],
+  )
+  assert.equal(endPicking.totalQuantity, 1, 'ESKİ state gösterilmemeli')
+})
+
+// ═══ ETİKET AGGREGATION SÖZLEŞMESİ (REGRESYON) ════════════════════════════
+
+test('LABEL-AGG-UNTOUCHED: Sürat footer kimliği BEDEN dâhil strict kalır', async () => {
+  const { aggregateProductLineItems } = await load(
+    '/src/utils/suratZplProductLine.ts',
+  )
+  const lines = aggregateProductLineItems([
+    { productName: 'Elbise', sku: 'SKU-1', color: 'Lacivert', size: '36', quantity: 1 },
+    { productName: 'Elbise', sku: 'SKU-1', color: 'Lacivert', size: '42', quantity: 1 },
+  ])
+  assert.equal(
+    lines.length,
+    2,
+    'etiket tarafında beden AYRI kalemdir (operasyon gruplaması sızmamalı)',
+  )
+})
+
+test('FAMILY-KEY: beden anahtarda YOK, renk anahtarda VAR, SKU eşitlik anahtarı DEĞİL', async () => {
+  const { resolveProductFamilyIdentity } = await load(FAMILY)
+  const a = resolveProductFamilyIdentity(line({ size: '36', sku: 'SKU-A' }))
+  const b = resolveProductFamilyIdentity(line({ size: '42', sku: 'SKU-B' }))
+  const bordo = resolveProductFamilyIdentity(line({ color: 'Bordo' }))
+  assert.equal(a.key, b.key, 'beden/SKU aileyi bölmemeli')
+  assert.notEqual(a.key, bordo.key, 'renk aileyi bölmeli')
+  assert.equal(a.source, 'productContentId')
+  assert.ok(!a.key.includes('36') && !a.key.includes('sku'))
+})
+
+test('FAMILY-FALLBACK: kanonik kimlik yoksa ad+renk, beden yine YOK', async () => {
+  const { resolveProductFamilyIdentity } = await load(FAMILY)
+  const base = { productName: 'Taşlı  Simli Abiye', color: 'Gri', quantity: 1 }
+  const a = resolveProductFamilyIdentity({ ...base, size: '38' })
+  const b = resolveProductFamilyIdentity({ ...base, size: '42' })
+  // Anlamsız boşluk/büyük-küçük farkı aileyi BÖLMEZ (fuzzy DEĞİL, normalize).
+  const c = resolveProductFamilyIdentity({
+    ...base,
+    productName: 'TAŞLI SİMLİ ABİYE',
+    size: '40',
+  })
+  assert.equal(a.key, b.key)
+  assert.equal(a.key, c.key)
+  assert.equal(a.source, 'nameColorFallback')
+})
+
+test('PERF: 4000 sipariş tek geçişte indekslenir (O(N·I))', async () => {
+  const { buildProductFamilyIndex, buildRepeatedProductOrderIds } =
+    await load(FAMILY)
+  const orders = Array.from({ length: 4000 }, (_, index) =>
+    order(`o${index}`, [
+      line({
+        contentId: `C-${index % 200}`,
+        size: String(36 + (index % 5) * 2),
+        quantity: 1,
+      }),
+    ]),
+  )
+  const startedAt = process.hrtime.bigint()
+  const families = buildProductFamilyIndex(orders)
+  const repeated = buildRepeatedProductOrderIds(orders)
+  const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6
+  assert.equal(families.length, 200)
+  assert.equal(repeated.size, 4000)
+  assert.ok(elapsedMs < 1500, `indeksleme çok yavaş: ${elapsedMs.toFixed(1)} ms`)
+})

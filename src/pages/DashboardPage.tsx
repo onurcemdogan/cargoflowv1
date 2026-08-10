@@ -121,6 +121,9 @@ export function DashboardPage({
   const [activeDashboardOperationId, setActiveDashboardOperationId] =
     useState<string>()
   const [dashboardDetailError, setDashboardDetailError] = useState<string>()
+  // Toplanacak Ürünler: yalnız AÇILIP-KAPANMA (görsel) durumu. Operasyonel
+  // gerçeklik burada TUTULMAZ; kaynak canonical order state'idir.
+  const [expandedPickingKey, setExpandedPickingKey] = useState<string>()
   const selectedPeriod = useMemo<DashboardPeriodSelection>(
     () => ({
       key: periodKey,
@@ -728,27 +731,95 @@ export function DashboardPage({
         <article className="dashboard-analytics-card dashboard-picking-card">
           <DashboardCardHeader
             title={viewModel.pickingLists.title}
-            helper="Açık operasyonlardan salt okunur özet"
+            helper={`Baskıya gönderilmemiş ${viewModel.pickingLists.orderCount} sipariş · ${viewModel.pickingLists.totalQuantity} adet`}
           />
           <div className="dashboard-picking-list">
-            {viewModel.pickingLists.products.map((product) => (
-              <div key={product.key}>
-                <ProductImageThumb
-                  candidates={product.imageCandidates}
-                  alt={product.productName}
-                  className="dashboard-mini-product-image"
-                  placeholderClassName="dashboard-mini-product-placeholder"
-                />
-                <span>
-                  <strong>{product.productName}</strong>
-                  <small>{product.barcode || product.sku || 'Kod yok'}</small>
-                </span>
-                <b>{product.quantity} adet</b>
+            {viewModel.pickingLists.products.map((product) => {
+              const expanded = expandedPickingKey === product.key
+              return (
+                <div key={product.key} className="dashboard-picking-family">
+                  <div className="dashboard-picking-family-head">
+                    <ProductImageThumb
+                      candidates={product.imageCandidates}
+                      alt={product.productName}
+                      className="dashboard-mini-product-image"
+                      placeholderClassName="dashboard-mini-product-placeholder"
+                    />
+                    <span className="dashboard-picking-family-title">
+                      <strong>{product.productName}</strong>
+                      <small>
+                        {product.color ? `${product.color} · ` : ''}
+                        {product.quantity} adet · {product.orderCount} sipariş
+                      </small>
+                    </span>
+                    <button
+                      type="button"
+                      className="dashboard-card-link"
+                      onClick={() =>
+                        setExpandedPickingKey(expanded ? undefined : product.key)
+                      }
+                    >
+                      {expanded ? 'Gizle' : 'Siparişleri Gör'}
+                    </button>
+                  </div>
+                  <div className="dashboard-picking-sizes">
+                    {product.variants.map((variant) => (
+                      <span key={variant.sizeKey} className="dashboard-picking-size">
+                        <b>{variant.size}</b>
+                        <i>{variant.quantity} adet</i>
+                      </span>
+                    ))}
+                  </div>
+                  {product.stageBreakdown.length > 0 ? (
+                    <div className="dashboard-picking-stages">
+                      {product.stageBreakdown.map((entry) => (
+                        <span key={entry.stage}>
+                          {entry.label}: <b>{entry.count}</b>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  {expanded ? (
+                    <div className="dashboard-table-wrap">
+                      <table className="dashboard-compact-table">
+                        <thead>
+                          <tr>
+                            <th>Sipariş No</th>
+                            <th>Müşteri</th>
+                            <th>Beden</th>
+                            <th>Adet</th>
+                            <th>Durum</th>
+                            <th>Kargo</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {product.orders.map((entry) => (
+                            <tr key={entry.orderId}>
+                              <td><strong>{entry.displayOrderNumber}</strong></td>
+                              <td>{entry.customerName || '—'}</td>
+                              <td>{entry.size}</td>
+                              <td>{entry.quantity}</td>
+                              <td>{entry.operationStatusLabel}</td>
+                              <td>{entry.carrier || 'Bekliyor'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : null}
+                </div>
+              )
+            })}
+            {viewModel.pickingLists.hiddenFamilyCount > 0 ? (
+              <div className="dashboard-empty-compact">
+                +{viewModel.pickingLists.hiddenFamilyCount} ürün daha
+                (toplam {viewModel.pickingLists.totalFamilyCount}). Tam liste
+                için Siparişler ekranını kullanın.
               </div>
-            ))}
+            ) : null}
             {viewModel.pickingLists.products.length === 0 ? (
               <div className="dashboard-empty-compact">
-                Açık operasyonlarda toplanacak ürün bulunamadı.
+                Baskıya gönderilmeyi bekleyen ürün bulunamadı.
               </div>
             ) : null}
           </div>

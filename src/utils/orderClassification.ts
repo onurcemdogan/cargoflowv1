@@ -14,6 +14,10 @@ import {
 import { verifySuratShipment } from './suratVerification'
 import { isExternallyProcessed } from './externalProcessing'
 import {
+  buildRepeatedProductOrderIds,
+  type SameProductFilter,
+} from './orderProductFamily'
+import {
   buildOrderCountSummary,
   dedupeOrdersByPackageIdentity,
   orderPackageIdentity,
@@ -59,6 +63,10 @@ export interface BuildVisibleOrdersInput {
   cityFilter?: string
   districtFilter?: string
   multiProductFilter?: 'all' | 'single' | 'multi'
+  // "Aynı Ürün Siparişi": ürün AİLESİ (beden bağımsız) bazında, DISTINCT
+  // LOGICAL ORDER sayısına göre. 'repeated' → aynı üründen 2+ sipariş,
+  // 'unique' → hiçbir ürünü başka siparişle eşleşmeyenler.
+  sameProductFilter?: SameProductFilter
   actionFilter?: OrdersActionFilter
   // "İşlem Durumu" filtresi: teknik yaşam-döngüsü durumlarına (barkod bekliyor,
   // kargo oluşturulacak, doğrulama bekliyor, etiket basılacak/basıldı, arşiv)
@@ -101,6 +109,7 @@ export interface VisibleOrdersDebug {
   afterCityFilter: number
   afterDistrictFilter: number
   afterMultiProductFilter: number
+  afterSameProductFilter: number
   afterActionFilter: number
   afterDateFilter: number
   afterSearch: number
@@ -410,6 +419,7 @@ export function buildVisibleOrders({
   cityFilter = 'all',
   districtFilter = 'all',
   multiProductFilter = 'all',
+  sameProductFilter = 'all',
   actionFilter = 'all',
   operationTabFilter = 'all',
   dateFilter,
@@ -465,6 +475,7 @@ export function buildVisibleOrders({
     afterCityFilter: 0,
     afterDistrictFilter: 0,
     afterMultiProductFilter: 0,
+    afterSameProductFilter: 0,
     afterActionFilter: 0,
     afterDateFilter: 0,
     afterSearch: 0,
@@ -780,6 +791,31 @@ export function buildVisibleOrders({
   )
   debug.afterSearch = current.length
 
+  // "AYNI ÜRÜN SİPARİŞİ" EN SON UYGULANIR.
+  //
+  // SCOPE SÖZLEŞMESİ (deterministik): tekrar hesabı, diğer TÜM filtrelerden
+  // (sekme + işlem durumu + pazaryeri + statü + kargo + şehir/ilçe + çoklu
+  // ürün + aksiyon + tarih + arama) geçmiş NİHAİ küme üzerinde yapılır.
+  // Böylece sayım teslim edilmiş/iptal eski kayıtlarla ŞİŞMEZ ve "Yeni
+  // Siparişler" sekmesinde yalnız o sekmenin siparişleri karşılaştırılır.
+  const beforeSameProductFilter = current
+  if (sameProductFilter !== 'all') {
+    const repeatedOrderIds = buildRepeatedProductOrderIds(current)
+    current = current.filter((order) => {
+      const orderId = String(order.id || order.orderNumber || '')
+      const repeated = repeatedOrderIds.has(orderId)
+      return sameProductFilter === 'repeated' ? repeated : !repeated
+    })
+  }
+  recordRemovedOrders(
+    beforeSameProductFilter,
+    current,
+    exclusions,
+    'sameProductFilter',
+    'Sipariş seçili aynı-ürün filtresiyle eşleşmiyor.',
+  )
+  debug.afterSameProductFilter = current.length
+
   const summary = buildOrderCountSummary(current)
   debug.visibleCount = summary.packageCount
   debug.uniquePackageCount = summary.packageCount
@@ -928,6 +964,37 @@ export function resolveDashboardOperationStage(
   if (state.isBarcodeWaiting) return 'barcodeWaiting'
   if (state.isOpenOperation) return 'open'
   return 'unknown'
+}
+
+// ═══ TOPLAMA UYGUNLUĞU (PICKING ELIGIBILITY) ══════════════════════════════
+//
+// "Toplanacak Ürünler" = HENÜZ BASKIYA GÖNDERİLMEMİŞ AKTİF siparişlerin
+// toplanması gereken ürünleri. Kanonik TEK-KOVA aşama helper'ı yeniden
+// kullanılır; YENİ bir durum sistemi üretilmez.
+//
+// DAHİL   : open (yeni/hazırlanan) · barcodeWaiting · labelReady · error
+// HARİÇ   : labelPrinted (Baskıya Gönderildi) · handedToCargo · delivered ·
+//           canceledOrReturned · archived · unknown (kapatılmış)
+//
+// SEÇİLMİŞ ≠ BASILMIŞ: toplu baskıda seçilmek siparişi listeden DÜŞÜRMEZ.
+// Yalnız başarılı LABEL_PRINTED geçişi düşürür; atlanan/başarısız sipariş
+// (LABEL_PRINTED almadığı için) listede KALIR.
+//
+// 'error' bilerek dahildir: baskı sorunu yaşamış ama basılmamış sipariş hâlâ
+// depodan toplanmalıdır.
+const PICKING_ELIGIBLE_STAGES = new Set<DashboardOperationStage>([
+  'open',
+  'barcodeWaiting',
+  'labelReady',
+  'error',
+])
+
+export function resolvePickingStage(order: CargoOrder): DashboardOperationStage {
+  return resolveDashboardOperationStage(classifyOrderForTabs(order))
+}
+
+export function isPickingEligible(order: CargoOrder): boolean {
+  return PICKING_ELIGIBLE_STAGES.has(resolvePickingStage(order))
 }
 
 export function dashboardOperationStageLabel(
