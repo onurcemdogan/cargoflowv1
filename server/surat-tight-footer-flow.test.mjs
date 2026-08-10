@@ -127,12 +127,17 @@ test('TF-3: kompakt kademeler merdivenin SONUNDA; mevcut seçimler DEĞİŞMEZ',
   for (const profile of SURAT_FOOTER_PROFILES) {
     assert.ok(profile.fontHeight >= 12, `çok küçük font: ${profile.key}`)
   }
-  // Yeri OLAN etiket eskisi gibi wrapped-compact seçer (regresyon yok).
+  // SÖZLEŞME GÜNCELLENDİ (fiziksel okunabilirlik turu): yeri OLAN etikette
+  // artık EN BÜYÜK font tercih edilir — 18 dot yerine 20 dot sarmalı.
+  // İddia zayıflatılmadı: hâlâ deterministik tek bir profil kilitleniyor.
   const roomy = {
     ok: true, printWidth: 799, labelLength: 799,
     leftRailRight: 48, contentBottom: 700,
   }
-  assert.equal(planSuratFooter([LIVE_ITEM], roomy).profile.key, 'wrapped-compact')
+  const roomyPlan = planSuratFooter([LIVE_ITEM], roomy)
+  assert.equal(roomyPlan.profile.key, 'wrapped-standard')
+  assert.equal(roomyPlan.profile.fontHeight, 20)
+  assert.ok(roomyPlan.usedHeight <= roomyPlan.area.height, 'banda sığar')
 })
 
 test('TF-4: dar alanda kompakt kademe devreye girer', async () => {
@@ -369,16 +374,23 @@ test('TF-16: metin TEK sürekli ^FB bloğunda akar (başlık/meta ZORLA ayrılma
   assert.match(commands[0], /1 x Scuba .*\(Renk: Lacivert, Beden: 40\) \[SCUBA-SEC01\]/)
 })
 
-test('TF-17: sürekli akış DAHA KOMPAKT (satır sayısı ARTMAZ)', async () => {
+// SÖZLEŞME GÜNCELLENDİ: eski hedef "satır sayısını azalt" idi; fiziksel
+// referans (DuruSoft termal çıktı) ise DAHA BÜYÜK FONT + SARMA gösteriyor.
+// Yeni hedef: yer varken en büyük fontu kullan ve banda SIĞ.
+test('TF-17: sürekli akış — yer varken EN BÜYÜK font, taşma YOK', async () => {
   const { planSuratFooter } = await load('/src/utils/suratZplProductLine.ts')
   const plan = planSuratFooter([LONG_ITEM], ROOMY)
-  // ÖNCE: başlık 2 satır + meta 1 satır = 3 satır (66 dot).
-  // SONRA: sürekli akış 2 satır (44 dot).
-  assert.equal(plan.blocks[0][0].lines, 2)
-  assert.equal(plan.usedHeight, 44)
-  assert.ok(plan.usedHeight < 66, 'eski üç satırlı düzenden daha kompakt')
-  // Profil DEĞİŞMEDİ: yer olan etiket hâlâ en büyük okunur fontu alır.
-  assert.equal(plan.profile.key, 'wrapped-compact')
+  // Tek sürekli blok korunur (başlık/meta ZORLA ayrılmaz).
+  assert.equal(plan.blocks[0].length, 1)
+  // EN BÜYÜK okunur font seçilir.
+  assert.equal(plan.profile.key, 'wrapped-standard')
+  assert.equal(plan.profile.fontHeight, 20)
+  // Sarma serbesttir; TEK KATI KURAL banda sığmaktır (sessiz kırpma YOK).
+  assert.ok(plan.blocks[0][0].lines >= 2)
+  assert.ok(
+    plan.usedHeight <= plan.area.height,
+    `footer taşıyor: ${plan.usedHeight} > ${plan.area.height}`,
+  )
 })
 
 test('TF-18: dar alanda ara kademe DAHA BÜYÜK fontu tercih eder', async () => {
@@ -386,12 +398,25 @@ test('TF-18: dar alanda ara kademe DAHA BÜYÜK fontu tercih eder', async () => 
     '/src/utils/suratZplProductLine.ts')
   assert.deepEqual(
     SURAT_FOOTER_PROFILES.map((p) => p.key),
+    // SIRA GÜNCELLENDİ (fiziksel okunabilirlik turu): BÜYÜK FONT → WRAP →
+    // ancak son çare SHRINK. Her `wrapped-*` profili, KENDİNDEN KÜÇÜK
+    // fontlu `single-line-*` profilinden ÖNCE gelir.
     [
-      'single-line-standard', 'single-line-compact', 'single-line-dense',
-      'wrapped-compact', 'wrapped-dense',
+      'single-line-standard', 'wrapped-standard',
+      'single-line-compact', 'wrapped-compact',
+      'single-line-dense', 'wrapped-dense',
       'wrapped-mid', 'single-line-micro', 'wrapped-micro',
     ],
   )
+  // MERDİVEN KURALI makine tarafından da doğrulanır: font yüksekliği
+  // ARTMAZ (monoton azalır) — böylece "önce büyük" garantisi kilitlenir.
+  const heights = SURAT_FOOTER_PROFILES.map((profile) => profile.fontHeight)
+  for (let index = 1; index < heights.length; index += 1) {
+    assert.ok(
+      heights[index] <= heights[index - 1],
+      `merdivende font BÜYÜMEMELİ: ${heights[index - 1]} → ${heights[index]}`,
+    )
+  }
   // Okunabilirlik tabanı korunuyor.
   for (const profile of SURAT_FOOTER_PROFILES) {
     assert.ok(profile.fontHeight >= 12, `çok küçük font: ${profile.key}`)

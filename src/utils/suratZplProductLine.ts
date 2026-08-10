@@ -33,6 +33,7 @@ export const PRODUCT_LINE_OVERFLOW_MESSAGE =
 export type SuratFooterProfileKey =
   | 'wrapped-mid'
   | 'single-line-standard'
+  | 'wrapped-standard'
   | 'single-line-compact'
   | 'single-line-dense'
   | 'wrapped-compact'
@@ -50,13 +51,41 @@ export interface SuratFooterProfile {
   lineGap: number
 }
 
-// DuruSoft kanıtı: tek ürün için ÖNCELİK TEK SATIRDIR. Sırayla denenir, İLK
-// güvenli profil seçilir; seçim DETERMINISTIKTIR.
+// ÖNCELİK SIRASI: BÜYÜK FONT → WRAP → ancak son çare olarak SHRINK.
+//
+// FİZİKSEL KANIT (kullanıcının Zebra çıktısı, 203 dpi): DuruSoft'un ürün
+// satırı İKİ SATIR ve belirgin şekilde daha büyük okunuyor; CargoFlow'un
+// tek satırı küçük kalıyordu. Eski politika "ne olursa olsun tek satıra
+// sığdır ve küçült" idi — merdivende her `wrapped-*` profili, kendinden
+// küçük fontlu `single-line-*` profilinin ARDINDA geliyordu.
+//
+// İKİ DÜZELTME (ikisi de ölçüme dayanır, footer bandı 771 × 66 dot):
+//   1) `wrapped-standard` EKLENDİ: tipik ürün satırı (~76 karakter) 20 dot'ta
+//      tek satıra sığmıyor ve eskiden 18 dot TEK satıra düşüyordu. Artık
+//      20 dot İKİ SATIR seçilir (50 dot; banda sığar) — referans görünüm.
+//   2) SIRA düzeltildi: 18 dot iki satır, 16 dot tek satırdan ÖNCE denenir.
+//
+// Fontlar, alan hesabı ve taşma güvenliği DEĞİŞMEDİ; yalnız tercih sırası
+// ve bir profil eklendi. Ürün toplama (aggregation) mantığına DOKUNULMADI.
+//
+// 203 dpi'de dot → mm: 20 ≈ 2,5 mm · 18 ≈ 2,25 mm · 16 ≈ 2,0 mm · 14 ≈ 1,75 mm.
 export const SURAT_FOOTER_PROFILES: SuratFooterProfile[] = [
+  // SHORT — tek satır, en büyük okunabilir font.
   { key: 'single-line-standard', fontHeight: 20, fontWidth: 20, maxLinesPerItem: 1, lineGap: 4 },
+  // MEDIUM — tek satıra sığmıyorsa KÜÇÜLTME: 20 dot'ta İKİ SATIR.
+  //
+  // ÖLÇÜM (maskeli gerçek şablon, footer bandı 771 × 66 dot): tipik ürün
+  // satırı (~76 karakter) 20 dot'ta tek satıra sığmıyordu ve eski merdiven
+  // onu 18 dot TEK satıra düşürüyordu. Fiziksel referansta DuruSoft aynı
+  // içeriği İKİ SATIR ve daha büyük fontla basıyor. İki satır 20 dot
+  // 50 dot yer tutar (66 dot banda sığar).
+  { key: 'wrapped-standard', fontHeight: 20, fontWidth: 20, maxLinesPerItem: 2, lineGap: 4 },
+  // MEDIUM — tek satır 18 dot.
   { key: 'single-line-compact', fontHeight: 18, fontWidth: 16, maxLinesPerItem: 1, lineGap: 3 },
-  { key: 'single-line-dense', fontHeight: 16, fontWidth: 14, maxLinesPerItem: 1, lineGap: 2 },
+  // MEDIUM/LONG — SIĞMIYORSA KÜÇÜLTME, SAR: 18 dot iki satır.
   { key: 'wrapped-compact', fontHeight: 18, fontWidth: 16, maxLinesPerItem: 2, lineGap: 3 },
+  // LONG — okunabilirlik tabanı 16 dot; önce tek satır, sonra iki satır.
+  { key: 'single-line-dense', fontHeight: 16, fontWidth: 14, maxLinesPerItem: 1, lineGap: 2 },
   { key: 'wrapped-dense', fontHeight: 16, fontWidth: 14, maxLinesPerItem: 2, lineGap: 2 },
   // ── SON ÇARE KADEMELERİ (canlı 4057121401 vakası) ────────────────────
   // KANIT: gerçek gönderide resmî içerik etiketin çok altına iniyor ve
