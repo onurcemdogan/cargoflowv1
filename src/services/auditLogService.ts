@@ -23,13 +23,28 @@ export class AuditLogService {
       orderNumber: input.orderNumber,
       createdAt: new Date().toISOString(),
     }
-    const logs = [nextLog, ...this.load()].slice(0, 100)
-    saveToStorage(STORAGE_KEY, logs)
+    let logs = [nextLog, ...this.load()].slice(0, 100)
+    // TANI/DENETİM KAYDI İŞ AKIŞINI KESMEZ: depolama kotası dolarsa yazım
+    // küçültülerek yeniden denenir ve hata DIŞARI SIZMAZ. Yalnız bu
+    // anahtar yönetilir (bkz. apiDebugService'teki aynı sözleşme).
+    for (;;) {
+      try {
+        saveToStorage(STORAGE_KEY, logs)
+        break
+      } catch {
+        if (logs.length === 0) break
+        logs = logs.slice(0, Math.floor(logs.length / 2))
+      }
+    }
     return logs
   }
 
   clear(): AuditLog[] {
-    saveToStorage<AuditLog[]>(STORAGE_KEY, [])
+    try {
+      saveToStorage<AuditLog[]>(STORAGE_KEY, [])
+    } catch {
+      // temizleme de iş akışını kesmez
+    }
     return []
   }
 }
