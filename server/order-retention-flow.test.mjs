@@ -1149,7 +1149,14 @@ test('HOUSEKEEPING-GATE-5: normal sipariş/sync/print akislari bayraktan ETKILEN
       continue
     }
     for (const file of entries.filter((name) => name.endsWith('.ts'))) {
-      if (file === 'orderRetention.ts' || file === 'retentionCheckCli.ts') continue
+      // Retention modulleri bayragi OKUMAKLA gorevlidir; disindakiler OKUMAZ.
+      if (
+        file === 'orderRetention.ts' ||
+        file === 'retentionCheckCli.ts' ||
+        file === 'retentionScheduler.ts'
+      ) {
+        continue
+      }
       const source = readFileSync(join(here, dir, file), 'utf8')
       assert.ok(
         !source.includes('ORDER_HOUSEKEEPING_ENABLED'),
@@ -1162,8 +1169,11 @@ test('HOUSEKEEPING-GATE-5: normal sipariş/sync/print akislari bayraktan ETKILEN
     }
   }
   const serverEntry = readFileSync(join(here, 'index.mjs'), 'utf8')
-  assert.ok(!serverEntry.includes('ORDER_HOUSEKEEPING_ENABLED'))
-  // 2) Boot'ta otomatik retention writer BAGLI DEGIL.
+  // Boot yolu bayragi KENDISI OKUMAZ; karari zamanlayiciya devreder
+  // (tek karar noktasi). Aciklama satirinda gecmesi okuma degildir.
+  assert.ok(!serverEntry.includes('process.env.ORDER_HOUSEKEEPING_ENABLED'))
+  // 2) Boot yolu YAZMA ilkellerini DOGRUDAN cagirmaz; yalniz KAPILI
+  //    zamanlayiciyi kurar (bayrak kapaliysa zamanlayici da kurulmaz).
   assert.ok(!serverEntry.includes('runRetentionCycle'))
   assert.ok(!serverEntry.includes('archiveEligibleOrders'))
   assert.ok(!serverEntry.includes('applyActivityBaseline'))
@@ -1198,4 +1208,280 @@ test('HOUSEKEEPING-GATE-6: dry-run CLI yalniz SALT OKUNUR fonksiyon kullanir', a
     assert.ok(!cli.includes(forbidden), `CLI ${forbidden} CAGIRMAMALI`)
   }
   assert.ok(cli.includes('inspectRetention'))
+})
+
+// ═══ RETENTION HOUSEKEEPING ZAMANLAYICISI ═════════════════════════════════
+//
+// Bu blok YALNIZ calisma-zamani baglantisini kilitler. Is kurallari
+// (baseline/archive/purge yuklemleri, 4/90 gun, batch) orderRetention.ts'te
+// kalir ve zamanlayici tarafindan OLDUGU GIBI kullanilir.
+
+const schedulerModule = await import('./orders/retentionScheduler.ts')
+
+/** Gercek DB'ye dokunmayan sahte tur; cagri sayimi ve gecikme kontrolu. */
+function makeCycleSpy({ fail = false, delayMs = 0 } = {}) {
+  const calls = []
+  let resolveGate = null
+  const spy = async () => {
+    calls.push(Date.now())
+    if (delayMs > 0) {
+      await new Promise((resolve) => {
+        resolveGate = resolve
+        setTimeout(resolve, delayMs)
+      })
+    }
+    if (fail) throw new Error('sentetik tur hatasi')
+    return {
+      scanned: 0,
+      baselineEligible: 0,
+      baselined: 0,
+      archiveEligible: 0,
+      archived: 0,
+      purgeEligible: 0,
+      purged: 0,
+      failed: 0,
+      durationMs: 1,
+    }
+  }
+  return { spy, calls, release: () => resolveGate?.() }
+}
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('SCHEDULER-1: bayrak unset → zamanlayici KURULMAZ, tur cagrisi = 0', async () => {
+  const { spy, calls } = makeCycleSpy()
+  const handle = schedulerModule.startRetentionScheduler(
+    {},
+    {
+      policy: retention.resolveRetentionPolicy({}),
+      runCycle: spy,
+      log: () => {},
+    },
+  )
+  assert.equal(handle.started, false)
+  assert.equal(handle.reason, 'disabled')
+  assert.equal(schedulerModule.isRetentionSchedulerActive(), false)
+  await wait(30)
+  assert.equal(calls.length, 0, 'boot yazmasi YOK')
+  handle.stop()
+})
+
+test('SCHEDULER-2: bayrak false → tur cagrisi = 0', async () => {
+  const { spy, calls } = makeCycleSpy()
+  const handle = schedulerModule.startRetentionScheduler(
+    {},
+    {
+      policy: retention.resolveRetentionPolicy({
+        ORDER_HOUSEKEEPING_ENABLED: 'false',
+      }),
+      runCycle: spy,
+      log: () => {},
+    },
+  )
+  assert.equal(handle.started, false)
+  await wait(30)
+  assert.equal(calls.length, 0)
+  handle.stop()
+})
+
+test('SCHEDULER-3: bayrak true → boot sonrasi TAM 1 initial tur', async () => {
+  const { spy, calls } = makeCycleSpy()
+  const handle = schedulerModule.startRetentionScheduler(
+    {},
+    {
+      policy: {
+        ...retention.resolveRetentionPolicy({
+          ORDER_HOUSEKEEPING_ENABLED: 'true',
+        }),
+        intervalMs: 60_000,
+      },
+      runCycle: spy,
+      log: () => {},
+    },
+  )
+  assert.equal(handle.started, true)
+  assert.equal(schedulerModule.isRetentionSchedulerActive(), true)
+  await wait(40)
+  assert.equal(calls.length, 1, 'tam bir initial tur')
+  handle.stop()
+})
+
+test('SCHEDULER-4: interval tick → sonraki tur calisir', async () => {
+  const { spy, calls } = makeCycleSpy()
+  const handle = schedulerModule.startRetentionScheduler(
+    {},
+    {
+      policy: {
+        ...retention.resolveRetentionPolicy({
+          ORDER_HOUSEKEEPING_ENABLED: 'true',
+        }),
+        intervalMs: 25,
+      },
+      runCycle: spy,
+      log: () => {},
+    },
+  )
+  await wait(120)
+  handle.stop()
+  assert.ok(calls.length >= 2, `periyodik tur beklenir, gorulen: ${calls.length}`)
+})
+
+test('SCHEDULER-5: tur devam ederken tick ORTUSME uretmez', async () => {
+  const { spy, calls, release } = makeCycleSpy({ delayMs: 200 })
+  const handle = schedulerModule.startRetentionScheduler(
+    {},
+    {
+      policy: {
+        ...retention.resolveRetentionPolicy({
+          ORDER_HOUSEKEEPING_ENABLED: 'true',
+        }),
+        intervalMs: 20,
+      },
+      runCycle: spy,
+      log: () => {},
+    },
+  )
+  // Ilk tur 200ms surerken ~9 tick gecer; hicbiri yeni tur BASLATMAMALI.
+  await wait(140)
+  assert.equal(calls.length, 1, 'ortusen tur YOK')
+  release()
+  handle.stop()
+})
+
+test('SCHEDULER-6: tur hata firlatsa da zamanlayici YASAR, sonraki tick dener', async () => {
+  const { spy, calls } = makeCycleSpy({ fail: true })
+  const errors = []
+  const handle = schedulerModule.startRetentionScheduler(
+    {},
+    {
+      policy: {
+        ...retention.resolveRetentionPolicy({
+          ORDER_HOUSEKEEPING_ENABLED: 'true',
+        }),
+        intervalMs: 25,
+      },
+      runCycle: spy,
+      log: () => {},
+      onError: (error) => errors.push(error),
+    },
+  )
+  await wait(120)
+  assert.ok(calls.length >= 2, 'hata sonrasi yeniden denenmeli')
+  assert.ok(errors.length >= 2, 'hata yakalanip raporlanmali')
+  assert.equal(
+    schedulerModule.isRetentionSchedulerActive(),
+    true,
+    'zamanlayici hayatta',
+  )
+  handle.stop()
+})
+
+test('SCHEDULER-7: bayrak false iken retention:check yine SALT OKUNUR calisir', async () => {
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: daysAgo(10),
+  })
+  const disabled = retention.resolveRetentionPolicy({
+    ORDER_HOUSEKEEPING_ENABLED: 'false',
+  })
+  const before = await db.select({ id: orders.id, a: orders.archivedAt }).from(orders)
+  const counts = await retention.inspectRetention(db, disabled, NOW)
+  const after = await db.select({ id: orders.id, a: orders.archivedAt }).from(orders)
+  assert.equal(counts.archiveEligible, 1)
+  assert.deepEqual(
+    after.map((r) => [r.id, r.a]),
+    before.map((r) => [r.id, r.a]),
+    'DB write 0',
+  )
+})
+
+test('SCHEDULER-8: zamanlayici MEVCUT runRetentionCycle/batch/predicate kullanir', async () => {
+  // Kanit 1: modul kendi is kurali TASIMAZ (yukleme/limit tanimlamaz).
+  const source = readFileSync(
+    join(here, 'orders', 'retentionScheduler.ts'),
+    'utf8',
+  )
+  for (const forbidden of [
+    'LABEL_READY',
+    'archived_at',
+    'archiveAfterDays =',
+    'purgeAfterDays =',
+    'BATCH_SIZE =',
+  ]) {
+    assert.ok(!source.includes(forbidden), `zamanlayici ${forbidden} TASIMAMALI`)
+  }
+  assert.ok(source.includes('runRetentionCycle'))
+
+  // Kanit 2: gercek DB ile uctan uca tur mevcut davranisi uretir.
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: null,
+  })
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: daysAgo(10),
+  })
+  await seedPurgeCandidate(db, organizationId, 120)
+
+  const reports = []
+  const handle = schedulerModule.startRetentionScheduler(db, {
+    policy: {
+      ...retention.resolveRetentionPolicy({
+        ORDER_HOUSEKEEPING_ENABLED: 'true',
+      }),
+      intervalMs: 60_000,
+    },
+    log: (report) => reports.push(report),
+  })
+  assert.equal(handle.started, true)
+  await wait(400)
+  handle.stop()
+  assert.equal(reports.length, 1)
+  assert.equal(reports[0].baselined, 1)
+  assert.equal(reports[0].archived, 1)
+  assert.equal(reports[0].purged, 1)
+})
+
+test('SCHEDULER-9: stop() zamanlayiciyi temizler, yeni tur BASLAMAZ', async () => {
+  const { spy, calls } = makeCycleSpy()
+  const handle = schedulerModule.startRetentionScheduler(
+    {},
+    {
+      policy: {
+        ...retention.resolveRetentionPolicy({
+          ORDER_HOUSEKEEPING_ENABLED: 'true',
+        }),
+        intervalMs: 20,
+      },
+      runCycle: spy,
+      log: () => {},
+    },
+  )
+  await wait(50)
+  const seen = calls.length
+  handle.stop()
+  assert.equal(schedulerModule.isRetentionSchedulerActive(), false)
+  await wait(80)
+  assert.equal(calls.length, seen, 'durdurulduktan sonra yeni tur YOK')
+})
+
+test('SCHEDULER-BOOT-WIRING: boot yolu bayrak KAPILI zamanlayiciyi cagirir', async () => {
+  const entry = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.ok(
+    entry.includes('startRetentionHousekeepingOnBoot'),
+    'boot yolu baglanmali',
+  )
+  assert.ok(entry.includes('startRetentionScheduler'))
+  // Boot yolu is kurali fonksiyonlarini DOGRUDAN cagirmaz.
+  assert.ok(!entry.includes('applyActivityBaseline'))
+  assert.ok(!entry.includes('archiveEligibleOrders'))
+  assert.ok(!entry.includes('purgeOrderRecord'))
+  // Kapanista temizlik.
+  assert.ok(entry.includes('stopRetentionScheduler'))
+  assert.ok(entry.includes('SIGTERM'))
 })
