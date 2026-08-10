@@ -32,6 +32,8 @@ async function main(): Promise<void> {
       archiveBatchSize: policy.archiveBatchSize,
       purgeBatchSize: policy.purgeBatchSize,
       baselineBatchSize: policy.baselineBatchSize,
+      // Otomatik yazma etkin mi? Bu komut bayraktan BAĞIMSIZ, salt okunurdur.
+      housekeepingEnabled: policy.housekeepingEnabled,
       intervalMs: policy.intervalMs,
     },
     scanned: counts.scanned,

@@ -72,6 +72,11 @@ async function insertOrder(db, organizationId, overrides = {}) {
 }
 
 const policy = () => retention.resolveRetentionPolicy({})
+// runRetentionCycle ACTIVATION GUARD'a tabidir: otomatik yazma varsayilan
+// olarak KAPALIDIR (HOUSEKEEPING-GATE-2). Cycle DAVRANISINI sinayan testler
+// bayragi ACIKCA acar; guvenli varsayilan ayri testte kilitlenir.
+const enabledPolicy = () =>
+  retention.resolveRetentionPolicy({ ORDER_HOUSEKEEPING_ENABLED: 'true' })
 
 // ═══ ACTIVITY TIMESTAMP ═══════════════════════════════════════════════════
 
@@ -496,7 +501,7 @@ test('CYCLE: housekeeping turu aggregate rapor üretir', async () => {
   await seedPurgeCandidate(db, organizationId, 120)
 
   let tick = 0
-  const report = await retention.runRetentionCycle(db, policy(), NOW, () => {
+  const report = await retention.runRetentionCycle(db, enabledPolicy(), NOW, () => {
     tick += 5
     return tick
   })
@@ -642,7 +647,7 @@ test('BASELINE-CYCLE: baseline alan kayit AYNI turda arsivlenmez', async () => {
     orderDate: daysAgo(400),
     lastOperationalActivityAt: null,
   })
-  const report = await retention.runRetentionCycle(db, policy(), NOW)
+  const report = await retention.runRetentionCycle(db, enabledPolicy(), NOW)
   assert.equal(report.baselined, 1)
   assert.equal(report.archived, 0, 'eski orderDate arsiv gerekcesi DEGIL')
   const rows = await db.select({ archivedAt: orders.archivedAt }).from(orders)
@@ -968,4 +973,229 @@ test('CLOCK-REPRINT-7: markLabelPrinted servisi basarili baskida saati yeniler',
     'basarili tekrar baski saati YENILEMELI',
   )
   assert.equal(rows[0].operationStatus, 'LABEL_PRINTED')
+})
+
+// ═══ HOUSEKEEPING ACTIVATION GUARD ════════════════════════════════════════
+//
+// PRODUCTION-SAFE VARSAYILAN: otomatik yazma KAPALI. Bayrak yalniz acik
+// onayla ('true'/'1') etkinlesir. Salt okunur denetim bayraktan BAGIMSIZDIR.
+
+async function countRows(db) {
+  const rows = await db
+    .select({
+      id: orders.id,
+      archivedAt: orders.archivedAt,
+      activity: orders.lastOperationalActivityAt,
+    })
+    .from(orders)
+  return rows
+}
+
+test('HOUSEKEEPING-GATE-1: env false → boot/periyodik writer YAZMAZ', async () => {
+  const { db, organizationId } = await makeDb()
+  // Uygun aday: baseline + archive + purge her uc kategoriye de aday uret.
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: null,
+  })
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: daysAgo(10),
+  })
+  await seedPurgeCandidate(db, organizationId, 120)
+  const before = await countRows(db)
+
+  const disabled = retention.resolveRetentionPolicy({
+    ORDER_HOUSEKEEPING_ENABLED: 'false',
+  })
+  assert.equal(disabled.housekeepingEnabled, false)
+  const report = await retention.runRetentionCycle(db, disabled, NOW)
+
+  assert.equal(report.baselined, 0, 'baseline yazmasi YOK')
+  assert.equal(report.archived, 0, 'archive yazmasi YOK')
+  assert.equal(report.purged, 0, 'purge yazmasi YOK')
+  // Uygunluk sayilari yine de raporlanir (gorunurluk kaybolmaz).
+  assert.ok(report.baselineEligible >= 1)
+  assert.ok(report.archiveEligible >= 1)
+  assert.ok(report.purgeEligible >= 1)
+
+  const after = await countRows(db)
+  assert.equal(after.length, before.length, 'kayit SILINMEDI')
+  assert.deepEqual(
+    after.map((row) => [
+      row.id,
+      row.archivedAt ? row.archivedAt.getTime() : null,
+      row.activity ? row.activity.getTime() : null,
+    ]),
+    before.map((row) => [
+      row.id,
+      row.archivedAt ? row.archivedAt.getTime() : null,
+      row.activity ? row.activity.getTime() : null,
+    ]),
+    'hicbir alan DEGISMEDI',
+  )
+})
+
+test('HOUSEKEEPING-GATE-2: env unset → production-safe varsayilan FALSE', async () => {
+  assert.equal(retention.isHousekeepingEnabled({}), false)
+  assert.equal(retention.resolveRetentionPolicy({}).housekeepingEnabled, false)
+  // Bos string / 0 / rastgele deger de KAPALI kabul edilir.
+  for (const value of ['', '0', 'no', 'off', 'yes', 'TRUE ']) {
+    const expected = value.trim().toLowerCase() === 'true'
+    assert.equal(
+      retention.isHousekeepingEnabled({ ORDER_HOUSEKEEPING_ENABLED: value }),
+      expected,
+      `deger: ${JSON.stringify(value)}`,
+    )
+  }
+
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    lastOperationalActivityAt: daysAgo(10),
+  })
+  const report = await retention.runRetentionCycle(
+    db,
+    retention.resolveRetentionPolicy({}),
+    NOW,
+  )
+  assert.equal(report.archived, 0, 'varsayilan olarak yazma YOK')
+})
+
+test('HOUSEKEEPING-GATE-3: env true → mevcut sinirli housekeeping calisir', async () => {
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: null,
+  })
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: daysAgo(10),
+  })
+  await seedPurgeCandidate(db, organizationId, 120)
+
+  const enabled = retention.resolveRetentionPolicy({
+    ORDER_HOUSEKEEPING_ENABLED: 'true',
+  })
+  assert.equal(enabled.housekeepingEnabled, true)
+  const report = await retention.runRetentionCycle(db, enabled, NOW)
+  assert.equal(report.baselined, 1)
+  assert.equal(report.archived, 1)
+  assert.equal(report.purged, 1)
+  assert.equal(report.failed, 0)
+
+  // '1' de etkinlestirir.
+  assert.equal(
+    retention.resolveRetentionPolicy({ ORDER_HOUSEKEEPING_ENABLED: '1' })
+      .housekeepingEnabled,
+    true,
+  )
+})
+
+test('HOUSEKEEPING-GATE-4: bayrak false iken dry-run CALISIR ve DB write = 0', async () => {
+  const { db, organizationId } = await makeDb()
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: null,
+  })
+  await insertOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+    marketplaceStatus: 'Picking',
+    lastOperationalActivityAt: daysAgo(10),
+  })
+  await seedPurgeCandidate(db, organizationId, 120)
+  const before = await countRows(db)
+
+  const disabled = retention.resolveRetentionPolicy({
+    ORDER_HOUSEKEEPING_ENABLED: 'false',
+  })
+  // inspectRetention (CLI'nin kullandigi tek fonksiyon) bayraktan BAGIMSIZ.
+  const counts = await retention.inspectRetention(db, disabled, NOW)
+  assert.ok(counts.scanned >= 3)
+  assert.equal(counts.baselineEligible, 1)
+  assert.equal(counts.archiveEligible, 1)
+  assert.equal(counts.purgeEligible, 1)
+  assert.ok(counts.nullActivityBacklog >= 1)
+
+  const after = await countRows(db)
+  assert.deepEqual(
+    after.map((row) => [
+      row.id,
+      row.archivedAt ? row.archivedAt.getTime() : null,
+      row.activity ? row.activity.getTime() : null,
+    ]),
+    before.map((row) => [
+      row.id,
+      row.archivedAt ? row.archivedAt.getTime() : null,
+      row.activity ? row.activity.getTime() : null,
+    ]),
+    'salt okunur: DB write 0',
+  )
+})
+
+test('HOUSEKEEPING-GATE-5: normal sipariş/sync/print akislari bayraktan ETKILENMEZ', async () => {
+  // 1) Bayrak YALNIZ retention modulunde okunur; baska hicbir kod yolunda yok.
+  const roots = ['orders', 'shipments', 'integrations', 'labels', 'analytics']
+  for (const dir of roots) {
+    let entries = []
+    try {
+      entries = readdirSync(join(here, dir))
+    } catch {
+      continue
+    }
+    for (const file of entries.filter((name) => name.endsWith('.ts'))) {
+      if (file === 'orderRetention.ts' || file === 'retentionCheckCli.ts') continue
+      const source = readFileSync(join(here, dir, file), 'utf8')
+      assert.ok(
+        !source.includes('ORDER_HOUSEKEEPING_ENABLED'),
+        `${dir}/${file} bayragi okumamali`,
+      )
+      assert.ok(
+        !source.includes('housekeepingEnabled'),
+        `${dir}/${file} bayragi okumamali`,
+      )
+    }
+  }
+  const serverEntry = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.ok(!serverEntry.includes('ORDER_HOUSEKEEPING_ENABLED'))
+  // 2) Boot'ta otomatik retention writer BAGLI DEGIL.
+  assert.ok(!serverEntry.includes('runRetentionCycle'))
+  assert.ok(!serverEntry.includes('archiveEligibleOrders'))
+  assert.ok(!serverEntry.includes('applyActivityBaseline'))
+  assert.ok(!serverEntry.includes('purgeOrderRecord'))
+
+  // 3) Normal akislar bayrak KAPALI iken de calisir.
+  const { db, organizationId } = await makeDb()
+  const order = await insertOrder(db, organizationId, {
+    operationStatus: 'BARCODE_WAITING',
+  })
+  const ready = await repo.markOrderLabelReady(db, organizationId, order.id)
+  assert.equal(ready.updated, true, 'etiket hazir gecisi calismali')
+  const printed = await repo.markOrderLabelPrinted(db, organizationId, order.id)
+  assert.equal(printed.updated, true, 'baski gecisi calismali')
+  const sync = mapper.marketplaceUpdateSet({
+    orderNumber: 'ORD-X',
+    packageId: 'PKG-X',
+    marketplaceStatus: 'Picking',
+    orderDate: NOW.toISOString(),
+  })
+  assert.ok(sync.lastSeenAt, 'marketplace sync alanlari uretilmeli')
+})
+
+test('HOUSEKEEPING-GATE-6: dry-run CLI yalniz SALT OKUNUR fonksiyon kullanir', async () => {
+  const cli = readFileSync(join(here, 'orders', 'retentionCheckCli.ts'), 'utf8')
+  for (const forbidden of [
+    'applyActivityBaseline',
+    'archiveEligibleOrders',
+    'purgeOrderRecord',
+    'runRetentionCycle',
+  ]) {
+    assert.ok(!cli.includes(forbidden), `CLI ${forbidden} CAGIRMAMALI`)
+  }
+  assert.ok(cli.includes('inspectRetention'))
 })
