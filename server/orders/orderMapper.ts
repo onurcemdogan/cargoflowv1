@@ -261,6 +261,18 @@ export function rowToOrder(
     rawOrder: rawOrder ?? undefined,
     items: lineRows.map((raw) => {
       const line = raw as Record<string, unknown>
+      // ÜRETİM HATASI DÜZELTMESİ: satır DB'den kurulurken `size`/`color`
+      // ÜRETİLMİYORDU ve Trendyol'da beden çoğunlukla `variantAttributes`ta
+      // DEĞİL `productSize` alanında gelir → Toplanacak Ürünler'de tüm
+      // bedenler "Bedensiz" görünüyordu. Kalemin TAM normalize hâli zaten
+      // `rawPayloadEncrypted` içinde SAKLI; yeni kolon/migration GEREKMEZ,
+      // yalnız okuma yolunda geri çözülür. Eşleştirme SATIR BAZINDA olduğu
+      // için çok ürünlü siparişte bedenler KARIŞMAZ.
+      const rawItem = (decryptOrderPayload(
+        line.rawPayloadEncrypted as string | null,
+      ) ?? {}) as Record<string, unknown>
+      const variantAttributes =
+        line.variantAttributes ?? rawItem.variantAttributes ?? []
       return {
         id: str(line.externalLineId),
         orderId: str(orderRow.orderNumber),
@@ -275,7 +287,12 @@ export function rowToOrder(
         imageUrl: str(line.imageUrl),
         productImageUrl: str(line.imageUrl),
         lineStatus: str(line.lineStatus),
-        variantAttributes: line.variantAttributes ?? [],
+        variantAttributes,
+        size: str(rawItem.size ?? rawItem.productSize),
+        color: str(rawItem.color ?? rawItem.productColor),
+        productMainId: str(rawItem.productMainId),
+        productCode: str(rawItem.productCode),
+        rawLine: rawItem.rawLine ?? undefined,
       }
     }),
   }
