@@ -362,7 +362,6 @@ export function planSuratFooter(
 
   // Bir ürün bloğunun kaplayabileceği EN FAZLA fiziksel satır. Ürün adı
   // kesilmez; gerekirse ad kendi içinde sarar (^FB), meta ayrı satırda kalır.
-  const MAX_PHYSICAL_LINES_PER_ITEM = 3
 
   for (const profile of SURAT_FOOTER_PROFILES) {
     const lineHeight = Math.round(profile.fontHeight * 1.05) + profile.lineGap
@@ -386,9 +385,21 @@ export function planSuratFooter(
       // "[SKU]" alt satıra akar. Eski iki-bloklu biçim ilk satırı yarım
       // bırakıyordu.
       //
-      // Satır sayısı ASLA artmaz: sürekli akış, başlık+meta ayrımından her
-      // zaman <= satır kullanır. Bu yüzden mevcut overflow çözümü BOZULMAZ.
-      if (singleLines > MAX_PHYSICAL_LINES_PER_ITEM) {
+      // SATIR TAVANI PROFİLİN KENDİSİNDEN GELİR — KATI.
+      //
+      // KÖK NEDEN (ölçüldü): burada GLOBAL bir `MAX_PHYSICAL_LINES_PER_ITEM`
+      // (3) kullanılıyordu ve `profile.maxLinesPerItem` yalnız "sarabilir
+      // mi?" ikili kontrolüne indirgenmişti. Sonuç: `maxLinesPerItem: 2`
+      // diyen bir profil GERÇEKTE 3 satır üretebiliyordu — 20 dot'ta
+      // 75 dot yer tutuyor ve 66 dot'luk gerçek Sürat footer bandını
+      // AŞIYORDU.
+      //
+      // Artık profil kendi tavanını dayatır: 2 satıra sığmayan içerik bu
+      // profili REDDEDER ve merdiven bir sonraki (daha küçük fontlu)
+      // profile geçer. Kelime ortasından kesme YOK; içerik hiç sığmıyorsa
+      // plan `ok:false` döner ve çağıran katman bunu AÇIK overflow olarak
+      // raporlar (sessiz ürün satırı düşürme YOK).
+      if (singleLines > profile.maxLinesPerItem) {
         fits = false
         break
       }

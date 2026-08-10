@@ -382,11 +382,16 @@ test('TF-17: sürekli akış — yer varken EN BÜYÜK font, taşma YOK', async 
   const plan = planSuratFooter([LONG_ITEM], ROOMY)
   // Tek sürekli blok korunur (başlık/meta ZORLA ayrılmaz).
   assert.equal(plan.blocks[0].length, 1)
-  // EN BÜYÜK okunur font seçilir.
-  assert.equal(plan.profile.key, 'wrapped-standard')
-  assert.equal(plan.profile.fontHeight, 20)
-  // Sarma serbesttir; TEK KATI KURAL banda sığmaktır (sessiz kırpma YOK).
-  assert.ok(plan.blocks[0][0].lines >= 2)
+  // EN BÜYÜK OKUNUR font seçilir — AMA satır tavanı KATIDIR. Bu içerik
+  // 20 dot'ta 2 satıra sığmadığı için `wrapped-standard` REDDEDİLİR ve
+  // merdiven 18 dot'a düşer; 3. satır AÇILMAZ.
+  assert.equal(plan.profile.key, 'wrapped-compact')
+  assert.equal(plan.profile.fontHeight, 18)
+  // Profil kendi tavanını dayatır.
+  assert.ok(
+    plan.blocks[0][0].lines <= plan.profile.maxLinesPerItem,
+    `tavan aşıldı: ${plan.blocks[0][0].lines} > ${plan.profile.maxLinesPerItem}`,
+  )
   assert.ok(
     plan.usedHeight <= plan.area.height,
     `footer taşıyor: ${plan.usedHeight} > ${plan.area.height}`,

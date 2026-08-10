@@ -267,3 +267,140 @@ test('IMMUTABLE-1: kalıcı artefakt baytları reprint sırasında DEĞİŞMEZ',
   ).printZplArtifact
   assert.equal(again.printZplSha256, first.printZplSha256)
 })
+
+// ═══ FOOTER-BOUND: GERÇEK RENDER EDİLMİŞ BANT SINIRI ═════════════════════
+//
+// Planner'ın soyut `area.height` değerine TEK BAŞINA güvenilmez. Aşağıdaki
+// testler ÜRETİLEN ZPL komutlarından fiziksel kutuyu yeniden hesaplar.
+//
+// GERÇEK SÜRAT BANDI (799 × 799 fixture, ölçüldü):
+//   x = 16 · width = 771 · top = 725 · bottom = 791 · height = 66 dot
+
+const FOOTER_TOP = 725
+const FOOTER_BOTTOM = 791
+const FOOTER_HEIGHT = 66
+
+/** Üretilen ^FO/^FB komutlarından GERÇEK fiziksel kutuyu çıkarır. */
+async function renderedFooterBox(items) {
+  const { planSuratFooter, buildFooterZplCommands } = await load(
+    '/src/utils/suratZplProductLine.ts',
+  )
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const plan = planSuratFooter(items, parseSuratZplGeometry(ZPL))
+  if (!plan.ok) return { ok: false, reason: plan.reason }
+  const commands = buildFooterZplCommands(plan, { utf8: true })
+  const lineHeight =
+    Math.round(plan.profile.fontHeight * 1.05) + plan.profile.lineGap
+  let top = Infinity
+  let bottom = -Infinity
+  let maxLines = 0
+  for (const command of commands) {
+    const position = command.match(/\^FO(\d+),(\d+)/)
+    const block = command.match(/\^FB(\d+),(\d+),/)
+    assert.ok(position && block, `beklenen komut biçimi yok: ${command}`)
+    const y = Number(position[2])
+    const lines = Number(block[2])
+    maxLines = Math.max(maxLines, lines)
+    top = Math.min(top, y)
+    bottom = Math.max(bottom, y + lines * lineHeight)
+  }
+  return {
+    ok: true,
+    top,
+    bottom,
+    height: bottom - top,
+    maxLines,
+    profile: plan.profile,
+    commands,
+  }
+}
+
+/** Her senaryoda uygulanan KATI sınır. */
+function assertInsideBand(box, label) {
+  assert.equal(box.ok, true, `${label}: plan üretilmeli`)
+  assert.ok(box.top >= FOOTER_TOP, `${label}: top ${box.top} < ${FOOTER_TOP}`)
+  assert.ok(
+    box.bottom <= FOOTER_BOTTOM,
+    `${label}: bottom ${box.bottom} > ${FOOTER_BOTTOM}`,
+  )
+  assert.ok(
+    box.height <= FOOTER_HEIGHT,
+    `${label}: yükseklik ${box.height} > ${FOOTER_HEIGHT}`,
+  )
+}
+
+test('FOOTER-BOUND-1: kısa içerik gerçek bandın İÇİNDE', async () => {
+  const box = await renderedFooterBox([item({ productName: 'Elbise', sku: 'A1' })])
+  assertInsideBand(box, 'kısa')
+  assert.equal(box.maxLines, 1)
+})
+
+test('FOOTER-BOUND-2: DuruSoft görünümü → 20 dot, EN FAZLA 2 satır, bant içinde', async () => {
+  const box = await renderedFooterBox([item()])
+  assertInsideBand(box, 'normal')
+  assert.equal(box.profile.fontHeight, 20, 'referans görünüm 20 dot')
+  assert.ok(box.maxLines <= 2, `2 satır sınırı aşıldı: ${box.maxLines}`)
+})
+
+test('FOOTER-BOUND-3: aşırı uzun içerik 3. SATIRA ÇIKMAZ, banttan taşmaz', async () => {
+  const box = await renderedFooterBox([
+    item({
+      productName:
+        'Kadin Isiltili Uzun Kollu Tesettur Abiye Elbise Modeli Ozel Dikim Premium Koleksiyon Seri',
+      color: 'Lacivert',
+      size: '42',
+      sku: 'SCUBA-SEC01-EXTRA-LONG',
+    }),
+  ])
+  assertInsideBand(box, 'aşırı uzun')
+  // KATI KURAL: 2 satırı AŞMAZ — daha küçük fonta düşer, 3. satır AÇILMAZ.
+  assert.ok(box.maxLines <= 2, `3. satır açıldı: ${box.maxLines}`)
+  // Fontu küçültmüş olabilir ama okunabilirlik tabanının üstünde kalır.
+  assert.ok(box.profile.fontHeight >= 16, `taban altı: ${box.profile.fontHeight}`)
+  // VERİ KAYBI YOK: SKU ve beden çıktıda TAM olarak bulunur.
+  const joined = box.commands.join('')
+  assert.ok(joined.includes('SCUBA-SEC01-EXTRA-LONG'), 'SKU parçalanmamalı')
+  assert.ok(joined.includes('Beden: 42'))
+})
+
+test('FOOTER-BOUND-4: iki aggregated ürün birlikte bandın İÇİNDE', async () => {
+  const box = await renderedFooterBox([
+    item(),
+    item({ sku: 'SCUBA-SEC02', size: '40' }),
+  ])
+  assertInsideBand(box, 'iki ürün')
+  // Bir ürün diğerini EZMEZ: her blok kendi satır(lar)ını alır.
+  assert.ok(box.maxLines <= 2)
+  const joined = box.commands.join('')
+  assert.ok(joined.includes('SCUBA-SEC01'))
+  assert.ok(joined.includes('SCUBA-SEC02'))
+})
+
+test('FOOTER-BOUND-5: profil tavanı KATI — hiçbir profil kendi sınırını aşamaz', async () => {
+  const { SURAT_FOOTER_PROFILES, planSuratFooter } = await load(
+    '/src/utils/suratZplProductLine.ts',
+  )
+  const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
+  const geometry = parseSuratZplGeometry(ZPL)
+  // Farklı uzunluk sınıflarında seçilen profilin KENDİ tavanı aşılmamalı.
+  for (const length of [10, 40, 80, 120, 200]) {
+    const plan = planSuratFooter(
+      [item({ productName: 'U'.repeat(length) })],
+      geometry,
+    )
+    if (!plan.ok) continue
+    for (const block of plan.blocks) {
+      for (const entry of block) {
+        assert.ok(
+          entry.lines <= plan.profile.maxLinesPerItem,
+          `${plan.profile.key}: ${entry.lines} > ${plan.profile.maxLinesPerItem}`,
+        )
+      }
+    }
+    assert.ok(plan.usedHeight <= FOOTER_HEIGHT)
+  }
+  // Merdivendeki her profil için tavan anlamlı bir sayıdır.
+  for (const profile of SURAT_FOOTER_PROFILES) {
+    assert.ok(profile.maxLinesPerItem >= 1 && profile.maxLinesPerItem <= 2)
+  }
+})
