@@ -30,6 +30,7 @@ import {
   canMarkPrinted,
 } from '../utils/orderStatus'
 import { buildVisibleOrders } from '../utils/orderClassification'
+import type { SameProductFilter } from '../utils/orderProductFamily'
 import {
   resolveLegacyTab,
   statusesForFetch,
@@ -247,6 +248,10 @@ export function OrdersPage({
   const [productQuery, setProductQuery] = useState('')
   const [orderNumberQuery, setOrderNumberQuery] = useState('')
   const [cargoSlipQuery, setCargoSlipQuery] = useState('')
+  // "Aynı Ürün Siparişi": ürün AİLESİ (beden bağımsız) bazında DISTINCT
+  // sipariş sayısına bakar. Adet (quantity) tekrar SAYILMAZ.
+  const [sameProductFilter, setSameProductFilter] =
+    useState<SameProductFilter>('all')
   const [multiProductFilter, setMultiProductFilter] = useState<
     'all' | 'single' | 'multi'
   >('all')
@@ -295,6 +300,7 @@ export function OrdersPage({
         cityFilter: city,
         districtFilter: district,
         multiProductFilter,
+        sameProductFilter,
         actionFilter,
         operationTabFilter: operationTab,
         dateFilter: {
@@ -324,6 +330,7 @@ export function OrdersPage({
       marketplace,
       district,
       multiProductFilter,
+      sameProductFilter,
       orderNumberQuery,
       orders,
       productQuery,
@@ -744,6 +751,20 @@ export function OrdersPage({
             <option value="all">Tümü</option>
             <option value="multi">Birden çok ürün</option>
             <option value="single">Tek ürün</option>
+          </select>
+        </label>
+        <label>
+          <span>Aynı Ürün Siparişi</span>
+          <select
+            value={sameProductFilter}
+            onChange={(event) => {
+              setSameProductFilter(event.target.value as SameProductFilter)
+              setCurrentPage(1)
+            }}
+          >
+            <option value="all">Tümü</option>
+            <option value="repeated">Aynı üründen 2+ sipariş</option>
+            <option value="unique">Tekil ürünler</option>
           </select>
         </label>
         <label>

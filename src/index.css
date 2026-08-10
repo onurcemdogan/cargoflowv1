@@ -4698,21 +4698,34 @@ button:disabled {
 .dashboard-operation-flow small { min-height: 25px; font-size: 8.5px; text-align: center; }
 .dashboard-operation-flow strong { font-size: 18px; }
 
-.dashboard-picking-list { padding: 7px 11px 10px; display: grid; }
-.dashboard-picking-list > div:not(.dashboard-empty-compact) {
-  min-height: 43px;
-  padding: 6px 0;
+.dashboard-picking-list { padding: 7px 11px 10px; display: grid; max-height: 340px; overflow-y: auto; }
+/* Ürün ailesi satırı: üst grup + beden alt kırılımı (mevcut kart dili korunur). */
+.dashboard-picking-family { padding: 6px 0; display: grid; gap: 5px; border-bottom: 1px solid #edf1f5; }
+.dashboard-picking-family:last-child { border-bottom: 0; }
+.dashboard-picking-family-head {
+  min-height: 34px;
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr) auto;
   align-items: center;
   gap: 8px;
-  border-bottom: 1px solid #edf1f5;
 }
-.dashboard-picking-list > div:last-child { border-bottom: 0; }
-.dashboard-picking-list span { min-width: 0; display: grid; gap: 2px; }
-.dashboard-picking-list strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
-.dashboard-picking-list small { color: var(--muted); font-size: 8px; }
-.dashboard-picking-list b { white-space: nowrap; color: #0f766e; font-size: 9px; }
+.dashboard-picking-family-title { min-width: 0; display: grid; gap: 2px; }
+.dashboard-picking-family-title strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9px; }
+.dashboard-picking-family-title small { color: var(--muted); font-size: 8px; }
+.dashboard-picking-sizes { display: flex; flex-wrap: wrap; gap: 5px; padding-left: 42px; }
+.dashboard-picking-size {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 6px;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f8fafc;
+}
+.dashboard-picking-size b { color: #0f172a; font-size: 9px; }
+.dashboard-picking-size i { color: #0f766e; font-style: normal; font-size: 8px; }
+.dashboard-picking-stages { display: flex; flex-wrap: wrap; gap: 8px; padding-left: 42px; color: var(--muted); font-size: 8px; }
+.dashboard-picking-stages b { color: #0f172a; font-size: 8px; }
 
 .dashboard-table-wrap { width: 100%; overflow-x: auto; }
 .dashboard-compact-table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
