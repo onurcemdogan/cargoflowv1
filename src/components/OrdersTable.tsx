@@ -5,7 +5,8 @@ import {
   MoveDown,
   MoveUp,
 } from 'lucide-react'
-import { Fragment } from 'react'
+import { Fragment, useMemo } from 'react'
+import type { SameProductGroupHeader } from '../utils/orderProductFamily'
 import type { CargoOrder, CargoProduct, OrderItem } from '../types/cargoflow'
 import { resolveNormalizedDesi } from '../utils/desi'
 import { formatCurrency } from '../utils/formatters'
@@ -47,6 +48,9 @@ interface OrdersTableProps {
   ) => void
   emptyMessage?: string
   emptyDetails?: string[]
+  // "Aynı Ürün Siparişi" filtresi açıkken sipariş → grup başlığı eşlemesi.
+  // Verilmezse tablo DEĞİŞMEZ (mevcut görünüm korunur).
+  groupHeaders?: Map<string, SameProductGroupHeader>
 }
 
 export function OrdersTable({
@@ -63,7 +67,23 @@ export function OrdersTable({
   onSortChange,
   emptyMessage = 'Veri bulunamadı.',
   emptyDetails = [],
+  groupHeaders,
 }: OrdersTableProps) {
+  // Başlık, grup DEĞİŞTİĞİNDE basılır (sayfanın ilk satırı dâhil) → bir aile
+  // sayfa sınırını aşsa bile yeni sayfada başlık yeniden görünür.
+  // SAF hesap: render sırasında değişken mutasyonu YOK.
+  const groupHeaderRowIds = useMemo(() => {
+    const ids = new Set<string>()
+    if (!groupHeaders) return ids
+    let previousKey: string | undefined
+    for (const order of orders) {
+      const header = groupHeaders.get(order.id)
+      if (!header) continue
+      if (header.key !== previousKey) ids.add(order.id)
+      previousKey = header.key
+    }
+    return ids
+  }, [groupHeaders, orders])
   const allSelected =
     orders.length > 0 && orders.every((order) => selectedIds.includes(order.id))
 
@@ -114,6 +134,8 @@ export function OrdersTable({
           </thead>
           <tbody>
             {orders.map((order) => {
+              const groupHeader = groupHeaders?.get(order.id)
+              const showGroupHeader = groupHeaderRowIds.has(order.id)
               const selected = selectedIds.includes(order.id)
               const expanded = expandedOrderId === order.id
               const firstItem = order.items[0]
@@ -131,6 +153,25 @@ export function OrdersTable({
 
               return (
                 <Fragment key={order.id}>
+                  {showGroupHeader && groupHeader ? (
+                    <tr className="orders-group-header-row">
+                      <td colSpan={6}>
+                        <span className="orders-group-header">
+                          <strong>
+                            {groupHeader.productName}
+                            {groupHeader.color ? ` / ${groupHeader.color}` : ''}
+                          </strong>
+                          <small>
+                            {groupHeader.orderCount} sipariş ·{' '}
+                            {groupHeader.totalQuantity} adet
+                            {groupHeader.sizes.length > 0
+                              ? ` · Bedenler: ${groupHeader.sizes.join(', ')}`
+                              : ''}
+                          </small>
+                        </span>
+                      </td>
+                    </tr>
+                  ) : null}
                   <tr className={selected ? 'selected-row' : undefined}>
                     <td className="checkbox-cell">
                       <input

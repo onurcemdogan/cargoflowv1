@@ -30,7 +30,10 @@ import {
   canMarkPrinted,
 } from '../utils/orderStatus'
 import { buildVisibleOrders } from '../utils/orderClassification'
-import type { SameProductFilter } from '../utils/orderProductFamily'
+import {
+  groupOrdersBySameProductFamily,
+  type SameProductFilter,
+} from '../utils/orderProductFamily'
 import {
   resolveLegacyTab,
   statusesForFetch,
@@ -456,9 +459,21 @@ export function OrdersPage({
     () => sortOrdersForWorkspace(filteredOrders, sortKey, sortDirection),
     [filteredOrders, sortDirection, sortKey],
   )
+  // AYNI ÜRÜN SİPARİŞİ görünümü: filtre AÇIKKEN aynı ürün ailesinin farklı
+  // bedenleri yan yana gelsin diye YENİDEN SIRALANIR. Filtre kapsamı ve
+  // hangi siparişlerin göründüğü DEĞİŞMEZ (yalnız sunum sırası). Gruplama
+  // sayfalamadan ÖNCE yapılır → aile sayfa içinde bölünmez.
+  const sameProductGrouping = useMemo(
+    () =>
+      sameProductFilter === 'all'
+        ? undefined
+        : groupOrdersBySameProductFamily(sortedOrders),
+    [sameProductFilter, sortedOrders],
+  )
+  const displayOrders = sameProductGrouping?.orders ?? sortedOrders
   const pagination = useMemo(
-    () => paginateOrders(sortedOrders, currentPage, pageSize),
-    [currentPage, pageSize, sortedOrders],
+    () => paginateOrders(displayOrders, currentPage, pageSize),
+    [currentPage, pageSize, displayOrders],
   )
   const pageNumbers = useMemo(
     () => visiblePageNumbers(pagination.page, pagination.pageCount),
@@ -892,6 +907,7 @@ export function OrdersPage({
         sortDirection={sortDirection}
         onSortChange={changeSort}
         onDesiChange={onDesiChange}
+        groupHeaders={sameProductGrouping?.headerByOrderId}
         emptyMessage={
           orders.length > 0
             ? 'Bu filtreye uygun sipariş bulunamadı.'

@@ -6740,3 +6740,20 @@ button:disabled {
   justify-content: flex-start;
   width: 100%;
 }
+
+/* AYNI ÜRÜN SİPARİŞİ grup başlığı — mevcut tablo diliyle uyumlu, sipariş
+   satırlarının görünümüne DOKUNMAZ. */
+.orders-group-header-row > td {
+  padding: 6px 10px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e2e8f0;
+}
+.orders-group-header { display: grid; gap: 2px; }
+.orders-group-header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #0f172a;
+  font-size: 10px;
+}
+.orders-group-header small { color: var(--muted); font-size: 8.5px; }

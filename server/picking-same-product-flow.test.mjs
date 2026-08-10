@@ -489,3 +489,121 @@ test('PERF: 4000 sipariş tek geçişte indekslenir (O(N·I))', async () => {
   assert.equal(repeated.size, 4000)
   assert.ok(elapsedMs < 1500, `indeksleme çok yavaş: ${elapsedMs.toFixed(1)} ms`)
 })
+
+// ═══ GÖRÜNÜM GRUPLAMASI (filtre semantiği DEĞİŞMEZ) ═══════════════════════
+
+async function grouped(orders) {
+  const { groupOrdersBySameProductFamily } = await load(FAMILY)
+  return groupOrdersBySameProductFamily(orders)
+}
+
+test('SAME-PRODUCT-GROUP-1: A/B/C aynı aile → arka arkaya ve TEK grup', async () => {
+  // Araya başka ürün girmiş "normal sipariş sırası".
+  const other = order('z', [
+    line({ contentId: 'C-999', productName: 'Baska Urun', size: '38' }),
+  ])
+  const input = [
+    order('a', [line({ size: '36' })]),
+    other,
+    order('b', [line({ size: '40' })]),
+    order('c', [line({ size: '42' })]),
+  ]
+  const result = await grouped(input)
+  const ids = result.orders.map((entry) => entry.id)
+  assert.deepEqual(ids, ['a', 'b', 'c', 'z'], 'aile bitişik olmalı')
+
+  const family = result.groups[0]
+  assert.equal(family.orderCount, 3)
+  assert.equal(family.totalQuantity, 3)
+  assert.deepEqual(family.sizes, ['36', '40', '42'])
+  // Üç sipariş de AYNI başlığı paylaşır.
+  const keys = new Set(['a', 'b', 'c'].map((id) => result.headerByOrderId.get(id).key))
+  assert.equal(keys.size, 1)
+})
+
+test('SAME-PRODUCT-GROUP-2: aynı model Bordo AYRI grup', async () => {
+  const result = await grouped([
+    order('a', [line({ color: 'Lacivert', size: '36' })]),
+    order('d', [line({ color: 'Bordo', size: '40' })]),
+    order('b', [line({ color: 'Lacivert', size: '40' })]),
+  ])
+  assert.equal(result.groups.length, 2, 'renk ayrı grup')
+  const lacivert = result.headerByOrderId.get('a').key
+  assert.equal(result.headerByOrderId.get('b').key, lacivert)
+  assert.notEqual(result.headerByOrderId.get('d').key, lacivert)
+  // Bordo satırı Lacivert grubunun ARASINA girmez.
+  assert.deepEqual(result.orders.map((entry) => entry.id), ['a', 'b', 'd'])
+})
+
+test('SAME-PRODUCT-GROUP-3: beden grup anahtarına GİRMEZ', async () => {
+  const result = await grouped([
+    order('a', [line({ size: '36' })]),
+    order('b', [line({ size: '42' })]),
+  ])
+  assert.equal(result.groups.length, 1)
+  assert.ok(!result.groups[0].key.includes('36'))
+  assert.ok(!result.groups[0].key.includes('42'))
+})
+
+test('SAME-PRODUCT-GROUP-4: çok ürünlü sipariş TEK grupta, TEK kez', async () => {
+  const input = [
+    order('multi', [
+      line({ id: 'x', contentId: 'C-X', size: '36' }),
+      line({ id: 'y', contentId: 'C-Y', size: '40', productName: 'Abiye Gri' }),
+    ]),
+    order('x2', [line({ id: 'x', contentId: 'C-X', size: '38' })]),
+    order('x3', [line({ id: 'x', contentId: 'C-X', size: '40' })]),
+    order('y2', [
+      line({ id: 'y', contentId: 'C-Y', size: '42', productName: 'Abiye Gri' }),
+    ]),
+  ]
+  const result = await grouped(input)
+  const ids = result.orders.map((entry) => entry.id)
+  assert.equal(ids.length, 4, 'sipariş sayısı değişmez')
+  assert.equal(ids.filter((id) => id === 'multi').length, 1, 'tek kez')
+  // Birincil aile = kapsamda EN ÇOK siparişi olan (C-X: 3 sipariş).
+  assert.equal(
+    result.headerByOrderId.get('multi').key,
+    result.headerByOrderId.get('x2').key,
+  )
+})
+
+test('SAME-PRODUCT-GROUP-5: gruplama KÜMEYİ değiştirmez, yalnız sırayı', async () => {
+  const input = [
+    order('a', [line({ size: '36' })]),
+    order('z', [line({ contentId: 'C-999', productName: 'Tekil', size: '38' })]),
+    order('b', [line({ size: '40' })]),
+  ]
+  const result = await grouped(input)
+  assert.deepEqual(
+    result.orders.map((entry) => entry.id).sort(),
+    input.map((entry) => entry.id).sort(),
+    'sipariş eklenmez/çıkarılmaz',
+  )
+})
+
+test('SAME-PRODUCT-GROUP-6: grup İÇİNDE mevcut sıralama KORUNUR (stabil)', async () => {
+  const result = await grouped([
+    order('c', [line({ size: '42' })]),
+    order('a', [line({ size: '36' })]),
+    order('b', [line({ size: '40' })]),
+  ])
+  assert.deepEqual(
+    result.orders.map((entry) => entry.id),
+    ['c', 'a', 'b'],
+    'giriş sırası grup içinde bozulmamalı',
+  )
+})
+
+test('SAME-PRODUCT-GROUP-7: filtre KAPSAMI değişmedi (all → gruplama yok)', async () => {
+  // Gruplama YALNIZ sunumdur: buildVisibleOrders sonucu aynı kalır.
+  const orders = [
+    order('a', [line({ size: '36' })]),
+    order('b', [line({ size: '40' })]),
+    order('z', [line({ contentId: 'C-999', productName: 'Tekil', size: '38' })]),
+  ]
+  const repeated = await visible(orders, { sameProductFilter: 'repeated' })
+  assert.deepEqual(idsOf(repeated), ['a', 'b'])
+  const result = await grouped(repeated.visibleOrders)
+  assert.deepEqual(result.orders.map((entry) => entry.id), ['a', 'b'])
+})
