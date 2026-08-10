@@ -302,6 +302,14 @@ export const orders = pgTable(
       .notNull()
       .defaultNow(),
     archivedAt: timestamp('archived_at', { withTimezone: true }),
+    // RETENTION SAATİ. YALNIZ gerçek CargoFlow operasyon geçişleri yazar
+    // (LABEL_READY / LABEL_PRINTED). Rutin Trendyol sync'i (marketplaceUpdateSet)
+    // bu alana DOKUNMAZ — bu yüzden updatedAt'in aksine gerçek operasyonel
+    // hareketsizliği temsil eder. NULL = güvenilir aktivite bilgisi YOK →
+    // otomatik arşiv ADAYI DEĞİLDİR (bkz. orderRetention.ts).
+    lastOperationalActivityAt: timestamp('last_operational_activity_at', {
+      withTimezone: true,
+    }),
     rawPayloadEncrypted: text('raw_payload_encrypted'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

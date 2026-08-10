@@ -882,3 +882,30 @@ test('SIZE-PERSIST: rowToOrder bedeni SAKLI ham gövdeden geri kurar', async () 
   assert.equal(domain.items[0].size, '42', 'beden okuma yolunda geri gelmeli')
   assert.equal(domain.items[0].color, 'Lacivert')
 })
+
+// ═══ ARŞİV ETKİSİ (ARCHIVE-7) ═════════════════════════════════════════════
+
+test('ARCHIVE-7: arşivlenmiş sipariş picking/same-product AKTİF hesaplarına GİRMEZ', async () => {
+  const archived = order('arch', [line({ size: '36', quantity: 5 })], {
+    archivedAt: '2026-08-01T00:00:00.000Z',
+  })
+  const active = order('act', [line({ size: '40', quantity: 2 })])
+
+  const picking = await pickingOf([archived, active])
+  assert.equal(picking.orderCount, 1, 'yalnız aktif sipariş toplanır')
+  assert.equal(picking.totalQuantity, 2)
+  assert.deepEqual(
+    picking.products[0].orders.map((entry) => entry.orderId),
+    ['act'],
+  )
+
+  // Same-product kapsamı da arşivliyi görmemeli (aktif sekme kapsamında).
+  const repeated = await visible([archived, active], {
+    selectedTab: 'newOrders',
+    sameProductFilter: 'repeated',
+  })
+  assert.ok(
+    !idsOf(repeated).includes('arch'),
+    'arşivli sipariş aktif tekrar hesabına girmemeli',
+  )
+})

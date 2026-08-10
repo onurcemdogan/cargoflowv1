@@ -511,7 +511,12 @@ export async function markOrderLabelReady(
 ): Promise<{ found: boolean; updated: boolean; operationStatus: string | null }> {
   const updated = await db
     .update(orders)
-    .set({ operationStatus: LABEL_READY_OPERATION_STATUS, updatedAt: new Date() })
+    .set({
+      operationStatus: LABEL_READY_OPERATION_STATUS,
+      // RETENTION SAATİ: gerçek operasyon geçişi.
+      lastOperationalActivityAt: new Date(),
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(orders.organizationId, organizationId),
@@ -577,7 +582,12 @@ export async function markOrderLabelPrinted(
 }> {
   const updated = await db
     .update(orders)
-    .set({ operationStatus: LABEL_PRINTED_OPERATION_STATUS, updatedAt: new Date() })
+    .set({
+      operationStatus: LABEL_PRINTED_OPERATION_STATUS,
+      // RETENTION SAATİ: gerçek operasyon geçişi.
+      lastOperationalActivityAt: new Date(),
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(orders.organizationId, organizationId),
