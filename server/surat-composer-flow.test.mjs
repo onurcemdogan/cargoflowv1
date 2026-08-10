@@ -560,12 +560,21 @@ test('CF-31: transform whitelist — beklenmeyen mutasyon/silme YOK', async () =
     parseZplDocument(zpl),
     parseZplDocument(result.zpl),
   )
+  // SİLME SIFIR KALIR — taşıyıcı komutu ASLA kaldırılmaz.
   assert.equal(diff.removed.length, 0)
-  assert.equal(diff.mutations.length, 1)
-  assert.equal(diff.mutations[0].name, 'BC')
+  // İZİNLİ MUTASYONLAR (whitelist): (1) Code128 yorum satırı bayrağı ve
+  // (6) dikey alıcı başlığının GÖVDESİNİN boşaltılması. Başlık SİLİNMEZ,
+  // yalnız `^FD` gövdesi boşaltılır — bu yüzden mutasyon, silme değil.
+  assert.equal(diff.mutations.length, 2)
+  const names = diff.mutations.map((mutation) => mutation.name).sort()
+  assert.deepEqual(names, ['BC', 'FD'])
+  const headingMutation = diff.mutations.find(
+    (mutation) => mutation.name === 'FD',
+  )
+  assert.equal(headingMutation.to, '', 'başlık gövdesi BOŞALTILIR')
   assert.equal(result.diagnostics.diff.unexpectedMutations, 0)
   assert.equal(result.diagnostics.diff.deletions, 0)
-  assert.equal(result.diagnostics.diff.allowedMutations, 1)
+  assert.equal(result.diagnostics.diff.allowedMutations, 2)
 })
 
 test('CF-32: invariant doğrulayıcı BOZULMUŞ çıktıyı reddeder', async () => {
@@ -774,8 +783,10 @@ test('CF-40: fark raporu mutasyon / ekleme / silme AYRI verir', async () => {
   const { diff } = result.diagnostics
   assert.equal(diff.deletions, 0, 'taşıyıcı komutu SİLİNMEZ')
   assert.equal(diff.unexpectedMutations, 0)
-  assert.equal(diff.allowedMutations, 1, 'yalnız ^BC yorum bayrağı')
-  assert.equal(diff.mutations, 1)
+  // İzinli mutasyonlar: ^BC yorum bayrağı + dikey alıcı başlığının
+  // gövdesinin boşaltılması. İkisi de whitelist'te AÇIKÇA tanımlı.
+  assert.equal(diff.allowedMutations, 2, '^BC bayrağı + başlık gövdesi')
+  assert.equal(diff.mutations, 2)
   assert.ok(diff.insertions > 0, 'yeni alanlar eklenir')
   // Ekleme bileşimi: barkod metni + bold adres vuruşları + QR durum/QR.
   assert.equal(

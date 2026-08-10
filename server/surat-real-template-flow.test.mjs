@@ -279,10 +279,17 @@ test('RT-10B: composed mod kaynağı korur ve whitelist/invariant ile bağlanır
     parseZplDocument(derived.printZpl),
   )
   assert.equal(diff.removed.length, 0, 'taşıyıcı komutu SİLİNMEZ')
-  assert.equal(diff.mutations.length, 1, 'tek beklenen mutasyon')
-  assert.equal(diff.mutations[0].name, 'BC')
-  assert.ok(diff.mutations[0].from.startsWith('N,,Y,N'))
-  assert.ok(diff.mutations[0].to.startsWith('N,,N,N'))
+  // İKİ beklenen mutasyon: (1) Code128 yorum bayrağı, (6) dikey alıcı
+  // başlığının GÖVDESİ boşaltılır. Başlık komutu SİLİNMEZ — bu yüzden
+  // `removed` hâlâ sıfırdır.
+  assert.equal(diff.mutations.length, 2, 'iki beklenen mutasyon')
+  const barcodeFlag = diff.mutations.find((mutation) => mutation.name === 'BC')
+  assert.ok(barcodeFlag, '^BC yorum bayrağı mutasyonu bulunmalı')
+  assert.ok(barcodeFlag.from.startsWith('N,,Y,N'))
+  assert.ok(barcodeFlag.to.startsWith('N,,N,N'))
+  const heading = diff.mutations.find((mutation) => mutation.name === 'FD')
+  assert.ok(heading, 'başlık gövdesi mutasyonu bulunmalı')
+  assert.equal(heading.to, '', 'başlık gövdesi BOŞALTILIR')
   assert.ok(diff.inserted > 0, 'yeni alanlar EKLENİR')
 
   // — B) SEMANTIC INVARIANTS —

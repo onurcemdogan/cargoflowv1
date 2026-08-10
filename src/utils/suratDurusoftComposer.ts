@@ -168,6 +168,26 @@ const QR_CANDIDATES: readonly SuratQrCandidate[] = [
  * yorum arasındaki fark 10 dot ile sınırlanır ve QR her iki modelde de aynı
  * güvenli banda (QR_Y .. QR_Y + 10 + QR_SIZE) düşer.
  */
+/**
+ * DİKEY "ALICI" BAŞLIĞI — kaldırılacak TEK etiket metni.
+ *
+ * FİZİKSEL GEREKÇE: alıcı kutusunun sol kenarındaki dikey başlık, uzun
+ * ad/adres kombinasyonlarında gereksiz alan tüketiyor ve sıkışma yaratıyor.
+ * Kaldırılan YALNIZ bu literal başlıktır; alıcı adı, adres, telefon ve
+ * il/ilçe alanlarına DOKUNULMAZ.
+ *
+ * KİMLİK: koordinat + font imzası (metin DEĞİL). Metinle eşleştirmek
+ * maskeli fixture'da ve farklı yazımlarda kırılırdı; şablon zaten
+ * fingerprint ile sabitlenmiş durumda.
+ */
+const RECIPIENT_HEADING = {
+  x: 54,
+  y: 430,
+  orientation: 'B' as const,
+  height: 23,
+  width: 24,
+}
+
 const QR_SCOPE_BY = '^BY2,3,10'
 const QR_RENDER_Y_OFFSET = 10
 /**
@@ -633,6 +653,29 @@ export function composeSuratDurusoftLabel(
     commands: [{ name: 'BC', args: `N,,N,N${codeCommand.args.slice('N,,Y,N'.length)}` }],
   })
 
+  // (whitelist 6) dikey "ALICI" başlığı GÖRÜNMEZ kılınır.
+  //
+  // SİLME DEĞİL BOŞALTMA: `^FD` gövdesi boşaltılır, komut yapısı YERİNDE
+  // kalır. Böylece "taşıyıcı komutu ASLA silinmez" invariant'ı (deletions=0)
+  // olduğu gibi korunur ve düzenleme tek bir mutasyona indirgenir.
+  const headingField = semantic.zplFields.find(
+    (field) =>
+      field.x === RECIPIENT_HEADING.x &&
+      field.y === RECIPIENT_HEADING.y &&
+      field.font?.orientation === RECIPIENT_HEADING.orientation &&
+      field.font?.height === RECIPIENT_HEADING.height &&
+      field.font?.width === RECIPIENT_HEADING.width &&
+      field.dataCommand !== null,
+  )
+  const headingData = headingField?.data ?? null
+  if (headingField?.dataCommand && headingData) {
+    edits.push({
+      type: 'replace',
+      target: headingField.dataCommand,
+      commands: [{ name: 'FD', args: '' }],
+    })
+  }
+
   const tail: ZplCommand[] = []
   // (whitelist 2) Code128 insan-okunur metni — barkod bandında ortalanmış.
   tail.push(
@@ -732,6 +775,15 @@ export function composeSuratDurusoftLabel(
       mutation.from.startsWith('N,,Y,N') &&
       mutation.to.startsWith('N,,N,N') &&
       mutation.from.slice('N,,Y,N'.length) === mutation.to.slice('N,,N,N'.length)
+    ) {
+      return false
+    }
+    // (6) Dikey "ALICI" başlığı: YALNIZ o alanın gövdesi boşaltılır.
+    if (
+      mutation.name === 'FD' &&
+      headingData !== null &&
+      mutation.from === headingData &&
+      mutation.to === ''
     ) {
       return false
     }

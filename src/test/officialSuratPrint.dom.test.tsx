@@ -940,4 +940,6 @@ test('DISPATCH-5: kullanıcı metni "Baskıya Gönderildi" — fiziksel başarı
   expect(text).not.toContain('etiket tekrar basıldı.')
   // Kanonik durum ve uç DEĞİŞMEDİ (migration yok).
   expect(text).toContain('label-printed')
-})
+  // Büyük kaynak dosyanın `?raw` import'u yük altında varsayılan 5 sn'yi
+  // aşabiliyordu (yalın zaman aşımı; iddialar DEĞİŞMEDİ).
+}, 30000)

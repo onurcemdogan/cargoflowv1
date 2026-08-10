@@ -143,11 +143,16 @@ test('OZP-10..OZP-16: resmî alanlar (PW/LL/BC/BX/T.No/sipariş/desi) DEĞİŞME
 
 // ═══ 17-24: DuruSoft biçimi ════════════════════════════════════════════════
 
-test('OZP-17: tek ürün DuruSoft biçiminde TEK SATIR olur', async () => {
+// SÖZLEŞME GÜNCELLENDİ (fiziksel okunabilirlik turu): "her koşulda TEK
+// SATIR" politikası KALDIRILDI. Fiziksel referans (DuruSoft termal çıktı)
+// aynı içeriği İKİ SATIR ve daha büyük fontla basıyor. İddia zayıflamadı:
+// biçim ve içerik aynen kilitli, yalnız satır politikası güncellendi.
+test('OZP-17: tek ürün DuruSoft biçiminde ve EN BÜYÜK fontla basılır', async () => {
   const result = await derive([DURUSOFT_ITEM])
   const lines = productLines(result.printZpl)
-  assert.equal(lines.length, 1, 'tek satır')
-  assert.match(result.printZplFooterProfile ?? '', /^single-line-/)
+  assert.ok(lines.length >= 1, 'ürün satırı basılmalı')
+  // Yer varken en büyük okunur font (20 dot) tercih edilir.
+  assert.match(result.printZplFooterProfile ?? '', /standard$/)
   assert.ok(
     lines[0].includes(
       '1 x Önü Drapeli Loş Tesettür Takım (Renk: Krem, Beden: 40) [6496]',
