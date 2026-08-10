@@ -68,6 +68,7 @@ import type {
   WorkflowResult,
 } from './types/cargoflow'
 import { downloadTextFile } from './utils/download'
+import { resolveLastSuccessfulSyncAt } from './utils/orderSyncStatus'
 import { loadLabelPreviewDrafts } from './utils/labelPreviewDrafts'
 import { migrateAlternateLoopbackStorage } from './utils/localStorageMigration'
 import { type QuickTab } from './utils/ordersTabs'
@@ -132,6 +133,11 @@ function App() {
     orders: [],
     ordersLoading: true,
   }))
+  // SON BAŞARILI SENKRONİZASYON — TEK KANONİK DEĞER.
+  // Dashboard ve Siparişler AYNI değeri kullanır (ayrı kaynak YOK). Oturum
+  // içi başarılı sync yoksa kalıcı sipariş verisindeki damgaya düşer; bu
+  // sayede sayfa yenilendiğinde "Bekleniyor"a geri dönmez. Başarısız sync
+  // bu değeri SİLMEZ (ordersState.lastSyncedAt yalnız BAŞARIDA yazılır).
   const [productsState, setProductsState] = useState<ProductsState>(() => ({
     products: [],
     productsLoading: false,
@@ -199,6 +205,11 @@ function App() {
     filters?: OrdersNavigationFilters
   }>()
   const orders = ordersState.orders
+  // Dashboard ve Siparişler bu TEK değeri paylaşır (ayrı sync kaynağı YOK).
+  const resolvedLastSyncedAt = useMemo(
+    () => resolveLastSuccessfulSyncAt(orders, ordersState.lastSyncedAt),
+    [orders, ordersState.lastSyncedAt],
+  )
   const products = productsState.products
 
   // Yazıcı Ayarları sayfası kaldırıldı; eski route'a düşen kullanıcı boş
@@ -1489,7 +1500,7 @@ function App() {
           apiDebugLogs={apiDebugLogs}
           loading={ordersState.ordersLoading || !integrationHydrated}
           error={ordersState.ordersError}
-          lastSyncedAt={ordersState.lastSyncedAt}
+          lastSyncedAt={resolvedLastSyncedAt}
           onNavigatePage={handleNavigate}
           onNavigateOrders={handleDashboardNavigateOrders}
           onDownloadOrder={handleDownloadZplForOrder}
@@ -1516,7 +1527,7 @@ function App() {
           lastResult={ordersState.ordersMessage}
           syncDebug={ordersState.ordersDebug}
           busy={ordersState.ordersLoading}
-          lastSyncAt={ordersState.lastSyncedAt}
+          lastSyncAt={resolvedLastSyncedAt}
           initialQuickTab={ordersNavigationRequest?.tab}
           initialOrderId={ordersNavigationRequest?.orderId}
           initialFilters={ordersNavigationRequest?.filters}

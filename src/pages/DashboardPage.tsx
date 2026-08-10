@@ -539,7 +539,7 @@ export function DashboardPage({
         </p>
         <p
           className="dashboard-reporting-note"
-          title="Durusoft satış raporlarıyla aynı gün sınırı kullanılır. Sipariş saatleri Türkiye saatiyle gösterilmeye devam eder."
+          title="Satış raporlarında aynı gün sınırı kullanılır. Sipariş saatleri Türkiye saatiyle gösterilmeye devam eder."
         >
           Rapor günü UTC bazında hesaplanır.
         </p>

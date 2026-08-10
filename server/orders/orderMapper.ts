@@ -241,6 +241,15 @@ export function rowToOrder(
     customerEmail: str(orderRow.customerEmail),
     marketplaceStatus: str(orderRow.marketplaceStatus),
     operationStatus: str(orderRow.operationStatus),
+    // SON SENKRONİZASYON DAMGASI. `lastSeenAt` kolonu, siparişin EN SON
+    // başarılı pazaryeri sync'inde görüldüğü andır (marketplaceUpdateSet her
+    // sync'te yazar). Bu alan okuma yolunda ÜRETİLMEDİĞİ için auth modunda
+    // sipariş listesi hiçbir sync damgası taşımıyordu → Dashboard/Siparişler
+    // sayfa yenilendiğinde kalıcı veri dolu olmasına rağmen "Bekleniyor"
+    // gösteriyordu. Yeni kolon/endpoint GEREKMEZ; mevcut kolon yansıtılır.
+    lastMarketplaceSyncedAt: orderRow.lastSeenAt
+      ? new Date(String(orderRow.lastSeenAt)).toISOString()
+      : undefined,
     status: 'Yeni',
     source: 'real_api',
     shipmentAddress: (address as Record<string, unknown>) ?? {},
