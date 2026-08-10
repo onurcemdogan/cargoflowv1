@@ -1,4 +1,9 @@
 import type { CargoOrder, OrderItem } from '../types/cargoflow'
+import {
+  buildRawLineIndex,
+  findRawLineForItem,
+  resolveOrderItemSize,
+} from './orderItemSize'
 
 /**
  * "Aynı Ürün Siparişi" filtre değeri.
@@ -161,13 +166,19 @@ export function buildProductFamilyIndex(
     const orderId = orderIdentity(order)
     if (!orderId) continue
     const stage = stageOf(order)
+    // Beden YALNIZ görüntü kırılımı içindir; aile anahtarına GİRMEZ.
+    // Ham satır indeksi sipariş başına BİR kez kurulur (O(N·I) korunur).
+    const rawLineIndex = buildRawLineIndex(order)
     // Aynı sipariş aynı aileyi birden çok kalemle içerebilir; aşama sayımı
     // sipariş başına BİR KEZ artmalıdır.
     const stageCountedFamilies = new Set<string>()
     for (const item of order.items ?? []) {
       const identity = resolveProductFamilyIdentity(item)
       const quantity = Math.max(0, Number(item.quantity) || 0)
-      const size = String(item.size ?? '').trim()
+      const size = resolveOrderItemSize(
+        item,
+        findRawLineForItem(item, rawLineIndex),
+      )
       const sizeKey = normalizeToken(size) || 'bedensiz'
       let group = groups.get(identity.key)
       if (!group) {
