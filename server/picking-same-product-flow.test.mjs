@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import test, { after, before } from 'node:test'
 import { createServer } from 'vite'
+import { randomBytes } from 'node:crypto'
+
+// Kalıcı okuma yolu testi için hermetik şifreleme anahtarı.
+process.env.ORDER_DATA_ENCRYPTION_KEY =
+  process.env.ORDER_DATA_ENCRYPTION_KEY ?? randomBytes(32).toString('hex')
 
 // TOPLANACAK ÜRÜNLER + AYNI ÜRÜN SİPARİŞİ.
 //
@@ -664,4 +669,216 @@ test('PICKING-UX-PURE: sunum bileşeni İŞ KURALI içermez', async () => {
   // Hazır veriyi yeniden gruplayan/filtreleyen tarama YOK.
   assert.ok(!card.includes('orders.filter('), 'yeni sipariş taraması yok')
   assert.ok(!card.includes('products.filter('), 'yeni ürün taraması yok')
+})
+
+// ═══ BEDEN ÇÖZÜMLEME (SUNUM) ══════════════════════════════════════════════
+//
+// ÜRETİM HATASI: tüm beden chip'leri "Bedensiz" görünüyordu. Ürün ailesi
+// mantığı DOĞRUYDU; kayıp yalnız beden GÖSTERİM kaynağındaydı.
+
+/** Kalıcı okuma yolundaki gerçek durum: size yok, variantAttributes boş. */
+function persistedLine({
+  id = 'l1',
+  contentId = 'C-100',
+  productSize = '42',
+  quantity = 1,
+  sku = undefined,
+  barcode = undefined,
+  productName = 'Scuba Secil Detayli Tesettur Elbise',
+  color = 'Lacivert',
+} = {}) {
+  return {
+    id,
+    productName,
+    sku: sku ?? `SKU-${productSize}`,
+    merchantSku: sku ?? `SKU-${productSize}`,
+    barcode: barcode ?? `BC-${productSize}`,
+    quantity,
+    color,
+    // size YOK · variantAttributes BOŞ  ← hatanın üretim koşulu
+    variantAttributes: [],
+    productContentId: contentId,
+    rawLine: { productSize },
+  }
+}
+
+test('SIZE-1: size yok + variantAttributes boş + rawLine.productSize=42 → 42', async () => {
+  const picking = await pickingOf([order('a', [persistedLine({ quantity: 6 })])])
+  const row = picking.products[0]
+  assert.equal(row.variants.length, 1)
+  assert.equal(row.variants[0].size, '42', 'beden ham satırdan çözülmeli')
+  assert.notEqual(row.variants[0].size, 'Bedensiz')
+  assert.equal(row.variants[0].quantity, 6)
+})
+
+test('SIZE-1b: sipariş düzeyi rawOrder.lines[].productSize de çözülür', async () => {
+  // Kalemde rawLine İLİŞTİRİLMEMİŞ; beden yalnız sipariş ham gövdesinde.
+  const item = persistedLine({ quantity: 3 })
+  delete item.rawLine
+  const picking = await pickingOf([
+    order('a', [item], {
+      rawOrder: { lines: [{ barcode: item.barcode, productSize: '42' }] },
+    }),
+  ])
+  assert.equal(picking.products[0].variants[0].size, '42')
+})
+
+test('SIZE-2: 36+40+42 TEK aile, ÜÇ beden kırılımı', async () => {
+  const picking = await pickingOf([
+    order('a', [persistedLine({ id: 'a1', productSize: '36', quantity: 4 })]),
+    order('b', [persistedLine({ id: 'b1', productSize: '40', quantity: 5 })]),
+    order('c', [persistedLine({ id: 'c1', productSize: '42', quantity: 6 })]),
+  ])
+  assert.equal(picking.products.length, 1, 'beden aileyi BÖLMEZ')
+  const row = picking.products[0]
+  assert.equal(row.quantity, 15)
+  assert.equal(row.orderCount, 3)
+  const bySize = Object.fromEntries(
+    row.variants.map((variant) => [variant.size, variant.quantity]),
+  )
+  assert.deepEqual(bySize, { 36: 4, 40: 5, 42: 6 })
+})
+
+test('SIZE-3: beden bazlı farklı SKU/barkod aileyi BÖLMEZ', async () => {
+  const picking = await pickingOf([
+    order('a', [
+      persistedLine({
+        id: 'a1',
+        productSize: '36',
+        sku: 'SKU-A-36',
+        barcode: 'BC-A-36',
+      }),
+    ]),
+    order('b', [
+      persistedLine({
+        id: 'b1',
+        productSize: '42',
+        sku: 'SKU-A-42',
+        barcode: 'BC-A-42',
+      }),
+    ]),
+  ])
+  assert.equal(picking.products.length, 1)
+  assert.deepEqual(
+    picking.products[0].variants.map((variant) => variant.size).sort(),
+    ['36', '42'],
+  )
+})
+
+test('SIZE-4: çok ürünlü siparişte bedenler KARIŞMAZ', async () => {
+  const itemA = persistedLine({
+    id: 'la',
+    contentId: 'C-X',
+    productSize: '36',
+    productName: 'Urun X',
+  })
+  const itemB = persistedLine({
+    id: 'lb',
+    contentId: 'C-Y',
+    productSize: '42',
+    productName: 'Urun Y',
+  })
+  delete itemA.rawLine
+  delete itemB.rawLine
+  const picking = await pickingOf([
+    order('multi', [itemA, itemB], {
+      rawOrder: {
+        lines: [
+          { barcode: itemA.barcode, productSize: '36' },
+          { barcode: itemB.barcode, productSize: '42' },
+        ],
+      },
+    }),
+  ])
+  const x = picking.products.find((entry) => entry.productName === 'Urun X')
+  const y = picking.products.find((entry) => entry.productName === 'Urun Y')
+  assert.equal(x.variants[0].size, '36')
+  assert.equal(y.variants[0].size, '42')
+})
+
+test('SIZE-4b: AYNI contentId iki bedende → belirsiz anahtar KULLANILMAZ', async () => {
+  // "İlk productSize'ı hepsine ver" TÜRÜ geri düşüş YOK: yanlış beden
+  // göstermektense Bedensiz doğrudur.
+  const itemA = persistedLine({ id: 'la', barcode: '', sku: 'AYNI' })
+  const itemB = persistedLine({ id: 'lb', barcode: '', sku: 'AYNI' })
+  delete itemA.rawLine
+  delete itemB.rawLine
+  const picking = await pickingOf([
+    order('multi', [itemA, itemB], {
+      rawOrder: {
+        lines: [
+          { merchantSku: 'AYNI', productSize: '36' },
+          { merchantSku: 'AYNI', productSize: '42' },
+        ],
+      },
+    }),
+  ])
+  const sizes = picking.products[0].variants.map((variant) => variant.size)
+  assert.deepEqual(sizes, ['Bedensiz'], 'belirsiz eşleşmede beden atanmaz')
+})
+
+test('SIZE-5: hiçbir yapılandırılmış beden yoksa Bedensiz', async () => {
+  const item = persistedLine({ quantity: 2 })
+  delete item.rawLine
+  const picking = await pickingOf([order('a', [item])])
+  assert.equal(picking.products[0].variants[0].size, 'Bedensiz')
+})
+
+test('SIZE-6: ÜRÜN ADI beden kaynağı DEĞİLDİR', async () => {
+  const item = persistedLine({
+    productName: 'Scuba Elbise SCUBA-SEC01, 42',
+    quantity: 1,
+  })
+  delete item.rawLine
+  const picking = await pickingOf([order('a', [item])])
+  assert.equal(
+    picking.products[0].variants[0].size,
+    'Bedensiz',
+    'addaki sayı beden sanılmamalı',
+  )
+})
+
+test('SIZE-7: variantAttributes Beden niteliği çözülür', async () => {
+  const item = persistedLine({ quantity: 1 })
+  delete item.rawLine
+  item.variantAttributes = [{ attributeName: 'Beden', attributeValue: '40' }]
+  const picking = await pickingOf([order('a', [item])])
+  assert.equal(picking.products[0].variants[0].size, '40')
+})
+
+test('SIZE-KEY-UNCHANGED: beden çözülse de AİLE ANAHTARI aynı kalır', async () => {
+  const { resolveProductFamilyIdentity } = await load(FAMILY)
+  const a = resolveProductFamilyIdentity(persistedLine({ productSize: '36' }))
+  const b = resolveProductFamilyIdentity(persistedLine({ productSize: '42' }))
+  assert.equal(a.key, b.key, 'beden aile anahtarına GİRMEZ')
+  assert.ok(!a.key.includes('36') && !a.key.includes('42'))
+})
+
+test('SIZE-PERSIST: rowToOrder bedeni SAKLI ham gövdeden geri kurar', async () => {
+  // ÜRETİM YOLU: sipariş DB'den okunurken satırda `size` alanı YOKTU.
+  const { toLineInsertValues, rowToOrder } = await load(
+    '/server/orders/orderMapper.ts',
+  )
+  const rows = toLineInsertValues('org-1', 'order-1', {
+    items: [
+        {
+          id: 'ty_line_1',
+          productName: 'Scuba Secil',
+          merchantSku: 'SKU-42',
+          barcode: 'BC-42',
+          quantity: 6,
+          color: 'Lacivert',
+          size: '42',
+          variantAttributes: [],
+        productContentId: 'C-100',
+      },
+    ],
+  })
+  // DB kolonlarında beden YOK; yalnız şifreli ham gövdede saklı.
+  assert.equal(rows[0].size, undefined, 'ayrı beden kolonu YOK (migration yok)')
+  assert.ok(rows[0].rawPayloadEncrypted, 'ham gövde saklanmış olmalı')
+
+  const domain = rowToOrder({ id: 'order-1', orderNumber: 'ORD-1' }, rows)
+  assert.equal(domain.items[0].size, '42', 'beden okuma yolunda geri gelmeli')
+  assert.equal(domain.items[0].color, 'Lacivert')
 })
