@@ -2561,6 +2561,86 @@ async function querySuratTrackingForCandidate(candidate) {
   }
 }
 
+// ARKA PLAN TRENDYOL DURUM SENKRONU.
+//
+// "Şimdi Yenile"nin KANONİK zinciri OLDUĞU GİBİ kullanılır:
+//   callTrendyolOrdersByStatuses → normalizeTrendyolOrders → persistSyncResult
+// İkinci bir marketplace mapping/persistence YOKTUR.
+//
+// `persistSyncResult` → `marketplaceUpdateSet`; bu küme
+// `last_operational_activity_at`e DOKUNMAZ (ACTIVITY-3 ile kilitli), yani
+// retention saati rutin senkronla yapay olarak TAZELENMEZ.
+// `operation_status` da EZİLMEZ: LABEL_PRINTED yerinde kalır, nihai aşamayı
+// resolver marketplace Shipped önceliğiyle üretir.
+async function syncTrendyolOrdersForOrganization(organizationId) {
+  const [{ getDb }, { getIntegrationCredential }, service] = await Promise.all([
+    import('./db/client.ts'),
+    import('./integrations/credentialService.ts'),
+    import('./orders/orderPersistenceService.ts'),
+  ])
+  const db = getDb()
+  const credentials = await getIntegrationCredential(
+    db,
+    organizationId,
+    'trendyol',
+  )
+  // Kimlik bilgisi yoksa SESSİZCE atlanır (hata değildir).
+  if (!credentials || !Object.keys(credentials).length) return { synced: false }
+
+  const result = await callTrendyolOrdersByStatuses(credentials, { size: 50 })
+  const syncStatus = result.debug?.syncStatus
+  const partial = result.partial === true || syncStatus === 'PARTIAL'
+  const complete = Boolean(result.ok) && syncStatus === 'COMPLETE'
+  // TOTAL_FAILURE: mevcut siparişlere DOKUNULMAZ (manuel akışla aynı kural).
+  if (!result.ok && !partial) return { synced: false }
+
+  const normalized = normalizeTrendyolOrders(result.data)
+  await service.persistSyncResult(db, organizationId, normalized.orders, {
+    complete,
+    fetchedCount: normalized.orders.length,
+  })
+  return { synced: true }
+}
+
+// Senkron hedefleri: Trendyol kimlik bilgisi TANIMLI organizasyonlar.
+async function listTrendyolSyncTargets(limit) {
+  const [{ getDb }, schema, drizzle] = await Promise.all([
+    import('./db/client.ts'),
+    import('./db/schema.ts'),
+    import('drizzle-orm'),
+  ])
+  const rows = await getDb()
+    .select({ organizationId: schema.integrationCredentials.organizationId })
+    .from(schema.integrationCredentials)
+    .where(drizzle.eq(schema.integrationCredentials.provider, 'trendyol'))
+    .orderBy(drizzle.asc(schema.integrationCredentials.organizationId))
+    .limit(limit)
+  return rows
+}
+
+// YALNIZ TRENDYOL_STATUS_SYNC_ENABLED=true/1 iken kurulur.
+async function startTrendyolStatusSyncOnBoot() {
+  if (!isTenantAuthMode()) return
+  try {
+    const scheduler = await import('./orders/trendyolStatusSyncScheduler.ts')
+    const policy = scheduler.resolveTrendyolSyncPolicy()
+    const handle = scheduler.startTrendyolStatusSyncScheduler({
+      policy,
+      runCycle: () =>
+        scheduler.runTrendyolSyncCycle(
+          policy,
+          (limit) => listTrendyolSyncTargets(limit),
+          (target) => syncTrendyolOrdersForOrganization(target.organizationId),
+        ),
+    })
+    if (handle.started) {
+      console.log('[trendyol-sync] arka plan durum senkronu etkin')
+    }
+  } catch {
+    // BEST-EFFORT: kurulamazsa uygulama normal calisir, senkron yapilmaz.
+  }
+}
+
 // SÜRAT TAKİP MUTABAKATI: YALNIZ SURAT_TRACKING_RECONCILE_ENABLED=true/1
 // iken kurulur. Bayrak tanımsız/false ise zamanlayıcı KURULMAZ → boot
 // taşıyıcı sorgusu YOK, periyodik sorgu YOK, DB yazması YOK.
@@ -2598,6 +2678,7 @@ app.listen(port, host, () => {
   void reconcileLabelBundlesOnBoot()
   void startRetentionHousekeepingOnBoot()
   void startSuratTrackingReconcileOnBoot()
+  void startTrendyolStatusSyncOnBoot()
 })
 
 // Kapanışta yeni tur başlatılmaz (mevcut zamanlayıcı temizlenir).
@@ -2608,6 +2689,9 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
       .catch(() => undefined)
     void import('./shipments/suratTrackingScheduler.ts')
       .then((scheduler) => scheduler.stopTrackingScheduler())
+      .catch(() => undefined)
+    void import('./orders/trendyolStatusSyncScheduler.ts')
+      .then((scheduler) => scheduler.stopTrendyolStatusSyncScheduler())
       .catch(() => undefined)
   })
 }
