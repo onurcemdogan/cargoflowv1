@@ -49,7 +49,11 @@ export function AppShell({
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brand-mark">CF</div>
+          {/*
+            Marka simgesi TARAYICI FAVICON'UYLA AYNI dosyadır (/favicon.png).
+            İkinci bir logo dosyası üretilmez; tek kanonik kaynak korunur.
+          */}
+          <img className="brand-mark" src="/favicon.png" alt="CargoFlow" />
           <div>
             <strong>CargoFlow</strong>
             <span>Operasyon Paneli</span>

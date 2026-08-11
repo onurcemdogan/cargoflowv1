@@ -80,15 +80,16 @@ button:disabled {
   gap: 12px;
 }
 
+/* Marka simgesi: tarayıcı favicon'uyla AYNI görsel (/favicon.png).
+   `contain` → kare görsel kutuya TAŞMADAN ve EZİLMEDEN oturur; kırpma yok.
+   Ölçü ve köşe yarıçapı mevcut tasarımdan DEĞİŞMEDİ. */
 .brand-mark {
   width: 42px;
   height: 42px;
   border-radius: 8px;
-  display: grid;
-  place-items: center;
-  background: #13a085;
-  color: #ffffff;
-  font-weight: 800;
+  display: block;
+  object-fit: contain;
+  flex-shrink: 0;
 }
 
 .brand strong,
