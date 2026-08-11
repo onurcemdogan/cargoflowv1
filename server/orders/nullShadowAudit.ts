@@ -6,7 +6,12 @@
 // BU MODÜL HİÇBİR ŞEY YAZMAZ/SİLMEZ/ARŞİVLEMEZ. Yalnız zaman çizelgesi,
 // sınıflandırma ve profil üretir.
 import { and, desc, eq, gte, isNull, sql } from 'drizzle-orm'
-import { orderLines, orders, shipmentOperations, shipments } from '../db/schema.ts'
+import { orderLines, orders } from '../db/schema.ts'
+import {
+  carrierKeyOf,
+  isCarrierDependent,
+  loadCarrierDependencies,
+} from './carrierDependency.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -85,40 +90,46 @@ export function classifyNullShadowGroup(input: {
 }
 
 /**
- * NULL yazabilen ÇALIŞMA ZAMANI yolları (kod denetimi bulgusu).
+ * NULL yazabilen ÇALIŞMA ZAMANI yolları.
  *
- * KANIT: `persistSyncResult` → `upsertMarketplaceOrders(..., accountId)`
- * zincirinde hesap kimliği `resolveActiveMarketplaceAccountId` ile çözülür ve
- * bu fonksiyon İKİ durumda `null` döner:
- *   1) organizasyonun AKTİF Trendyol hesabı YOKSA,
- *   2) çözümleme sırasında HERHANGİ bir hata olursa (`catch { return null }`).
- * Her iki durumda da manuel sync, arka plan turu ve eski-kayıt mutabakatı
- * NULL kapsamına yazar. Bu yüzden düzeltmeden SONRA da yeni NULL satır
- * oluşması TEORİK OLARAK MÜMKÜNDÜR; karar zaman çizelgesine bakılarak verilir.
+ * ÖNCE (kanıtlanmış hata): hesap kimliği `resolveActiveMarketplaceAccountId`
+ * ile çözülüyordu ve bu fonksiyon HEM "aktif hesap yok" HEM DE "çözümleme
+ * hatası" durumunda `null` döndürüyordu; değer doğrudan
+ * `persistSyncResult` → `upsertMarketplaceOrders(..., null)` zincirine
+ * gidiyordu. Üç çalışma zamanı yolu da NULL kapsamına yazabiliyordu.
+ *
+ * SONRA (bu turdaki düzeltme): üç yol da `resolveActiveMarketplaceAccountScope`
+ * kullanır; `status !== 'ok'` ise persist ÇAĞRILMAZ (manuel uç 409/503 döner,
+ * arka plan ve stale turu organizasyonu ATLAR). Ayrıca `persistSyncResult`
+ * `requireMarketplaceAccount: true` ile çağrıldığı için kimlik yoksa yazma
+ * REDDEDİLİR. Bu yüzden `canBeNull` artık `false`.
+ *
+ * Çevrimdışı/elle çalıştırılan araçlar (tarihsel backfill, legacy import)
+ * KASITLI olarak legacy kapsama yazabilir; `runtimeReachable: false`.
  */
 export const NULL_CAPABLE_WRITERS = [
   {
     writer: 'manual_sync',
     location: 'server/index.mjs · POST /api/orders/sync',
-    accountSource: 'resolveActiveMarketplaceAccountId',
-    canBeNull: true,
-    reason: 'aktif hesap yoksa veya çözümleme hata verirse null',
+    accountSource: 'resolveActiveMarketplaceAccountScope (status !== ok → persist YOK)',
+    canBeNull: false,
+    reason: 'hesap kapsamı çözülemezse 409/503 döner; persist YOK',
     runtimeReachable: true,
   },
   {
     writer: 'background_sync',
     location: 'server/index.mjs · syncTrendyolOrdersForOrganization',
-    accountSource: 'resolveActiveMarketplaceAccountId',
-    canBeNull: true,
-    reason: 'aynı çözümleyici; catch bloğu hatayı yutup null döner',
+    accountSource: 'resolveActiveMarketplaceAccountScope (status !== ok → persist YOK)',
+    canBeNull: false,
+    reason: 'hesap kapsamı çözülemezse organizasyon turu ATLANIR',
     runtimeReachable: true,
   },
   {
     writer: 'stale_open_reconcile',
     location: 'server/index.mjs · reconcileStaleOpenForOrganization',
-    accountSource: 'resolveActiveMarketplaceAccountId',
-    canBeNull: true,
-    reason: 'aynı çözümleyici',
+    accountSource: 'resolveActiveMarketplaceAccountScope (status !== ok → persist YOK)',
+    canBeNull: false,
+    reason: 'hesap kapsamı çözülemezse aday seçilmez, persist YOK',
     runtimeReachable: true,
   },
   {
@@ -232,6 +243,7 @@ export async function auditNullShadowRows(
     const rows = (await db
       .select({
         id: orders.id,
+        organizationId: orders.organizationId,
         marketplaceAccountId: orders.marketplaceAccountId,
         marketplace: orders.marketplace,
         packageId: orders.packageId,
@@ -296,6 +308,20 @@ export async function auditNullShadowRows(
     linesByOrder.get(key)!.push(line)
   }
 
+  // KANONİK taşıyıcı sayımı TEK seferde yüklenir (grup başına sorgu YOK).
+  const carrierKeys = []
+  for (const [packageId, group] of counterparts) {
+    const hasNull = group.some((row) => row.marketplaceAccountId == null)
+    const hasOther = group.some((row) => row.marketplaceAccountId != null)
+    if (!hasNull || !hasOther) continue
+    carrierKeys.push({
+      organizationId: String(group[0].organizationId ?? ''),
+      marketplace: String(group[0].marketplace),
+      packageId,
+    })
+  }
+  const carrierByKey = await loadCarrierDependencies(db, carrierKeys)
+
   for (const [packageId, group] of counterparts) {
     const hasNull = group.some((row) => row.marketplaceAccountId == null)
     const hasOther = group.some((row) => row.marketplaceAccountId != null)
@@ -303,32 +329,15 @@ export async function auditNullShadowRows(
     nullShadowPackages += 1
 
     const marketplace = String(group[0].marketplace)
-    const organizationId = String(nullRows[0]?.organizationId ?? '')
-    const [shipmentRow] = await db
-      .select({ total: sql<number>`count(*)` })
-      .from(shipments)
-      .where(
-        and(
-          eq(shipments.marketplace, marketplace),
-          eq(shipments.packageId, packageId),
-          organizationId ? eq(shipments.organizationId, organizationId) : sql`true`,
-        ),
-      )
-    const [operationRow] = await db
-      .select({ total: sql<number>`count(*)` })
-      .from(shipmentOperations)
-      .where(
-        and(
-          eq(shipmentOperations.marketplace, marketplace),
-          eq(shipmentOperations.packageId, packageId),
-          organizationId
-            ? eq(shipmentOperations.organizationId, organizationId)
-            : sql`true`,
-        ),
-      )
-    const carrierDependent =
-      Number(shipmentRow?.total ?? 0) > 0 ||
-      Number(operationRow?.total ?? 0) > 0
+    // DÜZELTME: eski sürüm organizasyon kimliğini TEK bir satırdan (ilk NULL
+    // satır) türetip tüm gruplara uyguluyordu. Artık her grup KENDİ
+    // organizasyonuyla, tek kanonik helper üzerinden sayılır.
+    const organizationId = String(group[0].organizationId ?? '')
+    const carrierDependent = isCarrierDependent(
+      carrierByKey.get(
+        carrierKeyOf({ organizationId, marketplace, packageId }),
+      ),
+    )
 
     const factsOf = (row: Record<string, any> | undefined): ShadowRowFacts | null =>
       row

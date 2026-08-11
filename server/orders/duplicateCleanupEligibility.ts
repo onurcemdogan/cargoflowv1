@@ -16,12 +16,11 @@
 // o gruptaki HİÇBİR satır otomatik aday sayılmaz. `order_lines` ise
 // `order_id` taşıdığı için SATIR DÜZEYİNDE atfedilebilir.
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import { orderLines, orders } from '../db/schema.ts'
 import {
-  orderLines,
-  orders,
-  shipmentOperations,
-  shipments,
-} from '../db/schema.ts'
+  carrierKeyOf,
+  loadCarrierDependencies,
+} from './carrierDependency.ts'
 import { classifyDuplicateGroup, type DuplicateClass } from './crossAccountDuplicateAudit.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -245,32 +244,20 @@ export async function buildCleanupEligibilityReport(
     .groupBy(orderLines.orderId)) as { orderId: string; total: number }[]
   for (const row of lineRows) lineCounts.set(String(row.orderId), Number(row.total))
 
-  // 4) PAKET bazlı taşıyıcı sayımları (satıra ATFEDİLEMEZ — bkz. modül başı).
-  const shipmentCounts = new Map<string, number>()
-  const shipmentRows = (await db
-    .select({ packageId: shipments.packageId, total: sql<number>`count(*)` })
-    .from(shipments)
-    .where(inArray(shipments.packageId, packageIds))
-    .groupBy(shipments.packageId)) as { packageId: string; total: number }[]
-  for (const row of shipmentRows) {
-    shipmentCounts.set(String(row.packageId), Number(row.total))
-  }
-
-  const operationCounts = new Map<string, number>()
-  const operationRows = (await db
-    .select({
-      packageId: shipmentOperations.packageId,
-      total: sql<number>`count(*)`,
-    })
-    .from(shipmentOperations)
-    .where(inArray(shipmentOperations.packageId, packageIds))
-    .groupBy(shipmentOperations.packageId)) as {
-    packageId: string
-    total: number
-  }[]
-  for (const row of operationRows) {
-    operationCounts.set(String(row.packageId), Number(row.total))
-  }
+  // 4) PAKET bazlı taşıyıcı sayımları — TEK KANONİK HELPER.
+  //
+  // DÜZELTME: ilk sürüm YALNIZ `package_id` ile eşleştiriyordu; organizasyon
+  // ve pazaryeri kapsamı düşürüldüğü için farklı kapsamdaki aynı paket
+  // numarasını da sayıp FAZLA bağımlılık raporluyordu (iki denetim arasındaki
+  // 230 ≠ 35 tutarsızlığının kaynağı). Artık kanonik anahtar kullanılır.
+  const carrier = await loadCarrierDependencies(
+    db,
+    groups.map((group) => ({
+      organizationId: group.organizationId,
+      marketplace: group.marketplace,
+      packageId: group.packageId,
+    })),
+  )
 
   // 5) Grup bazında sınıflandırma + toplama.
   const rowsByPackage = new Map<string, Record<string, any>[]>()
@@ -296,10 +283,13 @@ export async function buildCleanupEligibilityReport(
       accountIds,
       input.activeAccountIds,
     )
-    const packageCarrier = {
-      shipments: shipmentCounts.get(group.packageId) ?? 0,
-      shipmentOperations: operationCounts.get(group.packageId) ?? 0,
-    }
+    const packageCarrier = carrier.get(
+      carrierKeyOf({
+        organizationId: group.organizationId,
+        marketplace: group.marketplace,
+        packageId: group.packageId,
+      }),
+    ) ?? { shipments: 0, shipmentOperations: 0 }
     const eligibilityRows: EligibilityRow[] = groupRows.map((row) => ({
       id: String(row.id),
       marketplaceAccountId: row.marketplaceAccountId ?? null,

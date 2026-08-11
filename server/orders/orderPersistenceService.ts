@@ -56,9 +56,26 @@ export async function persistSyncResult(
     // reconcile YALNIZ bu hesabı değerlendirir (başka hesaba dokunmaz). null →
     // legacy/hesapsız kapsam.
     marketplaceAccountId?: string | null
+    /**
+     * DERİNLEMESİNE SAVUNMA (yalnız ÇALIŞMA ZAMANI pazaryeri senkronu için).
+     *
+     * `true` verilirse hesap kimliği YOKSA yazma REDDEDİLİR. Üretimde
+     * `resolveActiveMarketplaceAccountId` hem "aktif hesap yok" hem de
+     * "çözümleme hatası" durumunda `null` döndürüp NULL kapsamlı gölge
+     * satırlar üretebiliyordu; bu bayrak o yolu kapatır.
+     *
+     * VARSAYILAN `false`: tarihsel içe aktarma / backfill gibi ÇEVRİMDIŞI
+     * araçlar legacy (hesapsız) kapsama yazmaya devam edebilir. Genel API'ye
+     * kırıcı bir değişmez EKLENMEZ.
+     */
+    requireMarketplaceAccount?: boolean
   },
 ): Promise<SyncPersistResult> {
   const marketplaceAccountId = options.marketplaceAccountId ?? null
+  if (options.requireMarketplaceAccount && !marketplaceAccountId) {
+    // Sessiz düşüş YOK: çağıran bunu görür ve turu atlar.
+    throw new Error('marketplace_account_required')
+  }
   const result = await upsertMarketplaceOrders(
     db,
     organizationId,

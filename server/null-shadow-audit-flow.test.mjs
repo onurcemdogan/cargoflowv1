@@ -278,41 +278,44 @@ test('NULL-AUDIT-7: fix sonrasi yeni satir varsa NEW_NULL_ROWS_STILL_CREATED', a
   assert.equal(report.recurrenceVerdict, 'NEW_NULL_ROWS_STILL_CREATED')
 })
 
-test('NULL-AUDIT-8: yeni satir YOK ama ULASILABILIR yazar VARSA INCONCLUSIVE', async () => {
+test('NULL-AUDIT-8: guard sonrasi ULASILABILIR NULL yazar KALMADI', async () => {
   const ctx = await makeCtx()
   await seedShadowPair(ctx, { shadowCreatedAt: hoursAgo(72) })
   const report = await runAudit(ctx)
   assert.equal(report.createdAfterFix, 0)
-  assert.ok(report.reachableNullWriterCount > 0, 'NULL yazabilen yol MEVCUT')
+  // NULL yazma onleme fix'i sonrasi uc calisma zamani yolu da canBeNull:false.
+  assert.equal(report.reachableNullWriterCount, 0)
   assert.equal(
     report.recurrenceVerdict,
-    'INCONCLUSIVE',
-    'yalniz "yeni satir yok" HISTORICAL_ONLY icin YETMEZ',
+    'HISTORICAL_ONLY',
+    'yeni satir YOK + ulasilabilir NULL yazar YOK',
   )
 })
 
-test('NULL-AUDIT-9: NULL yazabilen calisma zamani yolu KOD ile kanitli', () => {
-  // Cozumleyici iki durumda null doner ve deger dogrudan persist'e gider.
-  assert.ok(
-    ENTRY_SOURCE.includes('return account ? account.id : null'),
-    'aktif hesap yoksa null',
-  )
-  const lines = ENTRY_SOURCE.split(/\r?\n/)
-  const start = lines.findIndex((line) =>
-    line.startsWith('async function resolveActiveMarketplaceAccountId'),
-  )
-  const end = lines.findIndex((line, index) => index > start && line === '}')
-  const body = lines.slice(start, end).join('\n')
-  assert.ok(body.includes('catch {'), 'hata yutuluyor')
-  assert.ok(body.includes('return null'), 've null donuyor')
+test('NULL-AUDIT-8b: ulasilabilir yazar VARKEN karar HISTORICAL_ONLY OLAMAZ', () => {
+  // Karar sozlesmesi IKI kosul birden ister; kod bunu acikca uygular.
+  assert.ok(MODULE_SOURCE.includes('} else if (reachableNullWriterCount > 0) {'))
+  assert.ok(MODULE_SOURCE.includes("recurrenceVerdict = 'INCONCLUSIVE'"))
+})
 
-  // Ucu de ayni cozumleyiciyi kullanir.
+test('NULL-AUDIT-9: calisma zamani yollari artik NULL YAZAMAZ', () => {
+  // Ayirt edilebilir cozumleyici mevcut; hata SESSIZCE null'a cevrilmez.
+  assert.ok(
+    ENTRY_SOURCE.includes('async function resolveActiveMarketplaceAccountScope'),
+  )
+  assert.equal(
+    ENTRY_SOURCE.split('requireMarketplaceAccount: true').length - 1,
+    3,
+    'uc calisma zamani yolunda derinlemesine savunma',
+  )
+
+  // Ucu de ayni ayirt edilebilir cozumleyiciyi kullanir ve NULL yazamaz.
   for (const writer of ['manual_sync', 'background_sync', 'stale_open_reconcile']) {
     const entry = audit.NULL_CAPABLE_WRITERS.find((item) => item.writer === writer)
     assert.ok(entry, writer)
-    assert.equal(entry.canBeNull, true)
+    assert.equal(entry.canBeNull, false, writer)
     assert.equal(entry.runtimeReachable, true)
-    assert.equal(entry.accountSource, 'resolveActiveMarketplaceAccountId')
+    assert.ok(entry.accountSource.includes('resolveActiveMarketplaceAccountScope'))
   }
   // Elle calistirilan CLI yollari runtime ULASILABILIR sayilmaz.
   for (const writer of ['historical_backfill_cli', 'legacy_import_cli']) {
