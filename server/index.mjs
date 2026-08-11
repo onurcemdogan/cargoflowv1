@@ -2532,8 +2532,10 @@ async function querySuratTrackingForCandidate(candidate) {
     )
     const config = normalizeSuratConfig(extractSuratConfigCandidate(stored))
     if (!config?.kullaniciAdi) return null
+    // WebSiparisKodu = SİPARİŞ NUMARASI (create böyle yazar). packageId
+    // Serendip'te ReferansNo'dur ve takip ucu onu KABUL ETMEZ.
     const queryReference = resolveSuratTrackingQueryReference({
-      webSiparisKodu: candidate.packageId,
+      webSiparisKodu: candidate.orderNumber,
     })
     if (!queryReference.ok) return null
     const body = { webSiparisKodu: queryReference.value, queryReference }

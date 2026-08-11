@@ -73,6 +73,7 @@ async function main(): Promise<void> {
       archivedAt: orders.archivedAt,
       marketplace: orders.marketplace,
       organizationId: orders.organizationId,
+      orderNumber: orders.orderNumber,
     })
     .from(orders)
     .where(eq(orders.packageId, packageId))
@@ -98,31 +99,88 @@ async function main(): Promise<void> {
     : []
   const shipment = shipmentRows[0]
 
-  // ── SALT OKUMA: taşıyıcı takip sorgusu (mevcut uç) ───────────────────────
-  let carrier: Record<string, unknown> | null = null
-  let carrierQuerySucceeded = false
-  try {
-    const response = await fetch(`${baseUrl}/api/shipments/surat/track`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ webSiparisKodu: packageId }),
+  // ── SALT OKUMA: ÇOK KİMLİKLİ TAŞIYICI SORGUSU ────────────────────────────
+  //
+  // KANITLANMIŞ SIRA (server/index.mjs requestFieldMapping):
+  //   WebSiparisKodu = orderNumber   ← Serendip kaydının ANAHTARI
+  //   SatisKodu      = orderNumber
+  //   ReferansNo     = packageId
+  //   OzelKargoTakipNo = 727 pazaryeri takip numarası
+  // Takip ucu YALNIZ WebSiparisKodu kabul eder. Bu yüzden birincil aday
+  // orderNumber'dır; diğerleri TANI amaçlı denenir (brute-force DEĞİL,
+  // create'in gerçekten yazdığı alanlarla sınırlı kapalı liste).
+  const mask = (value: string) =>
+    value.length <= 4 ? '****' : `${value.slice(0, 3)}***${value.slice(-3)}`
+
+  const identities = [
+    { identityType: 'orderNumber_webSiparisKodu', value: order?.orderNumber },
+    { identityType: 'packageId_referansNo', value: packageId },
+    { identityType: 'carrierTNo', value: shipment?.trackingNumber },
+    { identityType: 'carrierBarcode', value: shipment?.barcode },
+  ].filter((entry) => String(entry.value ?? '').trim())
+
+  const attempts: Record<string, unknown>[] = []
+  let winning: {
+    identityType: string
+    trackingLog: Record<string, unknown> | null
+    gonderilerCount: number
+  } | null = null
+
+  for (const identity of identities) {
+    const value = String(identity.value)
+    let succeeded = false
+    let gonderilerCount = 0
+    let errorCategory: string | null = null
+    let trackingLog: Record<string, unknown> | null = null
+    try {
+      const response = await fetch(`${baseUrl}/api/shipments/surat/track`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webSiparisKodu: value }),
+      })
+      const data = (await response.json()) as Record<string, unknown>
+      if (!response.ok) errorCategory = `http_${response.status}`
+      else if (data?.ok === false)
+        errorCategory = String(data.errorCode ?? 'carrier_error')
+      trackingLog = (data?.trackingLog ?? data) as Record<string, unknown>
+      const gonderiler = trackingLog?.Gonderiler
+      gonderilerCount = Number(
+        trackingLog?.gonderilerLength ??
+          (Array.isArray(gonderiler) ? gonderiler.length : 0),
+      )
+      succeeded = Boolean(response.ok && data?.ok !== false)
+    } catch (error) {
+      errorCategory = 'transport_error'
+      void error
+    }
+    const matchFound = succeeded && gonderilerCount > 0
+    attempts.push({
+      identityType: identity.identityType,
+      maskedIdentity: mask(value),
+      queryTransport: 'POST /api/shipments/surat/track',
+      succeeded,
+      gonderilerCount,
+      errorCategory,
+      matchFound,
+      returnedIdentitySummary: matchFound
+        ? {
+            barkodNo: trackingLog?.BarkodNo ?? null,
+            kargonunDurumuSayi: trackingLog?.KargonunDurumuSayi ?? null,
+          }
+        : null,
     })
-    const data = (await response.json()) as Record<string, unknown>
-    carrierQuerySucceeded = Boolean(response.ok && data?.ok !== false)
-    carrier = data
-  } catch (error) {
-    console.error('taşıyıcı sorgusu başarısız:', (error as Error).message)
+    if (matchFound && !winning) {
+      winning = {
+        identityType: identity.identityType,
+        trackingLog,
+        gonderilerCount,
+      }
+    }
   }
 
-  const trackingLog = (carrier?.trackingLog ??
-    carrier?.suratTrackingLog ??
-    carrier) as Record<string, unknown> | null
-  const gonderiler = trackingLog?.Gonderiler
-  const gonderilerCount = Number(
-    trackingLog?.gonderilerLength ??
-      (Array.isArray(gonderiler) ? gonderiler.length : 0),
-  )
-  const kargonunDurumuSayi = trackingLog?.KargonunDurumuSayi ?? null
+  const log = winning?.trackingLog ?? null
+  const gonderiler = log?.Gonderiler
+  const kargonunDurumuSayi = log?.KargonunDurumuSayi ?? null
   const mapped = mapSuratCarrierStatus(
     kargonunDurumuSayi as string | number | undefined,
   )
@@ -130,28 +188,29 @@ async function main(): Promise<void> {
   const report = {
     mode: 'read-only',
     packageId,
+    orderNumber: order?.orderNumber ?? null,
     tNo: shipment?.trackingNumber ?? null,
     carrierBarcode: shipment?.barcode ?? null,
     localOperationStatus: order?.operationStatus ?? null,
     marketplaceStatus: order?.marketplaceStatus ?? null,
     localShipmentExists: Boolean(shipment),
     archived: Boolean(order?.archivedAt),
-    carrierQuerySucceeded,
-    gonderilerCount,
-    kargonunDurumu: trackingLog?.KargonunDurumu ?? null,
+    attempts,
+    winningIdentityType: winning?.identityType ?? null,
+    carrierQuerySucceeded: Boolean(winning),
+    gonderilerCount: winning?.gonderilerCount ?? 0,
+    kargonunDurumu: log?.KargonunDurumu ?? null,
     kargonunDurumuSayi,
-    sonHareketTarihi: trackingLog?.SonHareketTarihi ?? null,
+    sonHareketTarihi: log?.SonHareketTarihi ?? null,
     structuredAcceptanceFields: extractStructuredAcceptanceFields(
-      Array.isArray(gonderiler) && gonderiler.length > 0
-        ? gonderiler[0]
-        : trackingLog,
+      Array.isArray(gonderiler) && gonderiler.length > 0 ? gonderiler[0] : log,
     ),
     mappedCarrierStatus: mapped
       ? { key: mapped.key, shipped: mapped.shipped, delivered: mapped.delivered }
       : null,
-    // MEVCUT harita ile bu yanıt "Kargoya Verildi" üretir miydi?
+    // Gönderi BULUNMASI tek başına yeterli DEĞİL: shipped kodu da şart.
     wouldResolveHandedToCargo: Boolean(
-      gonderilerCount > 0 && mapped?.shipped === true,
+      (winning?.gonderilerCount ?? 0) > 0 && mapped?.shipped === true,
     ),
   }
   console.log(JSON.stringify(report, null, 2))
