@@ -2587,17 +2587,37 @@ async function syncTrendyolOrdersForOrganization(organizationId) {
   // Kimlik bilgisi yoksa SESSİZCE atlanır (hata değildir).
   if (!credentials || !Object.keys(credentials).length) return { synced: false }
 
+  // HESAP KAPSAMI (ÜRETİM HATASI DÜZELTMESİ). `orders` tekilliği
+  //   (organization_id, marketplace, marketplace_account_id, package_id)
+  // ve UNIQUE NULLS NOT DISTINCT'tir: NULL hesap AYRI bir anahtardır. Bu
+  // fonksiyon eskiden `marketplaceAccountId` GÖNDERMİYORDU → upsert NULL
+  // kapsamına düşüyor, aktif hesapla damgalanmış GERÇEK satırla ÇAKIŞMIYOR
+  // ve onu GÜNCELLEMİYORDU. Sonuç: Trendyol `Shipped` dese bile hesap
+  // kapsamlı satır `Picking` kalıyor (golden 4065907241) ve NULL kapsamında
+  // karantinalı bir gölge satır oluşuyordu. Manuel "Şimdi Yenile" ile AYNI
+  // kanonik çözüm kullanılır; istemciden hesap kimliği ASLA alınmaz.
+  const marketplaceAccountId = await resolveActiveMarketplaceAccountId(
+    db,
+    organizationId,
+  )
+
   const result = await callTrendyolOrdersByStatuses(credentials, { size: 50 })
   const syncStatus = result.debug?.syncStatus
   const partial = result.partial === true || syncStatus === 'PARTIAL'
-  const complete = Boolean(result.ok) && syncStatus === 'COMPLETE'
   // TOTAL_FAILURE: mevcut siparişlere DOKUNULMAZ (manuel akışla aynı kural).
   if (!result.ok && !partial) return { synced: false }
 
   const normalized = normalizeTrendyolOrders(result.data)
   await service.persistSyncResult(db, organizationId, normalized.orders, {
-    complete,
+    // RECONCILE (ARŞİVLEME) YOK. Arka plan turu sabit küçük bir pencere ve
+    // `size:50` ile çalışır; "tam liste" olduğunu KANITLAYAMAZ. `complete`
+    // true geçilirse `archiveMissingOrders` artık GERÇEK hesap kapsamında
+    // çalışırdı ve turda dönmeyen kayıtlar arşivlenebilirdi. Arşiv mutabakatı
+    // pencere hesabı yapan manuel/kanonik sync'in işidir; bu tur YALNIZ
+    // pazaryeri statüsünü tazeler.
+    complete: false,
     fetchedCount: normalized.orders.length,
+    marketplaceAccountId,
   })
   return { synced: true }
 }
