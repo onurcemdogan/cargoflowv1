@@ -213,6 +213,7 @@ export function packagesOf(payload: unknown): unknown[] {
 // ═══ VAKA SINIFLANDIRMASI ═════════════════════════════════════════════════
 
 export type IdentityCase =
+  | 'IN_SYNC'
   | 'B1_package_split_or_replacement'
   | 'B2_persistence_or_matching_bug'
   | 'B3_replacement_package'
@@ -241,6 +242,13 @@ export interface IdentityCaseResult {
 export function classifyPackageIdentityCase(input: {
   persistedPackageId: string
   packages: PackageIdentityFields[]
+  /**
+   * KANONİK (aktif hesap kapsamlı) kalıcı pazaryeri statüsü. Verilirse ve
+   * canlı statüyle EŞİTSE sonuç `IN_SYNC` olur — aynı paketin başka bir
+   * hesap kapsamındaki ESKİ satırına bakıp yanlışlıkla "persistence bug"
+   * denmesini engeller.
+   */
+  persistedMarketplaceStatus?: string | null
 }): IdentityCaseResult {
   const persisted = String(input.persistedPackageId ?? '').trim()
   const exact = input.packages.find((pkg) => pkg.packageId === persisted) ?? null
@@ -259,6 +267,20 @@ export function classifyPackageIdentityCase(input: {
       otherPackageIds,
       conclusive: false,
       note: 'Sorgu penceresinde HİÇ paket dönmedi. Bu, paketin YOK olduğunu KANITLAMAZ; pencereyi genişletip tekrar çalıştır.',
+    }
+  }
+
+  // KALICI KAYIT ZATEN GÜNCEL Mİ? (kanonik satır ile canlı statü aynı)
+  const persistedStatus = String(input.persistedMarketplaceStatus ?? '').trim()
+  if (exact && persistedStatus && exactStatus && persistedStatus === exactStatus) {
+    return {
+      case: 'IN_SYNC',
+      exactFound: true,
+      exactStatus,
+      forwardPackageIds,
+      otherPackageIds,
+      conclusive: true,
+      note: 'Kanonik (aktif hesap kapsamlı) kayıt canlı pazaryeri statüsüyle AYNI. Yapılacak bir şey yok.',
     }
   }
 

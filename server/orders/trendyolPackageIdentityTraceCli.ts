@@ -10,9 +10,10 @@
 //
 // Çıktı PII TAŞIMAZ: müşteri adı/adres/telefon/satır içeriği/tutar YOKTUR;
 // yalnız teknik kimlikler, statüler ve zaman damgaları.
-import { and, eq } from 'drizzle-orm'
+import { and, desc, eq } from 'drizzle-orm'
 import { closePool, getDb, isDatabaseConfigured } from '../db/client.ts'
 import { orders } from '../db/schema.ts'
+import { getActiveAccount } from '../integrations/marketplaceAccountRepository.ts'
 import {
   getIntegrationCredential,
   type CredentialDb,
@@ -107,13 +108,22 @@ async function main(): Promise<void> {
 
   const db = getDb()
 
-  // ── SALT OKUMA: kalıcı sipariş kimliği ───────────────────────────────────
+  // ── SALT OKUMA: EŞLEŞEN TÜM SATIRLAR ─────────────────────────────────────
+  //
+  // ÜRETİM HATASI (kanıtlandı): aynı paket BİRDEN FAZLA pazaryeri hesabı
+  // kapsamında satır taşıyabiliyor (aktif hesap + eski/legacy hesap). Eski
+  // sürüm hesap kapsamı belirtmeden `limit(1)` ile satır seçtiği için ESKİ
+  // satırı "persisted" sanıp yanlış `B2_persistence_or_matching_bug` verdikti.
+  // Artık TÜM eşleşmeler raporlanır, karar ise KANONİK (aktif hesap) satırla
+  // verilir. UI de aynı kapsamı kullanır (findOrders → accountScope).
   const where = packageId
     ? eq(orders.packageId, packageId)
     : eq(orders.orderNumber, String(orderNumberArg))
   const orderRows = await db
     .select({
+      id: orders.id,
       organizationId: orders.organizationId,
+      marketplaceAccountId: orders.marketplaceAccountId,
       packageId: orders.packageId,
       orderNumber: orders.orderNumber,
       marketplace: orders.marketplace,
@@ -130,8 +140,27 @@ async function main(): Promise<void> {
         ? and(where, eq(orders.orderNumber, orderNumberArg))
         : where,
     )
-    .limit(1)
-  const persistedRow = orderRows[0] ?? null
+    .orderBy(desc(orders.lastSeenAt))
+
+  // KANONİK SATIR: organizasyonun AKTİF Trendyol hesabı kapsamındaki satır.
+  // Aktif hesap çözülemezse (veya o kapsamda satır yoksa) en son görülen
+  // satıra düşülür ve bu durum raporda AÇIKÇA belirtilir.
+  const organizationId = orderRows[0]?.organizationId ?? null
+  const activeAccount = organizationId
+    ? await getActiveAccount(db, organizationId, 'Trendyol')
+    : null
+  const activeAccountId = activeAccount?.id ?? null
+  const scopedRow =
+    orderRows.find(
+      (row: Record<string, unknown>) =>
+        String(row.marketplaceAccountId ?? '') === String(activeAccountId ?? ''),
+    ) ?? null
+  const persistedRow = scopedRow ?? orderRows[0] ?? null
+  const canonicalSelection = scopedRow
+    ? 'active_account_scope'
+    : orderRows.length > 0
+      ? 'fallback_most_recently_seen'
+      : 'not_found'
 
   const orderNumber = String(
     orderNumberArg ?? persistedRow?.orderNumber ?? '',
@@ -140,8 +169,32 @@ async function main(): Promise<void> {
     packageId ?? persistedRow?.packageId ?? '',
   ).trim()
 
+  const summarizeRow = (row: Record<string, unknown> | null) =>
+    row
+      ? {
+          id: row.id,
+          marketplaceAccountId: row.marketplaceAccountId,
+          isActiveAccountScope:
+            String(row.marketplaceAccountId ?? '') ===
+            String(activeAccountId ?? ''),
+          packageId: row.packageId,
+          orderNumber: row.orderNumber,
+          marketplaceStatus: row.marketplaceStatus,
+          operationStatus: row.operationStatus,
+          lastSeenAt: (row.lastSeenAt as Date | null)?.toISOString?.() ?? null,
+          marketplaceLastModifiedAt:
+            (row.marketplaceLastModifiedAt as Date | null)?.toISOString?.() ??
+            null,
+          archived: Boolean(row.archivedAt),
+        }
+      : null
+
   const persisted = {
     found: Boolean(persistedRow),
+    // KANONİK satırın hangi kurala göre seçildiği AÇIKÇA raporlanır.
+    canonicalSelection,
+    activeMarketplaceAccountId: activeAccountId,
+    marketplaceAccountId: persistedRow?.marketplaceAccountId ?? null,
     packageId: persistedRow?.packageId ?? null,
     orderNumber: persistedRow?.orderNumber ?? null,
     marketplace: persistedRow?.marketplace ?? null,
@@ -230,12 +283,19 @@ async function main(): Promise<void> {
   const verdict = classifyPackageIdentityCase({
     persistedPackageId,
     packages,
+    // KARAR KANONİK SATIRA GÖRE verilir (başka hesabın eski satırına DEĞİL).
+    persistedMarketplaceStatus: persistedRow?.marketplaceStatus ?? null,
   })
 
   const report = {
     mode: 'read_only',
     generatedFor: { packageId: persistedPackageId, orderNumber },
     persisted,
+    // TANI AMAÇLI: aynı paket/sipariş için TÜM satırlar (PII YOK). Çapraz
+    // hesap tekrarı burada görünür; karar yine kanonik satırdan verilir.
+    persistedMatches: orderRows.map((row: Record<string, unknown>) =>
+      summarizeRow(row),
+    ),
     query: {
       // Kanıtlanmış sözleşme: yalnız orderNumber ile sorgulanır.
       identity: 'orderNumber',
