@@ -12288,6 +12288,39 @@ function isUnknownTrendyolPackageStatus(item) {
   return Boolean(rawStatus && !ALL_TRENDYOL_ORDER_STATUSES.includes(rawStatus))
 }
 
+// Paket zaman damgası (epoch ms). Çözülemezse null.
+function trendyolPackageModifiedAt(item) {
+  const raw =
+    item?.lastModifiedDate ?? item?.lastModifiedAt ?? item?.packageModifiedDate
+  if (raw === undefined || raw === null || raw === '') return null
+  const numeric = Number(raw)
+  const time = Number.isFinite(numeric) ? numeric : Date.parse(String(raw))
+  return Number.isFinite(time) ? time : null
+}
+
+// `undefined` alanlar baskın kaydın parçası SAYILMAZ: aksi hâlde eksik alan
+// dolu alanı siler (ör. status: undefined mevcut Shipped'i ezerdi).
+function definedFieldsOf(item) {
+  const out = {}
+  for (const [key, value] of Object.entries(item ?? {})) {
+    if (value !== undefined) out[key] = value
+  }
+  return out
+}
+
+// ÜRETİM HATASI (kanıtlandı): aynı `shipmentPackageId` TEK sync turunda İKİ
+// geçişten gelebiliyor —
+//   1) statü-filtreli geçiş        → paket GÜNCEL statüsüyle (ör. Shipped)
+//   2) filtresiz son-10-gün keşfi  → yalnız ACTIVE/bilinmeyen statüler
+//                                    (Created/Picking/Invoiced) süzülür
+// Eski birleştirme `{...existing, ...item}` ile KOŞULSUZ "son gelen kazanır"
+// yapıyordu ve keşif geçişi İKİNCİ sırada olduğu için BAYAT `Picking`,
+// filtreli geçişten gelen `Shipped`'i EZİYORDU. Sonuç: sync "başarılı" der,
+// DB'ye eski statü yazılır ve sipariş "Etiket Basıldı"da kalırdı.
+//
+// Artık seçim DETERMİNİSTİK ve SIRADAN BAĞIMSIZDIR: aynı paket için EN YENİ
+// `lastModifiedDate` baskındır. Zaman damgası olmayan kayıt, damgası olanı
+// EZEMEZ; ikisi de damgasızsa İLK görülen korunur.
 function mergeTrendyolPackageCollections(...collections) {
   const packages = new Map()
   for (const collection of collections) {
@@ -12299,9 +12332,15 @@ function mergeTrendyolPackageCollections(...collections) {
         continue
       }
       const existing = packages.get(key)
+      const existingAt = trendyolPackageModifiedAt(existing)
+      const incomingAt = trendyolPackageModifiedAt(item)
+      const incomingIsNewer =
+        incomingAt !== null && (existingAt === null || incomingAt > existingAt)
+      const base = incomingIsNewer ? existing : item
+      const dominant = incomingIsNewer ? item : existing
       packages.set(key, {
-        ...existing,
-        ...item,
+        ...definedFieldsOf(base),
+        ...definedFieldsOf(dominant),
         lines: mergeTrendyolLines(existing.lines, item.lines),
       })
     }
