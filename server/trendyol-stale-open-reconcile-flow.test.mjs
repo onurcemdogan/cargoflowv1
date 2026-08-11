@@ -85,6 +85,8 @@ async function seed(db, organizationId, accountId, overrides = {}) {
       marketplace: 'Trendyol',
       marketplaceStatus: 'Picking',
       operationStatus: 'LABEL_PRINTED',
+      // Varsayilan: soguma penceresi DISINDA (eski kayit).
+      lastSeenAt: new Date(NOW.getTime() - 7 * 24 * 60 * 60 * 1000),
       ...overrides,
     })
     .returning({ id: orders.id })
@@ -131,6 +133,8 @@ const findCandidates = (db, organizationId, accountId, extra = {}) =>
     marketplaceAccountId: accountId,
     limit: 20,
     staleBefore: new Date(NOW.getTime() - defaults().staleAfterMs),
+    // SOGUMA capasi: varsayilan olarak tum eski kayitlar uygun kabul edilir.
+    seenBefore: new Date(NOW.getTime() - defaults().cooldownMs),
     ...extra,
   })
 
@@ -174,14 +178,21 @@ test('OLD-B-CANDIDATE-3: terminal/ileri statu ve arsiv aday DEGIL', async () => 
     orderDate: daysAgo(20),
     archivedAt: NOW,
   })
+  const candidates = await findCandidates(db, organizationId, accountId)
+  assert.equal(candidates.length, 0, 'terminal ve arsivli kayitlar disarida')
+
+  // SOZLESME GUNCELLENDI (OLD-ACTIVE): operasyon durumu NULL ama pazaryeri
+  // statusu TERMINAL OLMAYAN eski kayit ARTIK adaydir — golden 4028055254
+  // (Picking + NEW) bu yuzden hicbir yazarin kapsamina girmiyordu.
   await seed(db, organizationId, accountId, {
     packageId: 'P-NOOP',
     orderNumber: 'O-NOOP',
     orderDate: daysAgo(20),
     operationStatus: null,
   })
-  const candidates = await findCandidates(db, organizationId, accountId)
-  assert.equal(candidates.length, 0)
+  const withNonTerminal = await findCandidates(db, organizationId, accountId)
+  assert.equal(withNonTerminal.length, 1)
+  assert.equal(withNonTerminal[0].packageId, 'P-NOOP')
 })
 
 test('OLD-B-CANDIDATE-4: hesap kapsami disina TASMAZ', async () => {
@@ -193,6 +204,7 @@ test('OLD-B-CANDIDATE-4: hesap kapsami disina TASMAZ', async () => {
     marketplaceAccountId: null,
     limit: 20,
     staleBefore: new Date(NOW.getTime() - defaults().staleAfterMs),
+    seenBefore: new Date(NOW.getTime() - defaults().cooldownMs),
   })
   assert.equal(legacy.length, 0)
 })
@@ -759,4 +771,287 @@ test('OLD-TRANSIT-6: rutin mutabakat retention saatini TAZELEMEZ', async () => {
     .where(eq(orders.id, id))
   assert.equal(row.lastOperationalActivityAt, null, 'retention saati DEGISMEZ')
   assert.equal(row.archivedAt, null, 'arsiv politikasi DEGISMEZ')
+})
+
+// ═══ ESKI TERMINAL-OLMAYAN KAYIT MUTABAKATI (OLD-ACTIVE) ══════════════════
+//
+// URETIM VAKASI (PII YOK):
+//   packageId 4028055254 · orderNumber 11448183224 · orderDate 2026-07-26
+//   DB: marketplaceStatus=Picking · operationStatus=NEW · archived=false
+//       lastSeenAt = 2026-07-28
+//   Trendyol API: Delivered
+//
+// KOK NEDEN: eski aday siniflari (LABEL_READY/LABEL_PRINTED ve
+// Shipped/AtCollectionPoint) bu kaydi KAPSAMIYORDU; ana tur da yalniz son
+// 7 gunu goruyordu.
+//
+// COZUM: sinif 2 artik "TERMINAL OLMAYAN bilinen statu" olarak TURETILIR.
+// Yeni bagimsiz liste YOKTUR: terminal kume kanonik ileri kumeden cikarilir.
+
+const cooldownSeen = () =>
+  new Date(NOW.getTime() - defaults().cooldownMs - 60_000)
+
+const seedActive = (db, organizationId, accountId, overrides = {}) =>
+  seed(db, organizationId, accountId, {
+    packageId: '4028055254',
+    orderNumber: '11448183224',
+    orderDate: daysAgo(16),
+    marketplaceStatus: 'Picking',
+    operationStatus: 'NEW',
+    lastSeenAt: cooldownSeen(),
+    ...overrides,
+  })
+
+test('OLD-ACTIVE-1: eski Picking + NEW ADAY olur', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  await seedActive(db, organizationId, accountId)
+  const candidates = await findCandidates(db, organizationId, accountId)
+  assert.equal(candidates.length, 1)
+  assert.equal(candidates[0].packageId, '4028055254')
+  assert.equal(candidates[0].marketplaceStatus, 'Picking')
+  assert.equal(candidates[0].operationStatus, 'NEW')
+})
+
+test('OLD-ACTIVE-2: eski Created ve Invoiced de ADAY olur', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  for (const [index, status] of ['Created', 'Invoiced'].entries()) {
+    await seedActive(db, organizationId, accountId, {
+      packageId: `P-ACTIVE-${index}`,
+      orderNumber: `O-ACTIVE-${index}`,
+      marketplaceStatus: status,
+    })
+  }
+  assert.equal((await findCandidates(db, organizationId, accountId)).length, 2)
+})
+
+test('OLD-ACTIVE-3: API hala Picking derse kayit Picking KALIR', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  const id = await seedActive(db, organizationId, accountId)
+  await service.persistSyncResult(
+    db,
+    organizationId,
+    [
+      {
+        marketplace: 'Trendyol',
+        packageId: '4028055254',
+        orderNumber: '11448183224',
+        marketplaceStatus: 'Picking',
+        orderDate: daysAgo(16).toISOString(),
+        customerFirstName: 'T',
+        items: [],
+      },
+    ],
+    { complete: false, fetchedCount: 1, marketplaceAccountId: accountId },
+  )
+  const [row] = await db
+    .select({
+      marketplaceStatus: orders.marketplaceStatus,
+      operationStatus: orders.operationStatus,
+    })
+    .from(orders)
+    .where(eq(orders.id, id))
+  assert.equal(row.marketplaceStatus, 'Picking')
+  assert.equal(row.operationStatus, 'NEW', 'operasyon durumu EZILMEZ')
+})
+
+test('OLD-ACTIVE-4: terminal kayit ADAY OLMAZ', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  for (const [index, status] of [
+    'Delivered',
+    'Cancelled',
+    'Returned',
+    'UnDelivered',
+    'UnSupplied',
+  ].entries()) {
+    await seedActive(db, organizationId, accountId, {
+      packageId: `P-T-${index}`,
+      orderNumber: `O-T-${index}`,
+      marketplaceStatus: status,
+      operationStatus: 'NEW',
+    })
+  }
+  assert.equal((await findCandidates(db, organizationId, accountId)).length, 0)
+})
+
+test('OLD-ACTIVE-5: Unknown/bos statu KOR sekilde aday YAPILMAZ', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  await seedActive(db, organizationId, accountId, {
+    packageId: 'P-UNKNOWN',
+    orderNumber: 'O-UNKNOWN',
+    marketplaceStatus: 'Unknown',
+    operationStatus: 'NEW',
+  })
+  await seedActive(db, organizationId, accountId, {
+    packageId: 'P-EMPTY',
+    orderNumber: 'O-EMPTY',
+    marketplaceStatus: '',
+    operationStatus: 'NEW',
+  })
+  await seedActive(db, organizationId, accountId, {
+    packageId: 'P-NULL',
+    orderNumber: 'O-NULL',
+    marketplaceStatus: null,
+    operationStatus: 'NEW',
+  })
+  assert.equal((await findCandidates(db, organizationId, accountId)).length, 0)
+})
+
+test('OLD-ACTIVE-6: mevcut LABEL sinifi KORUNUR (statu NULL olsa bile)', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  await seedActive(db, organizationId, accountId, {
+    packageId: 'P-LABEL',
+    orderNumber: 'O-LABEL',
+    marketplaceStatus: null,
+    operationStatus: 'LABEL_PRINTED',
+  })
+  const candidates = await findCandidates(db, organizationId, accountId)
+  assert.equal(candidates.length, 1, 'label-open sinifi bozulmadi')
+  assert.equal(candidates[0].operationStatus, 'LABEL_PRINTED')
+})
+
+test('OLD-ACTIVE-7: golden 4028055254 sozlesmesi', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  const id = await seedActive(db, organizationId, accountId)
+  assert.equal((await findCandidates(db, organizationId, accountId)).length, 1)
+
+  // KANONIK zincir: Delivered persist edilir.
+  await service.persistSyncResult(
+    db,
+    organizationId,
+    [
+      {
+        marketplace: 'Trendyol',
+        packageId: '4028055254',
+        shipmentPackageId: '4028055254',
+        externalOrderId: '4028055254',
+        orderNumber: '11448183224',
+        marketplaceStatus: 'Delivered',
+        orderDate: daysAgo(16).toISOString(),
+        customerFirstName: 'T',
+        customerLastName: 'M',
+        items: [],
+      },
+    ],
+    { complete: false, fetchedCount: 1, marketplaceAccountId: accountId },
+  )
+  const [row] = await db
+    .select({
+      marketplaceStatus: orders.marketplaceStatus,
+      operationStatus: orders.operationStatus,
+      marketplaceAccountId: orders.marketplaceAccountId,
+    })
+    .from(orders)
+    .where(eq(orders.id, id))
+  assert.equal(row.marketplaceStatus, 'Delivered')
+  assert.equal(row.operationStatus, 'NEW', 'sahte operasyon degisikligi YOK')
+  assert.equal(row.marketplaceAccountId, accountId)
+  // Terminal oldu → aday kumesinden duser.
+  assert.equal((await findCandidates(db, organizationId, accountId)).length, 0)
+  // Golge satir olusmaz.
+  assert.equal((await db.select({ id: orders.id }).from(orders)).length, 1)
+})
+
+test('OLD-ACTIVE-8: SOGUMA icinde tekrar sorgulanmaz', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  // Az once gorulmus kayit (soguma icinde).
+  await seedActive(db, organizationId, accountId, {
+    lastSeenAt: new Date(NOW.getTime() - 60_000),
+  })
+  assert.equal((await findCandidates(db, organizationId, accountId)).length, 0)
+  // KANIT: her upsert `last_seen_at`i bugune ceker (soguma capasi gecerli).
+  const mapper = await import('./orders/orderMapper.ts')
+  const set = mapper.marketplaceUpdateSet({
+    marketplace: 'Trendyol',
+    packageId: '4028055254',
+    orderNumber: '11448183224',
+    marketplaceStatus: 'Picking',
+  })
+  assert.ok(set.lastSeenAt instanceof Date)
+})
+
+test('OLD-ACTIVE-9: soguma dolunca tekrar ADAY olur', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  await seedActive(db, organizationId, accountId, { lastSeenAt: cooldownSeen() })
+  assert.equal((await findCandidates(db, organizationId, accountId)).length, 1)
+  // Varsayilan 6 saat; env ile ayarlanabilir.
+  assert.equal(defaults().cooldownMs, 6 * 60 * 60 * 1000)
+  assert.equal(
+    reconciler.resolveStaleReconcilePolicy({
+      TRENDYOL_STALE_RECONCILE_COOLDOWN_MS: '900000',
+    }).cooldownMs,
+    900_000,
+  )
+})
+
+test('OLD-ACTIVE-10: last_operational_activity_at DEGISMEZ', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  const id = await seedActive(db, organizationId, accountId, {
+    lastOperationalActivityAt: null,
+  })
+  await service.persistSyncResult(
+    db,
+    organizationId,
+    [
+      {
+        marketplace: 'Trendyol',
+        packageId: '4028055254',
+        orderNumber: '11448183224',
+        marketplaceStatus: 'Delivered',
+        orderDate: daysAgo(16).toISOString(),
+        customerFirstName: 'T',
+        items: [],
+      },
+    ],
+    { complete: false, fetchedCount: 1, marketplaceAccountId: accountId },
+  )
+  const [row] = await db
+    .select({
+      lastOperationalActivityAt: orders.lastOperationalActivityAt,
+      archivedAt: orders.archivedAt,
+    })
+    .from(orders)
+    .where(eq(orders.id, id))
+  assert.equal(row.lastOperationalActivityAt, null)
+  assert.equal(row.archivedAt, null)
+})
+
+test('DUPLICATE-TRACE: ayni paket farkli hesapta AYRI satirdir', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  // Aktif hesap satiri.
+  await seedActive(db, organizationId, accountId, { marketplaceStatus: 'Shipped' })
+  // Ayni packageId, NULL hesap (legacy/golge kapsam).
+  await db.insert(orders).values({
+    organizationId,
+    marketplaceAccountId: null,
+    marketplace: 'Trendyol',
+    packageId: '4028055254',
+    orderNumber: '11448183224',
+    marketplaceStatus: 'Picking',
+    operationStatus: 'NEW',
+    orderDate: daysAgo(16),
+    lastSeenAt: cooldownSeen(),
+  })
+  const all = await db
+    .select({
+      marketplaceAccountId: orders.marketplaceAccountId,
+      marketplaceStatus: orders.marketplaceStatus,
+    })
+    .from(orders)
+  assert.equal(all.length, 2, 'NULLS NOT DISTINCT → iki AYRI satir')
+
+  // Aday secimi AKTIF HESAP kapsaminda kalir; golge satir SECILMEZ.
+  const scoped = await findCandidates(db, organizationId, accountId)
+  assert.equal(scoped.length, 1)
+  assert.equal(scoped[0].marketplaceStatus, 'Shipped')
+
+  // Legacy kapsam ayri sorgulanir (karismaz).
+  const legacy = await reconciler.findStaleOpenCandidates(db, {
+    organizationId,
+    marketplaceAccountId: null,
+    limit: 20,
+    staleBefore: new Date(NOW.getTime() - defaults().staleAfterMs),
+    seenBefore: new Date(NOW.getTime() - defaults().cooldownMs),
+  })
+  assert.equal(legacy.length, 1)
+  assert.equal(legacy[0].marketplaceStatus, 'Picking')
 })

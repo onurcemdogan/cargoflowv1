@@ -71,6 +71,7 @@ async function main(): Promise<void> {
       firstSeenAt: orders.firstSeenAt,
       createdAt: orders.createdAt,
       archivedAt: orders.archivedAt,
+      marketplaceLastModifiedAt: orders.marketplaceLastModifiedAt,
       rawPayloadEncrypted: orders.rawPayloadEncrypted,
     })
     .from(orders)
@@ -130,6 +131,8 @@ async function main(): Promise<void> {
     lastSeenAt: row.lastSeenAt?.toISOString?.() ?? null,
     firstSeenAt: row.firstSeenAt?.toISOString?.() ?? null,
     createdAt: row.createdAt?.toISOString?.() ?? null,
+    marketplaceLastModifiedAt:
+      row.marketplaceLastModifiedAt?.toISOString?.() ?? null,
     archived: Boolean(row.archivedAt),
     defects: findIdentityDefects(row),
     writerHint: attributeWriter({

@@ -64,6 +64,13 @@ export interface StaleReconcilePolicy {
   concurrency: number
   /** Bu yaştan ESKİ kayıtlar aday olur (ana turun penceresi dışı). */
   staleAfterMs: number
+  /**
+   * TEKRAR SORGU SOĞUMASI. Bir aday doğrulandığında (statüsü değişmese bile)
+   * `marketplaceUpdateSet` `last_seen_at`i BUGÜNE çeker; bu alan burada
+   * soğuma çapası olarak KULLANILIR. Böylece aynı terminal-olmayan kayıt her
+   * 5 dakikada yeniden sorgulanmaz. Yeni kolon/migration GEREKMEZ.
+   */
+  cooldownMs: number
 }
 
 function positiveInt(value: unknown, fallback: number): number {
@@ -112,6 +119,11 @@ export function resolveStaleReconcilePolicy(
         6 * 24 * 60 * 60 * 1000,
       ),
     ),
+    // Varsayılan 6 saat: aynı kayıt için günde en fazla ~4 doğrulama.
+    cooldownMs: positiveInt(
+      env.TRENDYOL_STALE_RECONCILE_COOLDOWN_MS,
+      6 * 60 * 60 * 1000,
+    ),
   }
 }
 
@@ -146,6 +158,8 @@ export async function findStaleOpenCandidates(
     marketplaceAccountId: string | null
     limit: number
     staleBefore: Date
+    /** Bu andan ÖNCE görülmüş kayıtlar aday olur (soğuma çapası). */
+    seenBefore: Date
     cursor?: StaleCursor | null
   },
 ): Promise<StaleOpenCandidate[]> {
@@ -177,9 +191,24 @@ export async function findStaleOpenCandidates(
         sql`${orders.operationStatus} in ${OPEN_OPERATION_STATUSES}`,
         sql`(${orders.marketplaceStatus} is null or ${orders.marketplaceStatus} not in ${MARKETPLACE_FORWARD_STATUSES})`,
       )!,
-      sql`${orders.marketplaceStatus} in ${IN_TRANSIT_MARKETPLACE_STATUSES}`,
+      // SINIF 2 — TERMİNAL OLMAYAN pazaryeri kaydı. Küme SAYILMAZ, TÜRETİLİR:
+      // "bilinen bir statü var VE terminal değil". Böylece Created/Picking/
+      // Invoiced (golden 4028055254: Picking + NEW) ve Shipped/
+      // AtCollectionPoint kendiliğinden kapsanır; yeni bağımsız liste YOK.
+      // `Unknown` ve boş/yer tutucu statüler AÇIKÇA dışlanır (kör sorgu yok).
+      and(
+        sql`${orders.marketplaceStatus} is not null`,
+        sql`trim(${orders.marketplaceStatus}) <> ''`,
+        sql`${orders.marketplaceStatus} <> 'Unknown'`,
+        sql`${orders.marketplaceStatus} not in ${TERMINAL_MARKETPLACE_STATUSES}`,
+      )!,
     )!,
     lt(orders.orderDate, input.staleBefore),
+    // SOĞUMA: son görülme damgası taze olan kayıt yeniden sorgulanmaz.
+    or(
+      isNull(orders.lastSeenAt),
+      lt(orders.lastSeenAt, input.seenBefore),
+    )!,
   ]
   if (input.cursor) {
     clauses.push(

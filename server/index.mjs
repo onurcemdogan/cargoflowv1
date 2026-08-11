@@ -2739,6 +2739,9 @@ async function reconcileStaleOpenForOrganization(policy, organizationId) {
     marketplaceAccountId,
     limit: policy.batchSize,
     staleBefore: new Date(now - policy.staleAfterMs),
+    // SOĞUMA ÇAPASI: son doğrulamanın üzerinden `cooldownMs` geçmeden aynı
+    // kayıt tekrar sorgulanmaz (gereksiz Trendyol yükü).
+    seenBefore: new Date(now - policy.cooldownMs),
     cursor: staleReconcileCursors.get(organizationId) ?? null,
   })
   const nextCursor = reconciler.advanceCursor(candidates, policy.batchSize)
