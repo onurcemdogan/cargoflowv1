@@ -248,3 +248,72 @@ test('SSP-REFRESH-1b: LABEL_PRINTED + Picking hâlâ labelPrinted (kabul kanıt�
   assert.equal(state.isHandedToCargo, false)
   assert.equal(stage, 'labelPrinted')
 })
+
+// ═══ TRENDYOL → KARGOYA VERİLDİ (otoriter kaynak) ═════════════════════════
+//
+// ÜRÜN KARARI: SSP/Sürat fiziksel kabul mutabakatı ürün gereksinimi DEĞİL.
+// "Kargoya Verildi" için otoriter kaynak TRENDYOL'dur. Yerel etiket durumu
+// (LABEL_READY / LABEL_PRINTED) pazaryeri Shipped'i EZMEZ.
+
+test('TRENDYOL-HANDED-1: LABEL_READY + Shipped → Kargoya Verildi', async () => {
+  const { state, stage } = await stageOf(
+    order({
+      marketplaceStatus: 'Shipped',
+      operationStatus: 'LABEL_READY',
+      labelStatus: 'READY',
+    }),
+  )
+  assert.equal(state.isHandedToCargo, true, 'yerel etiket durumu EZMEZ')
+  assert.equal(stage, 'handedToCargo')
+})
+
+test('TRENDYOL-HANDED-2: LABEL_PRINTED + Shipped → Kargoya Verildi', async () => {
+  const { state, stage } = await stageOf(
+    order({
+      marketplaceStatus: 'Shipped',
+      operationStatus: 'LABEL_PRINTED',
+      labelStatus: 'PRINTED',
+    }),
+  )
+  assert.equal(state.isHandedToCargo, true)
+  assert.equal(stage, 'handedToCargo')
+})
+
+test('TRENDYOL-HANDED-3: yeniden yükleme sonrası Kargoya Verildi KORUNUR', async () => {
+  // Kalıcı alanlardan yeniden kurulan sipariş (reload) aynı aşamayı verir.
+  const persisted = order({
+    marketplaceStatus: 'Shipped',
+    operationStatus: 'LABEL_PRINTED',
+  })
+  const first = await stageOf(persisted)
+  const second = await stageOf({ ...persisted })
+  assert.equal(first.stage, 'handedToCargo')
+  assert.equal(second.stage, 'handedToCargo')
+  // AtCollectionPoint de aynı sözleşmeye tabidir.
+  const collection = await stageOf(
+    order({ marketplaceStatus: 'AtCollectionPoint', operationStatus: 'LABEL_PRINTED' }),
+  )
+  assert.equal(collection.stage, 'handedToCargo')
+})
+
+test('TRENDYOL-HANDED-4: Picking → LABEL_READY/LABEL_PRINTED KORUNUR', async () => {
+  const ready = await stageOf(
+    order({
+      marketplaceStatus: 'Picking',
+      operationStatus: 'LABEL_READY',
+      labelStatus: 'READY',
+    }),
+  )
+  assert.equal(ready.state.isHandedToCargo, false)
+  assert.equal(ready.stage, 'labelReady')
+
+  const printed = await stageOf(
+    order({
+      marketplaceStatus: 'Picking',
+      operationStatus: 'LABEL_PRINTED',
+      labelStatus: 'PRINTED',
+    }),
+  )
+  assert.equal(printed.state.isHandedToCargo, false)
+  assert.equal(printed.stage, 'labelPrinted')
+})
