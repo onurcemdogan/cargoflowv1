@@ -219,3 +219,32 @@ test('SOURCE-LABEL: yerel operasyon durumu "Trendyol" kaynağı ÜRETMEZ', async
   assert.equal(marketplace.statusSource, 'marketplace')
   assert.equal(marketplace.sourceLabel, 'Trendyol')
 })
+
+// ═══ SSP FIZIKSEL KABUL SONRASI ASAMA ═════════════════════════════════════
+
+test('SSP-REFRESH-1: taşıyıcı mutabakatı HANDED_TO_CARGO yazınca aşama kargoya verildi olur', async () => {
+  // Golden vaka: Trendyol hâlâ Picking; kanonik operationStatus taşıyıcı
+  // mutabakatıyla HANDED_TO_CARGO'ya geçmiş.
+  const { state, stage } = await stageOf(
+    order({
+      orderNumber: '11493372619',
+      packageId: '4065907241',
+      marketplaceStatus: 'Picking',
+      operationStatus: 'HANDED_TO_CARGO',
+    }),
+  )
+  assert.equal(state.isHandedToCargo, true)
+  assert.equal(stage, 'handedToCargo')
+})
+
+test('SSP-REFRESH-1b: LABEL_PRINTED + Picking hâlâ labelPrinted (kabul kanıtı yok)', async () => {
+  const { state, stage } = await stageOf(
+    order({
+      marketplaceStatus: 'Picking',
+      operationStatus: 'LABEL_PRINTED',
+      labelStatus: 'PRINTED',
+    }),
+  )
+  assert.equal(state.isHandedToCargo, false)
+  assert.equal(stage, 'labelPrinted')
+})

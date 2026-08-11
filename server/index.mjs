@@ -2513,10 +2513,89 @@ async function startRetentionHousekeepingOnBoot() {
   }
 }
 
+let suratTrackingSchedulerHandle = null
+
+// Aday için SALT OKUNUR taşıyıcı takip sorgusu. Organizasyonun kayıtlı Sürat
+// kimlik bilgileri kullanılır; kimlik yoksa sorgu YAPILMAZ (null döner →
+// mutabakat o kaydı DEĞİŞTİRMEZ). Yeni taşıyıcı çağrı yolu YAZILMAZ: mevcut
+// trackShipmentSoap/Rest yeniden kullanılır.
+async function querySuratTrackingForCandidate(candidate) {
+  try {
+    const { getDb } = await import('./db/client.ts')
+    const { getIntegrationCredential } = await import(
+      './integrations/credentialService.ts'
+    )
+    const stored = await getIntegrationCredential(
+      getDb(),
+      candidate.organizationId,
+      'surat',
+    )
+    const config = normalizeSuratConfig(extractSuratConfigCandidate(stored))
+    if (!config?.kullaniciAdi) return null
+    const queryReference = resolveSuratTrackingQueryReference({
+      webSiparisKodu: candidate.packageId,
+    })
+    if (!queryReference.ok) return null
+    const body = { webSiparisKodu: queryReference.value, queryReference }
+    const result =
+      config.trackingServiceType === 'KargoTakipHareketDetayiRest'
+        ? await trackShipmentRest(config, queryReference.value, body)
+        : await trackShipmentSoap(config, queryReference.value, body)
+    const log = result?.trackingLog ?? result
+    const gonderiler = log?.Gonderiler
+    return {
+      ok: Boolean(result?.ok !== false),
+      gonderilerLength: Number(
+        log?.gonderilerLength ??
+          (Array.isArray(gonderiler) ? gonderiler.length : 0),
+      ),
+      kargonunDurumuSayi: log?.KargonunDurumuSayi ?? null,
+      trackingNumber: log?.BarkodNo ?? null,
+      sonHareketTarihi: log?.SonHareketTarihi ?? null,
+    }
+  } catch {
+    // Sorgu hatası: mutabakat bu kaydı DEĞİŞTİRMEZ, tur devam eder.
+    return null
+  }
+}
+
+// SÜRAT TAKİP MUTABAKATI: YALNIZ SURAT_TRACKING_RECONCILE_ENABLED=true/1
+// iken kurulur. Bayrak tanımsız/false ise zamanlayıcı KURULMAZ → boot
+// taşıyıcı sorgusu YOK, periyodik sorgu YOK, DB yazması YOK.
+async function startSuratTrackingReconcileOnBoot() {
+  if (!isTenantAuthMode()) return
+  try {
+    const [{ getDb }, reconciler, scheduler] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/suratTrackingReconciler.ts'),
+      import('./shipments/suratTrackingScheduler.ts'),
+    ])
+    const db = getDb()
+    const policy = reconciler.resolveTrackingReconcilePolicy()
+    const handle = scheduler.startTrackingScheduler({
+      policy,
+      runCycle: () =>
+        reconciler.reconcileSuratTracking(
+          db,
+          policy,
+          (candidate) => querySuratTrackingForCandidate(candidate),
+          (decision) => reconciler.applyTrackingDecision(db, decision),
+        ),
+    })
+    if (handle.started) {
+      console.log('[surat-tracking] mutabakat zamanlayıcısı etkin')
+      suratTrackingSchedulerHandle = handle
+    }
+  } catch {
+    // BEST-EFFORT: kurulamazsa uygulama normal çalışır, mutabakat yapılmaz.
+  }
+}
+
 app.listen(port, host, () => {
   console.log(`CargoFlow API listening on http://${host}:${port}`)
   void reconcileLabelBundlesOnBoot()
   void startRetentionHousekeepingOnBoot()
+  void startSuratTrackingReconcileOnBoot()
 })
 
 // Kapanışta yeni tur başlatılmaz (mevcut zamanlayıcı temizlenir).
@@ -2524,6 +2603,9 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
   process.on(signal, () => {
     void import('./orders/retentionScheduler.ts')
       .then((scheduler) => scheduler.stopRetentionScheduler())
+      .catch(() => undefined)
+    void import('./shipments/suratTrackingScheduler.ts')
+      .then((scheduler) => scheduler.stopTrackingScheduler())
       .catch(() => undefined)
   })
 }
