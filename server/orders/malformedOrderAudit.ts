@@ -136,6 +136,12 @@ export function describeRawIdentityShape(
 export function passesTrendyolPackagePredicate(raw: unknown): boolean {
   if (!raw || typeof raw !== 'object') return false
   const item = raw as Record<string, unknown>
+  // KANONİK PAKET KİMLİĞİ ŞARTI (üretim düzeltmesiyle AYNI sıra):
+  // packageId → shipmentPackageId → id; `0`/boş/`null` metni kimlik SAYILMAZ.
+  const packageIdentity = [item.packageId, item.shipmentPackageId, item.id].find(
+    (candidate) => isRealIdentity(candidate),
+  )
+  if (packageIdentity === undefined) return false
   const hasPackageIdentity = Boolean(
     item.orderNumber || item.packageId || item.shipmentPackageId || item.id,
   )
@@ -150,6 +156,63 @@ export function passesTrendyolPackagePredicate(raw: unknown): boolean {
   return Boolean(
     item.customerFirstName || item.customerLastName || item.customerFullName,
   )
+}
+
+// ═══ ŞİFRE ÇÖZME TANISI ═══════════════════════════════════════════════════
+//
+// `raw_payload_encrypted` KANONİK `decryptOrderPayload` ile çözülür
+// (server/orders/orderEncryption.ts). Anahtar çözümü:
+//   ORDER_DATA_ENCRYPTION_KEY  → tercih edilen
+//   CREDENTIAL_ENCRYPTION_KEY  → yoksa ortak yedek
+// İkisi FARKLI değerler olabilir: kayıt ORDER_DATA_ENCRYPTION_KEY ile
+// yazılmışsa, yalnız CREDENTIAL_ENCRYPTION_KEY yüklenmiş bir kabukta GCM
+// doğrulaması BAŞARISIZ olur ve çözme "auth_tag_mismatch" verir.
+// DEĞERLER ASLA raporlanmaz — yalnız hangi env adının kullanıldığı.
+
+export type OrderKeySource =
+  | 'ORDER_DATA_ENCRYPTION_KEY'
+  | 'CREDENTIAL_ENCRYPTION_KEY'
+  | 'none'
+
+function looksLikeKey(raw: string | undefined): boolean {
+  const value = String(raw ?? '').trim()
+  if (!value) return false
+  if (/^[0-9a-fA-F]{64}$/.test(value)) return true
+  try {
+    return Buffer.from(value, 'base64').length === 32
+  } catch {
+    return false
+  }
+}
+
+/** Çözmede HANGİ env adının kullanılacağı (değer DEĞİL, ad). */
+export function resolveOrderKeySource(
+  env: Record<string, string | undefined> = process.env,
+): OrderKeySource {
+  if (looksLikeKey(env.ORDER_DATA_ENCRYPTION_KEY)) {
+    return 'ORDER_DATA_ENCRYPTION_KEY'
+  }
+  if (looksLikeKey(env.CREDENTIAL_ENCRYPTION_KEY)) {
+    return 'CREDENTIAL_ENCRYPTION_KEY'
+  }
+  return 'none'
+}
+
+export type DecryptFailureReason =
+  | 'missing_key'
+  | 'envelope_parse_failed'
+  | 'auth_tag_mismatch'
+  | 'unknown'
+
+/** Çözme hatasını GÜVENLİ kategoriye indirger (ham mesaj/veri sızmaz). */
+export function classifyDecryptError(error: unknown): DecryptFailureReason {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  if (message.includes('ENCRYPTION_KEY')) return 'missing_key'
+  if (/JSON|Unexpected token/i.test(message)) return 'envelope_parse_failed'
+  if (/authenticate|Unsupported state|auth tag|bad decrypt/i.test(message)) {
+    return 'auth_tag_mismatch'
+  }
+  return 'unknown'
 }
 
 // ═══ YAZAR ATIFI (ATTRIBUTION) ════════════════════════════════════════════

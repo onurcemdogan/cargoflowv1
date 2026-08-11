@@ -16,10 +16,12 @@ import { orderLines, orders } from '../db/schema.ts'
 import { decryptOrderPayload } from './orderEncryption.ts'
 import {
   attributeWriter,
+  classifyDecryptError,
   describeRawIdentityShape,
   findIdentityDefects,
   isMalformedIdentity,
   passesTrendyolPackagePredicate,
+  resolveOrderKeySource,
 } from './malformedOrderAudit.ts'
 
 function parseArg(name: string): string | undefined {
@@ -43,6 +45,10 @@ async function main(): Promise<void> {
   const limit = positiveInt(parseArg('limit'), 200)
   // Ham yük ŞEKLİ yalnız ilk N kayıt için çözülür (çözme maliyetli).
   const sampleSize = positiveInt(parseArg('sample'), 5)
+
+  // Belirli bir satırı hedefleme (üretimdeki golden kayıt için).
+  const targetPackageId = parseArg('package-id')
+  const targetOrderNumber = parseArg('order-number')
 
   const db = getDb()
 
@@ -69,12 +75,18 @@ async function main(): Promise<void> {
     })
     .from(orders)
     .where(
-      sql`(
-        ${orders.orderNumber} in ('0', '', 'null', 'undefined', 'NaN')
-        or ${orders.packageId} in ('0', '', 'null', 'undefined', 'NaN')
-        or ${orders.marketplaceStatus} is null
-        or trim(${orders.marketplaceStatus}) = ''
-      )`,
+      targetPackageId || targetOrderNumber
+        ? sql`(
+            ${orders.packageId} = ${targetPackageId ?? '__no_match__'}
+            or ${orders.orderNumber} = ${targetOrderNumber ?? '__no_match__'}
+          )`
+        : sql`(
+            ${orders.orderNumber} in ('0', '', 'null', 'undefined', 'NaN')
+            or ${orders.packageId} in ('0', '', 'null', 'undefined', 'NaN')
+            or ${orders.marketplaceStatus} is null
+            or trim(${orders.marketplaceStatus}) = ''
+            or ${orders.marketplaceStatus} = 'Unknown'
+          )`,
     )
     .orderBy(desc(orders.createdAt))
     .limit(limit)
@@ -132,10 +144,11 @@ async function main(): Promise<void> {
     let raw: unknown = null
     let rawError: string | null = null
     try {
+      // KANONİK çözücü — CLI'ye ÖZEL bir uygulama YOKTUR.
       raw = decryptOrderPayload(row.rawPayloadEncrypted)
-    } catch {
-      // Çözülemeyen yük ham hâliyle RAPORLANMAZ; yalnız kategori.
-      rawError = 'decrypt_failed'
+    } catch (error) {
+      // Çözülemeyen yük ham hâliyle RAPORLANMAZ; yalnız GÜVENLİ kategori.
+      rawError = classifyDecryptError(error)
     }
     return {
       id: row.id,
@@ -154,6 +167,10 @@ async function main(): Promise<void> {
 
   const report = {
     mode: 'read_only',
+    // Hangi env ADI kullanıldı (DEĞER değil). `auth_tag_mismatch` +
+    // CREDENTIAL_ENCRYPTION_KEY → kayıt ORDER_DATA_ENCRYPTION_KEY ile
+    // yazılmış demektir; komutu o anahtar yüklüyken tekrar çalıştırın.
+    encryptionKeySource: resolveOrderKeySource(),
     scannedRows: rows.length,
     scanLimit: limit,
     // Yer tutucu KİMLİKLİ kayıt sayısı (limit'ten bağımsız toplam).

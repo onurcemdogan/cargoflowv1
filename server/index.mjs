@@ -12387,8 +12387,45 @@ function mergeTrendyolLines(existingLines = [], nextLines = []) {
   return Array.from(lines.values())
 }
 
+// KANONİK PAKET KİMLİĞİ YER TUTUCU MU?
+//
+// ÜRETİM HATASI (kanıtlandı): kimlik `String(a ?? b ?? c)` ile çözülür ve `??`
+// YALNIZ null/undefined'a düşer — sayısal `0` GEÇERLİ kimlik sayılıp `'0'`
+// metnine dönüşür. Sonuç: `package_id = '0'` olan, hiçbir gerçek Trendyol
+// paketine karşılık gelmeyen sipariş satırı (11496311967 vakası).
+//
+// `orderNumber` bir SİPARİŞ kimliğidir, PAKET kimliği DEĞİLDİR: geçerli bir
+// sipariş numarası, paket kimliğinin eksikliğini KAPATAMAZ (aksi hâlde aynı
+// siparişin farklı paketleri tek satıra çökerdi).
+const PLACEHOLDER_PACKAGE_IDENTITIES = new Set([
+  '',
+  '0',
+  'null',
+  'undefined',
+  'NaN',
+])
+
+function isPlaceholderPackageIdentity(value) {
+  if (value === null || value === undefined) return true
+  if (typeof value === 'number') return !Number.isFinite(value) || value === 0
+  return PLACEHOLDER_PACKAGE_IDENTITIES.has(String(value).trim())
+}
+
+// `normalizeTrendyolOrders` ile AYNI çözüm sırası: packageId → shipmentPackageId
+// → id. Üçü de yer tutucuysa paket kimliği YOKTUR.
+function resolveTrendyolPackageIdentity(item) {
+  for (const candidate of [item?.packageId, item?.shipmentPackageId, item?.id]) {
+    if (!isPlaceholderPackageIdentity(candidate)) return String(candidate).trim()
+  }
+  return ''
+}
+
 function isTrendyolOrderPackage(item) {
   if (!item || typeof item !== 'object') return false
+  // PAKET KİMLİĞİ ŞART: `0`/boş/`null` metinleri kimlik SAYILMAZ ve geçerli
+  // `orderNumber` bunun yerine GEÇMEZ. Kimliksiz item persist EDİLMEZ; mevcut
+  // sipariş de bu yüzden ASLA ezilmez (upsert'e hiç ulaşmaz).
+  if (!resolveTrendyolPackageIdentity(item)) return false
   const hasPackageIdentity = Boolean(
     item.orderNumber || item.packageId || item.shipmentPackageId || item.id,
   )

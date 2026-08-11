@@ -149,10 +149,9 @@ test('MALFORMED-4: `??` zinciri sayisal 0 kimligini GECIRIR', () => {
   assert.equal(insertValues.marketplaceStatus, null)
 })
 
-test('MALFORMED-5: normalize on-filtresi 0 kimlikli parcali kaydi GECIRIR', () => {
-  // `isTrendyolOrderPackage` kimlik icin HERHANGI BIR alanin truthy olmasini
-  // yeterli sayar; musteri/adres varsa kayit gecer. orderNumber=0 olan bir
-  // parcali paket bu yuzden elenmez.
+test('MALFORMED-5: on-filtre paket kimligi olmayan kaydi ELER', () => {
+  // Gecerli `id` varsa kayit gecerlidir (orderNumber=0 olmasi ONEMLI DEGIL:
+  // paket kimligi ayri bir alandir).
   const partial = {
     id: 12345,
     orderNumber: 0,
@@ -160,6 +159,15 @@ test('MALFORMED-5: normalize on-filtresi 0 kimlikli parcali kaydi GECIRIR', () =
     lines: [],
   }
   assert.equal(audit.passesTrendyolPackagePredicate(partial), true)
+  // URETIM VAKASI: paket kimliginin UCU DE yer tutucu → ELENIR.
+  assert.equal(
+    audit.passesTrendyolPackagePredicate({ ...partial, id: 0 }),
+    false,
+  )
+  assert.equal(
+    audit.passesTrendyolPackagePredicate({ ...partial, id: undefined, packageId: 0 }),
+    false,
+  )
   // Kimlik alani HIC yoksa elenir.
   assert.equal(
     audit.passesTrendyolPackagePredicate({ customerFirstName: 'X' }),
@@ -325,13 +333,236 @@ test('MALFORMED-10: tani gercek DB satirlarini dogru ayirir', async () => {
 })
 
 test('MALFORMED-11: mevcut kanonik akislar DEGISMEDI', () => {
-  // Bu tur URETIM DAVRANISI DEGISTIRMEDI: engel/temizlik EKLENMEDI.
   assert.ok(ENTRY_SOURCE.includes('resolveActiveMarketplaceAccountId('))
   assert.ok(ENTRY_SOURCE.includes('incomingIsNewer'))
   assert.ok(ENTRY_SOURCE.includes('startStaleOpenReconcileOnBoot'))
   // upsert zinciri hala TEK yazar.
   assert.ok(typeof repo.upsertMarketplaceOrders === 'function')
-  // Normalize on-filtresi HENUZ degistirilmedi (fail-closed kural YOK).
-  assert.ok(ENTRY_SOURCE.includes('function isTrendyolOrderPackage'))
-  assert.equal(ENTRY_SOURCE.includes('isRealIdentity'), false)
+  // Guard YALNIZ normalize on-filtresine eklendi; temizlik/DB mutasyonu YOK.
+  assert.ok(ENTRY_SOURCE.includes('function resolveTrendyolPackageIdentity'))
+  for (const forbidden of ['delete(orders)', 'PACKAGE_CLEANUP', 'repairPackageId']) {
+    assert.equal(ENTRY_SOURCE.includes(forbidden), false, forbidden)
+  }
+})
+
+// ═══ MINIMUM PAKET KIMLIGI SOZLESMESI ═════════════════════════════════════
+//
+// URETIM VAKASI (PII YOK): packageId "0" · orderNumber 11496311967
+//   marketplaceStatus "Unknown" · operationStatus "NEW" (INSERT imzasi)
+//
+// KOK NEDEN: kimlik `String(item.packageId ?? item.shipmentPackageId ??
+// item.id ?? '')` ile cozulur; `??` YALNIZ null/undefined'a duser, sayisal 0
+// GECERLI kimlik sayilip '0' olur. Gecerli bir orderNumber bu boslugu
+// KAPATAMAZ — orderNumber SIPARIS kimligidir, PAKET kimligi degildir.
+//
+// GUARD: kanonik paket kimligi yer tutucu olan item normalize on-filtresinde
+// ELENIR → persist edilmez, mevcut kaydi de EZEMEZ (upsert'e hic ulasmaz).
+
+/** `isTrendyolOrderPackage` + yardimcilarini index.mjs'ten izole calistirir. */
+function loadNormalizePredicate() {
+  const lines = ENTRY_SOURCE.split(/\r?\n/)
+  const names = [
+    'const PLACEHOLDER_PACKAGE_IDENTITIES',
+    'function isPlaceholderPackageIdentity',
+    'function resolveTrendyolPackageIdentity',
+    'function isTrendyolOrderPackage',
+  ]
+  const blocks = names.map((needle) => {
+    const start = lines.findIndex((line) => line.startsWith(needle))
+    assert.ok(start >= 0, `bulunamadi: ${needle}`)
+    const closer = needle.startsWith('const') ? '])' : '}'
+    const end = lines.findIndex((line, index) => index > start && line === closer)
+    return lines.slice(start, end + 1).join('\n')
+  })
+  return new Function(
+    `${blocks.join('\n\n')}\nreturn { isTrendyolOrderPackage, resolveTrendyolPackageIdentity }`,
+  )()
+}
+
+const { isTrendyolOrderPackage, resolveTrendyolPackageIdentity } =
+  loadNormalizePredicate()
+
+const VALID_ORDER_NUMBER = '11496311967'
+const pkg = (overrides = {}) => ({
+  orderNumber: VALID_ORDER_NUMBER,
+  customerFirstName: 'T',
+  customerLastName: 'M',
+  shipmentAddress: { city: 'Istanbul' },
+  lines: [],
+  ...overrides,
+})
+
+test('MALFORMED-PACKAGE-1: raw packageId=0 → persist YOK', () => {
+  assert.equal(isTrendyolOrderPackage(pkg({ packageId: 0 })), false)
+  assert.equal(isTrendyolOrderPackage(pkg({ packageId: '0' })), false)
+})
+
+test('MALFORMED-PACKAGE-2: raw shipmentPackageId=0 → persist YOK', () => {
+  assert.equal(isTrendyolOrderPackage(pkg({ shipmentPackageId: 0 })), false)
+  assert.equal(
+    isTrendyolOrderPackage(pkg({ packageId: null, shipmentPackageId: '0' })),
+    false,
+  )
+})
+
+test('MALFORMED-PACKAGE-3: raw id=0 ve baska kimlik yok → persist YOK', () => {
+  assert.equal(isTrendyolOrderPackage(pkg({ id: 0 })), false)
+  assert.equal(
+    isTrendyolOrderPackage(
+      pkg({ packageId: '', shipmentPackageId: null, id: 0 }),
+    ),
+    false,
+  )
+  // Hicbir kimlik alani yoksa da elenir.
+  assert.equal(isTrendyolOrderPackage(pkg()), false)
+})
+
+test('MALFORMED-PACKAGE-4: gecerli orderNumber paket kimligi YERINE GECMEZ', () => {
+  // URETIM VAKASI: orderNumber gecerli, packageId 0.
+  const item = pkg({ packageId: 0, status: undefined })
+  assert.equal(resolveTrendyolPackageIdentity(item), '')
+  assert.equal(isTrendyolOrderPackage(item), false, 'orderNumber KURTARMAZ')
+})
+
+test('MALFORMED-PACKAGE-5: gecerli packageId + orderNumber → normal persist', () => {
+  assert.equal(isTrendyolOrderPackage(pkg({ packageId: 4065907241 })), true)
+  assert.equal(isTrendyolOrderPackage(pkg({ packageId: '4065907241' })), true)
+  assert.equal(
+    resolveTrendyolPackageIdentity(pkg({ packageId: 4065907241 })),
+    '4065907241',
+  )
+  // Yalniz shipmentPackageId varsa da gecerlidir.
+  assert.equal(
+    isTrendyolOrderPackage(pkg({ shipmentPackageId: '4065907241' })),
+    true,
+  )
+  // Yalniz id varsa da gecerlidir (kanonik cozum sirasi).
+  assert.equal(isTrendyolOrderPackage(pkg({ id: 4065907241 })), true)
+})
+
+test('MALFORMED-PACKAGE-6: parcali yuk mevcut kaydi EZEMEZ', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  await db.insert(orders).values({
+    organizationId,
+    marketplaceAccountId: accountId,
+    marketplace: 'Trendyol',
+    packageId: '4065907241',
+    orderNumber: VALID_ORDER_NUMBER,
+    marketplaceStatus: 'Shipped',
+    operationStatus: 'LABEL_PRINTED',
+    orderDate: new Date('2026-08-01T09:00:00.000Z'),
+  })
+  // Kimliksiz item on-filtrede elendigi icin upsert'e HIC ulasmaz.
+  const incoming = [pkg({ packageId: 0, status: undefined })].filter(
+    isTrendyolOrderPackage,
+  )
+  assert.equal(incoming.length, 0)
+  const result = await repo.upsertMarketplaceOrders(
+    db,
+    organizationId,
+    incoming,
+    accountId,
+  )
+  assert.equal(result.persisted, 0)
+
+  const rows = await db
+    .select({
+      packageId: orders.packageId,
+      marketplaceStatus: orders.marketplaceStatus,
+      operationStatus: orders.operationStatus,
+    })
+    .from(orders)
+  assert.equal(rows.length, 1, 'yeni satir OLUSMAZ')
+  assert.equal(rows[0].packageId, '4065907241')
+  assert.equal(rows[0].marketplaceStatus, 'Shipped', 'Unknown ile EZILMEZ')
+  assert.equal(rows[0].operationStatus, 'LABEL_PRINTED')
+})
+
+test('MALFORMED-PACKAGE-7: mevcut kanonik akislar KORUNUR', () => {
+  // Musteri/adres sarti ve satir kurali DEGISMEDI.
+  assert.equal(
+    isTrendyolOrderPackage({ packageId: '4065907241', barcode: 'b' }),
+    false,
+    'musteri/adres yoksa siparis DEGIL',
+  )
+  // Arka plan senkronu, stale mutabakat ve freshness fix yerinde.
+  assert.ok(ENTRY_SOURCE.includes('resolveActiveMarketplaceAccountId('))
+  assert.ok(ENTRY_SOURCE.includes('startStaleOpenReconcileOnBoot'))
+  assert.ok(ENTRY_SOURCE.includes('incomingIsNewer'))
+  // Statu esleme zinciri DEGISMEDI.
+  assert.ok(
+    ENTRY_SOURCE.includes('const marketplaceStatus = normalizeStatus(item.status)'),
+  )
+})
+
+// ═══ SIFRE COZME TANISI ═══════════════════════════════════════════════════
+
+test('MALFORMED-DECRYPT-1: anahtar KAYNAGI adiyla raporlanir (deger YOK)', () => {
+  const key = randomBytes(32).toString('hex')
+  assert.equal(
+    audit.resolveOrderKeySource({ ORDER_DATA_ENCRYPTION_KEY: key }),
+    'ORDER_DATA_ENCRYPTION_KEY',
+  )
+  assert.equal(
+    audit.resolveOrderKeySource({ CREDENTIAL_ENCRYPTION_KEY: key }),
+    'CREDENTIAL_ENCRYPTION_KEY',
+  )
+  // ORDER_DATA tercih edilir.
+  assert.equal(
+    audit.resolveOrderKeySource({
+      ORDER_DATA_ENCRYPTION_KEY: key,
+      CREDENTIAL_ENCRYPTION_KEY: randomBytes(32).toString('base64'),
+    }),
+    'ORDER_DATA_ENCRYPTION_KEY',
+  )
+  assert.equal(audit.resolveOrderKeySource({}), 'none')
+  // Gecersiz uzunluk anahtar SAYILMAZ.
+  assert.equal(
+    audit.resolveOrderKeySource({ ORDER_DATA_ENCRYPTION_KEY: 'kisa' }),
+    'none',
+  )
+})
+
+test('MALFORMED-DECRYPT-2: YANLIS anahtar auth_tag_mismatch verir', async () => {
+  const encryption = await import('./orders/orderEncryption.ts')
+  const original = process.env.ORDER_DATA_ENCRYPTION_KEY
+  const previousCredential = process.env.CREDENTIAL_ENCRYPTION_KEY
+  try {
+    process.env.ORDER_DATA_ENCRYPTION_KEY = randomBytes(32).toString('hex')
+    const payload = encryption.encryptOrderPayload({ packageId: 0, id: 7 })
+    // Kayit A anahtariyla yazildi; simdi B anahtariyla cozulmeye calisiliyor.
+    process.env.ORDER_DATA_ENCRYPTION_KEY = randomBytes(32).toString('hex')
+    let reason = null
+    try {
+      encryption.decryptOrderPayload(payload)
+    } catch (error) {
+      reason = audit.classifyDecryptError(error)
+    }
+    assert.equal(reason, 'auth_tag_mismatch')
+
+    // Anahtar HIC yoksa ayri kategori.
+    delete process.env.ORDER_DATA_ENCRYPTION_KEY
+    delete process.env.CREDENTIAL_ENCRYPTION_KEY
+    try {
+      encryption.decryptOrderPayload(payload)
+      assert.fail('anahtarsiz cozme basarili OLMAMALI')
+    } catch (error) {
+      assert.equal(audit.classifyDecryptError(error), 'missing_key')
+    }
+  } finally {
+    process.env.ORDER_DATA_ENCRYPTION_KEY = original
+    if (previousCredential) {
+      process.env.CREDENTIAL_ENCRYPTION_KEY = previousCredential
+    }
+  }
+})
+
+test('MALFORMED-DECRYPT-3: CLI KANONIK cozucuyu kullanir', () => {
+  const cli = readFileSync('server/orders/malformedOrderAuditCli.ts', 'utf8')
+  assert.ok(cli.includes("from './orderEncryption.ts'"))
+  assert.ok(cli.includes('decryptOrderPayload(row.rawPayloadEncrypted)'))
+  // CLI'ye OZEL sifre cozme uygulamasi YOK.
+  for (const forbidden of ['createDecipheriv', 'aes-256-gcm', 'setAuthTag']) {
+    assert.equal(cli.includes(forbidden), false, forbidden)
+  }
 })
