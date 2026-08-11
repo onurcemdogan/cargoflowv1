@@ -31,6 +31,26 @@ type Db = any
  */
 export const OPEN_OPERATION_STATUSES = ['LABEL_READY', 'LABEL_PRINTED'] as const
 
+/**
+ * KANONİK "KARGOYA VERİLDİ" (yolda) kümesi — `src/utils/orderClassification.ts`
+ * `marketplaceHandedToCargo` ile AYNI değerler. Bu statüler İLERİ ama TERMİNAL
+ * DEĞİLDİR: paket hâlâ hareket hâlindedir ve Delivered'a ilerlemesi beklenir.
+ */
+export const IN_TRANSIT_MARKETPLACE_STATUSES = [
+  'Shipped',
+  'AtCollectionPoint',
+] as const
+
+/**
+ * TERMİNAL statüler kanonik ileri kümeden TÜRETİLİR (üçüncü bir liste
+ * YAZILMAZ): Delivered · Cancelled · Returned · UnDelivered · UnSupplied.
+ * Bu kayıtlar için doğrulanacak bir şey kalmadığından ASLA aday olmazlar.
+ */
+export const TERMINAL_MARKETPLACE_STATUSES = MARKETPLACE_FORWARD_STATUSES.filter(
+  (status) =>
+    !(IN_TRANSIT_MARKETPLACE_STATUSES as readonly string[]).includes(status),
+)
+
 export interface StaleReconcilePolicy {
   enabled: boolean
   /**
@@ -137,8 +157,28 @@ export async function findStaleOpenCandidates(
     eq(orders.organizationId, input.organizationId),
     accountScope,
     isNull(orders.archivedAt),
-    sql`${orders.operationStatus} in ${OPEN_OPERATION_STATUSES}`,
-    sql`(${orders.marketplaceStatus} is null or ${orders.marketplaceStatus} not in ${MARKETPLACE_FORWARD_STATUSES})`,
+    // İKİ ADAY SINIFI (biri VEYA diğeri):
+    //
+    //  1) AÇIK OPERASYON: CargoFlow etiketi hazır/basılmış ama pazaryeri
+    //     statüsü hâlâ ileri DEĞİL (klasik "iş bitmedi" kaydı).
+    //
+    //  2) YOLDA: pazaryeri statüsü Shipped/AtCollectionPoint — yani ileri ama
+    //     TERMİNAL DEĞİL. Bu sınıf `operation_status`tan BAĞIMSIZDIR: üretimde
+    //     `operation_status = NULL` + `Shipped` kalan eski kayıtlar (golden
+    //     4019554630) HİÇBİR periyodik yazarın kapsamına girmiyordu — ana tur
+    //     yalnız son 7 günü, sınıf 1 ise yalnız LABEL_READY/LABEL_PRINTED'i
+    //     görüyordu.
+    //
+    // Terminal statüler (Delivered/Cancelled/Returned/UnDelivered/UnSupplied)
+    // İKİ SINIFA DA girmez → bir kayıt terminale ulaştığında sonraki turlarda
+    // aday olmaktan çıkar (backlog erir, starvation yok).
+    or(
+      and(
+        sql`${orders.operationStatus} in ${OPEN_OPERATION_STATUSES}`,
+        sql`(${orders.marketplaceStatus} is null or ${orders.marketplaceStatus} not in ${MARKETPLACE_FORWARD_STATUSES})`,
+      )!,
+      sql`${orders.marketplaceStatus} in ${IN_TRANSIT_MARKETPLACE_STATUSES}`,
+    )!,
     lt(orders.orderDate, input.staleBefore),
   ]
   if (input.cursor) {

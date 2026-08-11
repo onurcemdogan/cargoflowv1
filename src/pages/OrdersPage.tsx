@@ -562,7 +562,10 @@ export function OrdersPage({
             disabled={busy}
           >
             <RefreshCcw size={18} />
-            Şimdi Yenile
+            {/* Senkron sürerken buton HEM devre dışı HEM de durumu söyler;
+                sunucu tarafı kilit yine de zorunludur (yalnız UI korumasına
+                güvenilmez). */}
+            {busy ? 'Yenileniyor...' : 'Şimdi Yenile'}
           </button>
         }
       />
