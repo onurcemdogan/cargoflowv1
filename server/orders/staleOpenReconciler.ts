@@ -33,6 +33,11 @@ export const OPEN_OPERATION_STATUSES = ['LABEL_READY', 'LABEL_PRINTED'] as const
 
 export interface StaleReconcilePolicy {
   enabled: boolean
+  /**
+   * KENDİ CADENCE'İ. Ana Trendyol turu 60 sn'ye kadar sıklaşabilir; bu geçiş
+   * ONA BAĞLI DEĞİLDİR ve tabanı 5 dakikadır (istek yükü öngörülebilir kalsın).
+   */
+  intervalMs: number
   /** Bir turda doğrulanacak EN FAZLA aday sayısı. */
   batchSize: number
   /** Aynı anda kaç aday sorgulanır. */
@@ -48,20 +53,32 @@ function positiveInt(value: unknown, fallback: number): number {
 }
 
 /**
- * Bu geçiş ZATEN kapılı olan arka plan turunun İÇİNDE çalışır
- * (TRENDYOL_STATUS_SYNC_ENABLED). Ayrıca açık bir kapatma anahtarı vardır:
- * TRENDYOL_STALE_RECONCILE_ENABLED=false|0 → geçiş HİÇ çalışmaz.
+ * YALNIZ açık onay etkinleştirir: 'true' | '1'. Diğer her şey KAPALI.
+ * TRENDYOL_STATUS_SYNC_ENABLED=true olması bu geçişi AÇMAZ — dış API'ye ek
+ * istek ürettiği için ayrı ve açık bir karar gerektirir.
  */
-export function resolveStaleReconcilePolicy(
+export function isStaleReconcileEnabled(
   env: Record<string, string | undefined> = process.env,
-): StaleReconcilePolicy {
+): boolean {
   const raw = String(env.TRENDYOL_STALE_RECONCILE_ENABLED ?? '')
     .trim()
     .toLowerCase()
+  return raw === 'true' || raw === '1'
+}
+
+export function resolveStaleReconcilePolicy(
+  env: Record<string, string | undefined> = process.env,
+): StaleReconcilePolicy {
   return {
-    enabled: raw !== 'false' && raw !== '0',
+    enabled: isStaleReconcileEnabled(env),
+    // TABAN 5 DAKİKA. Ana tur 60 sn'ye inse bile bu geçiş sıklaşmaz; aksi
+    // hâlde saatlik ek istek sayısı 12 katına çıkardı.
+    intervalMs: Math.max(
+      300_000,
+      positiveInt(env.TRENDYOL_STALE_RECONCILE_INTERVAL_MS, 300_000),
+    ),
     // Tavan SERT: tur başına istek sayısı öngörülebilir kalmalı.
-    batchSize: Math.min(50, positiveInt(env.TRENDYOL_STALE_RECONCILE_BATCH, 20)),
+    batchSize: Math.min(50, positiveInt(env.TRENDYOL_STALE_RECONCILE_BATCH, 10)),
     concurrency: Math.min(
       4,
       positiveInt(env.TRENDYOL_STALE_RECONCILE_CONCURRENCY, 2),
@@ -244,4 +261,88 @@ export async function reconcileStaleOpenOrders(
       outcomes.filter((value) => value === 'skipped').length +
       (candidates.length - usable.length),
   }
+}
+
+// ═══ BAĞIMSIZ ZAMANLAYICI ═════════════════════════════════════════════════
+//
+// Ana Trendyol turundan AYRI timer ve AYRI overlap guard'ı vardır. Ana tur
+// TRENDYOL_STATUS_SYNC_INTERVAL_MS=60000 ile çalışsa bile bu geçiş kendi
+// (tabanı 5 dakika olan) cadence'ini kullanır.
+
+let timer: ReturnType<typeof setInterval> | null = null
+let cycleRunning = false
+let stopping = false
+
+export interface StaleSchedulerHandle {
+  started: boolean
+  reason: 'disabled' | 'started'
+  stop: () => void
+}
+
+export function startStaleReconcileScheduler(options: {
+  policy?: StaleReconcilePolicy
+  runCycle: () => Promise<StaleReconcileReport>
+  log?: (report: StaleReconcileReport) => void
+  onError?: (error: unknown) => void
+}): StaleSchedulerHandle {
+  stopStaleReconcileScheduler()
+  stopping = false
+  const policy = options.policy ?? resolveStaleReconcilePolicy()
+
+  // ACTIVATION GUARD — tek karar noktası.
+  if (!policy.enabled) {
+    return {
+      started: false,
+      reason: 'disabled',
+      stop: stopStaleReconcileScheduler,
+    }
+  }
+
+  const emit = (report: StaleReconcileReport) => {
+    if (options.log) {
+      options.log(report)
+      return
+    }
+    // PII YOK: yalnız aggregate sayımlar.
+    console.log(
+      `[trendyol-stale] scanned=${report.scanned} queried=${report.queried} ` +
+        `persisted=${report.persisted} failed=${report.failed} ` +
+        `skipped=${report.skipped}`,
+    )
+  }
+
+  const cycle = async (): Promise<void> => {
+    // ÖRTÜŞME YOK: önceki tur bitmeden yenisi başlamaz. Ana senkronun
+    // guard'ından BAĞIMSIZDIR.
+    if (cycleRunning || stopping) return
+    cycleRunning = true
+    try {
+      emit(await options.runCycle())
+    } catch (error) {
+      // TUR HATASI UYGULAMAYI DÜŞÜRMEZ.
+      if (options.onError) options.onError(error)
+      else
+        console.error('[trendyol-stale] cycle failed:', (error as Error)?.message)
+    } finally {
+      cycleRunning = false
+    }
+  }
+
+  void cycle()
+  timer = setInterval(() => {
+    void cycle()
+  }, policy.intervalMs)
+  timer.unref?.()
+
+  return { started: true, reason: 'started', stop: stopStaleReconcileScheduler }
+}
+
+export function stopStaleReconcileScheduler(): void {
+  stopping = true
+  if (timer) clearInterval(timer)
+  timer = null
+}
+
+export function isStaleReconcileActive(): boolean {
+  return timer !== null
 }

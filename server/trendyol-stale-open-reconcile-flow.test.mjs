@@ -118,6 +118,12 @@ const rawPackage = (item, status = 'Delivered') => ({
 })
 
 const defaults = () => reconciler.resolveStaleReconcilePolicy({})
+/** Etkin (acik) policy — mutabakat davranisi testleri icin. */
+const enabledPolicy = (extra = {}) =>
+  reconciler.resolveStaleReconcilePolicy({
+    TRENDYOL_STALE_RECONCILE_ENABLED: 'true',
+    ...extra,
+  })
 
 const findCandidates = (db, organizationId, accountId, extra = {}) =>
   reconciler.findStaleOpenCandidates(db, {
@@ -228,29 +234,21 @@ test('OLD-B-BOUNDED-2: liste bitince cursor SIFIRLANIR (starvation YOK)', async 
   assert.equal(reconciler.advanceCursor([], 20), null)
 })
 
-test('OLD-B-POLICY: varsayilanlar ve sert tavanlar', () => {
+test('STALE-SCHEDULE-5: default batch 10, concurrency 2, esik 6 gun', () => {
   const policy = defaults()
-  assert.equal(policy.enabled, true)
-  assert.equal(policy.batchSize, 20)
+  assert.equal(policy.batchSize, 10)
   assert.equal(policy.concurrency, 2)
   assert.equal(policy.staleAfterMs, 6 * 24 * 60 * 60 * 1000)
+})
 
+test('STALE-SCHEDULE-6: batch hard max 50, concurrency max 4', () => {
   const capped = reconciler.resolveStaleReconcilePolicy({
+    TRENDYOL_STALE_RECONCILE_ENABLED: 'true',
     TRENDYOL_STALE_RECONCILE_BATCH: '9999',
     TRENDYOL_STALE_RECONCILE_CONCURRENCY: '64',
   })
   assert.equal(capped.batchSize, 50)
   assert.equal(capped.concurrency, 4)
-
-  for (const value of ['false', '0']) {
-    assert.equal(
-      reconciler.resolveStaleReconcilePolicy({
-        TRENDYOL_STALE_RECONCILE_ENABLED: value,
-      }).enabled,
-      false,
-      `kapatma anahtari: ${value}`,
-    )
-  }
 })
 
 // ═══ SONUC SOZLESMESI ═════════════════════════════════════════════════════
@@ -262,7 +260,7 @@ test('OLD-B-RESULT-1: golden kayitlar Delivered olur, LABEL_PRINTED KORUNUR', as
 
   const queried = []
   const report = await reconciler.reconcileStaleOpenOrders(
-    defaults(),
+    enabledPolicy(),
     candidates,
     async (candidate) => {
       queried.push(candidate.orderNumber)
@@ -323,7 +321,7 @@ test('OLD-B-RESULT-2: bos yanit kaydi DEGISTIRMEZ', async () => {
   await seedGolden(db, organizationId, accountId)
   const candidates = await findCandidates(db, organizationId, accountId)
   const report = await reconciler.reconcileStaleOpenOrders(
-    defaults(),
+    enabledPolicy(),
     candidates,
     async () => [],
     async () => {
@@ -339,7 +337,7 @@ test('OLD-B-RESULT-3: tek aday hatasi digerlerini ENGELLEMEZ', async () => {
   await seedGolden(db, organizationId, accountId)
   const candidates = await findCandidates(db, organizationId, accountId)
   const report = await reconciler.reconcileStaleOpenOrders(
-    defaults(),
+    enabledPolicy(),
     candidates,
     async (candidate) => {
       if (candidate.orderNumber === '11455613726') throw new Error('http_502')
@@ -351,15 +349,13 @@ test('OLD-B-RESULT-3: tek aday hatasi digerlerini ENGELLEMEZ', async () => {
   assert.equal(report.persisted, 1)
 })
 
-test('OLD-B-RESULT-4: kapatma anahtari turu TAMAMEN durdurur', async () => {
+test('OLD-B-RESULT-4: kapali policy turu TAMAMEN durdurur', async () => {
   const { db, organizationId, accountId } = await makeDb()
   await seedGolden(db, organizationId, accountId)
   const candidates = await findCandidates(db, organizationId, accountId)
   let calls = 0
   const report = await reconciler.reconcileStaleOpenOrders(
-    reconciler.resolveStaleReconcilePolicy({
-      TRENDYOL_STALE_RECONCILE_ENABLED: 'false',
-    }),
+    reconciler.resolveStaleReconcilePolicy({}),
     candidates,
     async () => {
       calls += 1
@@ -382,7 +378,7 @@ test('OLD-B-RESULT-4: kapatma anahtari turu TAMAMEN durdurur', async () => {
 test('OLD-B-WIRING: arka plan turu KANONIK zinciri kullanir', () => {
   const lines = ENTRY_SOURCE.split(/\r?\n/)
   const start = lines.findIndex((line) =>
-    line.startsWith('async function reconcileStaleOpenTrendyolOrders'),
+    line.startsWith('async function reconcileStaleOpenForOrganization'),
   )
   assert.ok(start >= 0, 'baglanti fonksiyonu bulunmali')
   const end = lines.findIndex((line, index) => index > start && line === '}')
@@ -419,7 +415,7 @@ test('OLD-B-WIRING: arka plan turu KANONIK zinciri kullanir', () => {
 test('OLD-B-SCOPE: mevcut sozlesmeler KORUNUR', () => {
   // Ana tur hesap kapsami + arsivsiz kalir.
   assert.ok(ENTRY_SOURCE.includes('resolveActiveMarketplaceAccountId('))
-  assert.ok(ENTRY_SOURCE.includes('reconcileStaleOpenTrendyolOrders('))
+  assert.ok(ENTRY_SOURCE.includes('reconcileStaleOpenForOrganization('))
   // Stale-merge fix (670ffd7) yerinde.
   assert.ok(ENTRY_SOURCE.includes('incomingIsNewer'))
   // Manuel sync degismedi.
@@ -443,4 +439,168 @@ test('OLD-B-SCOPE: mevcut sozlesmeler KORUNUR', () => {
   }
   // Retention politikasi degismedi (yalniz ileri statu kumesi PAYLASILIR).
   assert.ok(module.includes("from './orderRetention.ts'"))
+})
+
+// ═══ BAGIMSIZ ZAMANLAYICI (LOAD SAFETY) ═══════════════════════════════════
+//
+// Ana Trendyol turu uretimde TRENDYOL_STATUS_SYNC_INTERVAL_MS=60000 ile
+// calisiyor. Bu gecis ONA BAGLI DEGILDIR: kendi bayragi, kendi timer'i,
+// kendi overlap guard'i ve tabani 5 dakika olan kendi cadence'i vardir.
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+const emptyReport = () => ({
+  scanned: 0,
+  queried: 0,
+  persisted: 0,
+  failed: 0,
+  skipped: 0,
+})
+
+test('STALE-SCHEDULE-1: bayrak unset → is CALISMAZ', async () => {
+  let calls = 0
+  const handle = reconciler.startStaleReconcileScheduler({
+    policy: reconciler.resolveStaleReconcilePolicy({}),
+    runCycle: async () => {
+      calls += 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  assert.equal(handle.started, false)
+  assert.equal(handle.reason, 'disabled')
+  await wait(30)
+  assert.equal(calls, 0, 'tek bir tur bile baslamaz')
+  handle.stop()
+  // Varsayilan ve gecersiz degerler KAPALI.
+  for (const value of ['', '0', 'false', 'no', 'yes']) {
+    assert.equal(
+      reconciler.isStaleReconcileEnabled({
+        TRENDYOL_STALE_RECONCILE_ENABLED: value,
+      }),
+      false,
+      value || '(unset)',
+    )
+  }
+  assert.equal(reconciler.isStaleReconcileEnabled({}), false, 'default OFF')
+})
+
+test('STALE-SCHEDULE-2: bayrak true/1 → is CALISIR', async () => {
+  for (const value of ['true', '1']) {
+    assert.equal(
+      reconciler.isStaleReconcileEnabled({
+        TRENDYOL_STALE_RECONCILE_ENABLED: value,
+      }),
+      true,
+      value,
+    )
+  }
+  let calls = 0
+  const handle = reconciler.startStaleReconcileScheduler({
+    policy: { ...enabledPolicy(), intervalMs: 25 },
+    runCycle: async () => {
+      calls += 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  assert.equal(handle.started, true)
+  assert.equal(handle.reason, 'started')
+  await wait(120)
+  handle.stop()
+  assert.ok(calls >= 2, `periyodik tur beklenir: ${calls}`)
+})
+
+test('STALE-SCHEDULE-3: ana sync 60 sn olsa da stale kendi 5 dk tabanini kullanir', () => {
+  // Ana senkron bayragi/araligi bu policy'yi ETKILEMEZ.
+  const policy = reconciler.resolveStaleReconcilePolicy({
+    TRENDYOL_STALE_RECONCILE_ENABLED: 'true',
+    TRENDYOL_STATUS_SYNC_INTERVAL_MS: '60000',
+  })
+  assert.equal(policy.intervalMs, 300_000, 'varsayilan 5 dakika')
+
+  // Daha kucuk deger verilse bile TABAN 5 dakikadir.
+  assert.equal(
+    reconciler.resolveStaleReconcilePolicy({
+      TRENDYOL_STALE_RECONCILE_ENABLED: 'true',
+      TRENDYOL_STALE_RECONCILE_INTERVAL_MS: '60000',
+    }).intervalMs,
+    300_000,
+    '60 sn TABANA yukseltilir',
+  )
+  // Daha uzun aralik SAYGI GORUR.
+  assert.equal(
+    reconciler.resolveStaleReconcilePolicy({
+      TRENDYOL_STALE_RECONCILE_ENABLED: 'true',
+      TRENDYOL_STALE_RECONCILE_INTERVAL_MS: '900000',
+    }).intervalMs,
+    900_000,
+  )
+  // Ana zamanlayicinin kendi sozlesmesi DEGISMEDI: taban 60 sn.
+  const entryScheduler = readFileSync(
+    'server/orders/trendyolStatusSyncScheduler.ts',
+    'utf8',
+  )
+  assert.ok(entryScheduler.includes('60_000,'), 'ana tur tabani 60 sn kalir')
+})
+
+test('STALE-SCHEDULE-4: ORTUSME engellenir (kendi guard\'i)', async () => {
+  let active = 0
+  let peak = 0
+  const handle = reconciler.startStaleReconcileScheduler({
+    policy: { ...enabledPolicy(), intervalMs: 20 },
+    runCycle: async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await wait(150)
+      active -= 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  await wait(120)
+  assert.equal(peak, 1, 'ayni anda tek stale tur')
+  handle.stop()
+  await wait(80)
+})
+
+test('STALE-SCHEDULE-7: ana sync bayragi stale isi OTOMATIK ACMAZ', async () => {
+  assert.equal(
+    reconciler.isStaleReconcileEnabled({
+      TRENDYOL_STATUS_SYNC_ENABLED: 'true',
+      TRENDYOL_STATUS_SYNC_INTERVAL_MS: '60000',
+    }),
+    false,
+    'ayri ve acik karar gerekir',
+  )
+  let calls = 0
+  const handle = reconciler.startStaleReconcileScheduler({
+    policy: reconciler.resolveStaleReconcilePolicy({
+      TRENDYOL_STATUS_SYNC_ENABLED: 'true',
+    }),
+    runCycle: async () => {
+      calls += 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  assert.equal(handle.started, false)
+  await wait(30)
+  assert.equal(calls, 0)
+  handle.stop()
+
+  // Ana tur ARTIK stale gecisini kendi icinde CAGIRMAZ (ayri zamanlayici).
+  const lines = ENTRY_SOURCE.split(/\r?\n/)
+  const start = lines.findIndex((line) =>
+    line.startsWith('async function syncTrendyolOrdersForOrganization'),
+  )
+  const end = lines.findIndex((line, index) => index > start && line === '}')
+  const body = lines.slice(start, end).join('\n')
+  assert.equal(
+    body.includes('reconcileStaleOpen'),
+    false,
+    'stale gecisi ana turun ICINDE CALISMAZ',
+  )
+  // Kendi boot yolu ve kapanis temizligi var.
+  assert.ok(ENTRY_SOURCE.includes('startStaleOpenReconcileOnBoot'))
+  assert.ok(ENTRY_SOURCE.includes('stopStaleReconcileScheduler'))
 })
