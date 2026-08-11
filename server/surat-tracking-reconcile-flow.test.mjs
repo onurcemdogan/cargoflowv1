@@ -894,19 +894,6 @@ test('SSP-QUERY-7: tum sorgular basarisiz → mevcut durum KORUNUR', async () =>
   assert.equal((await stageOf(db, order.id)).operationStatus, 'LABEL_PRINTED')
 })
 
-test('SSP-QUERY-8: CLI hata kategorisi raporlar, SECRET/PII yok', async () => {
-  const cli = readFileSync(
-    join(here, 'shipments', 'sspAcceptanceCheckCli.ts'),
-    'utf8',
-  )
-  assert.ok(cli.includes('errorCategory'))
-  assert.ok(cli.includes('maskedIdentity'))
-  assert.ok(cli.includes('winningIdentityType'))
-  // Kimlik bilgisi/parola LOGLANMAZ.
-  for (const forbidden of ['kullaniciAdi', 'sifre', 'password', 'customerName']) {
-    assert.equal(cli.includes(`${forbidden}:`), false, forbidden)
-  }
-})
 
 test('SSP-QUERY-9: Gonderiler=1 TEK BASINA handedToCargo URETMEZ', async () => {
   const { db, organizationId } = await makeDb()
@@ -932,4 +919,60 @@ test('SSP-QUERY-SINGLE-SOURCE: CLI ve scheduler AYNI takip ucunu kullanir', asyn
   // Zamanlayici tarafi ayni referans cozumleyicisini kullanir.
   assert.ok(entry.includes('resolveSuratTrackingQueryReference'))
   assert.ok(entry.includes('webSiparisKodu: candidate.orderNumber'))
+})
+
+// ═══ FALLBACK YOK — TEK KANONIK SORGU KIMLIGI ═════════════════════════════
+//
+// KANIT: resolveSuratTrackingQueryReference —
+//   "KargoTakipHareketDetayi yalniz WEB_SIPARIS_KODU kabul eder".
+// Baska referans tipi icin AYRI sorgu sozlesmesi KANITLANMADI → fallback YOK.
+
+const cliSource = () =>
+  readFileSync(join(here, 'shipments', 'sspAcceptanceCheckCli.ts'), 'utf8')
+
+test('SSP-IDENTITY-CONTRACT: orderNumber → WebSiparisKodu (TEK kimlik)', async () => {
+  const cli = cliSource()
+  assert.ok(cli.includes("queryIdentityType: 'orderNumber_webSiparisKodu'"))
+  assert.ok(cli.includes('order?.orderNumber'))
+  assert.ok(cli.includes('webSiparisKodu: queryReference'))
+  // Tasiyici sorgusu TEK KEZ kurulur (deneme dongusu YOK).
+  // Yorumdaki gecis sayilmaz: GERCEK cagri TEK olmali.
+  assert.equal((cli.match(/await fetch\(/g) ?? []).length, 1)
+})
+
+test('SSP-IDENTITY-NO-FALLBACK-1: packageId WebSiparisKodu olarak DENENMEZ', async () => {
+  const cli = cliSource()
+  assert.equal(cli.includes('webSiparisKodu: packageId'), false)
+  assert.equal(/identityType:\s*'packageId/.test(cli), false)
+  // Deneme matrisi kaldirildi.
+  assert.equal(cli.includes('attempts'), false)
+})
+
+test('SSP-IDENTITY-NO-FALLBACK-2: T.No WebSiparisKodu olarak DENENMEZ', async () => {
+  const cli = cliSource()
+  assert.equal(/webSiparisKodu:\s*shipment/.test(cli), false)
+  assert.equal(/identityType:\s*'carrierTNo/.test(cli), false)
+})
+
+test('SSP-IDENTITY-NO-FALLBACK-3: barkod WebSiparisKodu olarak DENENMEZ', async () => {
+  const cli = cliSource()
+  assert.equal(/identityType:\s*'carrierBarcode/.test(cli), false)
+  assert.equal(cli.includes("identityType: 'carrierBarcode'"), false)
+})
+
+test('SSP-IDENTITY-NO-FALLBACK-4: reconciler de TEK kimlik kullanir', async () => {
+  const entry = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.ok(entry.includes('webSiparisKodu: candidate.orderNumber'))
+  assert.equal(entry.includes('webSiparisKodu: candidate.packageId'), false)
+  // CLI ve zamanlayici AYNI ucu ve AYNI kimligi kullanir.
+  assert.ok(cliSource().includes('/api/shipments/surat/track'))
+})
+
+test('SSP-QUERY-DIAG: hata kategorisi raporlanir, SECRET/PII yok', async () => {
+  const cli = cliSource()
+  assert.ok(cli.includes('errorCategory'))
+  assert.ok(cli.includes('queryReference: mask(queryReference)'))
+  for (const forbidden of ['kullaniciAdi', 'sifre', 'password', 'customerName']) {
+    assert.equal(cli.includes(`${forbidden}:`), false, forbidden)
+  }
 })
