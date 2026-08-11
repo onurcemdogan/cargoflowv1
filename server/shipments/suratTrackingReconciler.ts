@@ -40,11 +40,16 @@ const MARKETPLACE_TERMINAL_STATUSES = [
 ] as const
 
 /**
- * İLK SÜRÜM KAPSAMI: yalnız BASILMIŞ etiketler. LABEL_READY olup hiç
- * basılmamış kayıtlar bilinçli olarak DIŞARIDA (fiziksel kabul öncesi
- * gereksiz taşıyıcı yükü üretmemek için).
+ * SORGU ADAYLARI — etiketi hazır VEYA basılmış siparişler.
+ *
+ * KRİTİK AYRIM: bu liste YALNIZ "taşıyıcıya sorulur mu?" sorusunu yanıtlar.
+ * "Kargoya Verildi" sonucunu ÜRETMEZ — o yalnız doğrulanmış taşıyıcı
+ * kabul/shipped kanıtından doğar (bkz. decideFromCarrierSnapshot).
+ *
+ * Etiket hazır olup henüz basılmamış bir paket de SSP'de okutulabilir;
+ * bu yüzden LABEL_READY de aday kümededir.
  */
-const CANDIDATE_OPERATION_STATUSES = ['LABEL_PRINTED'] as const
+const CANDIDATE_OPERATION_STATUSES = ['LABEL_READY', 'LABEL_PRINTED'] as const
 
 export interface TrackingReconcilePolicy {
   intervalMs: number
@@ -124,8 +129,10 @@ export async function findTrackingReconcileCandidates(
     inArray(orders.operationStatus, [...CANDIDATE_OPERATION_STATUSES]),
     isNull(orders.archivedAt),
     sql`(${orders.marketplaceStatus} is null or ${orders.marketplaceStatus} not in ${MARKETPLACE_TERMINAL_STATUSES})`,
-    // YEREL SÜRAT GÖNDERİSİ ŞART: taşıyıcı kaydı olmayan siparişe sorgu YOK.
-    sql`exists (select 1 from ${shipments} where ${shipments.organizationId} = ${orders.organizationId} and ${shipments.marketplace} = ${orders.marketplace} and ${shipments.packageId} = ${orders.packageId})`,
+    // YEREL SÜRAT GÖNDERİSİ + GEÇERLİ TAŞIYICI KİMLİĞİ ŞART.
+    // Takip numarası (T.No) veya taşıyıcı barkodu olmayan kayda sorgu YOK:
+    // kimliksiz sorgu yanlış gönderiye bağlanma riski taşır.
+    sql`exists (select 1 from ${shipments} where ${shipments.organizationId} = ${orders.organizationId} and ${shipments.marketplace} = ${orders.marketplace} and ${shipments.packageId} = ${orders.packageId} and (coalesce(${shipments.trackingNumber}, '') <> '' or coalesce(${shipments.barcode}, '') <> ''))`,
   )
   return database
     .select({

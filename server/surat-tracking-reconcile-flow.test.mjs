@@ -91,8 +91,13 @@ async function seedOrder(db, organizationId, overrides = {}, withShipment = true
       provider: 'surat-kargo',
       source: 'local_create',
       status: 'CREATED',
-      trackingNumber: overrides.tNo ?? GOLDEN.tNo,
-      barcode: overrides.carrierBarcode ?? GOLDEN.carrierBarcode,
+      // `null` ACIKCA "kimlik yok" demektir (?? ile GOLDEN'a dusmez).
+      trackingNumber:
+        overrides.tNo === undefined ? GOLDEN.tNo : overrides.tNo,
+      barcode:
+        overrides.carrierBarcode === undefined
+          ? GOLDEN.carrierBarcode
+          : overrides.carrierBarcode,
     })
   }
   return row
@@ -397,6 +402,8 @@ test('SSP-LOAD-1/4: 1000 aday / batch 50 → sinirli turlarla HEPSI islenir', as
       provider: 'surat-kargo',
       source: 'local_create',
       status: 'CREATED',
+      // Kimlik SART: T.No olmayan kayda sorgu yapilmaz (SSP-IDENTITY-3).
+      trackingNumber: `TNO-${index}`,
     })
   }
   await db.insert(orders).values(values)
@@ -501,4 +508,309 @@ test('SSP-LABEL-UNCHANGED: mutabakat etiket katmanina DOKUNMAZ', async () => {
   assert.equal(source.includes('KargonunDurumu:'), false)
   // marketplace_status ASLA yazilmaz.
   assert.equal(/marketplaceStatus:\s*'/.test(source), false)
+})
+
+// ═══ ADAY KAPSAMI: LABEL_READY + LABEL_PRINTED ════════════════════════════
+//
+// KRITIK: bu iki durum YALNIZ "tasiyiciya sorulur mu?" sorusunu yanitlar.
+// "Kargoya Verildi" YALNIZ dogrulanmis tasiyici kabul kanitindan dogar.
+
+test('SSP-READY-1: LABEL_READY + tasiyici hazirlaniyor → LABEL_READY KALIR', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await seedOrder(db, organizationId, {
+    operationStatus: 'LABEL_READY',
+  })
+  const report = await runCycle(db, async () => snapshot('1', 1))
+  assert.equal(report.handedToCargo, 0)
+  assert.equal((await stageOf(db, order.id)).operationStatus, 'LABEL_READY')
+})
+
+test('SSP-READY-2: LABEL_READY + dogrulanmis kabul → HANDED_TO_CARGO', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await seedOrder(db, organizationId, {
+    operationStatus: 'LABEL_READY',
+  })
+  const report = await runCycle(db, async () => snapshot('2', 1))
+  assert.equal(report.handedToCargo, 1)
+  const state = await stageOf(db, order.id)
+  assert.equal(state.operationStatus, 'HANDED_TO_CARGO')
+  assert.equal(state.marketplaceStatus, 'Picking', 'Trendyol DOKUNULMAZ')
+})
+
+test('SSP-PRINTED-1: LABEL_PRINTED + hazirlaniyor → LABEL_PRINTED KALIR', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await seedOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+  })
+  await runCycle(db, async () => snapshot('1', 1))
+  assert.equal((await stageOf(db, order.id)).operationStatus, 'LABEL_PRINTED')
+})
+
+test('SSP-PRINTED-2: LABEL_PRINTED + dogrulanmis kabul → HANDED_TO_CARGO', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await seedOrder(db, organizationId, {
+    operationStatus: 'LABEL_PRINTED',
+  })
+  await runCycle(db, async () => snapshot('5', 1))
+  assert.equal((await stageOf(db, order.id)).operationStatus, 'HANDED_TO_CARGO')
+})
+
+test('SSP-SCOPE: LABEL_READY ve LABEL_PRINTED aday, digerleri DEGIL', async () => {
+  const { db, organizationId } = await makeDb()
+  await seedOrder(db, organizationId, { operationStatus: 'LABEL_READY' })
+  await seedOrder(db, organizationId, { operationStatus: 'LABEL_PRINTED' })
+  await seedOrder(db, organizationId, { operationStatus: 'NEW' })
+  await seedOrder(db, organizationId, { operationStatus: 'BARCODE_WAITING' })
+  const candidates = await reconciler.findTrackingReconcileCandidates(
+    db,
+    policy(),
+  )
+  assert.equal(candidates.length, 2)
+})
+
+test('SSP-IDENTITY-3: tasiyici kimligi (T.No/barkod) YOKSA aday DEGIL', async () => {
+  const { db, organizationId } = await makeDb()
+  // Gonderi kaydi var ama T.No ve barkod BOS.
+  await seedOrder(db, organizationId, { tNo: null, carrierBarcode: null })
+  const candidates = await reconciler.findTrackingReconcileCandidates(
+    db,
+    policy(),
+  )
+  assert.equal(candidates.length, 0, 'kimliksiz sorgu YAPILMAZ')
+})
+
+test('SSP-NEGATIVE-2: Gonderiler=1 + KargonunDurumuSayi=1 → handedToCargo FALSE', async () => {
+  const decision = reconciler.decideFromCarrierSnapshot(
+    {
+      orderId: 'o1',
+      organizationId: 'org',
+      marketplace: 'Trendyol',
+      packageId: GOLDEN.packageId,
+    },
+    snapshot('1', 1),
+  )
+  assert.equal(decision.handedToCargo, false)
+  assert.equal(decision.applied, false)
+  assert.equal(decision.reason, 'not_shipped_yet')
+})
+
+// ═══ ZAMANLAYICI (production-safe gate) ═══════════════════════════════════
+
+const scheduler = await import('./shipments/suratTrackingScheduler.ts')
+
+const emptyReport = () => ({
+  scanned: 0,
+  queried: 0,
+  handedToCargo: 0,
+  delivered: 0,
+  returning: 0,
+  unchanged: 0,
+  failed: 0,
+})
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('SSP-SCHEDULER-1: bayrak unset → 0 tasiyici sorgusu', async () => {
+  let calls = 0
+  const handle = scheduler.startTrackingScheduler({
+    enabled: scheduler.isTrackingReconcileEnabled({}),
+    runCycle: async () => {
+      calls += 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  assert.equal(handle.started, false)
+  assert.equal(handle.reason, 'disabled')
+  await wait(30)
+  assert.equal(calls, 0)
+  handle.stop()
+})
+
+test('SSP-SCHEDULER-2: bayrak false → 0 tasiyici sorgusu', async () => {
+  let calls = 0
+  const handle = scheduler.startTrackingScheduler({
+    enabled: scheduler.isTrackingReconcileEnabled({
+      SURAT_TRACKING_RECONCILE_ENABLED: 'false',
+    }),
+    runCycle: async () => {
+      calls += 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  assert.equal(handle.started, false)
+  await wait(30)
+  assert.equal(calls, 0)
+  handle.stop()
+  // '0' ve rastgele degerler de KAPALI.
+  for (const value of ['', '0', 'no', 'off']) {
+    assert.equal(
+      scheduler.isTrackingReconcileEnabled({
+        SURAT_TRACKING_RECONCILE_ENABLED: value,
+      }),
+      false,
+    )
+  }
+  for (const value of ['true', '1', 'TRUE']) {
+    assert.equal(
+      scheduler.isTrackingReconcileEnabled({
+        SURAT_TRACKING_RECONCILE_ENABLED: value,
+      }),
+      true,
+    )
+  }
+})
+
+test('SSP-SCHEDULER-3: bayrak true → boot sonrasi TAM 1 sinirli tur', async () => {
+  let calls = 0
+  const handle = scheduler.startTrackingScheduler({
+    enabled: true,
+    policy: { ...policy(), intervalMs: 60_000 },
+    runCycle: async () => {
+      calls += 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  assert.equal(handle.started, true)
+  await wait(40)
+  assert.equal(calls, 1)
+  handle.stop()
+})
+
+test('SSP-SCHEDULER-4: interval → sonraki tur calisir', async () => {
+  let calls = 0
+  const handle = scheduler.startTrackingScheduler({
+    enabled: true,
+    policy: { ...policy(), intervalMs: 25 },
+    runCycle: async () => {
+      calls += 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  await wait(120)
+  handle.stop()
+  assert.ok(calls >= 2, `periyodik tur beklenir: ${calls}`)
+})
+
+test('SSP-SCHEDULER-5: devam eden tur + tick → ORTUSME YOK', async () => {
+  let active = 0
+  let peak = 0
+  const handle = scheduler.startTrackingScheduler({
+    enabled: true,
+    policy: { ...policy(), intervalMs: 20 },
+    runCycle: async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await wait(150)
+      active -= 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  await wait(120)
+  assert.equal(peak, 1, 'ayni anda tek tur')
+  handle.stop()
+  await wait(80)
+})
+
+test('SSP-SCHEDULER-6: tasiyici istisnasi zamanlayiciyi DUSURMEZ', async () => {
+  let calls = 0
+  const errors = []
+  const handle = scheduler.startTrackingScheduler({
+    enabled: true,
+    policy: { ...policy(), intervalMs: 25 },
+    runCycle: async () => {
+      calls += 1
+      throw new Error('tasiyici hatasi')
+    },
+    log: () => {},
+    onError: (error) => errors.push(error),
+  })
+  await wait(120)
+  assert.ok(calls >= 2, 'yeniden denenir')
+  assert.ok(errors.length >= 2)
+  assert.equal(scheduler.isTrackingSchedulerActive(), true)
+  handle.stop()
+})
+
+test('SSP-SCHEDULER-7: stop() timer temizler, yeni tur BASLAMAZ', async () => {
+  let calls = 0
+  const handle = scheduler.startTrackingScheduler({
+    enabled: true,
+    policy: { ...policy(), intervalMs: 20 },
+    runCycle: async () => {
+      calls += 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  await wait(50)
+  const seen = calls
+  handle.stop()
+  assert.equal(scheduler.isTrackingSchedulerActive(), false)
+  await wait(80)
+  assert.equal(calls, seen)
+})
+
+test('SSP-SCHEDULER-8: elle tetikleme AYNI ortusme guardindan gecer', async () => {
+  let active = 0
+  let peak = 0
+  const handle = scheduler.startTrackingScheduler({
+    enabled: true,
+    policy: { ...policy(), intervalMs: 60_000 },
+    runCycle: async () => {
+      active += 1
+      peak = Math.max(peak, active)
+      await wait(80)
+      active -= 1
+      return emptyReport()
+    },
+    log: () => {},
+  })
+  handle.trigger()
+  handle.trigger()
+  await wait(40)
+  assert.equal(peak, 1, 'cift tetikleme ortusme URETMEZ')
+  handle.stop()
+  await wait(60)
+})
+
+test('SSP-BOOT-WIRING: boot yolu KAPILI zamanlayiciyi kurar', async () => {
+  const entry = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.ok(entry.includes('startSuratTrackingReconcileOnBoot'))
+  assert.ok(entry.includes('startTrackingScheduler'))
+  assert.ok(entry.includes('stopTrackingScheduler'))
+  // Boot yolu bayragi KENDISI OKUMAZ; karar zamanlayicidadir.
+  assert.equal(
+    entry.includes('process.env.SURAT_TRACKING_RECONCILE_ENABLED'),
+    false,
+  )
+  // Zamanlayici modulu is kurali TASIMAZ.
+  const schedulerSource = readFileSync(
+    join(here, 'shipments', 'suratTrackingScheduler.ts'),
+    'utf8',
+  )
+  for (const forbidden of ['LABEL_READY', 'KargonunDurumu', 'mapSurat']) {
+    assert.equal(schedulerSource.includes(forbidden), false, forbidden)
+  }
+})
+
+test('SSP-CLI-READONLY: tani komutu YAZMA yapmaz', async () => {
+  const cli = readFileSync(
+    join(here, 'shipments', 'sspAcceptanceCheckCli.ts'),
+    'utf8',
+  )
+  for (const forbidden of [
+    '.update(',
+    '.insert(',
+    '.delete(',
+    'applyTrackingDecision',
+    'createShipment',
+  ]) {
+    assert.equal(cli.includes(forbidden), false, `CLI salt okunur olmali: ${forbidden}`)
+  }
+  assert.ok(cli.includes('mapSuratCarrierStatus'))
+  assert.ok(cli.includes('wouldResolveHandedToCargo'))
 })

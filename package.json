@@ -46,6 +46,7 @@
     "admin:reset-platform-admin-password": "node server/admin/resetPlatformAdminPasswordCli.ts",
     "admin:reset-org-user-password": "node server/admin/resetOrgUserPasswordCli.ts",
     "benchmark:label-bundles": "node server/benchmarks/labelBundleBenchmark.ts",
+    "surat:ssp-acceptance:check": "node server/shipments/sspAcceptanceCheckCli.ts",
     "surat:print-zpl:repair": "node server/shipments/repairPrintZplCli.ts"
   },
   "dependencies": {
