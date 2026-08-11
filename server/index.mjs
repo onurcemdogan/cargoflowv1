@@ -1080,6 +1080,26 @@ app.post('/api/orders/sync', async (request, response) => {
   // Kilit AKTİF pazaryeri hesabı bazında alınır: farklı Trendyol hesapları
   // birbirinin sync kilidini paylaşmaz (hesap A sync'i hesap B'yi bloklamaz).
   const syncAccountId = context.marketplaceAccountId
+  // 1) SÜREÇ İÇİ UÇUŞ: arka plan turu aynı hesapta çalışıyorsa kısa süre
+  //    beklenir — kullanıcının tıklaması sessizce DÜŞMEZ.
+  const flightKey = syncFlightKey(context.organizationId, syncAccountId)
+  const flying = await waitForSyncFlight(flightKey)
+  if (!flying) {
+    const state = await readOrgSyncState(
+      context.db,
+      context.organizationId,
+      'orders',
+      syncAccountId,
+    )
+    response.status(409).json({
+      ok: false,
+      code: 'sync_in_progress',
+      message: 'Bu hesap için bir sipariş senkronizasyonu zaten çalışıyor.',
+      status: state,
+    })
+    return
+  }
+  // 2) MEVCUT DB KİLİDİ (çok süreçli kurulumda da geçerli) DEĞİŞMEDEN kalır.
   const locked = await acquireOrgSyncLock(
     context.db,
     context.organizationId,
@@ -1266,6 +1286,9 @@ app.post('/api/orders/sync', async (request, response) => {
       // (aynı hesap kapsamında).
       await releaseOrgSyncLock(context.db, context.organizationId, 'orders', null, syncAccountId)
     }
+    // SÜREÇ İÇİ UÇUŞ HER DURUMDA düşer (hata/erken dönüş dâhil); aksi hâlde
+    // arka plan turu bu hesapta kalıcı olarak atlanırdı.
+    endSyncFlight(flightKey)
   }
 })
 
@@ -1689,6 +1712,50 @@ async function acquireOrgSyncLock(db, organizationId, resource, marketplaceAccou
     return await acquireSyncLock(db, organizationId, resource, { marketplaceAccountId })
   } catch {
     return true
+  }
+}
+
+// ═══ HESAP KAPSAMLI TEK-UÇUŞ (SINGLE-FLIGHT) KAYIT DEFTERİ ════════════════
+//
+// KANIT (audit): manuel `POST /api/orders/sync` DB tabanlı, hesap kapsamlı bir
+// kilit alır (`integration_sync_state`) → manuel+manuel ZATEN engelli (409).
+// ANCAK 60 sn'lik arka plan turu bu kilidi ALMIYORDU: manuel senkron ile arka
+// plan turu AYNI hesap üzerinde ÖRTÜŞEBİLİYORDU. İki paralel çekim, aynı
+// satıcı için istek sayısını ikiye katlar ve 429/geçici hata olasılığını
+// yükseltir.
+//
+// DB kilidi arka plan için KULLANILMAZ: `releaseSyncLock` durumu `failed`
+// yazar ve UI'nin "son senkronizasyon" göstergesini bozardı. Bunun yerine
+// SÜREÇ İÇİ, hesap kapsamlı bir kayıt defteri kullanılır — API ve zamanlayıcı
+// AYNI süreçte çalışır (PM2 tek proses), dolayısıyla bu yeterlidir.
+// GLOBAL kilit YOKTUR: farklı hesaplar birbirini bloklamaz.
+const syncFlights = new Set()
+const SYNC_FLIGHT_WAIT_MS = 8000
+const SYNC_FLIGHT_POLL_MS = 400
+
+function syncFlightKey(organizationId, marketplaceAccountId) {
+  return `${organizationId}::${marketplaceAccountId ?? 'legacy'}`
+}
+function beginSyncFlight(key) {
+  if (syncFlights.has(key)) return false
+  syncFlights.add(key)
+  return true
+}
+function endSyncFlight(key) {
+  syncFlights.delete(key)
+}
+
+/**
+ * MANUEL İSTEK KAYBOLMASIN: uçuş başka bir tur (ör. arka plan turu)
+ * tarafından tutuluyorsa kısa süre BEKLENİR; arka plan turu tipik olarak
+ * saniyeler sürer. Süre dolarsa çağıran MEVCUT davranışa döner (409).
+ */
+async function waitForSyncFlight(key, waitMs = SYNC_FLIGHT_WAIT_MS) {
+  const deadline = Date.now() + Math.max(0, waitMs)
+  for (;;) {
+    if (beginSyncFlight(key)) return true
+    if (Date.now() >= deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, SYNC_FLIGHT_POLL_MS))
   }
 }
 
@@ -2601,6 +2668,14 @@ async function syncTrendyolOrdersForOrganization(organizationId) {
     organizationId,
   )
 
+  // EŞZAMANLILIK: aynı hesap için manuel senkron sürüyorsa bu tur SESSİZCE
+  // ATLANIR (beklemez). Aksi hâlde aynı satıcı için iki paralel Trendyol
+  // çekimi çalışır, istek sayısı ikiye katlanır ve 429/geçici hata olasılığı
+  // artar — kullanıcının gördüğü "Senkron kısmi kaldı" uyarısının zeminidir.
+  const flightKey = syncFlightKey(organizationId, marketplaceAccountId)
+  if (!beginSyncFlight(flightKey)) return { synced: false }
+
+  try {
   const result = await callTrendyolOrdersByStatuses(credentials, { size: 50 })
   const syncStatus = result.debug?.syncStatus
   const partial = result.partial === true || syncStatus === 'PARTIAL'
@@ -2620,6 +2695,10 @@ async function syncTrendyolOrdersForOrganization(organizationId) {
     marketplaceAccountId,
   })
   return { synced: true }
+  } finally {
+    // Kayıt HER DURUMDA düşer (hata/erken dönüş dâhil).
+    endSyncFlight(flightKey)
+  }
 }
 
 // Organizasyon başına keyset konumu (süreç içi). Kalıcı DEĞİLDİR: yeniden

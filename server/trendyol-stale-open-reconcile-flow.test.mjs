@@ -604,3 +604,159 @@ test('STALE-SCHEDULE-7: ana sync bayragi stale isi OTOMATIK ACMAZ', async () => 
   assert.ok(ENTRY_SOURCE.includes('startStaleOpenReconcileOnBoot'))
   assert.ok(ENTRY_SOURCE.includes('stopStaleReconcileScheduler'))
 })
+
+// ═══ ESKI "YOLDA" (SHIPPED) KAYIT MUTABAKATI ══════════════════════════════
+//
+// URETIM VAKASI (PII YOK):
+//   packageId 4019554630 · orderNumber 11438161233 · orderDate 2026-07-22
+//   DB: marketplaceStatus=Shipped · operationStatus=null · archived=false
+//   Trendyol API: Delivered
+//
+// KOK NEDEN (kod duzeyinde kanitli, IKI BAGIMSIZ DISLAMA):
+//   1) Ana arka plan turu tarih parametresi gondermez → son 7 gun. 22.07
+//      siparisi 20 gunluk; kapsam DISI.
+//   2) Eski stale aday yuklemi `operation_status IN (LABEL_READY,
+//      LABEL_PRINTED)` sarti kosuyordu (golden'da NULL) VE marketplace
+//      statusunun ileri kumede OLMAMASINI istiyordu (Shipped ileri kumede).
+//   → Hicbir periyodik yazar bu kaydi Delivered'a tasiyamiyordu.
+
+test('OLD-TRANSIT-1: eski Shipped kayit ADAY olur (operationStatus NULL)', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  await seed(db, organizationId, accountId, {
+    packageId: '4019554630',
+    orderNumber: '11438161233',
+    orderDate: daysAgo(20),
+    marketplaceStatus: 'Shipped',
+    operationStatus: null,
+  })
+  const candidates = await findCandidates(db, organizationId, accountId)
+  assert.equal(candidates.length, 1, 'golden aday olmali')
+  assert.equal(candidates[0].packageId, '4019554630')
+  assert.equal(candidates[0].operationStatus, null)
+  assert.equal(candidates[0].marketplaceStatus, 'Shipped')
+})
+
+test('OLD-TRANSIT-2: AtCollectionPoint da yolda sayilir', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  await seed(db, organizationId, accountId, {
+    packageId: 'P-COLLECT',
+    orderNumber: 'O-COLLECT',
+    orderDate: daysAgo(15),
+    marketplaceStatus: 'AtCollectionPoint',
+    operationStatus: null,
+  })
+  const candidates = await findCandidates(db, organizationId, accountId)
+  assert.equal(candidates.length, 1)
+})
+
+test('OLD-TRANSIT-3: TERMINAL statuler ASLA aday olmaz', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  const terminals = ['Delivered', 'Cancelled', 'Returned', 'UnDelivered', 'UnSupplied']
+  for (const [index, status] of terminals.entries()) {
+    await seed(db, organizationId, accountId, {
+      packageId: `P-TERM-${index}`,
+      orderNumber: `O-TERM-${index}`,
+      orderDate: daysAgo(20),
+      marketplaceStatus: status,
+      operationStatus: 'LABEL_PRINTED',
+    })
+  }
+  const candidates = await findCandidates(db, organizationId, accountId)
+  assert.equal(candidates.length, 0, 'terminal kayitlar disarida')
+  // Kume KANONIK ileri kumeden TURETILIR; ucuncu bir liste yazilmaz.
+  assert.deepEqual([...reconciler.TERMINAL_MARKETPLACE_STATUSES].sort(), [...terminals].sort())
+  assert.deepEqual([...reconciler.IN_TRANSIT_MARKETPLACE_STATUSES], [
+    'Shipped',
+    'AtCollectionPoint',
+  ])
+})
+
+test('OLD-TRANSIT-4: TAZE Shipped kayit aday DEGIL (ana tur kapsiyor)', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  await seed(db, organizationId, accountId, {
+    packageId: 'P-FRESH',
+    orderNumber: 'O-FRESH',
+    orderDate: daysAgo(2),
+    marketplaceStatus: 'Shipped',
+    operationStatus: null,
+  })
+  assert.equal((await findCandidates(db, organizationId, accountId)).length, 0)
+})
+
+test('OLD-TRANSIT-5: golden Delivered olunca aday KUMESINDEN DUSER', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  const id = await seed(db, organizationId, accountId, {
+    packageId: '4019554630',
+    orderNumber: '11438161233',
+    orderDate: daysAgo(20),
+    marketplaceStatus: 'Shipped',
+    operationStatus: null,
+  })
+  // KANONIK zincir: normalize edilmis Delivered paketi persistSyncResult'a verilir.
+  await service.persistSyncResult(
+    db,
+    organizationId,
+    [
+      {
+        marketplace: 'Trendyol',
+        packageId: '4019554630',
+        shipmentPackageId: '4019554630',
+        externalOrderId: '4019554630',
+        orderNumber: '11438161233',
+        marketplaceStatus: 'Delivered',
+        orderDate: daysAgo(20).toISOString(),
+        customerFirstName: 'T',
+        customerLastName: 'M',
+        items: [],
+      },
+    ],
+    { complete: false, fetchedCount: 1, marketplaceAccountId: accountId },
+  )
+  const [row] = await db
+    .select({
+      marketplaceStatus: orders.marketplaceStatus,
+      operationStatus: orders.operationStatus,
+    })
+    .from(orders)
+    .where(eq(orders.id, id))
+  assert.equal(row.marketplaceStatus, 'Delivered', 'golden Delivered olur')
+  // Backlog erir: bir sonraki turda aday DEGIL.
+  assert.equal((await findCandidates(db, organizationId, accountId)).length, 0)
+})
+
+test('OLD-TRANSIT-6: rutin mutabakat retention saatini TAZELEMEZ', async () => {
+  const { db, organizationId, accountId } = await makeDb()
+  const id = await seed(db, organizationId, accountId, {
+    packageId: '4019554630',
+    orderNumber: '11438161233',
+    orderDate: daysAgo(20),
+    marketplaceStatus: 'Shipped',
+    operationStatus: null,
+    lastOperationalActivityAt: null,
+  })
+  await service.persistSyncResult(
+    db,
+    organizationId,
+    [
+      {
+        marketplace: 'Trendyol',
+        packageId: '4019554630',
+        orderNumber: '11438161233',
+        marketplaceStatus: 'Delivered',
+        orderDate: daysAgo(20).toISOString(),
+        customerFirstName: 'T',
+        items: [],
+      },
+    ],
+    { complete: false, fetchedCount: 1, marketplaceAccountId: accountId },
+  )
+  const [row] = await db
+    .select({
+      lastOperationalActivityAt: orders.lastOperationalActivityAt,
+      archivedAt: orders.archivedAt,
+    })
+    .from(orders)
+    .where(eq(orders.id, id))
+  assert.equal(row.lastOperationalActivityAt, null, 'retention saati DEGISMEZ')
+  assert.equal(row.archivedAt, null, 'arsiv politikasi DEGISMEZ')
+})
