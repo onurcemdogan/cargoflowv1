@@ -95,6 +95,19 @@ export interface TrackingCandidate {
   organizationId: string
   marketplace: string
   packageId: string
+  /**
+   * SERENDIP SORGU ANAHTARI. Sürat create isteği `WebSiparisKodu` alanına
+   * SİPARİŞ NUMARASINI yazar (server/index.mjs requestFieldMapping:
+   * WebSiparisKodu=orderNumber, ReferansNo=packageId). Takip ucu YALNIZ
+   * WebSiparisKodu kabul ettiği için sorgu bu değerle yapılmalıdır.
+   *
+   * ÜRETİM HATASI (golden 4065907241): sorgu packageId ile yapılıyordu →
+   * carrierQuerySucceeded=false, Gonderiler=0. Kayıt Serendip'te VARDI.
+   */
+  orderNumber: string
+  /** Çapraz doğrulama için kalıcı taşıyıcı kimlikleri. */
+  trackingNumber?: string | null
+  carrierBarcode?: string | null
 }
 
 type Db = Record<string, unknown>
@@ -140,6 +153,10 @@ export async function findTrackingReconcileCandidates(
       organizationId: orders.organizationId,
       marketplace: orders.marketplace,
       packageId: orders.packageId,
+      // Serendip sorgu anahtarı (WebSiparisKodu).
+      orderNumber: orders.orderNumber,
+      // Çapraz doğrulama için kalıcı taşıyıcı takip numarası.
+      trackingNumber: sql<string | null>`(select ${shipments.trackingNumber} from ${shipments} where ${shipments.organizationId} = ${orders.organizationId} and ${shipments.marketplace} = ${orders.marketplace} and ${shipments.packageId} = ${orders.packageId} limit 1)`,
     })
     .from(orders)
     .where(cursor ? and(base, gt(orders.id, cursor)) : base)
@@ -171,6 +188,7 @@ export interface TrackingDecision {
   applied: boolean
   reason:
     | 'no_response'
+    | 'identity_mismatch'
     | 'no_shipment_record'
     | 'unknown_status'
     | 'not_shipped_yet'
@@ -201,6 +219,14 @@ export function decideFromCarrierSnapshot(
   // Gönderi kaydı yoksa fiziksel kabul KANITI da yoktur.
   if (!(Number(snapshot.gonderilerLength) > 0)) {
     return { ...base, reason: 'no_shipment_record' }
+  }
+  // KİMLİK ÇAPRAZ DOĞRULAMASI: taşıyıcı bir takip numarası döndürdüyse ve
+  // elimizde kalıcı T.No varsa UYUŞMALIDIR. Uyuşmuyorsa YANLIŞ gönderiye
+  // bakıyoruz demektir → hiçbir güncelleme yapılmaz.
+  const returned = String(snapshot.trackingNumber ?? '').replace(/\D/g, '')
+  const persisted = String(candidate.trackingNumber ?? '').replace(/\D/g, '')
+  if (returned && persisted && returned !== persisted) {
+    return { ...base, reason: 'identity_mismatch' }
   }
   const code = String(snapshot.kargonunDurumuSayi ?? '').trim()
   const mapped = mapSuratCarrierStatus(code)

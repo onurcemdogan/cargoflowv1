@@ -73,6 +73,7 @@ async function main(): Promise<void> {
       archivedAt: orders.archivedAt,
       marketplace: orders.marketplace,
       organizationId: orders.organizationId,
+      orderNumber: orders.orderNumber,
     })
     .from(orders)
     .where(eq(orders.packageId, packageId))
@@ -98,31 +99,54 @@ async function main(): Promise<void> {
     : []
   const shipment = shipmentRows[0]
 
-  // ── SALT OKUMA: taşıyıcı takip sorgusu (mevcut uç) ───────────────────────
-  let carrier: Record<string, unknown> | null = null
+  // ── SALT OKUMA: TEK KANONİK TAŞIYICI SORGUSU ─────────────────────────────
+  //
+  // TAKİP UCUNUN KABUL ETTİĞİ TEK KİMLİK: WebSiparisKodu.
+  // Kanıt: resolveSuratTrackingQueryReference —
+  //   "KargoTakipHareketDetayi yalnız WEB_SIPARIS_KODU kabul eder".
+  // Kanıt: server/index.mjs requestFieldMapping (create) —
+  //   WebSiparisKodu = orderNumber · ReferansNo = packageId ·
+  //   OzelKargoTakipNo = 727 pazaryeri takip no.
+  //
+  // FALLBACK YOKTUR. packageId / T.No / barkod değerlerini WebSiparisKodu
+  // ALANINA koyup denemek SEMANTİK OLARAK YANLIŞTIR: bunlar Serendip'te
+  // farklı alanlardır ve bu uç için ayrı bir sorgu sözleşmesi KANITLANMADI.
+  // Bulunamazsa mevcut durum KORUNUR.
+  const queryReference = String(order?.orderNumber ?? '').trim()
+  const mask = (value: string) =>
+    value.length <= 4 ? '****' : `${value.slice(0, 3)}***${value.slice(-3)}`
+
   let carrierQuerySucceeded = false
-  try {
-    const response = await fetch(`${baseUrl}/api/shipments/surat/track`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ webSiparisKodu: packageId }),
-    })
-    const data = (await response.json()) as Record<string, unknown>
-    carrierQuerySucceeded = Boolean(response.ok && data?.ok !== false)
-    carrier = data
-  } catch (error) {
-    console.error('taşıyıcı sorgusu başarısız:', (error as Error).message)
+  let gonderilerCount = 0
+  let errorCategory: string | null = null
+  let log: Record<string, unknown> | null = null
+
+  if (!queryReference) {
+    errorCategory = 'missing_web_siparis_kodu'
+  } else {
+    try {
+      const response = await fetch(`${baseUrl}/api/shipments/surat/track`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ webSiparisKodu: queryReference }),
+      })
+      const data = (await response.json()) as Record<string, unknown>
+      if (!response.ok) errorCategory = `http_${response.status}`
+      else if (data?.ok === false)
+        errorCategory = String(data.errorCode ?? 'carrier_error')
+      log = (data?.trackingLog ?? data) as Record<string, unknown>
+      const list = log?.Gonderiler
+      gonderilerCount = Number(
+        log?.gonderilerLength ?? (Array.isArray(list) ? list.length : 0),
+      )
+      carrierQuerySucceeded = Boolean(response.ok && data?.ok !== false)
+    } catch {
+      errorCategory = 'transport_error'
+    }
   }
 
-  const trackingLog = (carrier?.trackingLog ??
-    carrier?.suratTrackingLog ??
-    carrier) as Record<string, unknown> | null
-  const gonderiler = trackingLog?.Gonderiler
-  const gonderilerCount = Number(
-    trackingLog?.gonderilerLength ??
-      (Array.isArray(gonderiler) ? gonderiler.length : 0),
-  )
-  const kargonunDurumuSayi = trackingLog?.KargonunDurumuSayi ?? null
+  const gonderiler = log?.Gonderiler
+  const kargonunDurumuSayi = log?.KargonunDurumuSayi ?? null
   const mapped = mapSuratCarrierStatus(
     kargonunDurumuSayi as string | number | undefined,
   )
@@ -130,26 +154,26 @@ async function main(): Promise<void> {
   const report = {
     mode: 'read-only',
     packageId,
-    tNo: shipment?.trackingNumber ?? null,
-    carrierBarcode: shipment?.barcode ?? null,
+    localShipmentExists: Boolean(shipment),
     localOperationStatus: order?.operationStatus ?? null,
     marketplaceStatus: order?.marketplaceStatus ?? null,
-    localShipmentExists: Boolean(shipment),
     archived: Boolean(order?.archivedAt),
+    // TEK sorgu kimliği — fallback YOK.
+    queryIdentityType: 'orderNumber_webSiparisKodu',
+    queryReference: mask(queryReference),
     carrierQuerySucceeded,
+    errorCategory,
     gonderilerCount,
-    kargonunDurumu: trackingLog?.KargonunDurumu ?? null,
+    kargonunDurumu: log?.KargonunDurumu ?? null,
     kargonunDurumuSayi,
-    sonHareketTarihi: trackingLog?.SonHareketTarihi ?? null,
+    sonHareketTarihi: log?.SonHareketTarihi ?? null,
     structuredAcceptanceFields: extractStructuredAcceptanceFields(
-      Array.isArray(gonderiler) && gonderiler.length > 0
-        ? gonderiler[0]
-        : trackingLog,
+      Array.isArray(gonderiler) && gonderiler.length > 0 ? gonderiler[0] : log,
     ),
     mappedCarrierStatus: mapped
       ? { key: mapped.key, shipped: mapped.shipped, delivered: mapped.delivered }
       : null,
-    // MEVCUT harita ile bu yanıt "Kargoya Verildi" üretir miydi?
+    // Gönderi BULUNMASI tek başına yeterli DEĞİL: shipped kodu da şart.
     wouldResolveHandedToCargo: Boolean(
       gonderilerCount > 0 && mapped?.shipped === true,
     ),

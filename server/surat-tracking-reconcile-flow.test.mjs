@@ -82,7 +82,11 @@ async function seedOrder(db, organizationId, overrides = {}, withShipment = true
       orderDate: NOW,
       ...overrides,
     })
-    .returning({ id: orders.id, packageId: orders.packageId })
+    .returning({
+      id: orders.id,
+      packageId: orders.packageId,
+      orderNumber: orders.orderNumber,
+    })
   if (withShipment) {
     await db.insert(shipments).values({
       organizationId,
@@ -411,7 +415,15 @@ test('SSP-LOAD-1/4: 1000 aday / batch 50 → sinirli turlarla HEPSI islenir', as
 
   let processed = 0
   for (let cycle = 0; cycle < 40; cycle += 1) {
-    const report = await runCycle(db, async () => snapshot('3', 1))
+    // KargoTakipHareketDetayi cogu zaman BarkodNo DONDURMEZ; capraz
+    // dogrulama bu durumda ATLANIR (bkz. decideFromCarrierSnapshot).
+    const report = await runCycle(db, async () => ({
+      ok: true,
+      gonderilerLength: 1,
+      kargonunDurumuSayi: '3',
+      trackingNumber: null,
+      sonHareketTarihi: null,
+    }))
     if (report.scanned === 0) break
     assert.ok(report.scanned <= 50, 'batch siniri asilmaz')
     processed += report.handedToCargo
@@ -813,4 +825,154 @@ test('SSP-CLI-READONLY: tani komutu YAZMA yapmaz', async () => {
   }
   assert.ok(cli.includes('mapSuratCarrierStatus'))
   assert.ok(cli.includes('wouldResolveHandedToCargo'))
+})
+
+// ═══ SORGU KIMLIGI (uretim kok nedeni) ════════════════════════════════════
+//
+// KANIT (server/index.mjs requestFieldMapping):
+//   WebSiparisKodu = orderNumber   ← Serendip kaydinin ANAHTARI
+//   ReferansNo     = packageId
+// Takip ucu YALNIZ WebSiparisKodu kabul eder. Sorgu packageId ile
+// yapiliyordu → carrierQuerySucceeded=false, Gonderiler=0 (golden 4065907241).
+
+test('SSP-QUERY-1: aday SERENDIP ANAHTARINI (orderNumber) tasir', async () => {
+  const { db, organizationId } = await makeDb()
+  await seedOrder(db, organizationId, {
+    orderNumber: GOLDEN.orderNumber,
+    packageId: GOLDEN.packageId,
+  })
+  const [candidate] = await reconciler.findTrackingReconcileCandidates(
+    db,
+    policy(),
+  )
+  assert.equal(candidate.orderNumber, GOLDEN.orderNumber, 'WebSiparisKodu')
+  assert.equal(candidate.packageId, GOLDEN.packageId, 'ReferansNo ayri kalir')
+  assert.notEqual(candidate.orderNumber, GOLDEN.marketplaceTracking)
+})
+
+test('SSP-QUERY-5: sorgu orderNumber ile yapilir (packageId DEGIL)', async () => {
+  const { db, organizationId } = await makeDb()
+  await seedOrder(db, organizationId, {
+    orderNumber: GOLDEN.orderNumber,
+    packageId: GOLDEN.packageId,
+  })
+  const seen = []
+  await runCycle(db, async (candidate) => {
+    seen.push(candidate.orderNumber)
+    return snapshot('2', 1)
+  })
+  assert.deepEqual(seen, [GOLDEN.orderNumber])
+})
+
+test('SSP-QUERY-6: donen kimlik UYUSMUYORSA guncelleme YOK', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await seedOrder(db, organizationId, { tNo: GOLDEN.tNo })
+  const report = await runCycle(db, async () => ({
+    ok: true,
+    gonderilerLength: 1,
+    kargonunDurumuSayi: '2',
+    // BASKA bir gonderinin takip numarasi.
+    trackingNumber: '99999999999999',
+    sonHareketTarihi: null,
+  }))
+  assert.equal(report.handedToCargo, 0)
+  assert.equal((await stageOf(db, order.id)).operationStatus, 'LABEL_PRINTED')
+})
+
+test('SSP-QUERY-6b: kimlik UYUSUYORSA kabul edilir', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await seedOrder(db, organizationId, { tNo: GOLDEN.tNo })
+  await runCycle(db, async () => snapshot('2', 1))
+  assert.equal((await stageOf(db, order.id)).operationStatus, 'HANDED_TO_CARGO')
+})
+
+test('SSP-QUERY-7: tum sorgular basarisiz → mevcut durum KORUNUR', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await seedOrder(db, organizationId)
+  const report = await runCycle(db, async () => null)
+  assert.equal(report.failed, 1)
+  assert.equal((await stageOf(db, order.id)).operationStatus, 'LABEL_PRINTED')
+})
+
+
+test('SSP-QUERY-9: Gonderiler=1 TEK BASINA handedToCargo URETMEZ', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await seedOrder(db, organizationId)
+  await runCycle(db, async () => snapshot('1', 1))
+  assert.equal((await stageOf(db, order.id)).operationStatus, 'LABEL_PRINTED')
+})
+
+test('SSP-QUERY-10: bulunan gonderi + shipped kod → handedToCargo', async () => {
+  const { db, organizationId } = await makeDb()
+  const order = await seedOrder(db, organizationId)
+  await runCycle(db, async () => snapshot('3', 1))
+  assert.equal((await stageOf(db, order.id)).operationStatus, 'HANDED_TO_CARGO')
+})
+
+test('SSP-QUERY-SINGLE-SOURCE: CLI ve scheduler AYNI takip ucunu kullanir', async () => {
+  const cli = readFileSync(
+    join(here, 'shipments', 'sspAcceptanceCheckCli.ts'),
+    'utf8',
+  )
+  const entry = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.ok(cli.includes('/api/shipments/surat/track'))
+  // Zamanlayici tarafi ayni referans cozumleyicisini kullanir.
+  assert.ok(entry.includes('resolveSuratTrackingQueryReference'))
+  assert.ok(entry.includes('webSiparisKodu: candidate.orderNumber'))
+})
+
+// ═══ FALLBACK YOK — TEK KANONIK SORGU KIMLIGI ═════════════════════════════
+//
+// KANIT: resolveSuratTrackingQueryReference —
+//   "KargoTakipHareketDetayi yalniz WEB_SIPARIS_KODU kabul eder".
+// Baska referans tipi icin AYRI sorgu sozlesmesi KANITLANMADI → fallback YOK.
+
+const cliSource = () =>
+  readFileSync(join(here, 'shipments', 'sspAcceptanceCheckCli.ts'), 'utf8')
+
+test('SSP-IDENTITY-CONTRACT: orderNumber → WebSiparisKodu (TEK kimlik)', async () => {
+  const cli = cliSource()
+  assert.ok(cli.includes("queryIdentityType: 'orderNumber_webSiparisKodu'"))
+  assert.ok(cli.includes('order?.orderNumber'))
+  assert.ok(cli.includes('webSiparisKodu: queryReference'))
+  // Tasiyici sorgusu TEK KEZ kurulur (deneme dongusu YOK).
+  // Yorumdaki gecis sayilmaz: GERCEK cagri TEK olmali.
+  assert.equal((cli.match(/await fetch\(/g) ?? []).length, 1)
+})
+
+test('SSP-IDENTITY-NO-FALLBACK-1: packageId WebSiparisKodu olarak DENENMEZ', async () => {
+  const cli = cliSource()
+  assert.equal(cli.includes('webSiparisKodu: packageId'), false)
+  assert.equal(/identityType:\s*'packageId/.test(cli), false)
+  // Deneme matrisi kaldirildi.
+  assert.equal(cli.includes('attempts'), false)
+})
+
+test('SSP-IDENTITY-NO-FALLBACK-2: T.No WebSiparisKodu olarak DENENMEZ', async () => {
+  const cli = cliSource()
+  assert.equal(/webSiparisKodu:\s*shipment/.test(cli), false)
+  assert.equal(/identityType:\s*'carrierTNo/.test(cli), false)
+})
+
+test('SSP-IDENTITY-NO-FALLBACK-3: barkod WebSiparisKodu olarak DENENMEZ', async () => {
+  const cli = cliSource()
+  assert.equal(/identityType:\s*'carrierBarcode/.test(cli), false)
+  assert.equal(cli.includes("identityType: 'carrierBarcode'"), false)
+})
+
+test('SSP-IDENTITY-NO-FALLBACK-4: reconciler de TEK kimlik kullanir', async () => {
+  const entry = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.ok(entry.includes('webSiparisKodu: candidate.orderNumber'))
+  assert.equal(entry.includes('webSiparisKodu: candidate.packageId'), false)
+  // CLI ve zamanlayici AYNI ucu ve AYNI kimligi kullanir.
+  assert.ok(cliSource().includes('/api/shipments/surat/track'))
+})
+
+test('SSP-QUERY-DIAG: hata kategorisi raporlanir, SECRET/PII yok', async () => {
+  const cli = cliSource()
+  assert.ok(cli.includes('errorCategory'))
+  assert.ok(cli.includes('queryReference: mask(queryReference)'))
+  for (const forbidden of ['kullaniciAdi', 'sifre', 'password', 'customerName']) {
+    assert.equal(cli.includes(`${forbidden}:`), false, forbidden)
+  }
 })
