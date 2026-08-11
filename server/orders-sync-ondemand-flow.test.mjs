@@ -330,13 +330,21 @@ test('8) 429 için SINIRLI (bounded) retry yapılır, sonsuz döngü YOK', async
     },
   })
 
-  // Sync başarısızdır ama sonsuz retry OLMAZ: her (status,page) için tam
-  // 1 ilk deneme + 3 retry = 4 istek (retryDelaysMs uzunluğu 3).
+  // Sync başarısızdır ama retry SONSUZ DEĞİLDİR. İki bağımsız sınır çarpılır:
+  //   · istek seviyesi : 1 ilk deneme + 3 retry = 4 (TRENDYOL_ORDER_RETRY_DELAYS_MS)
+  //   · statü seviyesi : 1 ilk geçiş  + 3 retry = 4 (TRENDYOL_STATUS_RETRY_DELAYS_MS)
+  // → aynı (status,page) anahtarı için ÜST SINIR 4 × 4 = 16 istek.
+  // Kalıcı 429'da sayfa devamlılığı devreye girmez (sayfa 0 hiç alınamadı),
+  // bu yüzden her statü yeniden denemesi yine sayfa 0'ı ister. Toplam senkron
+  // bütçesi (TRENDYOL_STATUS_RETRY_BUDGET_MS) bu üst sınırı DAHA DA kısabilir.
   assert.equal(body.ok, false, 'kalıcı 429 sync\'i başarısız kılar')
   const createdPage0 = attempts.get('Created|0')
-  assert.equal(createdPage0, 4, 'Created/page0 için 1 + 3 retry (bounded)')
+  assert.ok(
+    createdPage0 >= 4,
+    `Created/page0 istek seviyesi retry uygulandı (${createdPage0})`,
+  )
   for (const [key, count] of attempts) {
-    assert.ok(count <= 4, `${key} retry sınırı aşmadı (${count})`)
+    assert.ok(count <= 16, `${key} retry sınırı aşmadı (${count})`)
   }
 })
 
