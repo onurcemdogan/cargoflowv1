@@ -315,3 +315,229 @@ test('ACCOUNT-DIAG-SCOPE: tani araci hala SALT OKUNUR ve kanonik secim yapar', (
     assert.equal(code.includes(forbidden), false, forbidden)
   }
 })
+
+// ═══ TEMIZLIK UYGUNLUK DENETIMI (SALT OKUNUR, SILME YOK) ══════════════════
+//
+// URETIM: duplicatePackageCount=964 · duplicateRowCount=1929
+//         null_shadow=334 · active_plus_legacy=630
+// 2 x 964 = 1928 oldugundan EN AZ BIR grup 3 satirli (anomali).
+//
+// KRITIK KISIT: shipments/shipment_operations dogal anahtari
+// (org, marketplace, package_id) — marketplace_account_id VEYA order_id
+// ICERMEZ. Tasiyici kaydi TEK BIR duplicate satira ATFEDILEMEZ; bu yuzden
+// paket duzeyinde raporlanir ve MUHAFAZAKAR yorumlanir.
+
+const eligibility = await import('./orders/duplicateCleanupEligibility.ts')
+
+const row = (overrides = {}) => ({
+  id: `row-${randomBytes(3).toString('hex')}`,
+  marketplaceAccountId: 'legacy-1',
+  role: 'legacy',
+  marketplaceStatus: 'Picking',
+  operationStatus: 'NEW',
+  archived: false,
+  orderLineCount: 1,
+  ...overrides,
+})
+
+const clean = { shipments: 0, shipmentOperations: 0 }
+
+test('ELIGIBILITY-1: aktif karsiligi olan TEMIZ legacy satir potansiyel aday', () => {
+  const verdict = eligibility.evaluateGroupEligibility({
+    duplicateClass: 'active_plus_legacy',
+    rowCount: 2,
+    rows: [
+      row({ id: 'active-1', marketplaceAccountId: 'active-1', role: 'active' }),
+      row({ id: 'legacy-row', marketplaceAccountId: 'legacy-1' }),
+    ],
+    packageCarrier: clean,
+    inactiveAccountIds: ['legacy-1'],
+  })
+  assert.equal(verdict.eligible, true)
+  assert.equal(verdict.candidateRowId, 'legacy-row')
+  assert.deepEqual(verdict.reasons, [])
+})
+
+test('ELIGIBILITY-2: PAKET tasiyici bagimliligi grubu ENGELLER', () => {
+  for (const carrier of [
+    { shipments: 1, shipmentOperations: 0 },
+    { shipments: 0, shipmentOperations: 1 },
+  ]) {
+    const verdict = eligibility.evaluateGroupEligibility({
+      duplicateClass: 'active_plus_legacy',
+      rowCount: 2,
+      rows: [
+        row({ id: 'a', marketplaceAccountId: 'active-1', role: 'active' }),
+        row({ id: 'b' }),
+      ],
+      packageCarrier: carrier,
+      inactiveAccountIds: ['legacy-1'],
+    })
+    assert.equal(verdict.eligible, false)
+    assert.ok(
+      verdict.reasons.includes('package_has_shipment') ||
+        verdict.reasons.includes('package_has_shipment_operation'),
+    )
+  }
+})
+
+test('ELIGIBILITY-3: 2 satirdan fazla grup ANOMALI (aday DEGIL)', () => {
+  const verdict = eligibility.evaluateGroupEligibility({
+    duplicateClass: 'active_plus_legacy',
+    rowCount: 3,
+    rows: [
+      row({ id: 'a', marketplaceAccountId: 'active-1', role: 'active' }),
+      row({ id: 'b' }),
+      row({ id: 'c', marketplaceAccountId: null, role: 'null_shadow' }),
+    ],
+    packageCarrier: clean,
+    inactiveAccountIds: ['legacy-1'],
+  })
+  assert.equal(verdict.eligible, false)
+  assert.ok(verdict.reasons.includes('multi_row_group'))
+})
+
+test('ELIGIBILITY-4: aktif karsilik YOKSA aday DEGIL', () => {
+  const verdict = eligibility.evaluateGroupEligibility({
+    duplicateClass: 'active_plus_legacy',
+    rowCount: 2,
+    rows: [row({ id: 'a' }), row({ id: 'b', marketplaceAccountId: 'legacy-2' })],
+    packageCarrier: clean,
+    inactiveAccountIds: ['legacy-1', 'legacy-2'],
+  })
+  assert.equal(verdict.eligible, false)
+  assert.ok(verdict.reasons.includes('no_active_counterpart'))
+})
+
+test('ELIGIBILITY-5: legacy hesap PASIF degilse aday DEGIL', () => {
+  const verdict = eligibility.evaluateGroupEligibility({
+    duplicateClass: 'active_plus_legacy',
+    rowCount: 2,
+    rows: [
+      row({ id: 'a', marketplaceAccountId: 'active-1', role: 'active' }),
+      row({ id: 'b', marketplaceAccountId: 'other-active' }),
+    ],
+    packageCarrier: clean,
+    inactiveAccountIds: [],
+  })
+  assert.equal(verdict.eligible, false)
+  assert.ok(verdict.reasons.includes('account_not_inactive'))
+})
+
+test('ELIGIBILITY-6: arsivli aday satir ENGELLENIR', () => {
+  const verdict = eligibility.evaluateGroupEligibility({
+    duplicateClass: 'null_shadow',
+    rowCount: 2,
+    rows: [
+      row({ id: 'a', marketplaceAccountId: 'active-1', role: 'active' }),
+      row({ id: 'b', marketplaceAccountId: null, role: 'null_shadow', archived: true }),
+    ],
+    packageCarrier: clean,
+    inactiveAccountIds: [],
+  })
+  assert.equal(verdict.eligible, false)
+  assert.ok(verdict.reasons.includes('archived_row'))
+})
+
+test('ELIGIBILITY-7: toplu rapor sinif ve rol kirilimini DOGRU uretir', async () => {
+  const db = await makeDb()
+  const { organizationId, activeId, legacyId } = await makeOrg(db)
+
+  // (1) active + legacy, TEMIZ → aday
+  await seedRow(db, organizationId, activeId, {
+    packageId: 'P-CLEAN',
+    orderNumber: 'O-CLEAN',
+    marketplaceStatus: 'Delivered',
+  })
+  await seedRow(db, organizationId, legacyId, {
+    packageId: 'P-CLEAN',
+    orderNumber: 'O-CLEAN',
+  })
+
+  // (2) active + legacy, PAKETTE gonderi var → engelli
+  await seedRow(db, organizationId, activeId, {
+    packageId: 'P-SHIP',
+    orderNumber: 'O-SHIP',
+    marketplaceStatus: 'Delivered',
+  })
+  await seedRow(db, organizationId, legacyId, {
+    packageId: 'P-SHIP',
+    orderNumber: 'O-SHIP',
+  })
+  await db.insert(shipments).values({
+    organizationId,
+    marketplace: 'Trendyol',
+    packageId: 'P-SHIP',
+    provider: 'surat-kargo',
+    source: 'local_create',
+    status: 'created',
+  })
+
+  // (3) NULL golge + active, TEMIZ → aday
+  await seedRow(db, organizationId, activeId, {
+    packageId: 'P-SHADOW',
+    orderNumber: 'O-SHADOW',
+    marketplaceStatus: 'Delivered',
+  })
+  await seedRow(db, organizationId, null, {
+    packageId: 'P-SHADOW',
+    orderNumber: 'O-SHADOW',
+  })
+
+  const report = await eligibility.buildCleanupEligibilityReport(db, {
+    organizationId,
+    activeAccountIds: [activeId],
+    inactiveAccountIds: [legacyId],
+  })
+
+  assert.equal(report.totalDuplicatePackages, 3)
+  assert.equal(report.totalDuplicateRows, 6)
+  assert.equal(report.classAggregates.active_plus_legacy.packageCount, 2)
+  assert.equal(report.classAggregates.null_shadow.packageCount, 1)
+  // Tasiyici bagimliligi PAKET duzeyinde: her iki satir da isaretlenir.
+  assert.equal(report.classAggregates.active_plus_legacy.rowsWithShipments, 2)
+  assert.equal(report.classAggregates.active_plus_legacy.activeRowsWithShipment, 1)
+  assert.equal(report.classAggregates.active_plus_legacy.legacyRowsWithShipment, 1)
+  assert.equal(
+    report.classAggregates.active_plus_legacy.legacyRowsWithNoCarrierChildren,
+    1,
+  )
+  assert.equal(report.cleanupEligibleCount, 2, 'temiz iki grup')
+  assert.equal(report.blockedCount, 1)
+  assert.equal(report.blockedReasons.package_has_shipment, 1)
+  assert.equal(report.multiRowGroups.count, 0)
+  assert.ok(report.carrierAttribution.includes('ATFEDILEMEZ'))
+})
+
+test('ELIGIBILITY-8: 3 satirli grup RAPORLANIR ve adaylıktan CIKAR', async () => {
+  const db = await makeDb()
+  const { organizationId, activeId, legacyId } = await makeOrg(db)
+  await seedRow(db, organizationId, activeId, { packageId: 'P-MULTI', orderNumber: 'O-MULTI' })
+  await seedRow(db, organizationId, legacyId, { packageId: 'P-MULTI', orderNumber: 'O-MULTI' })
+  await seedRow(db, organizationId, null, { packageId: 'P-MULTI', orderNumber: 'O-MULTI' })
+
+  const report = await eligibility.buildCleanupEligibilityReport(db, {
+    organizationId,
+    activeAccountIds: [activeId],
+    inactiveAccountIds: [legacyId],
+  })
+  assert.equal(report.multiRowGroups.count, 1)
+  assert.equal(report.multiRowGroups.samples[0].rowCount, 3)
+  assert.equal(report.multiRowGroups.samples[0].packageId, 'P-MULTI')
+  assert.equal(report.cleanupEligibleCount, 0)
+  assert.equal(report.blockedReasons.multi_row_group, 1)
+})
+
+test('ELIGIBILITY-9: denetim SALT OKUNUR (yazma yuzeyi YOK)', () => {
+  const source = readFileSync('server/orders/duplicateCleanupEligibility.ts', 'utf8')
+  const code = source
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith('//') && !line.trim().startsWith('*'))
+    .join('\n')
+  for (const forbidden of ['.update(', '.insert(', '.delete(', 'transaction(']) {
+    assert.equal(code.includes(forbidden), false, forbidden)
+  }
+  assert.ok(code.includes('.select('))
+  // CLI temizlik YAPMADIGINI acikca bildirir.
+  assert.ok(AUDIT_CLI_SOURCE.includes('cleanupPerformed: false'))
+})

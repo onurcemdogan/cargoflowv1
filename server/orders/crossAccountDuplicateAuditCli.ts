@@ -19,6 +19,7 @@ import {
   auditCrossAccountDuplicates,
   countNullAccountRows,
 } from './crossAccountDuplicateAudit.ts'
+import { buildCleanupEligibilityReport } from './duplicateCleanupEligibility.ts'
 
 function parseArg(name: string): string | undefined {
   const index = process.argv.indexOf(`--${name}`)
@@ -91,6 +92,17 @@ async function main(): Promise<void> {
   })
   const nullAccountRowCount = await countNullAccountRows(db, organizationId)
 
+  // ── TEMİZLİK UYGUNLUĞU (SALT SINIFLANDIRMA — SİLME YOK) ──────────────────
+  const inactiveAccountIds = accounts
+    .filter((account: { isActive: boolean }) => !account.isActive)
+    .map((account: { accountId: string }) => account.accountId)
+  const eligibility = await buildCleanupEligibilityReport(db, {
+    organizationId,
+    activeAccountIds,
+    inactiveAccountIds,
+    sampleLimit,
+  })
+
   console.log(
     JSON.stringify(
       {
@@ -99,7 +111,9 @@ async function main(): Promise<void> {
         accounts,
         activeAccountIds,
         nullAccountRowCount,
+        inactiveAccountIds,
         ...duplicates,
+        eligibility,
         // TEMİZLİK BU KOMUTUN İŞİ DEĞİLDİR (ayrı, onaylı tur).
         cleanupPerformed: false,
       },
