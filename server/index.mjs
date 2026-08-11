@@ -10041,6 +10041,121 @@ function isRetryableTrendyolStatus(statusCode) {
   return code >= 500 && code <= 599
 }
 
+// ═══ GEÇİCİ STATÜ HATASI İÇİN SINIRLI YENİDEN DENEME ══════════════════════
+//
+// ÜRETİM GÖZLEMİ: "Şimdi Yenile" bazen "Senkron kısmi kaldı — Delivered
+// yeniden denenebilir" uyarısı veriyor; kullanıcı biraz sonra tekrar
+// bastığında aynı istek sorunsuz tamamlanıyor. Yani hata GEÇİCİ.
+//
+// Tek istek düzeyinde zaten sınırlı bir backoff var (`callTrendyolOrders`:
+// 429/5xx/ağ). Eksik olan STATÜ düzeyinde bir tekrar: bir statü tüm sayfaları
+// bitiremeden düşerse, o statü komple başarısız sayılıyor ve kullanıcı butona
+// yeniden basmak zorunda kalıyordu (bu da TÜM statüleri baştan çekiyordu).
+//
+// Bu geçiş YALNIZ DÜŞEN STATÜYÜ yeniden dener:
+//   · başarılı statüler TEKRAR ÇEKİLMEZ,
+//   · sayfalama düşen SAYFADAN devam eder (`failedPage` + `partialContent`),
+//   · yalnız retryable sınıf denenir (`isRetryableTrendyolStatus`),
+//   · 429'da Retry-After'a saygı gösterilir ama ÜST SINIR aşılmaz.
+const TRENDYOL_STATUS_RETRY_DELAYS_MS = [1000, 3000, 7000]
+// Kullanıcı butonu gereksiz uzun beklemesin: tek bekleme için sert tavan.
+const TRENDYOL_STATUS_RETRY_MAX_DELAY_MS = 8000
+// TÜM SENKRON İÇİN TEK BÜTÇE. Statü sayısı kadar (10×11 sn) beklemek kabul
+// EDİLEMEZ; bütçe dolduğunda kalan statüler yeniden DENENMEZ ve mevcut kısmi
+// sonuç sözleşmesi aynen raporlanır.
+const TRENDYOL_STATUS_RETRY_BUDGET_MS = 10_000
+
+function getStatusRetryBudgetMs() {
+  // DİKKAT: tanımsız/boş değer `Number('')` ile 0'a düşerdi ve yeniden
+  // denemeyi TAMAMEN kapatırdı. Boş değer VARSAYILANA düşer.
+  const raw = String(process.env.TRENDYOL_STATUS_RETRY_BUDGET_MS ?? '').trim()
+  if (!raw) return TRENDYOL_STATUS_RETRY_BUDGET_MS
+  const parsed = Number(raw)
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return TRENDYOL_STATUS_RETRY_BUDGET_MS
+  }
+  return Math.min(parsed, 30_000)
+}
+
+function getStatusRetryDelaysMs() {
+  const raw = String(process.env.TRENDYOL_STATUS_RETRY_DELAYS_MS ?? '').trim()
+  if (!raw) return TRENDYOL_STATUS_RETRY_DELAYS_MS
+  const parsed = raw
+    .split(',')
+    .map((part) => Number(part.trim()))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+  return parsed.length > 0 ? parsed.slice(0, 3) : TRENDYOL_STATUS_RETRY_DELAYS_MS
+}
+
+function resolveStatusRetryDelayMs(attempt, result) {
+  const delays = getStatusRetryDelaysMs()
+  const base = delays[Math.min(attempt, delays.length - 1)] ?? 0
+  const retryAfterMs = Number(result?.debug?.retryAfterMs ?? 0)
+  // 429 için Retry-After'a saygı; her hâlükârda üst sınır uygulanır.
+  const respected =
+    Number(result?.statusCode) === 429 && Number.isFinite(retryAfterMs)
+      ? Math.max(base, retryAfterMs)
+      : base
+  const jitter = Math.floor(Math.random() * Math.min(base, 500))
+  return Math.min(respected + jitter, TRENDYOL_STATUS_RETRY_MAX_DELAY_MS)
+}
+
+/**
+ * Bir statü geçişini SINIRLI sayıda yeniden dener. Denemeler tükenirse SON
+ * sonuç aynen döner (mevcut kısmi/başarısız sözleşmesi KORUNUR).
+ */
+async function retryTrendyolStatusPass(
+  credentials,
+  query,
+  status,
+  firstResult,
+  deadlineMs = Number.POSITIVE_INFINITY,
+) {
+  const delays = getStatusRetryDelaysMs()
+  let result = firstResult
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    // KALICI HATA (400/401/403/parser) TEKRAR DENENMEZ.
+    if (!isRetryableTrendyolStatus(result.statusCode)) return result
+    const waitMs = resolveStatusRetryDelayMs(attempt, result)
+    // BÜTÇE AŞILIYORSA DENEME YOK: kullanıcı süresiz bekletilmez.
+    if (Date.now() + waitMs > deadlineMs) {
+      return {
+        ...result,
+        debug: {
+          ...(result.debug ?? {}),
+          statusRetryAttempts: attempt,
+          statusRetryBudgetExhausted: true,
+        },
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
+    // SAYFA DEVAMLILIĞI: düşen sayfadan devam et, öncekileri taşı.
+    const resumeQuery = { ...query }
+    if (Number.isFinite(Number(result.failedPage))) {
+      resumeQuery.page = Number(result.failedPage)
+      resumeQuery.carryOverContent = Array.isArray(result.partialContent)
+        ? result.partialContent
+        : []
+    }
+    const retried = await callTrendyolOrdersForStatus(
+      credentials,
+      resumeQuery,
+      status,
+    )
+    if (retried.ok) {
+      return {
+        ...retried,
+        debug: { ...(retried.debug ?? {}), statusRetryAttempts: attempt + 1 },
+      }
+    }
+    result = retried
+  }
+  return {
+    ...result,
+    debug: { ...(result.debug ?? {}), statusRetryAttempts: delays.length },
+  }
+}
+
 async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
   const statuses = normalizeTrendyolStatusQuery(query)
 
@@ -10059,6 +10174,22 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
     }
     const result = await callTrendyolOrdersForStatus(credentials, query, status)
     results.push({ status, result })
+  }
+
+  // GEÇİCİ HATA İÇİN İKİNCİ ŞANS: yalnız DÜŞEN statüler yeniden denenir.
+  // Başarılı statüler TEKRAR ÇEKİLMEZ (gereksiz istek ve süre yok).
+  const retryDeadlineMs = Date.now() + getStatusRetryBudgetMs()
+  for (const entry of results) {
+    if (entry.result.ok) continue
+    if (!isRetryableTrendyolStatus(entry.result.statusCode)) continue
+    if (Date.now() >= retryDeadlineMs) break
+    entry.result = await retryTrendyolStatusPass(
+      credentials,
+      query,
+      entry.status,
+      entry.result,
+      retryDeadlineMs,
+    )
   }
 
   const successes = results.filter((entry) => entry.result.ok)
@@ -10211,7 +10342,9 @@ async function callTrendyolOrdersForStatus(credentials, query, status) {
       ...query,
       status,
       statuses: undefined,
-      page: undefined,
+      // SAYFA DEVAMLILIĞI: yeniden deneme düşen sayfayı geçtiyse oradan
+      // devam edilir. Normal çağrılarda `query.page` tanımsızdır → sayfa 0.
+      page: query.page,
     })
   }
 
@@ -10232,12 +10365,15 @@ async function callTrendyolOrdersForStatus(credentials, query, status) {
     })
   }
 
+  // PENCERELİ DAL: yeniden deneme sayfa devamlılığı KULLANMAZ (pencere
+  // bölünmesi devralınan içeriği belirsizleştirir); baştan çalışır.
+  const windowQuery = { ...query, carryOverContent: undefined }
   const windowResults = []
   let cursor = startDate
   while (cursor <= endDate) {
     const windowEnd = Math.min(endDate, cursor + TRENDYOL_ACTIVE_STATUS_WINDOW_MS)
     const result = await callTrendyolOrdersAllPages(credentials, {
-      ...query,
+      ...windowQuery,
       startDate: cursor,
       endDate: windowEnd,
       status,
@@ -10343,19 +10479,32 @@ async function callTrendyolOrdersAllPages(credentials, query = {}) {
     })
 
     if (!pageResult.ok) {
+      // SAYFA DEVAMLILIĞI: o ana kadar TOPLANAN içerik ve BAŞARISIZ sayfa
+      // numarası taşınır. Böylece statü seviyesindeki yeniden deneme, sayfa
+      // 0'dan başlamak yerine YALNIZ düşen sayfadan devam edebilir.
       return {
         ...pageResult,
         ok: false,
         message: `Trendyol sayfalı sipariş çekimi eksik kaldı. ${page}. sayfa alınamadı: ${pageResult.message}`,
+        partialContent: combinedContent,
+        failedPage: page,
         debug: {
           ...pageResult.debug,
           pageRequests,
+          failedPage: page,
+          partialContentCount: combinedContent.length,
         },
       }
     }
 
     combinedContent.push(...pageContent)
   }
+
+  // Önceki denemeden devralınan sayfalar (varsa) BAŞA eklenir; tekrar eden
+  // paketler zaten kanonik freshness/dedup birleştirmesinden geçer.
+  const resumedContent = Array.isArray(query.carryOverContent)
+    ? [...query.carryOverContent, ...combinedContent]
+    : combinedContent
 
   return {
     ...firstResult,
@@ -10365,8 +10514,8 @@ async function callTrendyolOrdersAllPages(credentials, query = {}) {
         : firstResult.message,
     data: {
       ...firstResult.data,
-      content: combinedContent,
-      totalElements: combinedContent.length,
+      content: resumedContent,
+      totalElements: resumedContent.length,
       totalPages: 1,
       fetchedPages: maxPages,
       originalTotalPages: totalPages,
@@ -10376,7 +10525,8 @@ async function callTrendyolOrdersAllPages(credentials, query = {}) {
       pageRequests,
       fetchedPages: maxPages,
       originalTotalPages: totalPages,
-      combinedContentCount: combinedContent.length,
+      combinedContentCount: resumedContent.length,
+      resumedFromPage: Number.isFinite(Number(query.page)) ? Number(query.page) : 0,
     },
   }
 }
