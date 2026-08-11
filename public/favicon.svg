@@ -1,28 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="CargoFlow">
   <!--
-    CargoFlow tarayıcı sekmesi simgesi. Logo MARKASI (hız çizgileri + kamyon)
-    16 px'te okunabilir kalacak şekilde sadeleştirilmiştir: ince detay yok,
-    kare oran (viewBox 64×64) → sekmede EZİLMEZ, beyaz boşluk bırakmaz.
-    Uygulama içi CargoFlow görselleri bu dosyadan BAĞIMSIZDIR.
+    CargoFlow tarayıcı sekmesi simgesi: CF monogramı (beyaz "C" halkası +
+    turkuaz "F"), koyu lacivert zeminde. Geometri logonun oranlarından
+    ölçeklenmiştir; kare viewBox (64×64) → sekmede EZİLMEZ, beyaz boşluk
+    bırakmaz. Uygulama içi CargoFlow görselleri bu dosyadan BAĞIMSIZDIR.
   -->
-  <rect width="64" height="64" rx="14" fill="#0E2036" />
-  <!-- Hız çizgileri (logodaki mavi akış). -->
-  <g fill="#2F6BFF">
-    <rect x="4" y="24" width="14" height="4.5" rx="2.25" />
-    <rect x="7" y="33" width="11" height="4.5" rx="2.25" />
-    <rect x="4" y="42" width="14" height="4.5" rx="2.25" />
-  </g>
-  <!-- Kamyon: kasa + kabin tek siluet (beyaz), tekerlekler ayrık. -->
+  <rect width="64" height="64" rx="13" fill="#0B1B3E" />
+  <!--
+    "C": sağ tarafı açık halka. Yay sağ-üstten SOL taraf üzerinden sağ-alta
+    gider; kalan sağ-alt bölümü "F" zaten örter (logodaki katmanlanma).
+  -->
   <path
-    fill="#FFFFFF"
-    d="M22 19h19a2 2 0 0 1 2 2v6h5.6a2 2 0 0 1 1.62.83l4.4 6.06a2 2 0 0 1 .38 1.17V43a2 2 0 0 1-2 2h-2.2a6.6 6.6 0 0 0-12.8 0h-2.6a6.6 6.6 0 0 0-12.8 0H22a2 2 0 0 1-2-2V21a2 2 0 0 1 2-2Zm21 12h9.1l-3.5-4.8A1 1 0 0 0 47.8 26H43v5Z"
+    d="M36.8 20.3A12.4 12.4 0 1 0 36.8 40.7"
+    fill="none"
+    stroke="#FFFFFF"
+    stroke-width="6"
   />
-  <g fill="#FFFFFF">
-    <circle cx="29" cy="46.5" r="4.6" />
-    <circle cx="45" cy="46.5" r="4.6" />
-  </g>
-  <g fill="#0E2036">
-    <circle cx="29" cy="46.5" r="1.9" />
-    <circle cx="45" cy="46.5" r="1.9" />
+  <!-- "F": dikey gövde + üst kol tek parça; uçlar logodaki gibi eğik kesim. -->
+  <g fill="#21D4EE">
+    <path d="M26.2 24.7H52l-3.5 5.7H31.9v19.8l-5.7-4.4z" />
+    <path d="M31.9 33.2h15.2l-3.2 5.6H31.9z" />
   </g>
 </svg>
