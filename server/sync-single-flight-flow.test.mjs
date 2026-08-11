@@ -18,7 +18,9 @@ import test from 'node:test'
 //
 // Retry sozlesmesi, statu esleme, Surat/SSP, etiket ve retention KAPSAM DISI.
 
-const SOURCE = readFileSync('server/index.mjs', 'utf8')
+// Satir sonu (CRLF/LF) checkout ayarina gore degisebilir; sozlesme
+// assertion'lari bundan ETKILENMEMELI.
+const SOURCE = readFileSync('server/index.mjs', 'utf8').split('\r\n').join('\n')
 
 /** Ucus kayit defterini index.mjs'ten IZOLE calistirir (boot YOK). */
 function loadFlight() {
