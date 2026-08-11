@@ -2619,7 +2619,98 @@ async function syncTrendyolOrdersForOrganization(organizationId) {
     fetchedCount: normalized.orders.length,
     marketplaceAccountId,
   })
+
+  // ESKİ AÇIK KAYIT MUTABAKATI (CASE OLD-B). Yukarıdaki tur tarih parametresi
+  // GÖNDERMEZ → `callTrendyolOrders` varsayılanı SON 7 GÜNDÜR. 7 günden eski,
+  // hâlâ LABEL_READY/LABEL_PRINTED olan kayıtlar bu kapsama HİÇ girmez ve
+  // pazaryerinde Delivered olsalar bile DB'de `Picking` kalırdı. Tüm geçmişi
+  // her turda çekmek yerine SINIRLI bir aday kümesi tek tek doğrulanır.
+  await reconcileStaleOpenTrendyolOrders({
+    db,
+    service,
+    organizationId,
+    marketplaceAccountId,
+    credentials,
+  })
   return { synced: true }
+}
+
+// Bir sonraki turun keyset konumu (süreç içi). Kalıcı değildir: yeniden
+// başlatmada baştan taranır — bu güvenlidir, yalnız sıra kaybolur.
+let staleReconcileCursor = null
+
+// SINIRLI ESKİ AÇIK KAYIT MUTABAKATI.
+//
+// Aday seçimi ve sınırlar `staleOpenReconciler.ts`tedir. Sorgu KANITLI
+// salt-okunur sözleşmedir (`orderNumber` + 30 günü aşmayan pencere) ve
+// kalıcılaştırma KANONİK zincirdir: normalizeTrendyolOrders →
+// persistSyncResult (aktif hesap kapsamı, complete:false). Yeni statü
+// eşlemesi veya ikinci bir persistence YOKTUR.
+async function reconcileStaleOpenTrendyolOrders(context) {
+  try {
+    const reconciler = await import('./orders/staleOpenReconciler.ts')
+    const policy = reconciler.resolveStaleReconcilePolicy()
+    if (!policy.enabled) return
+
+    const now = Date.now()
+    const candidates = await reconciler.findStaleOpenCandidates(context.db, {
+      organizationId: context.organizationId,
+      marketplaceAccountId: context.marketplaceAccountId,
+      limit: policy.batchSize,
+      staleBefore: new Date(now - policy.staleAfterMs),
+      cursor: staleReconcileCursor,
+    })
+    staleReconcileCursor = reconciler.advanceCursor(candidates, policy.batchSize)
+    if (candidates.length === 0) return
+
+    const report = await reconciler.reconcileStaleOpenOrders(
+      policy,
+      candidates,
+      // SALT OKUMA: tek sipariş, statü filtresi YOK, tek sayfa. Pencere
+      // sipariş tarihine çapalanır ve Trendyol'un 30 gün sınırını AŞMAZ.
+      async (candidate) => {
+        const orderDateMs = candidate.orderDate?.getTime?.() ?? now
+        const startDate = orderDateMs - 24 * 60 * 60 * 1000
+        const endDate = Math.min(now, startDate + 29 * 24 * 60 * 60 * 1000)
+        const response = await callTrendyolOrders(context.credentials, {
+          orderNumber: candidate.orderNumber,
+          startDate,
+          endDate,
+          size: 200,
+          page: 0,
+        })
+        if (!response.ok) throw new Error('trendyol_query_failed')
+        return getTrendyolOrderPackagesArray(response.data)
+      },
+      // KANONİK KALICILAŞTIRMA — ana turla AYNI zincir.
+      async (packages) => {
+        const normalizedStale = normalizeTrendyolOrders({ content: packages })
+        if (normalizedStale.orders.length === 0) return
+        await context.service.persistSyncResult(
+          context.db,
+          context.organizationId,
+          normalizedStale.orders,
+          {
+            complete: false,
+            fetchedCount: normalizedStale.orders.length,
+            marketplaceAccountId: context.marketplaceAccountId,
+          },
+        )
+      },
+    )
+    // PII YOK: yalnız aggregate sayımlar.
+    console.log(
+      `[trendyol-sync] stale-open scanned=${report.scanned} ` +
+        `queried=${report.queried} persisted=${report.persisted} ` +
+        `failed=${report.failed} skipped=${report.skipped}`,
+    )
+  } catch (error) {
+    // BEST-EFFORT: bu geçiş ana senkronu ve uygulamayı DÜŞÜRMEZ.
+    console.error(
+      '[trendyol-sync] stale-open reconcile failed:',
+      error?.message,
+    )
+  }
 }
 
 // Senkron hedefleri: Trendyol kimlik bilgisi TANIMLI organizasyonlar.
