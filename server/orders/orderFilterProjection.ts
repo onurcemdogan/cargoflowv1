@@ -23,7 +23,10 @@
 import { and, asc, desc, eq, inArray } from 'drizzle-orm'
 import { orderLines, orders } from '../db/schema.ts'
 import { rowToOrder } from './orderMapper.ts'
-import { attachShipmentFromLoaded } from './orderPersistenceService.ts'
+import {
+  attachShipmentFromLoaded,
+  listOrders,
+} from './orderPersistenceService.ts'
 import { buildOrderWhere, resolvePageSize } from './orderRepository.ts'
 import { findShipmentsByPackageIds } from '../shipments/shipmentRepository.ts'
 import { findLatestOperationsByPackageIds } from '../shipments/shipmentOperationRepository.ts'
@@ -87,6 +90,112 @@ export interface FilteredProjection {
   instrumentation: ProjectionInstrumentation
 }
 
+/**
+ * FİLTRE BAĞIMLILIK PLANI.
+ *
+ * Her filtrenin GERÇEKTEN neye ihtiyaç duyduğu. Amaç: pasif bir filtre için
+ * ihtimale binaen payload yüklememek/çözmemek.
+ *
+ *   needsOrderLines        → sipariş satırları gerekir
+ *   needsShipment          → gönderi kaydı (ŞİFRE ÇÖZME) gerekir
+ *   needsShipmentOperation → operasyon kaydı (ŞİFRE ÇÖZME) gerekir
+ *   needsFullCandidateSet  → SQL'de ifade edilemez → tüm aday küme değerlenir
+ */
+export const FILTER_DEPENDENCY_PLAN = {
+  tab: { needsOrderLines: false, needsShipment: true, needsShipmentOperation: true, needsDecrypt: true, needsFullCandidateSet: true },
+  operationTab: { needsOrderLines: false, needsShipment: true, needsShipmentOperation: true, needsDecrypt: true, needsFullCandidateSet: true },
+  status: { needsOrderLines: false, needsShipment: true, needsShipmentOperation: true, needsDecrypt: true, needsFullCandidateSet: true },
+  cargo: { needsOrderLines: false, needsShipment: true, needsShipmentOperation: true, needsDecrypt: true, needsFullCandidateSet: true },
+  action: { needsOrderLines: false, needsShipment: true, needsShipmentOperation: true, needsDecrypt: true, needsFullCandidateSet: true },
+  cargoSlipQuery: { needsOrderLines: false, needsShipment: true, needsShipmentOperation: true, needsDecrypt: true, needsFullCandidateSet: true },
+  orderNumberQuery: { needsOrderLines: false, needsShipment: true, needsShipmentOperation: true, needsDecrypt: true, needsFullCandidateSet: true },
+  search: { needsOrderLines: true, needsShipment: true, needsShipmentOperation: true, needsDecrypt: true, needsFullCandidateSet: true },
+  // Ürün tarafı: gönderi/operasyon GEREKMEZ.
+  productQuery: { needsOrderLines: true, needsShipment: false, needsShipmentOperation: false, needsDecrypt: false, needsFullCandidateSet: true },
+  multiProduct: { needsOrderLines: true, needsShipment: false, needsShipmentOperation: false, needsDecrypt: false, needsFullCandidateSet: true },
+  // NİHAİ sonuç kümesi üzerinde çalışır.
+  sameProduct: { needsOrderLines: true, needsShipment: false, needsShipmentOperation: false, needsDecrypt: false, needsFullCandidateSet: true },
+  // Düz kolonlar; yine de normalizedToken eşitliği SQL '=' değildir.
+  marketplace: { needsOrderLines: false, needsShipment: false, needsShipmentOperation: false, needsDecrypt: false, needsFullCandidateSet: true },
+  customerQuery: { needsOrderLines: false, needsShipment: false, needsShipmentOperation: false, needsDecrypt: false, needsFullCandidateSet: true },
+  city: { needsOrderLines: false, needsShipment: false, needsShipmentOperation: false, needsDecrypt: false, needsFullCandidateSet: true },
+  district: { needsOrderLines: false, needsShipment: false, needsShipmentOperation: false, needsDecrypt: false, needsFullCandidateSet: true },
+  datePreset: { needsOrderLines: false, needsShipment: false, needsShipmentOperation: false, needsDecrypt: false, needsFullCandidateSet: true },
+} as const
+
+export type FilterKey = keyof typeof FILTER_DEPENDENCY_PLAN
+
+/** `all`/boş → filtre YOK (frontend `isAllFilter` semantiğiyle uyumlu). */
+function isActiveValue(value: unknown): boolean {
+  const token = String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+  return token !== '' && token !== 'all' && token !== 'tumu' && token !== 'tumtarihler'
+}
+
+export interface ExecutionPlan {
+  mode: 'fast' | 'canonical'
+  activeFilters: FilterKey[]
+  needsOrderLines: boolean
+  needsShipment: boolean
+  needsShipmentOperation: boolean
+  needsDecrypt: boolean
+}
+
+/**
+ * ÇALIŞMA YOLU PLANI.
+ *
+ * HIZLI YOL KOŞULU: kanonik değerlendirme gerektiren HİÇBİR filtre aktif
+ * değil. O zaman istek düz SQL LIMIT/OFFSET ile karşılanır ve 15k/50k/100k
+ * aday ASLA belleğe alınmaz.
+ *
+ * Aksi hâlde kanonik projeksiyon; fakat gönderi/operasyon yüklemesi YALNIZ
+ * aktif filtrelerin ihtiyacına göre yapılır (pasif filtre için ihtimale
+ * binaen decrypt YOK).
+ */
+export function planExecution(filters: OrderListFilters): ExecutionPlan {
+  const candidates: Array<[FilterKey, unknown]> = [
+    ['tab', filters.tab],
+    ['operationTab', filters.operationTab],
+    ['status', filters.status],
+    ['cargo', filters.cargo],
+    ['action', filters.action],
+    ['cargoSlipQuery', filters.cargoSlipQuery],
+    ['orderNumberQuery', filters.orderNumberQuery],
+    ['search', filters.search],
+    ['productQuery', filters.productQuery],
+    ['multiProduct', filters.multiProduct],
+    ['sameProduct', filters.sameProduct],
+    ['marketplace', filters.marketplace],
+    ['customerQuery', filters.customerQuery],
+    ['city', filters.city],
+    ['district', filters.district],
+    ['datePreset', filters.datePreset],
+  ]
+  const activeFilters = candidates
+    .filter(([, value]) => isActiveValue(value))
+    .map(([key]) => key)
+  const plan: ExecutionPlan = {
+    mode: activeFilters.length === 0 ? 'fast' : 'canonical',
+    activeFilters,
+    needsOrderLines: false,
+    needsShipment: false,
+    needsShipmentOperation: false,
+    needsDecrypt: false,
+  }
+  for (const key of activeFilters) {
+    const need = FILTER_DEPENDENCY_PLAN[key]
+    plan.needsOrderLines ||= need.needsOrderLines
+    plan.needsShipment ||= need.needsShipment
+    plan.needsShipmentOperation ||= need.needsShipmentOperation
+    plan.needsDecrypt ||= need.needsDecrypt
+  }
+  return plan
+}
+
 function now(): number {
   return Number(process.hrtime.bigint() / 1000n) / 1000
 }
@@ -113,6 +222,7 @@ async function buildCandidateViews(
   marketplaceAccountId: string | null | undefined,
   sort: 'orderDateDesc' | 'orderDateAsc',
   externalProcessing: { entries?: Record<string, unknown> } | null | undefined,
+  plan: ExecutionPlan,
 ): Promise<{
   views: Record<string, unknown>[]
   instrumentation: ProjectionInstrumentation
@@ -147,7 +257,8 @@ async function buildCandidateViews(
   // Sipariş satırları TEK sorguda. Kimlik listesi BIND EDİLMEZ: aynı kapsam
   // alt-sorgu olarak verilir → 65.535 parametre tavanı sorunu OLUŞMAZ.
   const scopedOrderIds = db.select({ id: orders.id }).from(orders).where(where)
-  const lineRows = (await db
+  const lineRows = (plan.needsOrderLines
+    ? await db
     .select()
     .from(orderLines)
     .where(
@@ -155,8 +266,9 @@ async function buildCandidateViews(
         eq(orderLines.organizationId, organizationId),
         inArray(orderLines.orderId, scopedOrderIds),
       ),
-    )) as Record<string, unknown>[]
-  instrumentation.queriesPerRequest += 1
+    )
+    : []) as Record<string, unknown>[]
+  if (plan.needsOrderLines) instrumentation.queriesPerRequest += 1
   const linesByOrder = new Map<string, Record<string, unknown>[]>()
   for (const line of lineRows) {
     const key = String(line.orderId)
@@ -174,7 +286,11 @@ async function buildCandidateViews(
     byMarketplace.get(marketplace)!.push(packageId)
   }
   const shipmentsByKey = new Map<string, Record<string, unknown>>()
-  for (const [marketplace, packageIds] of byMarketplace) {
+  // ŞİFRE ÇÖZME YALNIZ GEREKİYORSA: pasif bir filtre için ihtimale binaen
+  // carrier payload yüklenmez/çözülmez (bkz. FILTER_DEPENDENCY_PLAN).
+  for (const [marketplace, packageIds] of plan.needsShipment
+    ? byMarketplace
+    : new Map<string, string[]>()) {
     const loaded = await findShipmentsByPackageIds(
       db,
       organizationId,
@@ -196,14 +312,14 @@ async function buildCandidateViews(
       localCreatePackageIds.push(String(shipment.packageId))
     }
   }
-  const operationsByPackage = await findLatestOperationsByPackageIds(
-    db,
-    organizationId,
-    localCreatePackageIds,
-  )
-  instrumentation.operationBulkQueries += 1
-  instrumentation.queriesPerRequest += 1
-  instrumentation.payloadRowsDecrypted += operationsByPackage.size
+  const operationsByPackage = plan.needsShipmentOperation
+    ? await findLatestOperationsByPackageIds(db, organizationId, localCreatePackageIds)
+    : new Map<string, Record<string, unknown>>()
+  if (plan.needsShipmentOperation) {
+    instrumentation.operationBulkQueries += 1
+    instrumentation.queriesPerRequest += 1
+    instrumentation.payloadRowsDecrypted += operationsByPackage.size
+  }
 
   let views = orderRows.map((row) => {
     const base = rowToOrder(row, linesByOrder.get(String(row.id)) ?? [])
@@ -248,12 +364,14 @@ export async function loadFilteredProjection(
   externalProcessing?: { entries?: Record<string, unknown> } | null,
 ): Promise<FilteredProjection> {
   const sort = filters.sort === 'orderDateAsc' ? 'orderDateAsc' : 'orderDateDesc'
+  const plan = planExecution(filters)
   const { views, instrumentation } = await buildCandidateViews(
     db,
     organizationId,
     marketplaceAccountId,
     sort,
     externalProcessing,
+    plan,
   )
 
   const canonicalStart = now()
@@ -350,4 +468,118 @@ export async function listFilteredOrdersPage(
     pageSize,
     instrumentation: projection.instrumentation,
   }
+}
+
+/**
+ * İSTEK SEVİYESİ YÖNLENDİRİCİ — HIZLI YOL / KANONİK YOL.
+ *
+ * HIZLI YOL (aktif filtre YOK): düz SQL LIMIT/OFFSET + sayfa seviyesi toplu
+ * gönderi/operasyon birleştirme. 15k/50k/100k aday BELLEĞE ALINMAZ.
+ * KANONİK YOL (en az bir filtre aktif): tüm aday küme kanonik
+ * `buildVisibleOrders` ile değerlenir, sonra sayfalanır.
+ *
+ * Sayfa satırlarının GÖRÜNÜMÜ her iki yolda AYNIDIR: kanonik yolda gönderi
+ * yüklenmediyse (aktif filtre gerektirmiyorsa) sayfa için AYRICA toplu
+ * birleştirme yapılır — böylece istemciye giden alanlar değişmez.
+ */
+export async function listOrdersForRequest(
+  db: Db,
+  organizationId: string,
+  filters: OrderListFilters = {},
+  marketplaceAccountId?: string | null,
+  externalProcessing?: { entries?: Record<string, unknown> } | null,
+): Promise<{
+  orders: Record<string, unknown>[]
+  total: number
+  page: number
+  pageSize: number
+  plan: ExecutionPlan
+  instrumentation?: ProjectionInstrumentation
+}> {
+  const plan = planExecution(filters)
+  if (plan.mode === 'fast') {
+    const result = await listOrders(
+      db,
+      organizationId,
+      {
+        page: Number(filters.page ?? 1) || 1,
+        pageSize: Number(filters.pageSize ?? 0) || undefined,
+        sort: filters.sort === 'orderDateAsc' ? 'orderDateAsc' : 'orderDateDesc',
+      },
+      marketplaceAccountId,
+    )
+    return { ...result, plan }
+  }
+  const result = await listFilteredOrdersPage(
+    db,
+    organizationId,
+    filters,
+    marketplaceAccountId,
+    externalProcessing,
+  )
+  // Gönderi aday değerlendirmesinde GEREKMEDİYSE sayfa için burada eklenir.
+  if (!plan.needsShipment && result.orders.length > 0) {
+    result.orders = await attachShipmentsForRows(
+      db,
+      organizationId,
+      result.orders,
+    )
+    result.instrumentation.shipmentBulkQueries += 1
+    result.instrumentation.operationBulkQueries += 1
+    result.instrumentation.queriesPerRequest += 2
+  }
+  return { ...result, plan }
+}
+
+/** Sayfa satırları için toplu gönderi/operasyon birleştirme (N+1 YOK). */
+async function attachShipmentsForRows(
+  db: Db,
+  organizationId: string,
+  pageOrders: Record<string, unknown>[],
+): Promise<Record<string, unknown>[]> {
+  const byMarketplace = new Map<string, string[]>()
+  for (const order of pageOrders) {
+    const packageId = String(order.packageId ?? '')
+    if (!packageId) continue
+    const marketplace = String(order.marketplace ?? '')
+    if (!byMarketplace.has(marketplace)) byMarketplace.set(marketplace, [])
+    byMarketplace.get(marketplace)!.push(packageId)
+  }
+  const shipmentsByKey = new Map<string, Record<string, unknown>>()
+  for (const [marketplace, packageIds] of byMarketplace) {
+    const loaded = await findShipmentsByPackageIds(
+      db,
+      organizationId,
+      marketplace,
+      packageIds,
+      SURAT_PERSISTENCE_PROVIDER,
+    )
+    for (const [packageId, shipment] of loaded) {
+      shipmentsByKey.set(`${marketplace}::${packageId}`, shipment)
+    }
+  }
+  const localCreatePackageIds: string[] = []
+  for (const shipment of shipmentsByKey.values()) {
+    if (shipment.source === 'local_create') {
+      localCreatePackageIds.push(String(shipment.packageId))
+    }
+  }
+  const operationsByPackage = await findLatestOperationsByPackageIds(
+    db,
+    organizationId,
+    localCreatePackageIds,
+  )
+  return pageOrders.map((order) => {
+    const packageId = String(order.packageId ?? '')
+    if (!packageId) return order
+    const shipment = shipmentsByKey.get(
+      `${String(order.marketplace ?? '')}::${packageId}`,
+    )
+    if (!shipment) return order
+    const operation =
+      shipment.source === 'local_create'
+        ? operationsByPackage.get(packageId)
+        : null
+    return attachShipmentFromLoaded(order, shipment, operation)
+  })
 }

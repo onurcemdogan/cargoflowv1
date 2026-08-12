@@ -750,19 +750,35 @@ app.get('/api/orders', async (request, response) => {
     )
     // SUNUCU TARAFI SAYFALAMA + SEKME FİLTRESİ. `tab` verilmezse davranış
     // eskisiyle AYNI (saf SQL LIMIT/OFFSET yolu).
-    const { listOrdersForTab } = await import('./orders/orderTabProjection.ts')
-    const result = await listOrdersForTab(
+    // 10 YENİ + mevcut filtreler. Bilinmeyen/geçersiz değer `all` semantiğine
+    // düşer (planExecution `isActiveValue` ile karar verir) — mevcut frontend
+    // davranışıyla aynı.
+    const { listOrdersForRequest } = await import(
+      './orders/orderFilterProjection.ts'
+    )
+    const result = await listOrdersForRequest(
       context.db,
       context.organizationId,
       {
         tab: strOrUndef(query.tab),
+        operationTab: strOrUndef(query.operationTab),
         status: strOrUndef(query.status),
-        operationStatus: strOrUndef(query.operationStatus),
-        search: strOrUndef(query.search),
-        startDate: strOrUndef(query.startDate),
-        endDate: strOrUndef(query.endDate),
+        marketplace: strOrUndef(query.marketplace),
+        cargo: strOrUndef(query.cargo),
         city: strOrUndef(query.city),
         district: strOrUndef(query.district),
+        datePreset: strOrUndef(query.datePreset),
+        startTime: query.startTime ? Number(query.startTime) : undefined,
+        endTime: query.endTime ? Number(query.endTime) : undefined,
+        timezone: strOrUndef(query.timezone),
+        search: strOrUndef(query.search),
+        customerQuery: strOrUndef(query.customerQuery),
+        productQuery: strOrUndef(query.productQuery),
+        orderNumberQuery: strOrUndef(query.orderNumberQuery),
+        cargoSlipQuery: strOrUndef(query.cargoSlipQuery),
+        multiProduct: strOrUndef(query.multiProduct),
+        sameProduct: strOrUndef(query.sameProduct),
+        action: strOrUndef(query.action),
         page: query.page,
         pageSize: query.pageSize,
         sort: query.sort === 'orderDateAsc' ? 'orderDateAsc' : 'orderDateDesc',
@@ -777,6 +793,8 @@ app.get('/api/orders', async (request, response) => {
       total: result.total,
       page: result.page,
       pageSize: result.pageSize,
+      // Çalışma yolu şeffaflığı (hızlı yol mu, kanonik yol mu).
+      executionMode: result.plan?.mode,
       externalProcessing,
     })
   } catch {
