@@ -1,4 +1,4 @@
-import type { MarketplaceName } from '../types/cargoflow'
+import type { MarketplaceName } from '../types/cargoflow.ts'
 
 export type OrdersDatePreset =
   | 'all'

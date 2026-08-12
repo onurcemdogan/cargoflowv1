@@ -5,9 +5,9 @@ import type {
   SuratServiceMode,
   SuratVerificationStage,
   SuratZplAnalysis,
-} from '../types/cargoflow'
-import { resolveSuratBarcodeRawZpl, type ZplSource } from './zpl'
-import { analyzeSuratZpl, isNumericOperationalCode } from './suratZplAnalysis'
+} from '../types/cargoflow.ts'
+import { resolveSuratBarcodeRawZpl, type ZplSource } from './zpl.ts'
+import { analyzeSuratZpl, isNumericOperationalCode } from './suratZplAnalysis.ts'
 
 export interface TrackingUrlExtraction {
   value: string

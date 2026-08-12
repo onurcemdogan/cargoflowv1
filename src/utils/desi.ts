@@ -3,7 +3,7 @@ import type {
   DesiDebug,
   DesiSource,
   Shipment,
-} from '../types/cargoflow'
+} from '../types/cargoflow.ts'
 
 export interface NormalizedDesi {
   desi: number | null
