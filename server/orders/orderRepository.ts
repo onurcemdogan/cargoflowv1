@@ -57,7 +57,17 @@ function accountClause(marketplaceAccountId: string | null | undefined) {
     : eq(orders.marketplaceAccountId, marketplaceAccountId)
 }
 
-function buildWhere(
+/**
+ * Liste/sayaç sorgularının ORTAK WHERE üretimi.
+ *
+ * Sunucu tarafı sekme izdüşümü (`orderTabProjection`) ile sayfa sorgusu AYNI
+ * bu fonksiyonu kullanır: filtre semantiği iki yolda ayrışamaz.
+ *
+ * ARŞİV NOTU: bu sürüm `archived_at` koşulu EKLEMEZ — mevcut ürün davranışı
+ * (arşivli kayıtlar listede görünür) bilinçli olarak KORUNUR. Değişiklik
+ * ayrı bir ürün kararıdır.
+ */
+export function buildOrderWhere(
   organizationId: string,
   filters: OrderFilters,
   marketplaceAccountId?: string | null,
@@ -105,7 +115,7 @@ export async function findOrders(
 }> {
   const pageSize = resolvePageSize(filters.pageSize)
   const page = Math.max(1, Math.trunc(Number(filters.page ?? 1)) || 1)
-  const where = buildWhere(organizationId, filters, marketplaceAccountId)
+  const where = buildOrderWhere(organizationId, filters, marketplaceAccountId)
   // Sayfalama icin DETERMINISTIK siralama: yalniz orderDate ile ayni
   // timestamp'li kayitlarin sirasi belirsizdir ve sayfalar arasinda kayit
   // kaymasi/tekrari olusabilir. Ikincil anahtar (id) yalniz ESITLIK

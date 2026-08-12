@@ -1,6 +1,6 @@
 // Organization bazlı shipment kayıtları. Tracking/sender/barcode açık
 // kolonlarda (sorgu/UI); hassas carrier payload şifreli. db DI ile gelir.
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { shipments } from '../db/schema.ts'
 import {
   decryptShipmentPayload,
@@ -67,6 +67,53 @@ export async function findShipment(
       row.carrierPayloadEncrypted as string | null,
     ),
   }
+}
+
+/**
+ * TOPLU (BATCH) GÖNDERİ YÜKLEME — `findShipment`in N+1'siz eşdeğeri.
+ *
+ * ÜRETİM HATASI (ölçüldü): sipariş listesi her satır için AYRI `findShipment`
+ * çalıştırıyordu (25 satırlık sayfada 25 sorgu, 100'lük sayfada 100). Bu
+ * fonksiyon AYNI kanonik anahtarı — (organizationId, marketplace, packageId,
+ * provider) — kullanır fakat paketleri TEK sorguda getirir.
+ *
+ * KAPSAM ASLA GEVŞEMEZ: organizasyon, pazaryeri ve sağlayıcı her zaman
+ * eşitlikle sınırlanır; yalnız packageId çoklanır. Dönen Map'in anahtarı
+ * packageId'dir ve sorgu zaten tek (org, marketplace, provider) kapsamında
+ * olduğu için çakışma OLAMAZ (unique index bunu garanti eder).
+ *
+ * `carrierPayload` `findShipment` ile AYNI şekilde çözülür (aynı görünüm).
+ */
+export async function findShipmentsByPackageIds(
+  db: RepositoryDb,
+  organizationId: string,
+  marketplace: string,
+  packageIds: string[],
+  provider: string,
+): Promise<Map<string, Record<string, unknown>>> {
+  const result = new Map<string, Record<string, unknown>>()
+  const unique = Array.from(new Set(packageIds.filter(Boolean)))
+  if (unique.length === 0) return result
+  const rows = await db
+    .select()
+    .from(shipments)
+    .where(
+      and(
+        eq(shipments.organizationId, organizationId),
+        eq(shipments.marketplace, marketplace),
+        inArray(shipments.packageId, unique),
+        eq(shipments.provider, provider),
+      ),
+    )
+  for (const row of rows) {
+    result.set(String(row.packageId), {
+      ...row,
+      carrierPayload: decryptShipmentPayload(
+        row.carrierPayloadEncrypted as string | null,
+      ),
+    })
+  }
+  return result
 }
 
 export async function upsertShipment(

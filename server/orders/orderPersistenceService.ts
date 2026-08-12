@@ -16,12 +16,16 @@ import {
   type OrderFilters,
 } from './orderRepository.ts'
 import { rowToOrder } from './orderMapper.ts'
-import { findShipment } from '../shipments/shipmentRepository.ts'
+import {
+  findShipment,
+  findShipmentsByPackageIds,
+} from '../shipments/shipmentRepository.ts'
 import { SURAT_PERSISTENCE_PROVIDER } from '../shipments/suratProvider.ts'
 import { buildPrintableJob } from '../../src/utils/printableLabelJob.ts'
 import { sha256Hex } from '../../src/utils/augmentedSuratZpl.ts'
 import {
   findLatestOperationByPackage,
+  findLatestOperationsByPackageIds,
   findPrintableZplByPackage,
 } from '../shipments/shipmentOperationRepository.ts'
 
@@ -235,17 +239,20 @@ function buildShipmentViewFromPayload(
 // ASLA bağlanmaz (findShipment org-scoped). local_create → kalıcı operation
 // payload'ından güvenli shipment görünümü + hasPrintableLabel; marketplace_external
 // → salt okunur.
-async function attachShipment(
-  db: Db,
-  organizationId: string,
+/**
+ * SAF BİRLEŞTİRME — DB'ye DOKUNMAZ.
+ *
+ * Gönderi ve (varsa) operasyon kaydı ÖNCEDEN yüklenmiş olarak verilir. Tekil
+ * (`attachShipment`) ve toplu (`listOrders`) yollar AYNI bu fonksiyonu kullanır;
+ * böylece görünüm sözleşmesi tek kaynaktan gelir ve iki yol ayrışamaz.
+ */
+export function attachShipmentFromLoaded(
   order: Record<string, unknown>,
-): Promise<Record<string, unknown>> {
-  const packageId = String(order.packageId ?? '')
-  if (!packageId) return order
-  const shipment = await findShipment(db, organizationId, String(order.marketplace), packageId, SURAT_PERSISTENCE_PROVIDER)
+  shipment: Record<string, unknown> | null | undefined,
+  operation: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
   if (!shipment) return order
   if (shipment.source === 'local_create') {
-    const operation = await findLatestOperationByPackage(db, organizationId, packageId)
     const payload =
       (operation?.payload as Record<string, unknown> | undefined) ??
       (shipment.carrierPayload as Record<string, unknown> | undefined) ??
@@ -284,6 +291,102 @@ async function attachShipment(
   }
 }
 
+/** TEKİL yol (getOrder). Tek kayıt için 1-2 sorgu; LİSTE yolu bunu KULLANMAZ. */
+async function attachShipment(
+  db: Db,
+  organizationId: string,
+  order: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const packageId = String(order.packageId ?? '')
+  if (!packageId) return order
+  const shipment = await findShipment(
+    db,
+    organizationId,
+    String(order.marketplace),
+    packageId,
+    SURAT_PERSISTENCE_PROVIDER,
+  )
+  if (!shipment) return order
+  const operation =
+    shipment.source === 'local_create'
+      ? await findLatestOperationByPackage(db, organizationId, packageId)
+      : null
+  return attachShipmentFromLoaded(order, shipment, operation)
+}
+
+/**
+ * SAYFA SEVİYESİ TOPLU BİRLEŞTİRME — N+1 KALDIRILDI.
+ *
+ * ÖNCE: sayfadaki HER sipariş için 1 `findShipment` (+ local_create ise 1
+ * `findLatestOperationByPackage`) → 25 satırlık sayfa 37 sorgu, 100'lük sayfa
+ * 148 sorgu. Üretimde `shipments` tablosunda yalnız ~589 satır olmasına rağmen
+ * `shipments_org_package_idx` tarama sayacının ~994.000'e çıkmasının nedeni
+ * buydu.
+ *
+ * SONRA: pazaryeri başına 1 gönderi sorgusu + 1 operasyon sorgusu. Sorgu
+ * sayısı sayfa BOYUTUNDAN BAĞIMSIZDIR.
+ *
+ * Kanonik kapsam AYNEN korunur: gönderi (organizationId, marketplace,
+ * packageId, provider), operasyon (organizationId, packageId). Seçim kuralı
+ * ve görünüm üretimi tekil yolla ORTAK fonksiyondan gelir.
+ */
+async function attachShipmentsForPage(
+  db: Db,
+  organizationId: string,
+  orders: Record<string, unknown>[],
+): Promise<Record<string, unknown>[]> {
+  if (orders.length === 0) return orders
+  // Pazaryeri başına grupla: tekil sürüm de her siparişin KENDİ marketplace
+  // değeriyle arar; kapsamı tek değere sabitlemek izolasyonu bozardı.
+  const byMarketplace = new Map<string, string[]>()
+  for (const order of orders) {
+    const packageId = String(order.packageId ?? '')
+    if (!packageId) continue
+    const marketplace = String(order.marketplace ?? '')
+    if (!byMarketplace.has(marketplace)) byMarketplace.set(marketplace, [])
+    byMarketplace.get(marketplace)!.push(packageId)
+  }
+  const shipmentsByKey = new Map<string, Record<string, unknown>>()
+  for (const [marketplace, packageIds] of byMarketplace) {
+    const loaded = await findShipmentsByPackageIds(
+      db,
+      organizationId,
+      marketplace,
+      packageIds,
+      SURAT_PERSISTENCE_PROVIDER,
+    )
+    for (const [packageId, shipment] of loaded) {
+      shipmentsByKey.set(`${marketplace}::${packageId}`, shipment)
+    }
+  }
+  // Operasyon YALNIZ local_create gönderiler için gerekir (tekil sürümdeki
+  // koşulun aynısı) → gereksiz payload transferi yapılmaz.
+  const localCreatePackageIds: string[] = []
+  for (const shipment of shipmentsByKey.values()) {
+    if (shipment.source === 'local_create') {
+      localCreatePackageIds.push(String(shipment.packageId))
+    }
+  }
+  const operationsByPackage = await findLatestOperationsByPackageIds(
+    db,
+    organizationId,
+    localCreatePackageIds,
+  )
+  return orders.map((order) => {
+    const packageId = String(order.packageId ?? '')
+    if (!packageId) return order
+    const shipment = shipmentsByKey.get(
+      `${String(order.marketplace ?? '')}::${packageId}`,
+    )
+    if (!shipment) return order
+    const operation =
+      shipment.source === 'local_create'
+        ? operationsByPackage.get(packageId)
+        : null
+    return attachShipmentFromLoaded(order, shipment, operation)
+  })
+}
+
 export async function listOrders(
   db: Db,
   organizationId: string,
@@ -309,11 +412,12 @@ export async function listOrders(
     if (!linesByOrder.has(key)) linesByOrder.set(key, [])
     linesByOrder.get(key)!.push(line)
   }
-  const viewModels = []
-  for (const row of orderRows) {
-    const base = rowToOrder(row, linesByOrder.get(String(row.id)) ?? [])
-    viewModels.push(await attachShipment(db, organizationId, base))
-  }
+  // N+1 KALDIRILDI: döngü içinde sipariş başına sorgu YOK; gönderi/operasyon
+  // sayfa için TOPLU yüklenir.
+  const baseOrders = orderRows.map((row) =>
+    rowToOrder(row, linesByOrder.get(String(row.id)) ?? []),
+  )
+  const viewModels = await attachShipmentsForPage(db, organizationId, baseOrders)
   return { orders: viewModels, total, page, pageSize }
 }
 

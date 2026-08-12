@@ -2,7 +2,7 @@ import type {
   CargoOrder,
   CarrierStatusKey,
   OperationStatus,
-} from '../types/cargoflow'
+} from '../types/cargoflow.ts'
 
 export type OrderStatusSource =
   | 'suratTracking'

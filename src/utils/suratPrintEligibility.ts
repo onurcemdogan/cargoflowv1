@@ -1,7 +1,7 @@
-import type { CargoOrder, Shipment } from '../types/cargoflow'
-import { resolveSuratBarcodeRawZpl } from './zpl'
-import { verifySuratShipment } from './suratVerification'
-import { resolveNormalizedDesi } from './desi'
+import type { CargoOrder, Shipment } from '../types/cargoflow.ts'
+import { resolveSuratBarcodeRawZpl } from './zpl.ts'
+import { verifySuratShipment } from './suratVerification.ts'
+import { resolveNormalizedDesi } from './desi.ts'
 
 // Baskı izninin TEK kaynağı. ZPL İndir ve Etiketi Yazdır aynı sonucu
 // kullanır; iki yetenek AYRIŞTIRILMIŞTIR:

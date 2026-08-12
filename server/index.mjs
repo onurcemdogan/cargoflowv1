@@ -737,10 +737,25 @@ app.get('/api/orders', async (request, response) => {
   if (!context) return
   try {
     const query = request.query ?? {}
-    const result = await context.service.listOrders(
+    // YEREL harici-işlem arşivi: sipariş satirlarina DOKUNMAZ, organization
+    // settings JSONB'sinden okunur. Istemci canonical kimlikle esler.
+    // Sunucu tarafı sekme sınıflandırması da AYNI durumu kullanır (istemciyle
+    // birebir aynı damgalama).
+    const { getExternalProcessing } = await import(
+      './orders/externalProcessingRepository.ts'
+    )
+    const externalProcessing = await getExternalProcessing(
+      context.db,
+      context.organizationId,
+    )
+    // SUNUCU TARAFI SAYFALAMA + SEKME FİLTRESİ. `tab` verilmezse davranış
+    // eskisiyle AYNI (saf SQL LIMIT/OFFSET yolu).
+    const { listOrdersForTab } = await import('./orders/orderTabProjection.ts')
+    const result = await listOrdersForTab(
       context.db,
       context.organizationId,
       {
+        tab: strOrUndef(query.tab),
         status: strOrUndef(query.status),
         operationStatus: strOrUndef(query.operationStatus),
         search: strOrUndef(query.search),
@@ -754,15 +769,7 @@ app.get('/api/orders', async (request, response) => {
       },
       // Yalnız aktif pazaryeri hesabının siparişleri (başka hesap/legacy gizli).
       context.marketplaceAccountId,
-    )
-    // YEREL harici-işlem arşivi: sipariş satirlarina DOKUNMAZ, organization
-    // settings JSONB'sinden okunur. Istemci canonical kimlikle esler.
-    const { getExternalProcessing } = await import(
-      './orders/externalProcessingRepository.ts'
-    )
-    const externalProcessing = await getExternalProcessing(
-      context.db,
-      context.organizationId,
+      externalProcessing,
     )
     response.json({
       ok: true,
@@ -774,6 +781,59 @@ app.get('/api/orders', async (request, response) => {
     })
   } catch {
     response.status(500).json({ ok: false, message: 'Siparişler yüklenemedi.' })
+  }
+})
+
+// GET /api/orders/counts — HIZLI SEKME SAYAÇLARI (salt okunur).
+//
+// ÜRETİM HATASI (ölçüldü): OrdersPage 6 sekme sayacı için TÜM sipariş
+// kütlesini istemcide 6 kez daha tarıyordu (10.000 siparişte ~12,7 s ana iş
+// parçacığı donması). Sayaçlar artık hesap kapsamlı olarak BURADA üretilir.
+//
+// SEMANTİK: frontend'in kullandığı KANONİK `classifyOrderForTabs` /
+// `orderMatchesQuickTab` fonksiyonları AYNEN kullanılır — ikinci bir kural
+// seti YOKTUR. Provider/marketplace çağrısı YAPILMAZ, DB'ye YAZILMAZ.
+//
+// NOT: bu uç `/api/orders/:id`den ÖNCE tanımlanmalıdır; aksi hâlde "counts"
+// bir sipariş kimliği sanılırdı.
+app.get('/api/orders/counts', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const query = request.query ?? {}
+    const { getExternalProcessing } = await import(
+      './orders/externalProcessingRepository.ts'
+    )
+    const externalProcessing = await getExternalProcessing(
+      context.db,
+      context.organizationId,
+    )
+    const { loadTabProjection } = await import('./orders/orderTabProjection.ts')
+    const projection = await loadTabProjection(
+      context.db,
+      context.organizationId,
+      {
+        status: strOrUndef(query.status),
+        operationStatus: strOrUndef(query.operationStatus),
+        search: strOrUndef(query.search),
+        startDate: strOrUndef(query.startDate),
+        endDate: strOrUndef(query.endDate),
+        city: strOrUndef(query.city),
+        district: strOrUndef(query.district),
+      },
+      // Aktif pazaryeri hesabı kapsamı ZORUNLU (tenant izolasyonu).
+      context.marketplaceAccountId,
+      externalProcessing,
+    )
+    response.json({
+      ok: true,
+      total: projection.scannedCount,
+      counts: projection.counts,
+    })
+  } catch {
+    response
+      .status(500)
+      .json({ ok: false, message: 'Sipariş sayaçları hesaplanamadı.' })
   }
 })
 

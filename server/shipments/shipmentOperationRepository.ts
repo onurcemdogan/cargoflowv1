@@ -1,7 +1,7 @@
 // Organization bazlı Sürat create idempotency kayıtları. Atomik create
 // koruması unique(organization_id, idempotency_key) + INSERT ON CONFLICT
 // üzerinden: eşzamanlı iki create'te yalnız biri rezervasyonu kazanır.
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { shipmentOperations } from '../db/schema.ts'
 import {
   decryptShipmentPayload,
@@ -67,6 +67,59 @@ export async function findLatestOperationByPackage(
   // Başarılı olanı tercih et; yoksa herhangi biri.
   const succeeded = rows.find((row) => String(row.status) === 'succeeded')
   return toRow(succeeded ?? rows[0] ?? null)
+}
+
+/**
+ * TOPLU (BATCH) OPERASYON YÜKLEME — `findLatestOperationByPackage`in
+ * N+1'siz eşdeğeri. SEÇİM KURALI BİREBİR AYNIDIR:
+ *   pakete ait satırlar arasında `succeeded` olan TERCİH EDİLİR,
+ *   yoksa ilk görülen satır kullanılır.
+ *
+ * Tek fark ÇAĞRI SAYISIDIR: sipariş başına bir sorgu yerine sayfa başına bir
+ * sorgu. Kapsam (organizationId + packageId) aynen korunur.
+ *
+ * ŞİFRE ÇÖZME YALNIZ SEÇİLEN SATIR İÇİNDİR — tekil sürümdeki davranışın aynısı;
+ * elenen operasyonların ZPL payload'ları çözülmez.
+ */
+export async function findLatestOperationsByPackageIds(
+  db: OperationDb,
+  organizationId: string,
+  packageIds: string[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const result = new Map<string, Record<string, unknown>>()
+  const unique = Array.from(new Set(packageIds.filter(Boolean)))
+  if (unique.length === 0) return result
+  const rows = await db
+    .select()
+    .from(shipmentOperations)
+    .where(
+      and(
+        eq(shipmentOperations.organizationId, organizationId),
+        inArray(shipmentOperations.packageId, unique),
+      ),
+    )
+  // Pakete göre grupla; tekil sürümdeki "başarılıyı öncele, yoksa ilkini al"
+  // kuralını satır sırasını KORUYARAK uygula.
+  const chosen = new Map<string, Record<string, unknown>>()
+  for (const row of rows) {
+    const key = String(row.packageId)
+    const current = chosen.get(key)
+    if (!current) {
+      chosen.set(key, row)
+      continue
+    }
+    if (
+      String(current.status) !== 'succeeded' &&
+      String(row.status) === 'succeeded'
+    ) {
+      chosen.set(key, row)
+    }
+  }
+  for (const [key, row] of chosen) {
+    const mapped = toRow(row)
+    if (mapped) result.set(key, mapped)
+  }
+  return result
 }
 
 // Kayıtlı (persisted) yazdırılabilir ham ZPL'i pakete ait TÜM operasyonları
