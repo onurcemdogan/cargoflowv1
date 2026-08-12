@@ -841,6 +841,45 @@ app.get('/api/orders/counts', async (request, response) => {
   }
 })
 
+// GET /api/dashboard/operational — SINIRLI OPERASYON PROJEKSİYONU.
+//
+// ÜRETİM HATASI (ölçüldü): Dashboard operasyon panelleri App'in indirdiği TÜM
+// sipariş dizisine bağlıydı; bu yüzden uygulama açılışında 15k+ sipariş
+// indiriliyor ve 200 sayfalık (20.000 sipariş) sert tavana takılıyordu.
+//
+// Aşama sayaçları BURADA kanonik `resolveDashboardOperationStage` ile üretilir;
+// satır düzeyinde gerçekten gereken tek küme (toplama adayları + son işlemler
+// penceresi) SINIRLI döner. Ham 15k/50k sipariş listesi GÖNDERİLMEZ.
+// Salt okunur: DB'ye yazmaz, provider/marketplace çağırmaz.
+app.get('/api/dashboard/operational', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const { getExternalProcessing } = await import(
+      './orders/externalProcessingRepository.ts'
+    )
+    const externalProcessing = await getExternalProcessing(
+      context.db,
+      context.organizationId,
+    )
+    const { loadOperationalProjection } = await import(
+      './orders/orderTabProjection.ts'
+    )
+    const projection = await loadOperationalProjection(
+      context.db,
+      context.organizationId,
+      // Aktif pazaryeri hesabı kapsamı ZORUNLU (tenant izolasyonu).
+      context.marketplaceAccountId,
+      externalProcessing,
+    )
+    response.json({ ok: true, ...projection, externalProcessing })
+  } catch {
+    response
+      .status(500)
+      .json({ ok: false, message: 'Operasyon özeti hesaplanamadı.' })
+  }
+})
+
 // POST /api/orders/external-processing — YEREL, MANUEL, GERİ ALINABİLİR.
 // Provider veya marketplace çağrısı YAPMAZ; sipariş satırlarını, tracking
 // numarasını, barkodu, labelStatus'u ve printCount'u DEĞİŞTİRMEZ. Yalnız
