@@ -495,3 +495,103 @@ test('INSTRUMENT-1: maliyet SEFFAF raporlanir', async () => {
   assert.ok(info.canonicalDurationMs >= 0)
   await ctx.pglite.close()
 })
+
+// ═══ HIZLI YOL / KANONIK YOL PLANI ════════════════════════════════════════
+
+test('PLAN-1: filtresiz istek HIZLI YOLA duser (aday projeksiyonu YOK)', async () => {
+  const ctx = await makeCtx({ count: 200 })
+  ctx.counter.reset()
+  const result = await filterProjection.listOrdersForRequest(
+    ctx.db,
+    ctx.organizationId,
+    { page: 1, pageSize: 25, sort: 'orderDateDesc', tab: 'all' },
+    ctx.marketplaceAccountId,
+  )
+  assert.equal(result.plan.mode, 'fast')
+  assert.equal(result.orders.length, 25, 'yalniz sayfa kadar satir')
+  assert.equal(result.total, 200)
+  assert.ok(ctx.counter.count <= 5, `hizli yol sorgu: ${ctx.counter.count}`)
+  // Aday kumesi BELLEGE ALINMAZ → instrumentation uretilmez.
+  assert.equal(result.instrumentation, undefined)
+  await ctx.pglite.close()
+})
+
+test('PLAN-2: aktif filtre KANONIK yolu tetikler', async () => {
+  const ctx = await makeCtx({ count: 60 })
+  const result = await filterProjection.listOrdersForRequest(
+    ctx.db,
+    ctx.organizationId,
+    { operationTab: 'labelReady', page: 1, pageSize: 25 },
+    ctx.marketplaceAccountId,
+  )
+  assert.equal(result.plan.mode, 'canonical')
+  assert.deepEqual(result.plan.activeFilters, ['operationTab'])
+  assert.equal(result.plan.needsShipment, true)
+  await ctx.pglite.close()
+})
+
+test('PLAN-3: pasif filtre icin IHTIMALE BINAEN decrypt YOK', async () => {
+  const ctx = await makeCtx({ count: 60 })
+  // productQuery gonderi/operasyon GEREKTIRMEZ → payload cozulmez.
+  const projection = await filterProjection.loadFilteredProjection(
+    ctx.db,
+    ctx.organizationId,
+    { productQuery: 'Ornek Urun 4' },
+    ctx.marketplaceAccountId,
+  )
+  assert.equal(projection.instrumentation.shipmentBulkQueries, 0)
+  assert.equal(projection.instrumentation.operationBulkQueries, 0)
+  assert.equal(projection.instrumentation.payloadRowsDecrypted, 0)
+  // cargoSlipQuery aktif olunca GEREKIR.
+  const withPayload = await filterProjection.loadFilteredProjection(
+    ctx.db,
+    ctx.organizationId,
+    { cargoSlipQuery: '72700' },
+    ctx.marketplaceAccountId,
+  )
+  assert.equal(withPayload.instrumentation.shipmentBulkQueries, 1)
+  assert.ok(withPayload.instrumentation.payloadRowsDecrypted > 0)
+  await ctx.pglite.close()
+})
+
+test('PLAN-4: gonderi gerekmeyen filtrede de SAYFA gorunumu TAM', async () => {
+  const ctx = await makeCtx({ count: 60 })
+  const result = await filterProjection.listOrdersForRequest(
+    ctx.db,
+    ctx.organizationId,
+    { productQuery: 'Ornek Urun 0', page: 1, pageSize: 10 },
+    ctx.marketplaceAccountId,
+  )
+  assert.equal(result.plan.needsShipment, false)
+  // Gonderisi olan satirlarda shipment gorunumu YINE DE eklenir.
+  const withShipment = result.orders.filter((order) => order.shipment)
+  assert.ok(withShipment.length > 0, 'sayfa icin toplu birlestirme yapildi')
+  await ctx.pglite.close()
+})
+
+test('PLAN-5: bilinmeyen filtre degeri `all` gibi davranir', async () => {
+  const ctx = await makeCtx({ count: 40 })
+  const plan = filterProjection.planExecution({ tab: 'all', cargo: 'Tümü', city: '' })
+  assert.equal(plan.mode, 'fast')
+  assert.deepEqual(plan.activeFilters, [])
+  await ctx.pglite.close()
+})
+
+test('ENDPOINT-1: 10 filtrenin TAMAMI uca baglandi', () => {
+  const ENTRY = nl(readFileSync('server/index.mjs', 'utf8'))
+  for (const param of [
+    'marketplace: strOrUndef(query.marketplace)',
+    'cargo: strOrUndef(query.cargo)',
+    'customerQuery: strOrUndef(query.customerQuery)',
+    'productQuery: strOrUndef(query.productQuery)',
+    'orderNumberQuery: strOrUndef(query.orderNumberQuery)',
+    'cargoSlipQuery: strOrUndef(query.cargoSlipQuery)',
+    'multiProduct: strOrUndef(query.multiProduct)',
+    'sameProduct: strOrUndef(query.sameProduct)',
+    'action: strOrUndef(query.action)',
+    'operationTab: strOrUndef(query.operationTab)',
+  ]) {
+    assert.ok(ENTRY.includes(param), param)
+  }
+  assert.ok(ENTRY.includes('listOrdersForRequest('))
+})

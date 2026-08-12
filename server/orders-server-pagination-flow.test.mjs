@@ -581,5 +581,7 @@ test('PERF-P0-ENDPOINT: sayaç ucu :id rotasindan ONCE tanimli', () => {
   )
   // Liste ucu tab parametresini gecirir.
   assert.ok(ENTRY_SOURCE.includes('tab: strOrUndef(query.tab)'))
-  assert.ok(ENTRY_SOURCE.includes('listOrdersForTab('))
+  // SOZLESME GUNCELLENDI: liste ucu artik 10 filtrenin tamamini kabul eden
+  // yonlendiriciyi (hizli yol / kanonik yol) kullanir.
+  assert.ok(ENTRY_SOURCE.includes('listOrdersForRequest('))
 })
