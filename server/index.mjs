@@ -693,16 +693,41 @@ async function requireOrderPersistenceContext(request, response) {
 
 // Auth-mode org'unun AKTİF Trendyol pazaryeri hesabının id'sini çözer (yoksa
 // null). İstemci girdisine GÜVENMEZ; yalnız DB'deki aktif hesap satırını okur.
-async function resolveActiveMarketplaceAccountId(db, organizationId) {
+// ═══ AKTİF PAZARYERİ HESABI ÇÖZÜMÜ ═══════════════════════════════════════
+//
+// ÜRETİM HATASI (kanıtlandı): eski sürüm HEM "aktif hesap yok" HEM DE
+// "çözümleme hatası" durumunda `null` döndürüyordu ve bu değer doğrudan
+// `persistSyncResult` → `upsertMarketplaceOrders(..., null)` zincirine
+// gidiyordu → NULL kapsamlı gölge satırlar. Artık iki durum AYRIŞTIRILIR ve
+// hata SESSİZCE null'a çevrilmez.
+//
+// `status`:
+//   'ok'                       → accountId kesin
+//   'no_active_account'        → organizasyonun aktif Trendyol hesabı yok
+//   'account_resolution_error' → sorgu/çözümleme hatası (geçici olabilir)
+async function resolveActiveMarketplaceAccountScope(db, organizationId) {
   try {
     const { getActiveAccount } = await import(
       './integrations/marketplaceAccountRepository.ts'
     )
     const account = await getActiveAccount(db, organizationId, 'Trendyol')
-    return account ? account.id : null
-  } catch {
-    return null
+    if (account?.id) return { status: 'ok', accountId: account.id }
+    return { status: 'no_active_account', accountId: null }
+  } catch (error) {
+    // PII/secret YOK: yalnız kategori ve organizasyon kimliği.
+    console.error(
+      `[account-scope] resolution failed org=${organizationId} reason=account_resolution_error`,
+      error?.message,
+    )
+    return { status: 'account_resolution_error', accountId: null }
   }
+}
+
+// OKUMA yolları için geriye dönük yardımcı: legacy (hesapsız) kapsam okuması
+// GEÇERLİDİR, bu yüzden null dönebilir. YAZMA yolları bunu KULLANMAZ.
+async function resolveActiveMarketplaceAccountId(db, organizationId) {
+  const scope = await resolveActiveMarketplaceAccountScope(db, organizationId)
+  return scope.accountId
 }
 
 // GET /api/orders — org-scoped, server-side sayfalı liste. Filtreler yalnız
@@ -1079,7 +1104,30 @@ app.post('/api/orders/sync', async (request, response) => {
   // tenant'lar ayrı satır kullandığından birbirini bloklamaz.
   // Kilit AKTİF pazaryeri hesabı bazında alınır: farklı Trendyol hesapları
   // birbirinin sync kilidini paylaşmaz (hesap A sync'i hesap B'yi bloklamaz).
-  const syncAccountId = context.marketplaceAccountId
+  // ── HESAP KAPSAMI ZORUNLU (YAZMA YOLU) ───────────────────────────────────
+  // Aktif Trendyol hesabı çözülemiyorsa sipariş KALICILAŞTIRILMAZ: aksi hâlde
+  // NULL kapsamlı gölge satırlar oluşurdu. İki durum AYRI raporlanır.
+  const accountScope = await resolveActiveMarketplaceAccountScope(
+    context.db,
+    context.organizationId,
+  )
+  if (accountScope.status !== 'ok') {
+    const resolutionError = accountScope.status === 'account_resolution_error'
+    console.error(
+      `[account-scope] manual_sync skipped org=${context.organizationId} ` +
+        `reason=${accountScope.status}`,
+    )
+    response.status(resolutionError ? 503 : 409).json({
+      ok: false,
+      code: accountScope.status,
+      message: resolutionError
+        ? 'Pazaryeri hesabı çözümlenemedi; senkron yapılmadı. Lütfen tekrar deneyin.'
+        : 'Aktif Trendyol pazaryeri hesabı bulunamadı; senkron yapılmadı.',
+      persistedCount: 0,
+    })
+    return
+  }
+  const syncAccountId = accountScope.accountId
   // 1) SÜREÇ İÇİ UÇUŞ: arka plan turu aynı hesapta çalışıyorsa kısa süre
   //    beklenir — kullanıcının tıklaması sessizce DÜŞMEZ.
   const flightKey = syncFlightKey(context.organizationId, syncAccountId)
@@ -1204,6 +1252,8 @@ app.post('/api/orders/sync', async (request, response) => {
           // Hesap sync başında sabitlendi; mid-sync hesap değişse de bu sync A
           // context'iyle tamamlanır.
           marketplaceAccountId: syncAccountId,
+          // DERİNLEMESİNE SAVUNMA: hesap kimliği yoksa yazma REDDEDİLİR.
+          requireMarketplaceAccount: true,
         },
       )
       // Başarı/kısmi metadata'sını yaz (kilidi serbest bırakır + UI'ye "son
@@ -2663,10 +2713,21 @@ async function syncTrendyolOrdersForOrganization(organizationId) {
   // kapsamlı satır `Picking` kalıyor (golden 4065907241) ve NULL kapsamında
   // karantinalı bir gölge satır oluşuyordu. Manuel "Şimdi Yenile" ile AYNI
   // kanonik çözüm kullanılır; istemciden hesap kimliği ASLA alınmaz.
-  const marketplaceAccountId = await resolveActiveMarketplaceAccountId(
+  // HESAP KAPSAMI ZORUNLU: çözülemezse bu organizasyonun turu ATLANIR.
+  // Sessizce NULL kapsamına yazmak yerine sebep raporlanır; zamanlayıcı
+  // DÜŞMEZ ve diğer organizasyonlara devam eder.
+  const accountScope = await resolveActiveMarketplaceAccountScope(
     db,
     organizationId,
   )
+  if (accountScope.status !== 'ok') {
+    console.error(
+      `[account-scope] background_sync skipped org=${organizationId} ` +
+        `reason=${accountScope.status}`,
+    )
+    return { synced: false, skipped: accountScope.status }
+  }
+  const marketplaceAccountId = accountScope.accountId
 
   // EŞZAMANLILIK: aynı hesap için manuel senkron sürüyorsa bu tur SESSİZCE
   // ATLANIR (beklemez). Aksi hâlde aynı satıcı için iki paralel Trendyol
@@ -2693,6 +2754,8 @@ async function syncTrendyolOrdersForOrganization(organizationId) {
     complete: false,
     fetchedCount: normalized.orders.length,
     marketplaceAccountId,
+    // DERİNLEMESİNE SAVUNMA: hesap kimliği yoksa yazma REDDEDİLİR.
+    requireMarketplaceAccount: true,
   })
   return { synced: true }
   } finally {
@@ -2729,10 +2792,19 @@ async function reconcileStaleOpenForOrganization(policy, organizationId) {
   // Kimlik bilgisi yoksa SESSİZCE atlanır (hata değildir).
   if (!credentials || !Object.keys(credentials).length) return empty
 
-  const marketplaceAccountId = await resolveActiveMarketplaceAccountId(
+  // HESAP KAPSAMI ZORUNLU: çözülemezse aday BİLE seçilmez, persist YOK.
+  const accountScope = await resolveActiveMarketplaceAccountScope(
     db,
     organizationId,
   )
+  if (accountScope.status !== 'ok') {
+    console.error(
+      `[account-scope] stale_open_reconcile skipped org=${organizationId} ` +
+        `reason=${accountScope.status}`,
+    )
+    return empty
+  }
+  const marketplaceAccountId = accountScope.accountId
   const now = Date.now()
   const candidates = await reconciler.findStaleOpenCandidates(db, {
     organizationId,
@@ -2778,6 +2850,8 @@ async function reconcileStaleOpenForOrganization(policy, organizationId) {
           complete: false,
           fetchedCount: normalizedStale.orders.length,
           marketplaceAccountId: context.marketplaceAccountId,
+          // DERİNLEMESİNE SAVUNMA: hesap kimliği yoksa yazma REDDEDİLİR.
+          requireMarketplaceAccount: true,
         },
       )
     },

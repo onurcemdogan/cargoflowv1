@@ -305,8 +305,21 @@ test('B2-SECONDARY-WRITER-2: arka plan senkronu AKTIF HESAP kapsamini gecirir', 
     .filter((line) => !line.trim().startsWith('//'))
     .join('\n')
   // Manuel akisla AYNI kanonik hesap cozumu.
-  assert.ok(body.includes('resolveActiveMarketplaceAccountId('))
+  // SOZLESME GUNCELLENDI (NULL yazim engelleme): artik ayrimli cozumleyici
+  // kullanilir; hata SESSIZCE null'a DUSMEZ, tur ATLANIR.
+  assert.ok(body.includes('resolveActiveMarketplaceAccountScope('))
+  assert.equal(
+    body.includes('resolveActiveMarketplaceAccountId('),
+    false,
+    'null dondurebilen okuma yardimcisi YAZMA yolunda KULLANILMAZ',
+  )
+  assert.ok(body.includes("accountScope.status !== 'ok'"))
+  assert.ok(body.includes('skipped: accountScope.status'))
   assert.ok(body.includes('marketplaceAccountId,'), 'persist cagrisina gecirilir')
+  assert.ok(
+    body.includes('requireMarketplaceAccount: true'),
+    'persist katmaninda derinlemesine savunma',
+  )
   // Arka plan turu reconcile/arsivleme TETIKLEMEZ.
   assert.ok(body.includes('complete: false'))
   // Kanonik zincir korunur (ikinci bir mapping/persistence YOK).
