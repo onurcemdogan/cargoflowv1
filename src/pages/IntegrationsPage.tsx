@@ -1011,6 +1011,9 @@ function SuratSettingsPanel({
                     })
                   }}
                 >
+                  <option value="SURAT_CANONICAL_API">
+                    Sürat Web API (resmî entegrasyon)
+                  </option>
                   <option value="ORTAK_BARKOD_SOAP">
                     Gerçek Sürat kaydı + ortak etiket
                   </option>

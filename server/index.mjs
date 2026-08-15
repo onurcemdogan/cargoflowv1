@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
+import { SURAT_CANONICAL_SERVICE_MODE } from './shipments/suratCanonicalServiceMode.mjs'
 import {
   findMissingProductionEnv,
   isProductionEnvironment,
@@ -3052,7 +3053,11 @@ async function createSuratShipmentCore(request, response) {
   }
 
   const validation =
-    config.serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL'
+    // Kanonik dalın doğrulaması Ünite 1/2'dedir. Legacy doğrulayıcılar
+    // env credential okur; kanonik yolda ÇALIŞTIRILMAZ.
+    config.serviceMode === SURAT_CANONICAL_SERVICE_MODE
+      ? null
+    : config.serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL'
       ? validateSuratRestCredentials(config, order)
       : config.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP'
         ? validateSuratBarcodeOrderCredentials(config)
@@ -3125,6 +3130,38 @@ async function createSuratShipmentCore(request, response) {
         preflight: trendyolPreflight,
       }),
     )
+    return
+  }
+
+  // KANONİK SÜRAT WEB API DALI (api02 · POST /api/OrtakBarkodOlustur).
+  // Credential çözümü, DTO eşlemesi, marketplace faturalama bağlamı ve
+  // ResultMesaj ayrıştırması tamamen Ünite 1/2/3A-1 servislerindedir.
+  // Bu dalda legacy/api01/SOAP/test fallback YOKTUR.
+  if (config.serviceMode === SURAT_CANONICAL_SERVICE_MODE) {
+    const { createCanonicalSuratShipmentForRequest } = await import(
+      './shipments/suratCanonicalCreateAdapter.ts'
+    )
+    try {
+      response.json(
+        await createCanonicalSuratShipmentForRequest({
+          organizationId: String(request.auth?.organizationId ?? ''),
+          config: request.body?.config?.surat ?? request.body?.config ?? {},
+          order: orderForSurat,
+          reference,
+          cashOnDelivery: credentialSelection.cashOnDelivery === true,
+          resolveAddress: resolveSingleShipmentAddress,
+        }),
+      )
+    } catch (error) {
+      // Girdi kusuru (ör. desi eksik): taşıyıcıya GİDİLMEDİ.
+      response.json({
+        ok: false,
+        source: 'real',
+        errorSource: 'Frontend',
+        errorCode: 'SURAT_CANONICAL_INPUT_INVALID',
+        message: error instanceof Error ? error.message : String(error),
+      })
+    }
     return
   }
 
@@ -3461,6 +3498,9 @@ function resolveSuratCreateOperationName(configOrServiceMode) {
       ? { serviceMode: configOrServiceMode }
       : configOrServiceMode || {}
   const serviceMode = config.serviceMode
+  if (serviceMode === SURAT_CANONICAL_SERVICE_MODE) {
+    return 'OrtakBarkodOlustur'
+  }
   if (serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP') {
     return 'KargoBarkoduSiparis'
   }
@@ -3584,12 +3624,25 @@ async function executeIdempotentSuratCreate(request, operation) {
     })
   }
 
+  const canonical = result?.canonicalCreate ?? null
   const verified = isSerendipVerifiedCreateResult(result)
   const explicitBusinessFailure = isExplicitSuratBusinessFailure(result)
   const completedAt = new Date().toISOString()
+  // Kanonik dalda Serendip doğrulaması YAPILMAZ; durum doğrudan taşıyıcı
+  // sonucundan gelir. UNKNOWN, FAILED veya yeniden denenebilir create
+  // olarak normalize EDİLMEZ.
+  const canonicalStatus = canonical
+    ? canonical.carrierCreateStatus === 'SUCCESS'
+      ? 'SUCCESS'
+      : canonical.carrierCreateStatus === 'REJECTED'
+        ? 'FAILED_SAFE'
+        : 'UNKNOWN'
+    : null
   const record = {
     ...inProgressRecord,
-    status: verified
+    status: canonicalStatus
+      ? canonicalStatus
+      : verified
       ? 'SUCCESS'
       : explicitBusinessFailure
         ? 'FAILED_SAFE'
@@ -3631,7 +3684,25 @@ async function executeIdempotentSuratCreate(request, operation) {
       result?.createDiagnostics?.zplAnalysis?.acceptedFinalBarcode,
     ),
     candidateIdentifiers: collectSafeSuratCandidates(result),
-    soapAction: `http://tempuri.org/${operation.operation}`,
+    // Kanonik dal REST'tir; SOAP action YAZILMAZ.
+    soapAction: canonical ? '' : `http://tempuri.org/${operation.operation}`,
+    // HAM TAŞIYICI ÇIKTISI (§8): mevcut şifreli operasyon payload'ına
+    // yazılır — yeni tablo/migration YOK. Yalnız vendor response alanları;
+    // KullaniciAdi/Sifre/istek gövdesi ASLA taşınmaz.
+    canonicalVendorArtifact: canonical
+      ? {
+          adapter: canonical.adapter,
+          operation: canonical.operation,
+          barcode: result?.shipment?.canonicalVendorBarcode ?? [],
+          barcodeNo: result?.shipment?.canonicalVendorBarcodeNo ?? [],
+          printableFormat: result?.shipment?.printableFormat ?? 'UNKNOWN',
+          printableArtifact: result?.shipment?.printableArtifact ?? null,
+          artifactStatus: canonical.artifactStatus,
+          artifactSha256: canonical.artifactSha256,
+          accountFingerprint: canonical.accountFingerprint,
+          billingParty: canonical.billingParty,
+        }
+      : undefined,
     requestRoot: operation.operation,
     ozelKargoTakipNo: firstNonEmpty(
       readSuratField(result?.suratCreateLog?.rawRequest, ['OzelKargoTakipNo']),
@@ -3682,6 +3753,12 @@ async function executeSuratCreateCoreAsValue(request) {
 }
 
 function didSuratCreateReachCarrier(result) {
+  // Kanonik dal kendi sonucunu açıkça bildirir. BLOCKED = taşıyıcıya
+  // gidilmedi; SUCCESS/REJECTED/UNKNOWN = POST yapıldı ve kayıt SİLİNEMEZ
+  // (aksi hâlde kilit açılır ve ikinci create riski doğar).
+  if (result?.canonicalCreate) {
+    return result.canonicalCreate.carrierCreateStatus !== 'BLOCKED'
+  }
   const createLog = result?.shipment?.suratCreateLog ?? result?.suratCreateLog
   return Boolean(
     createLog &&
@@ -3781,6 +3858,47 @@ function buildPersistedSuratCreateResponse(record, operation) {
         : operationName === 'GonderiOlusturV2'
           ? 'GonderiOlusturV2'
           : 'KargoBarkoduSiparisSoap'
+  // KANONİK KAYIT TEKRARI (§11): taşıyıcıya GİDİLMEZ, kalıcı ham vendor
+  // çıktısı kullanılır. Etiket çözülemediyse print-ready İDDİA EDİLMEZ.
+  const canonicalArtifact = record?.canonicalVendorArtifact
+  if (canonicalArtifact) {
+    const resolved = canonicalArtifact.artifactStatus === 'RESOLVED'
+    return withSuratIdempotencyDebug(
+      {
+        ok: true,
+        source: 'real',
+        message: resolved
+          ? 'Bu gönderi daha önce Sürat Web API ile oluşturuldu; kalıcı etiket kullanıldı.'
+          : 'Bu gönderi daha önce Sürat Web API ile oluşturuldu; yeni create çağrısı yapılmadı. Yazdırılabilir etiket kaynağı çözülemedi.',
+        serviceType: 'SuratCanonicalWebApi',
+        operationName: 'OrtakBarkodOlustur',
+        shipment: {
+          trackingNumber: record.carrierTrackingNumber,
+          kargoTakipNo: record.carrierTrackingNumber,
+          tNo: record.carrierTrackingNumber,
+          ozelKargoTakipNo: record.ozelKargoTakipNo,
+          dispatchRegistrationConfirmed: true,
+          lifecycleStatus: resolved
+            ? 'LABEL_CREATED_UNVERIFIED'
+            : 'SHIPMENT_REGISTERED_LABEL_REQUIRED',
+          labelStatus: resolved ? 'READY' : canonicalArtifact.artifactStatus,
+          printEnabled: resolved,
+          printReady: resolved,
+          printableFormat: canonicalArtifact.printableFormat,
+          printableArtifact: canonicalArtifact.printableArtifact,
+          canonicalVendorBarcode: canonicalArtifact.barcode,
+          canonicalVendorBarcodeNo: canonicalArtifact.barcodeNo,
+        },
+      },
+      operation,
+      {
+        carrierCreateCalled: false,
+        persistentStatus: 'SUCCESS',
+        createCallCount: record.createCallCount,
+        restoredFromStore: true,
+      },
+    )
+  }
   return withSuratIdempotencyDebug(
     {
       ok: true,
@@ -11459,7 +11577,11 @@ function normalizeSuratConfig(value = {}) {
     value.allowPreRegistrationRest === true ||
     process.env.CARGOFLOW_ALLOW_SURAT_PRE_REGISTRATION_REST === '1'
   const serviceMode =
-    value.serviceMode === 'ORTAK_BARKOD_SOAP'
+    // Kanonik Sürat Web API modu explicit'tir: inference YOK, otomatik
+    // geçiş YOK. Yalnız tenant açıkça bu modu seçtiğinde etkindir.
+    value.serviceMode === SURAT_CANONICAL_SERVICE_MODE
+      ? SURAT_CANONICAL_SERVICE_MODE
+    : value.serviceMode === 'ORTAK_BARKOD_SOAP'
       ? 'ORTAK_BARKOD_SOAP'
       : value.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP'
         ? 'KARGO_BARKODU_SIPARIS_SOAP'
@@ -11646,6 +11768,14 @@ function resolveSuratServiceMode(serviceType) {
 }
 
 function resolveSuratCreateRoute(serviceMode, value = {}) {
+  if (serviceMode === SURAT_CANONICAL_SERVICE_MODE) {
+    // Host Ünite 2 istemcisinde KİLİTLİ; buradaki yol yalnız görünürlük
+    // içindir ve kullanıcı girdisinden ALINMAZ.
+    return {
+      serviceType: 'SuratCanonicalWebApi',
+      createShipmentPath: '/api/OrtakBarkodOlustur',
+    }
+  }
   if (serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP') {
     return {
       serviceType: 'KargoBarkoduSiparisSoap',

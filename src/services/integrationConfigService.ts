@@ -488,7 +488,8 @@ function normalizeSuratConfig(
     surat?.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP' ||
     surat?.serviceMode === 'PRE_REGISTRATION_REST' ||
     surat?.serviceMode === 'GONDERI_YENI_SOAP' ||
-    surat?.serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL'
+    surat?.serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL' ||
+    surat?.serviceMode === 'SURAT_CANONICAL_API'
       ? surat.serviceMode
       : 'ORTAK_BARKOD_SOAP'
   const route = routeFromServiceMode(serviceMode)
@@ -505,6 +506,13 @@ function normalizeSuratConfig(
 export function routeFromServiceMode(
   serviceMode: IntegrationConfig['surat']['serviceMode'],
 ): Pick<IntegrationConfig['surat'], 'serviceType' | 'createShipmentPath'> {
+  if (serviceMode === 'SURAT_CANONICAL_API') {
+    // Canlı host backend'de kilitlidir; kullanıcıdan URL alınmaz.
+    return {
+      serviceType: 'SuratCanonicalWebApi',
+      createShipmentPath: '/api/OrtakBarkodOlustur',
+    }
+  }
   if (serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP') {
     return {
       serviceType: 'KargoBarkoduSiparisSoap',

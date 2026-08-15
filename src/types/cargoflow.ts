@@ -78,6 +78,8 @@ export type SuratServiceMode =
   | 'GONDERI_YENI_SOAP'
   | 'TRENDYOL_MARKETPLACE'
   | 'GONDERI_OLUSTUR_V2_EXPERIMENTAL'
+  // Kanonik Sürat Web API (api02 · POST /api/OrtakBarkodOlustur).
+  | 'SURAT_CANONICAL_API'
 
 export type LabelStatus = 'READY' | 'GENERATED' | 'PRINTED' | 'BLOCKED'
 export type DesiSource =
@@ -928,6 +930,7 @@ export interface SuratIntegrationConfig {
     | 'GonderiyiKargoyaGonderRestJson'
     | 'GonderiOlusturV2'
     | 'GonderiyiKargoyaGonderLegacy'
+    | 'SuratCanonicalWebApi'
   createShipmentPath:
     | '/api/KargoBarkoduSiparis'
     | '/api/OrtakBarkodOlustur'
