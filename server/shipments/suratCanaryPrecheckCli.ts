@@ -5,6 +5,7 @@
 //
 // Kullanım:
 //   npm run surat:canary-precheck -- --org <organizationId>
+import { sql } from 'drizzle-orm'
 import { getDb } from '../db/client.ts'
 import {
   isCredentialEncryptionConfigured,
@@ -36,11 +37,54 @@ function maskIdentifier(value: string): string {
   return `****${trimmed.slice(-4)}`
 }
 
+/**
+ * Tenant adına göre SALT OKUNUR organization araması.
+ *
+ * Birden fazla aday bulunursa TAHMİN YAPILMAZ: adaylar maskeli listelenir
+ * ve çağıran durur.
+ */
+async function findOrganizationByName(
+  name: string,
+): Promise<{ id: string; name: string; slug: string; status: string }[]> {
+  const pattern = `%${name}%`
+  const rows = await getDb().execute(
+    sql`select id, name, slug, status from organizations
+        where name ilike ${pattern} or slug ilike ${pattern}
+        order by name`,
+  )
+  const list = (Array.isArray(rows) ? rows : (rows as { rows?: unknown[] }).rows) ?? []
+  return list as { id: string; name: string; slug: string; status: string }[]
+}
+
 export async function runSuratCanaryPrecheck(): Promise<number> {
-  const organizationId = readArg('org')
-  if (!organizationId) {
-    console.error('--org <organizationId> zorunludur.')
+  let organizationId = readArg('org')
+  const nameQuery = readArg('name')
+  if (!organizationId && !nameQuery) {
+    console.error('--org <organizationId> veya --name <tenant adı> zorunludur.')
     return 2
+  }
+  if (!organizationId && nameQuery) {
+    const candidates = await findOrganizationByName(nameQuery)
+    if (candidates.length === 0) {
+      console.log(`ORGANIZATION FOUND : NO ("${nameQuery}" eşleşmedi)`)
+      return 1
+    }
+    if (candidates.length > 1) {
+      console.log(`ORGANIZATION FOUND : BELİRSİZ (${candidates.length} aday)`)
+      for (const row of candidates) {
+        console.log(
+          `  - ${row.name} | slug=${row.slug} | status=${row.status} | id=${maskIdentifier(row.id)}`,
+        )
+      }
+      console.log('\nTAHMİN YAPILMADI. Doğru adayın tam id\'siyle --org kullanın.')
+      return 1
+    }
+    organizationId = candidates[0].id
+    console.log(
+      `ORGANIZATION FOUND : YES | ${candidates[0].name} | slug=${candidates[0].slug} | status=${candidates[0].status}`,
+    )
+    console.log(`ORG ID (masked)    : ${maskIdentifier(organizationId)}`)
+    console.log('')
   }
   if (!isCredentialEncryptionConfigured()) {
     console.error('CREDENTIAL_ENCRYPTION_KEY tanımlı değil; ön kontrol yapılamaz.')
