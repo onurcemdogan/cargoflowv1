@@ -97,14 +97,15 @@ export function resolveCanonicalTenantSuratAccount(
       ? pick(config.codKullaniciAdi)
       : billingParty === 'SELLER_PAYS'
         ? pick(config.sellerPaysKullaniciAdi)
-        : // Birincil: env'in dokunmadığı CANLI tenant alanı.
-          pick(config.liveKullaniciAdi)
+        : // Birincil: normalizeSuratConfig'in ENV'den bağımsız türettiği
+          // tenant hesabı. `kullaniciAdi` (env ile ezilebilir) OKUNMAZ.
+          pick(config.canonicalPrimaryKullaniciAdi, config.liveKullaniciAdi)
   const sifre =
     billingParty === 'CASH_ON_DELIVERY'
       ? pick(config.codSifre)
       : billingParty === 'SELLER_PAYS'
         ? pick(config.sellerPaysSifre)
-        : pick(config.liveSifre)
+        : pick(config.canonicalPrimarySifre, config.liveSifre)
   if (!kullaniciAdi || !sifre) return null
   return {
     kullaniciAdi,

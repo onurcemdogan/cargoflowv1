@@ -11638,6 +11638,16 @@ function normalizeSuratConfig(value = {}) {
         value.suratWebPassword ||
         '',
     ).trim(),
+    // KANONİK BİRİNCİL HESAP — ENV'DEN BAĞIMSIZ.
+    // Yukarıdaki `kullaniciAdi`/`sifre` alanları SURAT_LIVE_*/SURAT_TEST_*
+    // ile EZİLİR; kanonik Web API yolu bu yüzden tenant'ın KENDİ kayıtlı
+    // değerini ayrı bir alandan okur. Yalnız `value` okunur, env OKUNMAZ.
+    canonicalPrimaryKullaniciAdi: String(
+      value.liveKullaniciAdi || value.kullaniciAdi || value.cariKodu || '',
+    ).trim(),
+    canonicalPrimarySifre: String(
+      value.liveSifre || value.sifre || value.password || '',
+    ).trim(),
     sellerPaysKullaniciAdi: String(
       value.sellerPaysKullaniciAdi ?? value.sellerPaysCariKodu ?? '',
     ).trim(),

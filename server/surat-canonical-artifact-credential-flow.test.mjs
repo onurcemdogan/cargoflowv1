@@ -178,6 +178,47 @@ test('3B-ENV: kanonik yol ENV taban alanlarini OKUMAZ', async () => {
   )
 })
 
+// ═══ UI ALAN KOPRUSU ══════════════════════════════════════════════════════
+
+test('3B-UI-1: UI Musteri Kodu alani kanonik birincil hesaba ULASIR', async () => {
+  // IntegrationsPage `kullaniciAdi` yazar; `liveKullaniciAdi` icin UI alani
+  // YOKTUR. normalizeSuratConfig bu yuzden ENV'den bagimsiz
+  // canonicalPrimary* alanlarini turetir ve kanonik yol onu okur.
+  const spy = installFetchSpy(() => jsonResponse(okBody()))
+  try {
+    await ADAPTER.createCanonicalSuratShipmentForRequest({
+      organizationId: 'org-A',
+      config: {
+        serviceMode: 'SURAT_CANONICAL_API',
+        // normalizeSuratConfig ciktisi: taban alan env ile EZILMIS,
+        // canonicalPrimary* ise tenant'in KENDI degeri.
+        kullaniciAdi: 'ENV_POISONED',
+        sifre: 'ENV_POISONED_SECRET',
+        canonicalPrimaryKullaniciAdi: 'UI_CARI_7788',
+        canonicalPrimarySifre: 'UI_SECRET',
+      },
+      order: baseOrder,
+      reference: 'PKG-1',
+    })
+    const body = JSON.parse(spy.calls[0].init.body)
+    assert.equal(body.KullaniciAdi, 'UI_CARI_7788')
+    assert.equal(body.Sifre, 'UI_SECRET')
+    assert.equal(spy.calls[0].init.body.includes('ENV_POISONED'), false)
+  } finally { spy.restore() }
+})
+
+test('3B-UI-2: canonicalPrimary* turetimi ENV DEGISKENI OKUMAZ', () => {
+  const start = INDEX_SOURCE.indexOf('canonicalPrimaryKullaniciAdi: String(')
+  assert.ok(start > 0, 'canonicalPrimaryKullaniciAdi turetilmeli')
+  const block = INDEX_SOURCE.slice(start, INDEX_SOURCE.indexOf('sellerPaysKullaniciAdi', start))
+  // Yalnizca tenant `value` okunur.
+  for (const forbidden of ['process.env', 'envKullaniciAdi', 'envSifre', 'envPrefix']) {
+    assert.equal(block.includes(forbidden), false, forbidden)
+  }
+  assert.ok(block.includes('value.liveKullaniciAdi'))
+  assert.ok(block.includes('value.kullaniciAdi'))
+})
+
 // ═══ 8-9. RESMI SEMA ══════════════════════════════════════════════════════
 
 test('3B-8: Barcode[] eleman tipi TIPSIZ → tahmin YOK', () => {
