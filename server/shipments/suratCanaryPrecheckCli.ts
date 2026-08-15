@@ -21,6 +21,7 @@ import {
   SURAT_CANONICAL_CREATE_PATH,
 } from './suratWebApiClient.ts'
 import { SURAT_MARKETPLACE_REGISTRY } from './suratCanonicalGonderiModel.ts'
+import { deriveCanonicalPrimaryAccount } from './suratCanonicalServiceMode.mjs'
 
 const present = (value: unknown): string =>
   String(value ?? '').trim() ? 'YES' : 'NO'
@@ -96,7 +97,17 @@ export async function runSuratCanaryPrecheck(): Promise<number> {
     getDb() as unknown as Parameters<typeof loadOrganizationIntegrationConfig>[0],
     organizationId,
   )
-  const surat = (config?.surat ?? {}) as Record<string, unknown>
+  const stored = (config?.surat ?? {}) as Record<string, unknown>
+  // KAYITLI PAYLOAD ÇALIŞMA ZAMANI GİBİ TÜRETİLİR.
+  // `loadOrganizationIntegrationConfig` şifresi çözülmüş HAM kaydı döner;
+  // çalışma zamanında ise `tenantInjectCredentials` bunu normalizeSuratConfig
+  // üzerinden geçirir ve `canonicalPrimary*` alanları orada doğar. Ön kontrol
+  // normalizasyonu atlarsa kanonik hesabı ASLA göremez ve YANLIŞ BLOCKED
+  // üretir. Bu yüzden aynı paylaşılan türev burada da uygulanır.
+  const surat: Record<string, unknown> = {
+    ...stored,
+    ...deriveCanonicalPrimaryAccount(stored),
+  }
 
   // Kanonik yolun okuduğu hesap kümeleri — DEĞERLER BASILMAZ.
   const primary = resolveCanonicalTenantSuratAccount(surat, 'PRIMARY')
@@ -132,8 +143,8 @@ export async function runSuratCanaryPrecheck(): Promise<number> {
     `CURRENT SERVICE MODE          : ${serviceMode || '(tanımsız)'}`,
     `CANONICAL MODE SELECTED       : ${canonicalSelected ? 'YES' : 'NO'}`,
     '',
-    `PRIMARY LIVE CUSTOMER CODE    : ${present(surat.liveKullaniciAdi)}`,
-    `PRIMARY LIVE SHIPPING PASSWORD: ${present(surat.liveSifre)}`,
+    `PRIMARY CUSTOMER CODE         : ${present(surat.canonicalPrimaryKullaniciAdi)}`,
+    `PRIMARY SHIPPING PASSWORD     : ${present(surat.canonicalPrimarySifre)}`,
     `PRIMARY ACCOUNT FINGERPRINT   : ${primary?.accountFingerprint || '(çözülemedi)'}`,
     '',
     `SELLER-PAYS ACCOUNT CONFIGURED: ${sellerPays ? 'YES' : 'NO'}`,

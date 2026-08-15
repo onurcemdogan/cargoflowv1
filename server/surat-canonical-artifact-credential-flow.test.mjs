@@ -178,6 +178,148 @@ test('3B-ENV: kanonik yol ENV taban alanlarini OKUMAZ', async () => {
   )
 })
 
+// ═══ URETIM PAYLOAD SEKLI (SANITIZED — SECRET YOK) ════════════════════════
+
+const MODE = await import('./shipments/suratCanonicalServiceMode.mjs')
+
+// MonalisaToka'nin uretim kaydiyla AYNI SEKIL:
+// /api/integrations/surat/save yolu normalizeLocalIntegrationConfig(incoming)
+// .surat CIKTISINI sifreleyip saklar. UI cari kodunu `kullaniciAdi`, sifreyi
+// `sifre` alanina yazar; `liveKullaniciAdi`/`liveSifre` UI'da YOKTUR ve bu
+// yuzden kayitli payload'da BOSTUR. Degerler uydurmadir.
+const PRODUCTION_SHAPED_PAYLOAD = {
+  serviceMode: 'ORTAK_BARKOD_SOAP',
+  serviceType: 'OrtakBarkodOlusturSoap',
+  createShipmentPath: '/api/OrtakBarkodOlustur',
+  ortam: 'live',
+  kullaniciAdi: 'TEST_CUSTOMER_4321',
+  sifre: 'TEST_SECRET',
+  webPassword: 'TEST_WEB',
+  liveKullaniciAdi: '',
+  liveSifre: '',
+  sellerPaysKullaniciAdi: '',
+  sellerPaysSifre: '',
+  codKullaniciAdi: '',
+  codSifre: '',
+}
+
+test('3B-PROD-1: uretim seklindeki birincil hesap COZULUR', () => {
+  const derived = MODE.deriveCanonicalPrimaryAccount(PRODUCTION_SHAPED_PAYLOAD)
+  assert.equal(derived.canonicalPrimaryKullaniciAdi, 'TEST_CUSTOMER_4321')
+  assert.equal(derived.canonicalPrimarySifre, 'TEST_SECRET')
+  const account = ADAPTER.resolveCanonicalTenantSuratAccount(
+    { ...PRODUCTION_SHAPED_PAYLOAD, ...derived }, 'PRIMARY',
+  )
+  assert.notEqual(account, null, 'birincil hesap COZULMELI')
+  assert.equal(account.accountFingerprint, '****4321')
+})
+
+test('3B-PROD-2: uretim seklindeki normal gonderi BIRINCIL hesabi kullanir', async () => {
+  const spy = installFetchSpy(() => jsonResponse(okBody()))
+  try {
+    const derived = MODE.deriveCanonicalPrimaryAccount(PRODUCTION_SHAPED_PAYLOAD)
+    await ADAPTER.createCanonicalSuratShipmentForRequest({
+      organizationId: 'org-monalisa',
+      config: { ...PRODUCTION_SHAPED_PAYLOAD, ...derived },
+      order: baseOrder,
+      reference: 'PKG-1',
+    })
+    const body = JSON.parse(spy.calls[0].init.body)
+    assert.equal(body.KullaniciAdi, 'TEST_CUSTOMER_4321')
+    assert.equal(body.Sifre, 'TEST_SECRET')
+  } finally { spy.restore() }
+})
+
+test('3B-PROD-3: turev ENV DEGISKENI OKUMAZ', () => {
+  const keys = ['SURAT_LIVE_KULLANICI_ADI', 'SURAT_LIVE_CARI_KODU', 'SURAT_LIVE_SIFRE']
+  const previous = {}
+  for (const key of keys) { previous[key] = process.env[key]; process.env[key] = `ENV_${key}` }
+  try {
+    const derived = MODE.deriveCanonicalPrimaryAccount(PRODUCTION_SHAPED_PAYLOAD)
+    assert.equal(derived.canonicalPrimaryKullaniciAdi, 'TEST_CUSTOMER_4321')
+    assert.equal(derived.canonicalPrimarySifre, 'TEST_SECRET')
+    // Hicbir env degeri sizmaz.
+    assert.equal(JSON.stringify(derived).includes('ENV_'), false)
+    // Bos tenant kaydi env ile DOLDURULMAZ.
+    assert.deepEqual(MODE.deriveCanonicalPrimaryAccount({}), {
+      canonicalPrimaryKullaniciAdi: '', canonicalPrimarySifre: '',
+    })
+  } finally {
+    for (const key of keys) {
+      if (previous[key] === undefined) delete process.env[key]
+      else process.env[key] = previous[key]
+    }
+  }
+})
+
+test('3B-PROD-4: index.mjs ve on kontrol AYNI turevi kullanir', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const cli = await readFile(
+    new URL('./shipments/suratCanaryPrecheckCli.ts', import.meta.url), 'utf8',
+  )
+  // Tek kaynak: paylasilan .mjs turevi. Kopya mantik YOK.
+  assert.match(INDEX_SOURCE, /\.\.\.deriveCanonicalPrimaryAccount\(value\)/)
+  assert.match(cli, /deriveCanonicalPrimaryAccount\(stored\)/)
+  for (const source of [INDEX_SOURCE, cli]) {
+    assert.match(source, /suratCanonicalServiceMode\.mjs/)
+  }
+})
+
+test('3B-PROD-5: kayit gercekten bossa hâlâ FAIL-CLOSED', () => {
+  const empty = { serviceMode: 'SURAT_CANONICAL_API', kullaniciAdi: '', sifre: '' }
+  const derived = MODE.deriveCanonicalPrimaryAccount(empty)
+  assert.equal(
+    ADAPTER.resolveCanonicalTenantSuratAccount({ ...empty, ...derived }, 'PRIMARY'),
+    null,
+  )
+})
+
+test('3B-PROD-6: uretim seklinde sellerPays/COD normal gonderiyi ELE GECIRMEZ', async () => {
+  const withAll = {
+    ...PRODUCTION_SHAPED_PAYLOAD,
+    sellerPaysKullaniciAdi: 'SP_9999', sellerPaysSifre: 'SP_SECRET',
+    codKullaniciAdi: 'COD_8888', codSifre: 'COD_SECRET',
+  }
+  const config = { ...withAll, ...MODE.deriveCanonicalPrimaryAccount(withAll) }
+  const spy = installFetchSpy(() => jsonResponse(okBody()))
+  try {
+    await ADAPTER.createCanonicalSuratShipmentForRequest({
+      organizationId: 'org-monalisa', config, order: baseOrder, reference: 'PKG-1',
+    })
+    const body = spy.calls[0].init.body
+    assert.equal(JSON.parse(body).KullaniciAdi, 'TEST_CUSTOMER_4321')
+    assert.equal(body.includes('SP_9999'), false)
+    assert.equal(body.includes('COD_8888'), false)
+  } finally { spy.restore() }
+  // Ilgili business condition'da DOGRU kumeler secilir.
+  assert.equal(
+    ADAPTER.resolveCanonicalTenantSuratAccount(config, 'SELLER_PAYS').kullaniciAdi,
+    'SP_9999',
+  )
+  assert.equal(
+    ADAPTER.resolveCanonicalTenantSuratAccount(config, 'CASH_ON_DELIVERY').kullaniciAdi,
+    'COD_8888',
+  )
+})
+
+test('3B-PROD-7: uretim seklinde tenant izolasyonu korunur', async () => {
+  const a = { ...PRODUCTION_SHAPED_PAYLOAD }
+  const b = { ...PRODUCTION_SHAPED_PAYLOAD, kullaniciAdi: 'OTHER_TENANT_1234', sifre: 'OTHER' }
+  const spy = installFetchSpy(() => jsonResponse(okBody()))
+  try {
+    for (const [org, raw] of [['org-A', a], ['org-B', b]]) {
+      await ADAPTER.createCanonicalSuratShipmentForRequest({
+        organizationId: org,
+        config: { ...raw, ...MODE.deriveCanonicalPrimaryAccount(raw) },
+        order: baseOrder, reference: 'PKG-1',
+      })
+    }
+    assert.equal(JSON.parse(spy.calls[0].init.body).KullaniciAdi, 'TEST_CUSTOMER_4321')
+    assert.equal(JSON.parse(spy.calls[1].init.body).KullaniciAdi, 'OTHER_TENANT_1234')
+    assert.equal(spy.calls[1].init.body.includes('TEST_CUSTOMER'), false)
+  } finally { spy.restore() }
+})
+
 // ═══ UI ALAN KOPRUSU ══════════════════════════════════════════════════════
 
 test('3B-UI-1: UI Musteri Kodu alani kanonik birincil hesaba ULASIR', async () => {
@@ -207,16 +349,25 @@ test('3B-UI-1: UI Musteri Kodu alani kanonik birincil hesaba ULASIR', async () =
   } finally { spy.restore() }
 })
 
-test('3B-UI-2: canonicalPrimary* turetimi ENV DEGISKENI OKUMAZ', () => {
-  const start = INDEX_SOURCE.indexOf('canonicalPrimaryKullaniciAdi: String(')
-  assert.ok(start > 0, 'canonicalPrimaryKullaniciAdi turetilmeli')
-  const block = INDEX_SOURCE.slice(start, INDEX_SOURCE.indexOf('sellerPaysKullaniciAdi', start))
-  // Yalnizca tenant `value` okunur.
-  for (const forbidden of ['process.env', 'envKullaniciAdi', 'envSifre', 'envPrefix']) {
-    assert.equal(block.includes(forbidden), false, forbidden)
+test('3B-UI-2: canonicalPrimary* turetimi ENV DEGISKENI OKUMAZ', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const shared = await readFile(
+    new URL('./shipments/suratCanonicalServiceMode.mjs', import.meta.url), 'utf8',
+  )
+  // Turev PAYLASILAN modulde; hicbir env degiskeni okumaz.
+  // YALNIZ calisan kod incelenir (yorumlardaki kelimeler onemli degil).
+  const code = shared
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('//'))
+    .join('\n')
+  assert.match(code, /export function deriveCanonicalPrimaryAccount/)
+  for (const forbidden of ['process.env', 'SURAT_LIVE_', 'SURAT_TEST_']) {
+    assert.equal(code.includes(forbidden), false, forbidden)
   }
-  assert.ok(block.includes('value.liveKullaniciAdi'))
-  assert.ok(block.includes('value.kullaniciAdi'))
+  // index.mjs turevi HAM tenant degeri uzerinde cagirir (env-merged cikti degil).
+  assert.match(INDEX_SOURCE, /\.\.\.deriveCanonicalPrimaryAccount\(value\)/)
+  assert.equal(INDEX_SOURCE.includes('deriveCanonicalPrimaryAccount(envKullaniciAdi'), false)
 })
 
 // ═══ 8-9. RESMI SEMA ══════════════════════════════════════════════════════

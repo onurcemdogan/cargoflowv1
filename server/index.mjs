@@ -17,7 +17,10 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
-import { SURAT_CANONICAL_SERVICE_MODE } from './shipments/suratCanonicalServiceMode.mjs'
+import {
+  SURAT_CANONICAL_SERVICE_MODE,
+  deriveCanonicalPrimaryAccount,
+} from './shipments/suratCanonicalServiceMode.mjs'
 import {
   findMissingProductionEnv,
   isProductionEnvironment,
@@ -11641,13 +11644,10 @@ function normalizeSuratConfig(value = {}) {
     // KANONİK BİRİNCİL HESAP — ENV'DEN BAĞIMSIZ.
     // Yukarıdaki `kullaniciAdi`/`sifre` alanları SURAT_LIVE_*/SURAT_TEST_*
     // ile EZİLİR; kanonik Web API yolu bu yüzden tenant'ın KENDİ kayıtlı
-    // değerini ayrı bir alandan okur. Yalnız `value` okunur, env OKUNMAZ.
-    canonicalPrimaryKullaniciAdi: String(
-      value.liveKullaniciAdi || value.kullaniciAdi || value.cariKodu || '',
-    ).trim(),
-    canonicalPrimarySifre: String(
-      value.liveSifre || value.sifre || value.password || '',
-    ).trim(),
+    // değerini ayrı bir alandan okur. Türev PAYLAŞILAN tek kaynaktadır ve
+    // HAM `value` üzerinde çalışır (env değil) — kanarya ön kontrolü de
+    // kayıtlı payload üzerinde AYNI türevi kullanır.
+    ...deriveCanonicalPrimaryAccount(value),
     sellerPaysKullaniciAdi: String(
       value.sellerPaysKullaniciAdi ?? value.sellerPaysCariKodu ?? '',
     ).trim(),
