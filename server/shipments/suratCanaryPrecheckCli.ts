@@ -19,6 +19,7 @@ import {
   SURAT_CANONICAL_LIVE_API_BASE_URL,
   SURAT_CANONICAL_CREATE_PATH,
 } from './suratWebApiClient.ts'
+import { SURAT_MARKETPLACE_REGISTRY } from './suratCanonicalGonderiModel.ts'
 
 const present = (value: unknown): string =>
   String(value ?? '').trim() ? 'YES' : 'NO'
@@ -65,6 +66,14 @@ export async function runSuratCanaryPrecheck(): Promise<number> {
   const serviceMode = String(surat.serviceMode ?? '')
   const canonicalSelected = serviceMode === SURAT_CANONICAL_SERVICE_MODE
 
+  // Bu build kanonik modu tanıyor mu? (servis modu sabiti + kayıtlı
+  // pazaryeri kaynağı). Tenant config'inden BAĞIMSIZ yapısal kontrol.
+  const canonicalSupported = SURAT_CANONICAL_SERVICE_MODE === 'SURAT_CANONICAL_API'
+  const trendyol = SURAT_MARKETPLACE_REGISTRY.TRENDYOL
+  const trendyolReady =
+    trendyol?.entegrasyonFirmasi === 'Trendyol' &&
+    trendyol?.trackingSource === 'cargoTrackingNumber'
+
   // Env override kontrolü: kanonik yol bu değişkenleri OKUMAZ; burada
   // yalnız VARLIKLARI raporlanır (değerleri asla).
   const envPresent = [
@@ -88,6 +97,8 @@ export async function runSuratCanaryPrecheck(): Promise<number> {
     `NORMAL SHIPMENT SELECTS       : ${normalParty}`,
     `NORMAL USES PRIMARY ONLY      : ${normalParty === 'PRIMARY' ? 'YES' : 'NO'}`,
     '',
+    `CANONICAL SERVICE SUPPORTED   : ${canonicalSupported ? 'YES' : 'NO'}`,
+    `MARKETPLACE SOURCE            : ${trendyolReady ? 'TRENDYOL_READY' : 'TRENDYOL_UNAVAILABLE'}`,
     `CANONICAL HOST                : ${SURAT_CANONICAL_LIVE_API_BASE_URL}`,
     `CANONICAL ENDPOINT            : ${SURAT_CANONICAL_CREATE_PATH}`,
     `ENV CREDENTIAL VARS PRESENT   : ${envPresent.length === 0 ? 'NONE' : envPresent.join(', ')}`,
@@ -96,8 +107,10 @@ export async function runSuratCanaryPrecheck(): Promise<number> {
   console.log(lines.join('\n'))
 
   const blockers: string[] = []
-  if (!primary) blockers.push('PRIMARY_LIVE_ACCOUNT_MISSING')
+  if (!primary) blockers.push('PRIMARY_ACCOUNT_MISSING')
   if (normalParty !== 'PRIMARY') blockers.push('NORMAL_SHIPMENT_NOT_PRIMARY')
+  if (!canonicalSupported) blockers.push('CANONICAL_SERVICE_UNSUPPORTED')
+  if (!trendyolReady) blockers.push('TRENDYOL_SOURCE_UNAVAILABLE')
   console.log('')
   console.log(
     blockers.length === 0
