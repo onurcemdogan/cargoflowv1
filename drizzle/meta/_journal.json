@@ -64,6 +64,13 @@
       "when": 1786881567070,
       "tag": "0008_busy_wong",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1786905027595,
+      "tag": "0009_fresh_zarda",
+      "breakpoints": true
     }
   ]
 }

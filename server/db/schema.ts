@@ -584,6 +584,13 @@ export const integrationSyncState = pgTable(
     lastSyncStatus: text('last_sync_status'),
     lastFetchedCount: integer('last_fetched_count'),
     lastErrorCode: text('last_error_code'),
+    // ARTIMLI SENKRON DEFTERİ (B3).
+    //   lastAttemptedAt   → denemenin kendisi (başarı şart değil)
+    //   syncWatermarkAt   → bir sonraki turun BAŞLAYACAĞI pencere konumu
+    // WATERMARK YALNIZ KALICILAŞTIRMA BAŞARILI OLUNCA ilerler; sağlayıcı
+    // çekimi başarılı olsa bile persistence düşerse konum DEĞİŞMEZ.
+    lastAttemptedAt: timestamp('last_attempted_at', { withTimezone: true }),
+    syncWatermarkAt: timestamp('sync_watermark_at', { withTimezone: true }),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),

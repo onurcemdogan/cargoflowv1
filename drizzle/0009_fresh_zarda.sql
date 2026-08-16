@@ -1,0 +1,2 @@
+ALTER TABLE "integration_sync_state" ADD COLUMN "last_attempted_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "integration_sync_state" ADD COLUMN "sync_watermark_at" timestamp with time zone;
