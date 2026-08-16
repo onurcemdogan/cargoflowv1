@@ -22,6 +22,7 @@ import {
   getSuratCargoByParcelUniqueId,
   isGetCargoConfigured,
 } from './suratGetCargoClient.ts'
+import { maskIdentifier, resolveOrganizationByName } from './suratBillingScanner.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -201,13 +202,30 @@ export async function runSuratBillingInspect(): Promise<number> {
     console.error('[surat:billing] DATABASE_URL tanımlı değil.')
     return 1
   }
-  const organizationId = readArg('org')
+  const db = getDb()
   const packageId = readArg('package')
+  // `--name` ile tenant çözümü (UUID aramak gerekmez); `--org` GERİYE UYUMLU.
+  let organizationId = readArg('org')
+  const name = readArg('name')
+  if (!organizationId && name) {
+    const resolved = await resolveOrganizationByName(db, name)
+    if (resolved.status === 'not_found') {
+      console.error(`[surat:billing] "${name}" için tenant bulunamadı.`)
+      return 1
+    }
+    if (resolved.status === 'ambiguous') {
+      console.error('[surat:billing] BİRDEN FAZLA eşleşme — tahmin YOK:')
+      for (const candidate of resolved.candidates) {
+        console.error(`  ${maskIdentifier(candidate.id)}  ${candidate.name}`)
+      }
+      return 1
+    }
+    organizationId = resolved.organization.id
+  }
   if (!organizationId || !packageId) {
-    console.error('[surat:billing] --org ve --package ZORUNLU.')
+    console.error('[surat:billing] (--org veya --name) ve --package ZORUNLU.')
     return 1
   }
-  const db = getDb()
   let getCargoConfig: Record<string, unknown> = {}
   if (hasFlag('get-cargo')) {
     const rows = (await db.execute(
