@@ -210,7 +210,7 @@ function salesOrder(over = {}) {
 }
 
 test('RDS-1/2/3: refundDataSource order_status / unavailable / persisted_claims', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { buildDashboardViewModel } = await vite.ssrLoadModule('/src/dashboard/dashboardViewModel.ts')
   const now = new Date('2026-07-19T12:00:00.000Z')

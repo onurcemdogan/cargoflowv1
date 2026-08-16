@@ -11,6 +11,10 @@ test('Marketplace senkronu operasyonel shipment state kaybetmez (A-G)', async (t
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { OrderWorkflowService, preserveOperationalStateFromStore } =

@@ -26,7 +26,7 @@ const accounts = await import('./integrations/marketplaceAccountRepository.ts')
 let _vite
 async function load(path) {
   if (!_vite) {
-    _vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+    _vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   }
   return _vite.ssrLoadModule(path)
 }

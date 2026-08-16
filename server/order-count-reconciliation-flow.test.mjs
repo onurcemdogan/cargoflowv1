@@ -29,6 +29,7 @@ async function loadFrontend(path) {
   if (!_vite) {
     _vite = await createServer({
       appType: 'custom', server: { middlewareMode: true, hmr: false },
+      optimizeDeps: { noDiscovery: true, include: [] },
     })
   }
   return _vite.ssrLoadModule(path)

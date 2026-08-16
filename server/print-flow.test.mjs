@@ -8,6 +8,10 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
 
@@ -594,6 +598,10 @@ test('Toplu yazdırma tek dokümanda doğru alan eşlemesiyle çalışır', asyn
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
 

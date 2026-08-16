@@ -58,7 +58,7 @@ const printableShipment = (over = {}) => ({
 })
 
 test('Faz 1+3: display no, arama, capability, projection güvenliği', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { displayOrderNumber, sourceOrderNumber } = await vite.ssrLoadModule('/src/utils/orderDisplay.ts')
   const { resolveOrderActionCapabilities } = await vite.ssrLoadModule('/src/utils/orderActionCapabilities.ts')

@@ -74,7 +74,7 @@ async function operationStatusFor(db, packageId) {
 
 // ---- Rozet (badge) ve reload türetmesi: canonical operationStatus önceliği ----
 test('1,2,4,5: rozet canonical operationStatus önceliğini kullanır', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { mapOperationStatus } = await vite.ssrLoadModule('/src/utils/statusPresentation.ts')
   const { withDerivedOperationStatus } = await vite.ssrLoadModule('/src/utils/orderStatus.ts')

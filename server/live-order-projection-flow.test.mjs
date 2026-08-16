@@ -150,7 +150,7 @@ test('frontend: reconstructed order → 727 display, arama, capability, projecti
   await orderService.markLabelReady(db, org, row.id)
   const liveOrder = await orderService.getOrder(db, org, row.id)
 
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { displayOrderNumber, sourceOrderNumber } = await vite.ssrLoadModule('/src/utils/orderDisplay.ts')
   const { resolveOrderActionCapabilities } = await vite.ssrLoadModule('/src/utils/orderActionCapabilities.ts')

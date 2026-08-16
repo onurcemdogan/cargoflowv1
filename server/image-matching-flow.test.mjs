@@ -10,6 +10,10 @@ test('Varyant ve parent model görsel eşleşme sözleşmesi', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const {
@@ -292,6 +296,10 @@ test('Normalize katalog görsel eşleşmesi (A-H)', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const {
@@ -571,6 +579,10 @@ test('Kirli barkod + aile kimliği ambiguity fallback (currentSync)', async (t) 
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { resolveProductCacheMatch, resolveProductImage } =
@@ -669,6 +681,10 @@ test('Canlı katalog varyant kimlikleri üst ürün altında kaybolmaz', async (
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { resolveProductImage } = await vite.ssrLoadModule(

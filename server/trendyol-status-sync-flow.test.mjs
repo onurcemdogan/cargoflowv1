@@ -14,6 +14,7 @@ let vite
 
 before(async () => {
   vite = await createServer({
+    optimizeDeps: { noDiscovery: true, include: [] },
     server: { middlewareMode: true },
     appType: 'custom',
     logLevel: 'silent',

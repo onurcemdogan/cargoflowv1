@@ -15,7 +15,7 @@ function emptyConfig() {
 }
 
 test('dashboard provider health: masked metadata\'dan configured türetir (reload regresyonu)', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { resolveTrendyolConfigured, resolveSuratConfigured } = await vite.ssrLoadModule(
     '/src/utils/integrationConfigured.ts',
@@ -79,7 +79,7 @@ test('dashboard provider health: masked metadata\'dan configured türetir (reloa
 })
 
 test('Sürat configured: FirmaId ZORUNLU değil; kullaniciAdi/cariKod + (sifre|webPassword) yeterli', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { resolveSuratConfigured } = await vite.ssrLoadModule('/src/utils/integrationConfigured.ts')
   const { buildDashboardProviderHealth } = await vite.ssrLoadModule('/src/dashboard/dashboardSummary.ts')
@@ -112,7 +112,7 @@ test('Sürat configured: FirmaId ZORUNLU değil; kullaniciAdi/cariKod + (sifre|w
 })
 
 test('Hiç credential yok → not_configured ("bağlantı bulunamadı" doğru gösterilir)', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { buildDashboardProviderHealth } = await vite.ssrLoadModule('/src/dashboard/dashboardSummary.ts')
   const health = buildDashboardProviderHealth({

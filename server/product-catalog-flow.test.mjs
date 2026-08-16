@@ -6,6 +6,10 @@ test('4293 ham listing, barcode tekrar etse bile varyant kimliğiyle korunur', a
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const {
@@ -36,6 +40,10 @@ test('aynı productMainId altındaki farklı barkod, renk ve beden varyantları 
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { dedupeProductsByVariantIdentity } = await vite.ssrLoadModule(
@@ -58,6 +66,10 @@ test('kısmi ürün senkronu son başarılı tam cache üzerine yazılmaz', asyn
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { OrderWorkflowService } = await vite.ssrLoadModule(
@@ -115,6 +127,10 @@ test('eski şemasız 1154 kayıtlık cache tam katalog olarak hydrate edilmez', 
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { OrderWorkflowService, isValidProductCatalogCache } =
@@ -133,6 +149,10 @@ test('frontend ve backend build revizyonu farklıysa mismatch uyarısı üretili
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { buildRevisionMismatch } = await vite.ssrLoadModule(

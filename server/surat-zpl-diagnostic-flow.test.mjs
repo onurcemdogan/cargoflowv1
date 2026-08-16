@@ -312,6 +312,7 @@ test('SZD-13: label sağlayıcı technicalZpl\'i resmî ZPL olarak kullanır', a
   const { createServer } = await import('vite')
   const vite = await createServer({
     appType: 'custom', server: { middlewareMode: true, hmr: false },
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { ZebraZplLabelProvider } = await vite.ssrLoadModule(

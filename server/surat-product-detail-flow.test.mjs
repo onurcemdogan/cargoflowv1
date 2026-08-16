@@ -19,6 +19,7 @@ let _vite
 async function load(path) {
   if (!_vite) {
     _vite = await createServer({
+      optimizeDeps: { noDiscovery: true, include: [] },
       appType: 'custom',
       server: { middlewareMode: true, hmr: false },
     })

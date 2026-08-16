@@ -9,7 +9,7 @@ import { createServer } from 'vite'
 // tracking/barkod varlığına bağlanmalı.
 
 test('resolveSuratCreateBusinessResult: HTTP 200 tek başına SUCCESS değildir', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { resolveSuratCreateBusinessResult } = await vite.ssrLoadModule(
     '/src/utils/suratCreateResult.ts',

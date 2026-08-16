@@ -41,7 +41,7 @@ function printableShipment(over = {}) {
 }
 
 test('Faz 1: etiket "Siparis No" 727 gösterir; 114/T.No/barkod korunur', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { buildSuratLabelData } = await vite.ssrLoadModule('/src/utils/labelData.ts')
 
@@ -62,7 +62,7 @@ test('Faz 1: etiket "Siparis No" 727 gösterir; 114/T.No/barkod korunur', async 
 })
 
 test('Faz 2: persist ZPL varken desi tekrar İSTENMEZ; ZPL yoksa istenir', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { validateLabelData } = await vite.ssrLoadModule('/src/utils/labelData.ts')
   const hasDesiError = (v) => v.errors.some((e) => e.includes('Desi bilgisi eksik'))
@@ -87,7 +87,7 @@ test('Faz 2: persist ZPL varken desi tekrar İSTENMEZ; ZPL yoksa istenir', async
 })
 
 test('Faz 3: provider health login/hydrate — needs_check nötr, connected/error kalıcıdan', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, })
   t.after(() => vite.close())
   const { buildDashboardProviderHealth } = await vite.ssrLoadModule('/src/dashboard/dashboardSummary.ts')
 

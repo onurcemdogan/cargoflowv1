@@ -36,6 +36,7 @@ let _vite
 async function frontend() {
   if (!_vite) {
     _vite = await createServer({
+      optimizeDeps: { noDiscovery: true, include: [] },
       appType: 'custom',
       server: { middlewareMode: true, hmr: false },
     })

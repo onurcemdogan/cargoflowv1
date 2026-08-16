@@ -86,6 +86,10 @@ test('classifyAnalyticsClaim statüleri doğru sınıflar', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { classifyAnalyticsClaim } = await vite.ssrLoadModule(
@@ -105,6 +109,10 @@ test('summarizeAcceptedClaimsForPeriod dedup (F) ve exclude (G)', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { summarizeAcceptedClaimsForPeriod } = await vite.ssrLoadModule(
@@ -132,6 +140,10 @@ test('dashboard satış kartları claim mutabakatı (A-E, H)', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { buildDashboardSalesPeriodCards } = await vite.ssrLoadModule(
@@ -234,6 +246,10 @@ test('claims verisi olmadan satış brüt kalır, operasyon paneli çalışır (
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // Bu sunucular YALNIZ ssrLoadModule icin kullanilir; SSR'da bagimliliklar
+    // zaten harici tutulur. Otomatik dep-scan bu yuzden GEREKSIZ ve ayni surecte
+    // pes pese acilip kapanan sunucularda yarisa girip sonraki dosyayi dusuruyordu.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { buildDashboardViewModel } = await vite.ssrLoadModule(
