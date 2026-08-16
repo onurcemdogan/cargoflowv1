@@ -43,6 +43,8 @@ export interface MaskedIntegrationStatus {
     cariKod?: string
     firmaId?: string
     environment?: string
+    /** Sır değil: kayıtlı servis modu (form yeniden yüklenirken korunur). */
+    serviceMode?: string
     hasPassword?: boolean
     hasWebPassword?: boolean
     usernameMasked: string
@@ -267,6 +269,16 @@ export class IntegrationConfigService {
               payload.surat?.cariKod ?? payload.surat?.customerCode ?? '',
             ),
             firmaId: String(payload.surat?.firmaId ?? ''),
+            // KAYITLI SERVİS MODU GERİ YÜKLENİR. Bu olmadan form her
+            // yüklemede varsayılana düşüyor ve sonraki kaydetme tenant'ın
+            // seçtiği modu eziyordu. Alan gelmezse (eski sunucu/eski kayıt)
+            // varsayılan AYNEN korunur — mevcut tenant davranışı değişmez.
+            ...(isSuratServiceMode(payload.surat?.serviceMode)
+              ? {
+                  serviceMode: payload.surat.serviceMode,
+                  ...routeFromServiceMode(payload.surat.serviceMode),
+                }
+              : {}),
             ...(suratEnv === 'live' || suratEnv === 'test'
               ? { ortam: suratEnv }
               : {}),
@@ -480,18 +492,35 @@ function clamp(value: number, minimum: number, maximum: number): number {
   return Math.min(maximum, Math.max(minimum, Number(value) || minimum))
 }
 
+/**
+ * Kabul edilen servis modları — TEK liste.
+ *
+ * Hem kaydetme normalizasyonu hem de form yeniden yükleme aynı listeyi
+ * kullanır; ikisi ayrışırsa seçilen mod sessizce varsayılana düşer.
+ */
+const SURAT_SERVICE_MODES: readonly IntegrationConfig['surat']['serviceMode'][] = [
+  'ORTAK_BARKOD_SOAP',
+  'KARGO_BARKODU_SIPARIS_SOAP',
+  'PRE_REGISTRATION_REST',
+  'GONDERI_YENI_SOAP',
+  'GONDERI_OLUSTUR_V2_EXPERIMENTAL',
+  'SURAT_CANONICAL_API',
+]
+
+export function isSuratServiceMode(
+  value: unknown,
+): value is IntegrationConfig['surat']['serviceMode'] {
+  return SURAT_SERVICE_MODES.includes(
+    value as IntegrationConfig['surat']['serviceMode'],
+  )
+}
+
 function normalizeSuratConfig(
   surat?: Partial<IntegrationConfig['surat']>,
 ): IntegrationConfig['surat'] {
-  const serviceMode =
-    surat?.serviceMode === 'ORTAK_BARKOD_SOAP' ||
-    surat?.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP' ||
-    surat?.serviceMode === 'PRE_REGISTRATION_REST' ||
-    surat?.serviceMode === 'GONDERI_YENI_SOAP' ||
-    surat?.serviceMode === 'GONDERI_OLUSTUR_V2_EXPERIMENTAL' ||
-    surat?.serviceMode === 'SURAT_CANONICAL_API'
-      ? surat.serviceMode
-      : 'ORTAK_BARKOD_SOAP'
+  const serviceMode = isSuratServiceMode(surat?.serviceMode)
+    ? surat.serviceMode
+    : 'ORTAK_BARKOD_SOAP'
   const route = routeFromServiceMode(serviceMode)
 
   return {

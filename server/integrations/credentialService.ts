@@ -234,6 +234,7 @@ export async function getMaskedIntegrationStatus(
     cariKod: string
     firmaId: string
     environment: string
+    serviceMode: string
     hasPassword: boolean
     hasWebPassword: boolean
     usernameMasked: string
@@ -276,6 +277,11 @@ export async function getMaskedIntegrationStatus(
       cariKod,
       firmaId: String(surat.firmaId ?? ''),
       environment: String(surat.ortam ?? ''),
+      // SERVİS MODU SIR DEĞİLDİR ve geri okunabilmelidir. Bu alan
+      // dönmediğinde form her yüklemede varsayılana (ORTAK_BARKOD_SOAP)
+      // düşüyor ve bir sonraki kaydetme, tenant'ın seçtiği modu SESSİZCE
+      // eziyordu. Kalıcılık zincirinin kapanması için gereklidir.
+      serviceMode: String(surat.serviceMode ?? ''),
       hasPassword: hasSuratPassword,
       hasWebPassword,
       usernameMasked: maskTail(surat.kullaniciAdi),
