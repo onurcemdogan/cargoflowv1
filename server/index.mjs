@@ -1299,9 +1299,39 @@ async function executeOrdersSyncRound(request, response) {
   // released=true ise finally'de ek serbest bırakmaya gerek yoktur.
   let released = false
 
+  // ARTIMLI PENCERE + DEFTER (B3).
+  //
+  // Pencere sonu olarak ÇEKİM BAŞLANGICI kullanılır (`now` DEĞİL): tur sürerken
+  // gelen siparişler bu turun yanıtında olmayabilir; sonu `now` yapmak onları
+  // atlardı. Örtüşme zaten idempotent upsert ile güvenlidir.
+  const roundStartedAt = new Date()
+  const checkpointApi = await import('./sync/marketplaceSyncCheckpoint.ts')
+  await checkpointApi
+    .recordSyncAttempt(context.db, context.organizationId, syncAccountId, roundStartedAt)
+    .catch(() => undefined)
+
   try {
     const credentials = request.body?.credentials ?? {}
-    const query = request.body?.query ?? {}
+    const requestedQuery = request.body?.query ?? {}
+    // Çağıran AÇIKÇA tarih verdiyse ona SAYGI duyulur (tarih kapsamlı manuel
+    // senkron). Vermediyse pencere kalıcı watermark'tan türer; watermark yoksa
+    // MEVCUT istemci varsayılanı (son 7 gün) korunur — sınırsız geçmiş YOK.
+    const storedCheckpoint = await checkpointApi
+      .readSyncCheckpoint(context.db, context.organizationId, syncAccountId)
+      .catch(() => null)
+    const incrementalWindow = storedCheckpoint
+      ? checkpointApi.buildIncrementalWindow(storedCheckpoint, roundStartedAt)
+      : { initial: true, startTime: null }
+    const explicitWindow =
+      requestedQuery.startDate !== undefined || requestedQuery.endDate !== undefined
+    const query =
+      explicitWindow || incrementalWindow.initial || !incrementalWindow.startTime
+        ? requestedQuery
+        : {
+            ...requestedQuery,
+            startDate: incrementalWindow.startTime.getTime(),
+            endDate: roundStartedAt.getTime(),
+          }
     let result
     try {
       result = await callTrendyolOrdersByStatuses(credentials, { size: 50, ...query })
@@ -1409,6 +1439,22 @@ async function executeOrdersSyncRound(request, response) {
       // Sipariş durum/tutar/iptal/iade verisi değişti → bu tenant'ın satış
       // analitiği cache'i geçersizleşir; sonraki Dashboard isteği yeniden hesaplar.
       await invalidateTenantAnalyticsCache(context.organizationId)
+      // WATERMARK YALNIZ TAM BAŞARIDA İLERLER.
+      //
+      // KISMİ turda bazı statüler çekilemedi; konumu ilerletmek o statülerin
+      // siparişlerini KALICI olarak atlardı. Bu yüzden `partial` dalında
+      // watermark'a DOKUNULMAZ ve bir sonraki tur aynı pencereyi tekrar kapsar.
+      if (!partial) {
+        await checkpointApi
+          .commitSyncWatermark(
+            context.db,
+            context.organizationId,
+            syncAccountId,
+            roundStartedAt,
+            { fetchedCount: persistResult.fetchedCount },
+          )
+          .catch(() => undefined)
+      }
       released = true
       if (partial) {
         // KISMİ başarı: uygulama hatası DEĞİL → HTTP 207 (2xx; tarayıcıda 502
@@ -1453,6 +1499,12 @@ async function executeOrdersSyncRound(request, response) {
         errorCode: null,
         marketplaceAccountId: syncAccountId,
       })
+      // ÇEKİM BAŞARILI, KALICILAŞTIRMA DÜŞTÜ → watermark İLERLEMEZ.
+      await checkpointApi
+        .recordSyncFailure(
+          context.db, context.organizationId, syncAccountId, 'PERSISTENCE',
+        )
+        .catch(() => undefined)
       released = true
       response.status(500).json({ ok: false, message: 'Siparişler kaydedilemedi.' })
     }
