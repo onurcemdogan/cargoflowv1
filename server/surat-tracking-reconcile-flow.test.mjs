@@ -249,6 +249,7 @@ test('SSP-POLL-5b: teslim/iade kodu geriye DUSURMEZ (no-regress)', async () => {
     db,
     {
       orderId: order.id,
+      organizationId,
       handedToCargo: true,
       delivered: false,
       returning: false,
@@ -346,6 +347,7 @@ test('SSP-IDENTITY-2: karar YALNIZ kendi orderId sine uygulanir', async () => {
     db,
     {
       orderId: target.id,
+      organizationId,
       handedToCargo: true,
       delivered: false,
       returning: false,

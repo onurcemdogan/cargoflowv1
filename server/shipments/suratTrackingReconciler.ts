@@ -1,5 +1,6 @@
 import { and, asc, eq, gt, inArray, isNull, notInArray, sql } from 'drizzle-orm'
 import { orders, shipments } from '../db/schema.ts'
+import { refreshOrderProjectionFragment } from '../orders/orderFilterProjectionRepository.ts'
 import { mapSuratCarrierStatus } from '../../src/utils/shipmentStatus.ts'
 
 // ═══ SÜRAT TAKİP MUTABAKATI — FİZİKSEL KABUL SONRASI DURUM YAKALAMA ═══════
@@ -180,6 +181,8 @@ export type CarrierTrackingQuery = (
 
 export interface TrackingDecision {
   orderId: string
+  /** TENANT KAPSAMI: karar üretildiği adayın organizasyonu (tahmin YOK). */
+  organizationId: string
   /** Kanonik haritadan türeyen sonuç; YENİ eşleme YOK. */
   handedToCargo: boolean
   delivered: boolean
@@ -207,6 +210,7 @@ export function decideFromCarrierSnapshot(
 ): TrackingDecision {
   const base = {
     orderId: candidate.orderId,
+    organizationId: candidate.organizationId,
     handedToCargo: false,
     delivered: false,
     returning: false,
@@ -404,6 +408,8 @@ export async function applyTrackingDecision(
     })
     .where(
       and(
+        // TENANT KAPSAMI: yalnız kararın ait olduğu organizasyon.
+        eq(orders.organizationId, decision.organizationId),
         eq(orders.id, decision.orderId),
         // NO-REGRESS: teslim/iade/kargoya verilmiş kayıt geriye çekilmez.
         notInArray(orders.operationStatus, [
@@ -414,4 +420,11 @@ export async function applyTrackingDecision(
         ]),
       ),
     )
+  // PROJEKSİYON BAKIMI: mutasyondan SONRA ORDER parçası mevcut DB durumundan
+  // yeniden türetilir. NO-REGRESS nedeniyle UPDATE eşleşmese bile yenileme
+  // IDEMPOTENT'tir (aynı token'lar yazılır) ve projeksiyon ASLA bayat kalmaz.
+  // Yeni taşıyıcı/ağ çağrısı YOK; decrypt YOK; hata YUTULMAZ.
+  await refreshOrderProjectionFragment(database, decision.organizationId, [
+    decision.orderId,
+  ])
 }
