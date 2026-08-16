@@ -239,3 +239,98 @@ test('CFG-4: settings_json anahtarlari listelenir', async (t) => {
   const result = await inspect.inspectConfigKeys(db, org)
   assert.deepEqual(result.settingsKeys, ['digerAyar', 'suratGetCargo'])
 })
+
+/* ═══ CONFIG SUMMARY (Faz 3F) ═════════════════════════════════════════ */
+
+/** Gerçek üretim config'ine benzeyen, kasıtlı SIR içeren fikstür. */
+const PROD_LIKE_CONFIG = {
+  serviceMode: 'SURAT_CANONICAL_API',
+  serviceType: 'SuratCanonicalWebApi',
+  createShipmentPath: '/api/OrtakBarkodOlustur',
+  trackingServiceType: 'KargoTakipHareketDetayiSoap',
+  trackingPath: '/api/KargoTakipHareketDetayi',
+  restSenderId: '496056',
+  firmaId: '1551267127',
+  entegrasyonFirmasi: 'Trendyol',
+  odemeTipi: '1',
+  allowPreRegistrationRest: false,
+  // AŞAĞIDAKİLERİN DEĞERİ ASLA GÖRÜNMEMELİ:
+  kullaniciAdi: 'GIZLI_KULLANICI',
+  canonicalPrimaryKullaniciAdi: 'GIZLI_PRIMARY',
+  sifre: 'GIZLI_SIFRE',
+  webPassword: 'GIZLI_WEB',
+  apiKey: 'GIZLI_APIKEY',
+  token: 'GIZLI_TOKEN',
+  liveKullaniciAdi: 'GIZLI_LIVE',
+  someUrl: 'https://user:pass@gizli.host.invalid/api/x?token=GIZLI_QUERY',
+}
+
+test('SUM-1: izin listeli alanlar GORUNUR', () => {
+  const summary = inspect.buildConfigSummary(PROD_LIKE_CONFIG)
+  const byKey = Object.fromEntries(summary.allowed.map((e) => [e.key, e.value]))
+  assert.equal(byKey.serviceMode, 'SURAT_CANONICAL_API')
+  assert.equal(byKey.createShipmentPath, '/api/OrtakBarkodOlustur')
+  assert.equal(byKey.trackingPath, '/api/KargoTakipHareketDetayi')
+  assert.equal(byKey.trackingServiceType, 'KargoTakipHareketDetayiSoap')
+  assert.equal(byKey.entegrasyonFirmasi, 'Trendyol')
+})
+
+test('SUM-2: SIR DEGERLERI hicbir kosulda cikmaz', () => {
+  const text = inspect
+    .formatConfigSummary(inspect.buildConfigSummary(PROD_LIKE_CONFIG))
+    .join('\n')
+  for (const secret of [
+    'GIZLI_KULLANICI', 'GIZLI_PRIMARY', 'GIZLI_SIFRE', 'GIZLI_WEB',
+    'GIZLI_APIKEY', 'GIZLI_TOKEN', 'GIZLI_LIVE', 'GIZLI_QUERY',
+    'user:pass', 'gizli.host.invalid',
+  ]) {
+    assert.equal(text.includes(secret), false, `sir sizdi: ${secret}`)
+  }
+  // Ama ADLARI görünür (operatör hangi alanın dolu olduğunu bilmeli).
+  assert.ok(text.includes('kullaniciAdi'))
+  assert.ok(text.includes('secret(masked)'))
+})
+
+test('SUM-3: URL redaction — userinfo ve query ATILIR', () => {
+  assert.equal(
+    inspect.redactUrlLike('https://user:pass@host.invalid/api/x?token=SECRET'),
+    'https://host.invalid/api/x?<redacted>',
+  )
+  assert.equal(
+    inspect.redactUrlLike('https://api02.suratkargo.com.tr/api/getCargo'),
+    'https://api02.suratkargo.com.tr/api/getCargo',
+  )
+  // URL olmayan değerler olduğu gibi kalır.
+  assert.equal(inspect.redactUrlLike('/api/KargoTakipHareketDetayi'),
+    '/api/KargoTakipHareketDetayi')
+  assert.equal(inspect.redactUrlLike(''), '')
+})
+
+test('SUM-4: BEYAZ LISTE — yeni alan otomatik DISARIDA kalir', () => {
+  const summary = inspect.buildConfigSummary({
+    ...PROD_LIKE_CONFIG,
+    yeniGizliAlan: 'YENI_SIR',
+  })
+  const allowedKeys = summary.allowed.map((e) => e.key)
+  assert.equal(allowedKeys.includes('yeniGizliAlan'), false, 'beyaz liste disi')
+  const text = inspect.formatConfigSummary(summary).join('\n')
+  assert.equal(text.includes('YENI_SIR'), false, 'degeri SIZMAZ')
+  assert.ok(text.includes('yeniGizliAlan'), 'adi gorunur')
+})
+
+test('SUM-5: config-summary DB yazma 0, ag 0', () => {
+  const code = codeOf(INSPECT_FILE)
+  const start = code.indexOf("hasFlag('config-summary')")
+  assert.ok(start > 0)
+  const block = code.slice(start, start + 900)
+  for (const forbidden of ['.insert(', '.update(', '.delete(', 'fetch(', 'getSuratCargo']) {
+    assert.equal(block.includes(forbidden), false, `${forbidden} OLMAMALI`)
+  }
+})
+
+test('SUM-6: bos config CRASH etmez', () => {
+  const summary = inspect.buildConfigSummary({})
+  assert.deepEqual(summary.allowed, [])
+  assert.deepEqual(summary.unknown, [])
+  assert.ok(inspect.formatConfigSummary(summary).length > 0)
+})

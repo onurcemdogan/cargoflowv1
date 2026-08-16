@@ -328,6 +328,102 @@ export async function inspectConfigKeys(
   return { suratKeys, settingsKeys }
 }
 
+/**
+ * ÖZET İÇİN İZİN VERİLEN ALANLAR — BEYAZ LİSTE.
+ *
+ * Kara liste yerine beyaz liste: yeni bir kimlik alanı eklendiğinde otomatik
+ * olarak DIŞARIDA kalır. Kara liste olsaydı yeni sır alanı sessizce sızardı.
+ */
+export const CONFIG_SUMMARY_ALLOWLIST = [
+  'serviceMode',
+  'serviceType',
+  'createShipmentPath',
+  'trackingServiceType',
+  'trackingPath',
+  'restSenderId',
+  'firmaId',
+  'entegrasyonFirmasi',
+  'odemeTipi',
+  'allowPreRegistrationRest',
+] as const
+
+/** Adı sır çağrıştıran her alan — DEĞERİ ASLA gösterilmez. */
+const SECRETISH_KEY = /(kullaniciadi|username|sifre|password|webpassword|apikey|api_key|token|authorization|credential|secret|auth)/i
+
+/** URL benzeri değerlerde kimlik/sorgu taşıyan kısımları TEMİZLER. */
+export function redactUrlLike(value: unknown): string {
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) return text
+  try {
+    const url = new URL(text)
+    // userinfo (user:pass@) ve tüm sorgu dizesi ATILIR.
+    return `${url.protocol}//${url.host}${url.pathname}${url.search ? '?<redacted>' : ''}`
+  } catch {
+    return '<redacted-url>'
+  }
+}
+
+export interface ConfigSummary {
+  allowed: { key: string; value: string }[]
+  /** İzin listesinde OLMAYAN alanlar: yalnız ad + tür + doluluk. */
+  unknown: { key: string; kind: string; present: boolean }[]
+}
+
+/**
+ * SALT OKUNUR YAPILANDIRMA ÖZETİ.
+ *
+ * İzin listesindeki alanların DEĞERİ gösterilir (hiçbiri kimlik bilgisi
+ * değildir); geri kalan her şey yalnız ad/tür/doluluk olarak listelenir.
+ * Sır çağrıştıran adlar izin listesinde olsa bile değeri BASILMAZ.
+ */
+export function buildConfigSummary(
+  config: Record<string, unknown> = {},
+): ConfigSummary {
+  const allowed: { key: string; value: string }[] = []
+  for (const key of CONFIG_SUMMARY_ALLOWLIST) {
+    if (!Object.prototype.hasOwnProperty.call(config, key)) continue
+    if (SECRETISH_KEY.test(key)) continue
+    const raw = config[key]
+    if (raw === null || raw === undefined || String(raw).trim() === '') continue
+    allowed.push({ key, value: redactUrlLike(raw) })
+  }
+  const allowSet = new Set<string>(CONFIG_SUMMARY_ALLOWLIST)
+  const unknown = Object.keys(config)
+    .filter((key) => !allowSet.has(key))
+    .sort()
+    .map((key) => {
+      const raw = config[key]
+      return {
+        key,
+        kind: SECRETISH_KEY.test(key)
+          ? 'secret(masked)'
+          : typeof raw === 'object' && raw !== null
+            ? 'object'
+            : typeof raw,
+        present:
+          raw !== null && raw !== undefined && String(raw).trim() !== '',
+      }
+    })
+  return { allowed, unknown }
+}
+
+export function formatConfigSummary(summary: ConfigSummary): string[] {
+  const lines = ['CONFIG_SUMMARY']
+  if (summary.allowed.length === 0) lines.push('  —')
+  for (const entry of summary.allowed) {
+    lines.push(`  ${entry.key}=${entry.value}`)
+  }
+  lines.push('', 'UNKNOWN/DYNAMIC KEYS (deger BASILMAZ)')
+  if (summary.unknown.length === 0) lines.push('  —')
+  for (const entry of summary.unknown) {
+    lines.push(
+      `  ${entry.key.padEnd(32)} type=${entry.kind}  present=${entry.present ? 'YES' : 'NO'}`,
+    )
+  }
+  return lines
+}
+
 export async function runSuratBillingInspect(): Promise<number> {
   if (!isDatabaseConfigured()) {
     console.error('[surat:billing] DATABASE_URL tanımlı değil.')
@@ -360,6 +456,25 @@ export async function runSuratBillingInspect(): Promise<number> {
   const getCargoConfig = hasFlag('get-cargo')
     ? await resolveGetCargoConfig(db, organizationId)
     : {}
+
+  // YAPILANDIRMA ÖZETİ: izin listeli alanların değeri + diğerlerinin yalnız adı.
+  if (hasFlag('config-summary')) {
+    let surat: Record<string, unknown> = {}
+    try {
+      const config = (await loadOrganizationIntegrationConfig(
+        db as never,
+        organizationId,
+      )) as Record<string, unknown> | null
+      surat = (config?.surat ?? {}) as Record<string, unknown>
+    } catch {
+      surat = {}
+    }
+    console.info(`ORGANIZATION            ${mask(organizationId)}`)
+    for (const line of formatConfigSummary(buildConfigSummary(surat))) {
+      console.info(line)
+    }
+    return 0
+  }
 
   // ANAHTAR KEŞFİ: getCargo sözleşmesini üretim yapılandırmasında aramak için.
   if (hasFlag('config-keys')) {
