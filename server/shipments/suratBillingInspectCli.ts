@@ -264,6 +264,70 @@ export async function resolveGetCargoConfig(
   return {}
 }
 
+/**
+ * YAPILANDIRMA ANAHTARI KEŞFİ — SALT OKUNUR, DEĞER BASMAZ.
+ *
+ * getCargo sözleşmesi repoda YOK (git geçmişi, dist ve loglar tarandı). Bir
+ * sonraki gerçek adım üretimdeki tenant yapılandırmasında hangi anahtarların
+ * BULUNDUĞUNU görmek. Bu fonksiyon YALNIZ anahtar ADLARINI ve "dolu mu"
+ * bilgisini üretir — DEĞERLER ASLA basılmaz.
+ *
+ * Host benzeri değerlerde yalnız alan adı gösterilir; URL'in kendisi bile
+ * kimlik bilgisi taşıyabileceği için tam basılmaz.
+ */
+export function describeConfigKeys(
+  config: Record<string, unknown> = {},
+): { key: string; present: boolean; kind: string }[] {
+  const secretish = /(sifre|password|secret|token|key|auth)/i
+  return Object.keys(config)
+    .sort()
+    .map((key) => {
+      const value = config[key]
+      const filled =
+        value !== null && value !== undefined && String(value).trim() !== ''
+      return {
+        key,
+        present: filled,
+        // Tür ipucu operatöre yeter; değer GEREKMEZ.
+        kind: secretish.test(key)
+          ? 'secret(masked)'
+          : typeof value === 'object' && value !== null
+            ? 'object'
+            : typeof value,
+      }
+    })
+}
+
+/** Tenant Sürat yapılandırmasının anahtarlarını salt okunur listeler. */
+export async function inspectConfigKeys(
+  db: Db,
+  organizationId: string,
+): Promise<{ suratKeys: ReturnType<typeof describeConfigKeys>; settingsKeys: string[] }> {
+  let suratKeys: ReturnType<typeof describeConfigKeys> = []
+  try {
+    const config = (await loadOrganizationIntegrationConfig(
+      db as never,
+      organizationId,
+    )) as Record<string, unknown> | null
+    suratKeys = describeConfigKeys((config?.surat ?? {}) as Record<string, unknown>)
+  } catch {
+    suratKeys = []
+  }
+  let settingsKeys: string[] = []
+  try {
+    const rows = (await db
+      .select({ settings: organizationSettings.settingsJson })
+      .from(organizationSettings)
+      .where(eq(organizationSettings.organizationId, organizationId))
+      .limit(1)) as { settings: unknown }[]
+    const settings = (rows[0]?.settings ?? {}) as Record<string, unknown>
+    settingsKeys = Object.keys(settings).sort()
+  } catch {
+    settingsKeys = []
+  }
+  return { suratKeys, settingsKeys }
+}
+
 export async function runSuratBillingInspect(): Promise<number> {
   if (!isDatabaseConfigured()) {
     console.error('[surat:billing] DATABASE_URL tanımlı değil.')
@@ -296,6 +360,22 @@ export async function runSuratBillingInspect(): Promise<number> {
   const getCargoConfig = hasFlag('get-cargo')
     ? await resolveGetCargoConfig(db, organizationId)
     : {}
+
+  // ANAHTAR KEŞFİ: getCargo sözleşmesini üretim yapılandırmasında aramak için.
+  if (hasFlag('config-keys')) {
+    const { suratKeys, settingsKeys } = await inspectConfigKeys(db, organizationId)
+    console.info(`ORGANIZATION            ${mask(organizationId)}`)
+    console.info('SURAT_CONFIG_KEYS (degerler BASILMAZ)')
+    if (suratKeys.length === 0) console.info('  —')
+    for (const entry of suratKeys) {
+      console.info(
+        `  ${entry.key.padEnd(32)} present=${entry.present ? 'YES' : 'NO'}  kind=${entry.kind}`,
+      )
+    }
+    console.info('SETTINGS_JSON_KEYS')
+    console.info(`  ${settingsKeys.join(', ') || '—'}`)
+    return 0
+  }
 
   let report
   try {

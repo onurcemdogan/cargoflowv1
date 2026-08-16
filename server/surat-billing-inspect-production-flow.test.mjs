@@ -188,3 +188,54 @@ test('INSPECT-PROD-11/12: DB yazma 0, migration 0', async (t) => {
   )
   assert.deepEqual(mutations, [], 'cozucu HIC yazmamali')
 })
+
+/* ═══ YAPILANDIRMA ANAHTARI KEŞFİ (Faz 3E) ════════════════════════════ */
+
+test('CFG-1: anahtar listesi DEGERLERI basmaz', () => {
+  const described = inspect.describeConfigKeys({
+    kullaniciAdi: 'GIZLI_KULLANICI',
+    sifre: 'GIZLI_SIFRE',
+    webPassword: 'GIZLI_WEB',
+    getCargoBaseUrl: 'https://gizli.host.invalid',
+    entegrasyonFirmasi: 'Trendyol',
+    bosAlan: '',
+  })
+  const text = JSON.stringify(described)
+  for (const secret of [
+    'GIZLI_KULLANICI', 'GIZLI_SIFRE', 'GIZLI_WEB', 'gizli.host.invalid',
+    'Trendyol',
+  ]) {
+    assert.equal(text.includes(secret), false, `deger sizdi: ${secret}`)
+  }
+  // Yalnız ad + doluluk + tür ipucu.
+  const byKey = Object.fromEntries(described.map((e) => [e.key, e]))
+  assert.equal(byKey.sifre.kind, 'secret(masked)')
+  assert.equal(byKey.webPassword.kind, 'secret(masked)')
+  assert.equal(byKey.getCargoBaseUrl.present, true)
+  assert.equal(byKey.bosAlan.present, false)
+})
+
+test('CFG-2: anahtarlar SIRALI ve eksiksiz', () => {
+  const described = inspect.describeConfigKeys({ b: 1, a: 2, c: 3 })
+  assert.deepEqual(described.map((e) => e.key), ['a', 'b', 'c'])
+})
+
+test('CFG-3: yapilandirma okunamazsa CROP degil BOS doner', async (t) => {
+  const { pglite, db } = await makeDb({ withSettingsTable: false })
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const result = await inspect.inspectConfigKeys(db, org)
+  assert.deepEqual(result.settingsKeys, [], 'tablo yoksa cokme YOK')
+  assert.ok(Array.isArray(result.suratKeys))
+})
+
+test('CFG-4: settings_json anahtarlari listelenir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const payload = JSON.stringify({ suratGetCargo: { baseUrl: 'x' }, digerAyar: 1 })
+  await db.execute(sql`insert into organization_settings
+    (organization_id, settings_json) values (${org}, ${payload}::jsonb)`)
+  const result = await inspect.inspectConfigKeys(db, org)
+  assert.deepEqual(result.settingsKeys, ['digerAyar', 'suratGetCargo'])
+})
