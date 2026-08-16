@@ -184,6 +184,7 @@ async function measure(label, counter, run) {
     bytes,
     rows,
     total: result?.total ?? null,
+    inst: result?.instrumentation ?? null,
   }
 }
 
@@ -223,7 +224,8 @@ for (const size of datasets) {
   for (const r of all[size]) {
     console.log(
       `${r.label.padEnd(24)} ${String(r.ms).padStart(8)} ${String(r.queries).padStart(8)}` +
-      ` ${String(r.bytes).padStart(9)} ${String(r.rows).padStart(6)} ${String(r.total ?? '-').padStart(7)}`)
+      ` ${String(r.bytes).padStart(9)} ${String(r.rows).padStart(6)} ${String(r.total ?? '-').padStart(7)}` +
+      (r.inst ? `  cand=${r.inst.candidateRowsBeforeCanonical} decrypt=${r.inst.payloadRowsDecrypted} canonJS=${r.inst.canonicalDurationMs}ms` : ''))
   }
 }
 
