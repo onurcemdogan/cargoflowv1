@@ -223,6 +223,9 @@ async function buildCandidateViews(
   sort: 'orderDateDesc' | 'orderDateAsc',
   externalProcessing: { entries?: Record<string, unknown> } | null | undefined,
   plan: ExecutionPlan,
+  // İSTEĞE BAĞLI ÖN-ELEME: projeksiyon SQL'i aday kümesini daralttıysa yalnız
+  // o kimlikler yüklenir. Kanonik karar DEĞİŞMEZ; sadece daha az satır okunur.
+  candidateOrderIds?: readonly string[] | null,
 ): Promise<{
   views: Record<string, unknown>[]
   instrumentation: ProjectionInstrumentation
@@ -239,7 +242,13 @@ async function buildCandidateViews(
   }
   // Kapsam SQL'i: YALNIZ organizasyon + aktif hesap. Filtre koşulu EKLENMEZ
   // (bkz. dosya başı: SQL ön-eleme false-negative üretirdi).
-  const where = buildOrderWhere(organizationId, {}, marketplaceAccountId)
+  const scopeWhere = buildOrderWhere(organizationId, {}, marketplaceAccountId)
+  const where = candidateOrderIds
+    ? and(scopeWhere, inArray(orders.id, [...candidateOrderIds]))
+    : scopeWhere
+  if (candidateOrderIds && candidateOrderIds.length === 0) {
+    return { views: [], instrumentation }
+  }
   const orderBy =
     sort === 'orderDateAsc'
       ? [asc(orders.orderDate), asc(orders.id)]
@@ -362,6 +371,7 @@ export async function loadFilteredProjection(
   filters: OrderListFilters = {},
   marketplaceAccountId?: string | null,
   externalProcessing?: { entries?: Record<string, unknown> } | null,
+  candidateOrderIds?: readonly string[] | null,
 ): Promise<FilteredProjection> {
   const sort = filters.sort === 'orderDateAsc' ? 'orderDateAsc' : 'orderDateDesc'
   const plan = planExecution(filters)
@@ -372,6 +382,7 @@ export async function loadFilteredProjection(
     sort,
     externalProcessing,
     plan,
+    candidateOrderIds,
   )
 
   const canonicalStart = now()
