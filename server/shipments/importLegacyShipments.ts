@@ -1,3 +1,4 @@
+import { and, eq } from 'drizzle-orm'
 // Tek seferlik, AÇIKÇA çağrılan legacy import: surat-create-operations.json →
 // organization bazlı shipment_operations + shipments (source=imported_legacy).
 // Server başlangıcında ÇALIŞMAZ. organizationId açık env/arg ile zorunludur.
@@ -7,6 +8,8 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { shipmentOperations } from '../db/schema.ts'
+import { orders } from '../db/schema.ts'
+import { updateOperationProjectionFragment } from '../orders/orderFilterProjectionRepository.ts'
 import { encryptShipmentPayload } from './shipmentEncryption.ts'
 import { upsertShipment } from './shipmentRepository.ts'
 import { SURAT_PERSISTENCE_PROVIDER } from './suratProvider.ts'
@@ -109,6 +112,35 @@ async function importOne(
       .onConflictDoNothing()
       .returning()
     if (existing.length === 0) return 'skipped'
+    // PROJEKSİYON BAKIMI — OPERATION parçası.
+    // Bu yol `upsertCreateOperation` yerine DOĞRUDAN insert ettiği için
+    // operation parçası burada ayrıca güncellenir. Değerler içe aktarma
+    // kaydından ZATEN çözülmüş gelir: decrypt YOK, ağ YOK.
+    // (SHIPMENT parçası aşağıdaki `upsertShipment` üzerinden kapsanır.)
+    if (packageId) {
+      const owner = await db
+        .select({ id: orders.id })
+        .from(orders)
+        .where(
+          and(
+            eq(orders.organizationId, organizationId),
+            eq(orders.marketplace, marketplace),
+            eq(orders.packageId, packageId),
+          ),
+        )
+      const orderId = owner[0]?.id ? String(owner[0].id) : ''
+      if (orderId) {
+        await updateOperationProjectionFragment(db, organizationId, orderId, {
+          cargoSlipOperationValues: [
+            trackingNumber,
+            record.carrierTrackingNumber,
+            record.carrierBarcodeNumber,
+            record.candidateTrackingNumber,
+            record.candidateBarcodeNumber,
+          ],
+        })
+      }
+    }
     if (opStatus === 'succeeded' && packageId) {
       await upsertShipment(db, {
         organizationId,
