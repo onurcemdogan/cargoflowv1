@@ -892,7 +892,7 @@ function filterByWorkspaceQuery(
   )
 }
 
-function normalizedSearch(value: unknown): string {
+export function normalizedSearch(value: unknown): string {
   return String(value ?? '')
     .trim()
     .normalize('NFD')
@@ -1070,7 +1070,7 @@ function isAllFilter(value?: string): boolean {
   return ['all', 'tumu', 'tumtarihler', ''].includes(normalizedToken(value))
 }
 
-function normalizedToken(value: unknown): string {
+export function normalizedToken(value: unknown): string {
   return String(value ?? '')
     .trim()
     .toLowerCase()

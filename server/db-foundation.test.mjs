@@ -56,6 +56,8 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
       'integration_credentials',
       'integration_sync_state',
       'marketplace_accounts',
+      // B2-1b-A: kanonik filtre projeksiyonu (1:1 türev, additive).
+      'order_filter_projection',
       'order_lines',
       'orders',
       'organization_settings',

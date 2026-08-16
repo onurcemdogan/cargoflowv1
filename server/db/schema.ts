@@ -662,3 +662,59 @@ export const platformAdminAuditLogs = pgTable(
     index('platform_admin_audit_logs_created_at_idx').on(table.createdAt),
   ],
 )
+
+// KANONİK FİLTRE PROJEKSİYONU (B2-1b).
+//
+// Sipariş başına 1:1 türev. Okuma yolunda 10.000 kaydı JS'te normalize
+// etmek yerine kanonik token'lar YAZMA anında bir kez üretilir.
+//
+// NORMALİZASYON BURADA YAPILMAZ: değerler uygulamada `normalizedToken` /
+// `normalizedSearch` ile üretilir (bkz. orderFilterProjectionBuilder).
+// Generated column / SQL normalization YOKTUR — ikinci doğruluk kaynağı
+// oluşmaz.
+//
+// Sipariş silindiğinde projeksiyon da silinir (ON DELETE CASCADE).
+// Gizli veri TAŞIMAZ; `customer_search_token` yalnız arama için gereken
+// müşteri alanlarını içerir (ARANABİLİR PII — bu alanlar zaten `orders`
+// tablosunda düz kolondur).
+export const orderFilterProjection = pgTable(
+  'order_filter_projection',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id),
+    orderId: uuid('order_id')
+      .notNull()
+      .references(() => orders.id, { onDelete: 'cascade' }),
+    marketplaceToken: text('marketplace_token'),
+    operationStatusToken: text('operation_status_token'),
+    marketplaceStatus: text('marketplace_status'),
+    shippingCityToken: text('shipping_city_token'),
+    shippingDistrictToken: text('shipping_district_token'),
+    customerSearchToken: text('customer_search_token'),
+    orderNumberSearchToken: text('order_number_search_token'),
+    cargoSlipSearchToken: text('cargo_slip_search_token'),
+    orderDate: timestamp('order_date', { withTimezone: true }),
+    projectionVersion: integer('projection_version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    // 1:1 — tenant kapsamı zorunlu.
+    uniqueIndex('order_filter_projection_org_order_unique').on(
+      table.organizationId,
+      table.orderId,
+    ),
+    // Index kararı EXPLAIN ile B2-1b-B'de verilecek; burada yalnız
+    // tenant+sürüm taraması için asgari yardımcı.
+    index('order_filter_projection_org_version_idx').on(
+      table.organizationId,
+      table.projectionVersion,
+    ),
+  ],
+)
