@@ -77,9 +77,11 @@ test('RES-4: complete=false (kısmi/başarısız) reconcile ÇALIŞMAZ; endpoint
   assert.match(server, /response\.status\(502\)/)
 })
 
-test('RES-5: frontend — 409 sync_in_progress hata değil (info); mevcut liste korunur', () => {
+test('RES-5: frontend — süren senkron hata değil (info); mevcut liste korunur', () => {
   const svc = readSrc('src/services/orderWorkflowService.ts')
-  assert.match(svc, /sync_in_progress/)
+  // Kabul eden uçta "zaten çalışıyor" artık 409 değil, mevcut tura
+  // BİRLEŞTİRME (COALESCED) olarak gelir. Semantik aynı: veri kaybı yok.
+  assert.match(svc, /COALESCED/)
   assert.match(svc, /syncInProgress/)
   // Süren sync bilgi mesajıyla döner (error banner değil).
   const block = sliceBlock(svc, 'if (syncInProgress) {', 500)

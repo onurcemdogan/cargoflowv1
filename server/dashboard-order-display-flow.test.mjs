@@ -159,5 +159,10 @@ test('Faz 2: Dashboard Yenile /api/orders/sync çağırmaz; Siparişler Şimdi Y
   const loadWindow = wfSrc.slice(loadIdx, loadIdx + 1500)
   assert.match(loadWindow, /\/api\/orders/, 'loadOrdersFromServer GET /api/orders')
   assert.equal(/orders\/sync/.test(loadWindow), false, 'loadOrdersFromServer sync yolunu çağırmaz')
-  assert.match(wfSrc, /fetch\('\/api\/orders\/sync'/, 'sync yalnız fetchOrders (Şimdi Yenile) yolunda')
+  // Senkron artık KABUL EDEN uca gider (sağlayıcı beklenmez); yalnız
+  // "Şimdi Yenile" yolunda tetiklenir.
+  assert.match(
+    wfSrc, /fetch\('\/api\/orders\/sync\/request'/,
+    'sync yalnız fetchOrders (Şimdi Yenile) yolunda, kabul eden uçla',
+  )
 })
