@@ -2,6 +2,8 @@
 // kolonlarda (sorgu/UI); hassas carrier payload şifreli. db DI ile gelir.
 import { and, eq, inArray } from 'drizzle-orm'
 import { shipments } from '../db/schema.ts'
+import { orders } from '../db/schema.ts'
+import { updateShipmentProjectionFragment } from '../orders/orderFilterProjectionRepository.ts'
 import {
   decryptShipmentPayload,
   encryptShipmentPayload,
@@ -156,4 +158,41 @@ export async function upsertShipment(
         updatedAt: new Date(),
       },
     })
+
+  // PROJEKSİYON BAKIMI — SHIPMENT parçası.
+  // `record.carrierPayload` çağıran tarafından ZATEN çözülmüş bellekteki
+  // değerdir; burada YENİDEN DECRYPT YOK, ağ YOK, taşıyıcı çağrısı YOK.
+  // Yalnız shipment-owned kolonlar SET edilir (ORDER/OPERATION korunur).
+  const payload = (record.carrierPayload ?? {}) as Record<string, unknown>
+  const owner = await db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.organizationId, record.organizationId),
+        eq(orders.marketplace, record.marketplace),
+        eq(orders.packageId, record.packageId),
+      ),
+    )
+  const orderId = owner[0]?.id ? String(owner[0].id) : ''
+  if (orderId) {
+    await updateShipmentProjectionFragment(db, record.organizationId, orderId, {
+      ozelKargoTakipNo: payload.ozelKargoTakipNo,
+      trendyolCargoTrackingNumber: payload.trendyolCargoTrackingNumber,
+      cargoSlipShipmentValues: [
+        record.trackingNumber,
+        record.barcode,
+        payload.shipmentCode,
+        payload.trackingNumber,
+        payload.kargoTakipNo,
+        payload.tNo,
+        payload.barkodNo,
+        payload.barcodeValue,
+        payload.gonderiNo,
+        payload.waybillNo,
+        payload.irsaliyeNo,
+        payload.cargoKey,
+      ],
+    })
+  }
 }
