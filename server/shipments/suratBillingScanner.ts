@@ -373,3 +373,105 @@ export async function findGoldenParcel(
 }
 
 export { sql }
+
+/* ═══ TEŞHİS HEDEFİ ÇÖZÜMÜ (Faz 3D) ════════════════════════════════════ */
+
+/**
+ * KULLANICI KİMLİĞİNDEN SİPARİŞ ÇÖZÜMÜ — ÇOK ALANLI, HEPSİ TAM EŞLEŞME.
+ *
+ * BULGU (üretimde çöktü): tarayıcı aday olarak `cargoTrackingNumber`ı (727…)
+ * üretiyor ve `--package <727…>` komutunu KENDİSİ yazıyordu; oysa teşhis aracı
+ * yalnız `orders.package_id` ile arıyordu. Yani üretilen komut yapısı gereği
+ * çalışamazdı. Çözüm tek alanlı aramayı bırakmak.
+ *
+ * SIRA index dostudur ve hepsi TAM EŞLEŞMEdir — `LIKE %727%` gibi geniş tarama
+ * YAPILMAZ (yanlış siparişi seçme riski).
+ *
+ * TENANT KAPSAMI her sorguda ZORUNLUDUR.
+ *
+ * Birden fazla FARKLI sipariş eşleşirse `AMBIGUOUS` döner: yanlış siparişte
+ * faturalama teşhisi yapmak yanlış sonuç üretir.
+ */
+export const BILLING_TARGET_FIELDS = [
+  'packageId',
+  'cargoTrackingNumber',
+  'externalOrderId',
+  'orderNumber',
+  'shipmentPackageId',
+] as const
+
+export type BillingTargetField = (typeof BILLING_TARGET_FIELDS)[number]
+
+export type BillingTargetResolution =
+  | { status: 'ok'; order: Record<string, unknown>; matchedField: BillingTargetField }
+  | { status: 'not_found'; matchedField: null }
+  | { status: 'ambiguous'; matchedField: BillingTargetField; matches: number }
+
+export async function resolveBillingInspectionTarget(
+  db: Db,
+  organizationId: string,
+  identifier: string,
+): Promise<BillingTargetResolution> {
+  const needle = text(identifier)
+  if (!needle || !text(organizationId)) {
+    return { status: 'not_found', matchedField: null }
+  }
+  const scope = eq(orders.organizationId, organizationId)
+
+  const direct: [BillingTargetField, unknown][] = [
+    ['packageId', orders.packageId],
+    ['cargoTrackingNumber', orders.cargoTrackingNumber],
+    ['externalOrderId', orders.externalOrderId],
+    ['orderNumber', orders.orderNumber],
+  ]
+  for (const [field, column] of direct) {
+    const rows = (await db
+      .select()
+      .from(orders)
+      .where(and(scope, eq(column as never, needle)))
+      .limit(2)) as Record<string, unknown>[]
+    if (rows.length === 1) return { status: 'ok', order: rows[0], matchedField: field }
+    if (rows.length > 1) {
+      return { status: 'ambiguous', matchedField: field, matches: rows.length }
+    }
+  }
+
+  // Gönderi tarafındaki paket kimliği → sipariş (aynı tenant + pazaryeri).
+  const shipmentRows = (await db
+    .select({
+      marketplace: shipments.marketplace,
+      packageId: shipments.packageId,
+    })
+    .from(shipments)
+    .where(
+      and(
+        eq(shipments.organizationId, organizationId),
+        eq(shipments.packageId, needle),
+      ),
+    )
+    .limit(2)) as { marketplace: string; packageId: string }[]
+  if (shipmentRows.length === 1) {
+    const rows = (await db
+      .select()
+      .from(orders)
+      .where(
+        and(
+          scope,
+          eq(orders.marketplace, shipmentRows[0].marketplace),
+          eq(orders.packageId, shipmentRows[0].packageId),
+        ),
+      )
+      .limit(2)) as Record<string, unknown>[]
+    if (rows.length === 1) {
+      return { status: 'ok', order: rows[0], matchedField: 'shipmentPackageId' }
+    }
+    if (rows.length > 1) {
+      return {
+        status: 'ambiguous',
+        matchedField: 'shipmentPackageId',
+        matches: rows.length,
+      }
+    }
+  }
+  return { status: 'not_found', matchedField: null }
+}

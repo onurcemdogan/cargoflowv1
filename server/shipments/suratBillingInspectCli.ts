@@ -12,7 +12,7 @@
 import { and, eq } from 'drizzle-orm'
 import { closePool, getDb, isDatabaseConfigured } from '../db/client.ts'
 import { loadOrganizationIntegrationConfig } from '../integrations/credentialService.ts'
-import { organizationSettings, orders, shipments } from '../db/schema.ts'
+import { organizationSettings, shipments } from '../db/schema.ts'
 import { decryptOrderPayload } from '../orders/orderEncryption.ts'
 import { decryptShipmentPayload } from './shipmentEncryption.ts'
 import {
@@ -23,7 +23,11 @@ import {
   getSuratCargoByParcelUniqueId,
   isGetCargoConfigured,
 } from './suratGetCargoClient.ts'
-import { maskIdentifier, resolveOrganizationByName } from './suratBillingScanner.ts'
+import {
+  maskIdentifier,
+  resolveBillingInspectionTarget,
+  resolveOrganizationByName,
+} from './suratBillingScanner.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -48,6 +52,8 @@ const safe = (value: unknown): string => {
 
 export interface BillingInspectionReport {
   organizationMasked: string
+  /** Kimliğin hangi kanonik alanda bulunduğu (teşhis şeffaflığı). */
+  matchedField: string
   packageIdMasked: string
   marketplace: string
   rawSourceField: string | null
@@ -77,15 +83,19 @@ export async function inspectOrderBilling(
   packageId: string,
   options: { getCargo?: boolean; getCargoConfig?: Record<string, unknown> } = {},
 ): Promise<BillingInspectionReport | null> {
-  const orderRows = (await db
-    .select()
-    .from(orders)
-    .where(
-      and(eq(orders.organizationId, organizationId), eq(orders.packageId, packageId)),
-    )
-    .limit(1)) as Record<string, unknown>[]
-  const orderRow = orderRows[0]
-  if (!orderRow) return null
+  // ÇOK ALANLI ÇÖZÜM: tarayıcı aday olarak `cargoTrackingNumber` (727…) üretiyor;
+  // tek alanlı `packageId` araması bu yüzden çalışmıyordu.
+  const target = await resolveBillingInspectionTarget(db, organizationId, packageId)
+  if (target.status === 'ambiguous') {
+    // Yanlış siparişte faturalama teşhisi yanlış sonuç üretir.
+    throw Object.assign(new Error('AMBIGUOUS_IDENTIFIER'), {
+      matchedField: target.matchedField,
+      matches: target.matches,
+    })
+  }
+  if (target.status !== 'ok') return null
+  const orderRow = target.order
+  const matchedField = target.matchedField
 
   // Ham Trendyol yükü YALNIZ bu tek kayıt için çözülür (sınırlı teşhis).
   let rawOrder: Record<string, unknown> = {}
@@ -153,7 +163,8 @@ export async function inspectOrderBilling(
 
   return {
     organizationMasked: mask(organizationId),
-    packageIdMasked: mask(packageId),
+    matchedField,
+    packageIdMasked: mask(orderRow.packageId),
     marketplace: String(orderRow.marketplace ?? ''),
     rawSourceField: inspection.sourceField,
     rawValue: inspection.rawValue,
@@ -177,6 +188,8 @@ export async function inspectOrderBilling(
 export function formatBillingReport(report: BillingInspectionReport): string[] {
   return [
     `ORGANIZATION            ${report.organizationMasked}`,
+    `ORDER_FOUND             YES`,
+    `MATCHED_FIELD           ${report.matchedField}`,
     `PACKAGE                 ${report.packageIdMasked}`,
     `MARKETPLACE             ${safe(report.marketplace)}`,
     '',
@@ -284,10 +297,21 @@ export async function runSuratBillingInspect(): Promise<number> {
     ? await resolveGetCargoConfig(db, organizationId)
     : {}
 
-  const report = await inspectOrderBilling(db, organizationId, packageId, {
-    getCargo: hasFlag('get-cargo'),
-    getCargoConfig,
-  })
+  let report
+  try {
+    report = await inspectOrderBilling(db, organizationId, packageId, {
+      getCargo: hasFlag('get-cargo'),
+      getCargoConfig,
+    })
+  } catch (error) {
+    if (error instanceof Error && error.message === 'AMBIGUOUS_IDENTIFIER') {
+      console.error(
+        '[surat:billing] BELİRSİZ kimlik — birden fazla sipariş eşleşti; tahmin YOK.',
+      )
+      return 1
+    }
+    throw error
+  }
   if (!report) {
     console.error('[surat:billing] Sipariş bulunamadı (tenant kapsamında).')
     return 1
