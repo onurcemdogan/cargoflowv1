@@ -11,7 +11,7 @@ import { sql } from 'drizzle-orm'
 
 // B2-1b-B2 · FAZ 1-2 — MIGRATION SÖZLEŞMESİ + PROVA.
 //
-// `0008` production'da HENÜZ UYGULANMADI. Bu dosya yükseltmeyi GERÇEK drizzle
+// `0008` (ve `0009`) production'da HENÜZ UYGULANMADI. Bu dosya yükseltmeyi GERÇEK drizzle
 // migrator'ı ile (elle SQL exec ederek DEĞİL) atılabilir bir DB üzerinde prova
 // eder: önce yalnız 0000-0007 uygulanmış "legacy" bir veritabanı kurulur, içine
 // iş verisi yazılır, sonra tam klasörle migrator yeniden koşturulur — üretimde
@@ -99,13 +99,19 @@ test('MIG-1: 0008 ADDITIVE — yikici ifade YOK', () => {
   }
 })
 
-test('MIG-2: 0008 journal SON girdi (tarih yeniden yazilmamis)', () => {
-  const last = journal.entries[journal.entries.length - 1]
-  assert.equal(last.tag, TARGET)
-  assert.equal(last.idx, journal.entries.length - 1)
-  // Sıralama monoton: geçmiş yeniden yazılmamış.
-  for (let i = 1; i < journal.entries.length; i += 1) {
-    assert.ok(journal.entries[i].when > journal.entries[i - 1].when)
+test('MIG-2: journal MONOTON — gecmis yeniden yazilmamis', () => {
+  // 0008 yerinde ve sonrasina yalniz EKLENMIS olmali (yeniden numaralandirma
+  // veya tarih duzenlemesi YOK). Yeni migration eklendikce bu test yasar.
+  const index = journal.entries.findIndex((entry) => entry.tag === TARGET)
+  assert.ok(index >= 0, '0008 journal da olmali')
+  for (let i = 0; i < journal.entries.length; i += 1) {
+    assert.equal(journal.entries[i].idx, i, 'idx yeniden numaralandirilmamis')
+    if (i > 0) {
+      assert.ok(
+        journal.entries[i].when > journal.entries[i - 1].when,
+        `${journal.entries[i].tag} tarihi geriye gitmis`,
+      )
+    }
   }
 })
 
@@ -173,7 +179,13 @@ test('MIG-4: LEGACY DB — 0008 verilere DOKUNMADAN uygulanir', async (t) => {
 
   const applied = Number(rows(await db.execute(sql.raw(
     `select count(*)::int as n from drizzle.__drizzle_migrations`)))[0].n)
-  assert.equal(applied, appliedCount + 1, 'YALNIZ 0008 eklenmeli')
+  // 0008 VE ondan sonraki tüm BEKLEYEN migrationlar uygulanır — fazlası değil.
+  // Sayı sabitlenmez: yeni migration eklendikçe bu test yaşar.
+  assert.equal(
+    applied, journal.entries.length,
+    'bekleyen migrationlarin TAMAMI uygulanmali',
+  )
+  assert.ok(applied > appliedCount, 'en az bir migration eklenmeli')
 
   // 4) İş verisi BİREBİR korunur.
   assert.deepEqual(await counts(db, BUSINESS), countsBefore, 'satir sayilari DEGISMEMELI')
