@@ -9,9 +9,10 @@
 //
 // GİZLİLİK: müşteri adı/adres/telefon/e-posta, kimlik bilgisi kullanıcı adı ve
 // şifresi, ham şifreli yük ASLA basılmaz. Yalnız operasyonel payer metadatası.
-import { and, eq, sql } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
 import { closePool, getDb, isDatabaseConfigured } from '../db/client.ts'
-import { orders, shipments } from '../db/schema.ts'
+import { loadOrganizationIntegrationConfig } from '../integrations/credentialService.ts'
+import { organizationSettings, orders, shipments } from '../db/schema.ts'
 import { decryptOrderPayload } from '../orders/orderEncryption.ts'
 import { decryptShipmentPayload } from './shipmentEncryption.ts'
 import {
@@ -197,6 +198,59 @@ export function formatBillingReport(report: BillingInspectionReport): string[] {
   ]
 }
 
+/**
+ * getCargo YAPILANDIRMASI — İKİ KANITLI KAYNAK, TAHMİN YOK.
+ *
+ * BULGU (üretimde çöktü): önceki sürüm ham SQL ile `select settings from
+ * organization_settings` yazıyordu; oysa kolonun gerçek adı `settings_json`.
+ * Tablo üretimde VAR (migration 0004) — sorun tablo değil, YANLIŞ KOLONDU.
+ * Artık tipli tablo referansı kullanılıyor, böylece kolon adı derleyici
+ * tarafından kontrol ediliyor ve bir daha kayamaz.
+ *
+ * Sıra: (1) tenant Sürat entegrasyon yapılandırması — tarayıcının da kullandığı
+ * kanonik kaynak, (2) organizasyon ayarlarındaki `suratGetCargo` bloğu.
+ * Hiçbiri yoksa BOŞ döner ve çağıran NOT_CONFIGURED üretir; uydurma adres YOK.
+ *
+ * Bu fonksiyon HİÇBİR koşulda fırlatmaz: teşhis aracı şema farkı yüzünden
+ * çökmemelidir.
+ */
+export async function resolveGetCargoConfig(
+  db: Db,
+  organizationId: string,
+): Promise<Record<string, unknown>> {
+  // (1) Tenant Sürat yapılandırması.
+  try {
+    const config = (await loadOrganizationIntegrationConfig(
+      db as never,
+      organizationId,
+    )) as Record<string, unknown> | null
+    const surat = (config?.surat ?? {}) as Record<string, unknown>
+    const baseUrl = String(surat.getCargoBaseUrl ?? '').trim()
+    const path = String(surat.getCargoPath ?? '').trim()
+    if (baseUrl && path) {
+      return { baseUrl, path, apiKey: surat.getCargoApiKey }
+    }
+  } catch {
+    // Yapılandırma okunamadı → sonraki kaynağa geç (çökme YOK).
+  }
+  // (2) Organizasyon ayarları (`settings_json`).
+  try {
+    const rows = (await db
+      .select({ settings: organizationSettings.settingsJson })
+      .from(organizationSettings)
+      .where(eq(organizationSettings.organizationId, organizationId))
+      .limit(1)) as { settings: unknown }[]
+    const settings = (rows[0]?.settings ?? {}) as Record<string, unknown>
+    const block = (settings.suratGetCargo ?? {}) as Record<string, unknown>
+    if (String(block.baseUrl ?? '').trim() && String(block.path ?? '').trim()) {
+      return block
+    }
+  } catch {
+    // Tablo/kolon farkı teşhisi DÜŞÜRMEZ.
+  }
+  return {}
+}
+
 export async function runSuratBillingInspect(): Promise<number> {
   if (!isDatabaseConfigured()) {
     console.error('[surat:billing] DATABASE_URL tanımlı değil.')
@@ -226,19 +280,9 @@ export async function runSuratBillingInspect(): Promise<number> {
     console.error('[surat:billing] (--org veya --name) ve --package ZORUNLU.')
     return 1
   }
-  let getCargoConfig: Record<string, unknown> = {}
-  if (hasFlag('get-cargo')) {
-    const rows = (await db.execute(
-      sql`select settings from organization_settings
-          where organization_id = ${organizationId} limit 1`,
-    )) as unknown
-    const list = (Array.isArray(rows) ? rows : (rows as { rows?: unknown[] }).rows) ?? []
-    const settings = ((list[0] as { settings?: unknown })?.settings ?? {}) as Record<
-      string,
-      unknown
-    >
-    getCargoConfig = (settings.suratGetCargo ?? {}) as Record<string, unknown>
-  }
+  const getCargoConfig = hasFlag('get-cargo')
+    ? await resolveGetCargoConfig(db, organizationId)
+    : {}
 
   const report = await inspectOrderBilling(db, organizationId, packageId, {
     getCargo: hasFlag('get-cargo'),
