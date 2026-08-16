@@ -7,6 +7,7 @@
 import { readFile } from 'node:fs/promises'
 import { and, eq, inArray } from 'drizzle-orm'
 import { orderLines, orders } from '../db/schema.ts'
+import { refreshOrderProjectionFragment } from './orderFilterProjectionRepository.ts'
 import { toLineInsertValues, toOrderInsertValues } from './orderMapper.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -61,7 +62,11 @@ async function importOne(
   organizationId: string,
   order: Record<string, unknown>,
   dryRun: boolean,
-): Promise<{ outcome: 'inserted' | 'skipped' | 'failed'; lines: number }> {
+): Promise<{
+  outcome: 'inserted' | 'skipped' | 'failed'
+  lines: number
+  orderId?: string
+}> {
   const packageId = String(order.packageId ?? order.shipmentPackageId ?? '').trim()
   if (!packageId) return { outcome: 'failed', lines: 0 }
   if (dryRun) {
@@ -104,7 +109,11 @@ async function importOne(
         .returning({ id: orderLines.id })
       if (insertedLine.length > 0) linesInserted += 1
     }
-    return { outcome: 'inserted', lines: linesInserted }
+    return {
+      outcome: 'inserted',
+      lines: linesInserted,
+      orderId: String(inserted[0].id),
+    }
   } catch {
     return { outcome: 'failed', lines: 0 }
   }
@@ -138,11 +147,19 @@ export async function importLegacyOrders(
     linesInserted: 0,
     dryRun,
   }
+  const projectedOrderIds: string[] = []
   for (const record of records) {
-    const { outcome, lines } = await importOne(db, organizationId, record, dryRun)
+    const { outcome, lines, orderId } = await importOne(
+      db, organizationId, record, dryRun,
+    )
+    if (orderId) projectedOrderIds.push(orderId)
     summary[outcome] += 1
     summary.linesInserted += lines
   }
+  // PROJEKSİYON BAKIMI: ORDER parçası TEK toplu yenilemeyle güncellenir
+  // (satır başına sorgu YOK). dryRun'da yazma olmadığı için liste boştur.
+  await refreshOrderProjectionFragment(db, organizationId, projectedOrderIds)
+
   return summary
 }
 
