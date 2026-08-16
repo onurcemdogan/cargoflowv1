@@ -223,3 +223,116 @@ export function buildBillingObservation(params: {
     ),
   }
 }
+
+/* ═══ ADAY TARAMA + ÇİFT BULMA (Faz 3) ═════════════════════════════════ */
+
+export interface BillingCandidate {
+  packageIdMasked: string
+  rawSourceField: string | null
+  rawValue: string | null
+  expectedBillingParty: BillingParty
+  credentialClass: string
+  accountFingerprint: string
+  serviceMode: string
+  actualSuratWhoPays: string | null
+  actualBillingParty: BillingParty
+  senderCode: string | null
+}
+
+/** Nedensellik testi için karşılaştırma bağlamı — SIRA ÖNEMLİ. */
+export function billingGroupKey(candidate: {
+  credentialClass?: unknown
+  accountFingerprint?: unknown
+  serviceMode?: unknown
+}): string {
+  return [
+    text(candidate.credentialClass) || 'UNKNOWN',
+    text(candidate.accountFingerprint) || 'UNKNOWN',
+    text(candidate.serviceMode) || 'UNKNOWN',
+  ].join('::')
+}
+
+export interface BillingScanSummary {
+  sampledOrders: number
+  rawWhoPays1Count: number
+  rawMissingCount: number
+  rawOtherCount: number
+  credentialClasses: Record<string, number>
+  /** Aynı bağlamda gözlenen gerçek whoPays kümeleri. */
+  groups: {
+    groupKey: string
+    credentialClass: string
+    accountFingerprint: string
+    serviceMode: string
+    observedWhoPays: string[]
+    orderCount: number
+  }[]
+  /**
+   * AYNI kredensiyal bağlamında hem 1 hem 3 görüldü mü?
+   *
+   * Görüldüyse "ödeyen tarafı yalnız kredensiyal belirler" hipotezi ÇÜRÜR:
+   * aynı hesap iki farklı sonuç üretmiş demektir.
+   */
+  sameAccountBothWhoPays: boolean
+  credentialOnlyCausation: 'REFUTED' | 'UNRESOLVED'
+}
+
+/** Adaylardan nedensellik özeti üretir — SAF, ağ/DB YOK. */
+export function summarizeBillingScan(
+  candidates: readonly BillingCandidate[],
+): BillingScanSummary {
+  const credentialClasses: Record<string, number> = {}
+  const grouped = new Map<
+    string,
+    { candidate: BillingCandidate; whoPays: Set<string>; count: number }
+  >()
+  let rawWhoPays1Count = 0
+  let rawMissingCount = 0
+  let rawOtherCount = 0
+
+  for (const candidate of candidates) {
+    const cls = text(candidate.credentialClass) || 'UNKNOWN'
+    credentialClasses[cls] = (credentialClasses[cls] ?? 0) + 1
+
+    if (candidate.rawSourceField === null) rawMissingCount += 1
+    else if (candidate.rawValue === '1') rawWhoPays1Count += 1
+    else rawOtherCount += 1
+
+    const key = billingGroupKey(candidate)
+    const entry = grouped.get(key) ?? {
+      candidate,
+      whoPays: new Set<string>(),
+      count: 0,
+    }
+    entry.count += 1
+    if (candidate.actualSuratWhoPays) entry.whoPays.add(candidate.actualSuratWhoPays)
+    grouped.set(key, entry)
+  }
+
+  const groups = [...grouped.entries()].map(([groupKey, entry]) => ({
+    groupKey,
+    credentialClass: text(entry.candidate.credentialClass) || 'UNKNOWN',
+    accountFingerprint: text(entry.candidate.accountFingerprint) || 'UNKNOWN',
+    serviceMode: text(entry.candidate.serviceMode) || 'UNKNOWN',
+    observedWhoPays: [...entry.whoPays].sort(),
+    orderCount: entry.count,
+  }))
+
+  const sameAccountBothWhoPays = groups.some(
+    (group) =>
+      group.observedWhoPays.includes(SURAT_WHO_PAYS_SELLER) &&
+      group.observedWhoPays.includes(SURAT_WHO_PAYS_TRENDYOL),
+  )
+
+  return {
+    sampledOrders: candidates.length,
+    rawWhoPays1Count,
+    rawMissingCount,
+    rawOtherCount,
+    credentialClasses,
+    groups,
+    sameAccountBothWhoPays,
+    // Kanıt yoksa "doğrulandı" DEMEZ; yalnız çürütme kesin sonuçtur.
+    credentialOnlyCausation: sameAccountBothWhoPays ? 'REFUTED' : 'UNRESOLVED',
+  }
+}

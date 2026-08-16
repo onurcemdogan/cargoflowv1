@@ -352,3 +352,92 @@ test('BILL-CLI-1: rapor PII/kimlik bilgisi BASMAZ', () => {
     assert.ok(source.includes(field), `${field} raporda olmali`)
   }
 })
+
+/* ═══ FAZ 3 — ADAY TARAMA + NEDENSELLİK ═══════════════════════════════ */
+
+const candidate = (overrides = {}) => ({
+  packageIdMasked: '****0001',
+  rawSourceField: null,
+  rawValue: null,
+  expectedBillingParty: 'UNKNOWN',
+  credentialClass: 'PRIMARY',
+  accountFingerprint: 'acc-aaaa',
+  serviceMode: 'SURAT_CANONICAL_API',
+  actualSuratWhoPays: null,
+  actualBillingParty: 'UNKNOWN',
+  senderCode: null,
+  ...overrides,
+})
+
+test('SCAN-1: gruplama anahtari sinif+hesap+servisModu', () => {
+  const key = billing.billingGroupKey({
+    credentialClass: 'PRIMARY',
+    accountFingerprint: 'acc-aaaa',
+    serviceMode: 'SURAT_CANONICAL_API',
+  })
+  assert.equal(key, 'PRIMARY::acc-aaaa::SURAT_CANONICAL_API')
+  // AYNI sınıf ama FARKLI hesap → AYRI grup (yanlış pozitif önlenir).
+  assert.notEqual(
+    key,
+    billing.billingGroupKey({
+      credentialClass: 'PRIMARY',
+      accountFingerprint: 'acc-bbbb',
+      serviceMode: 'SURAT_CANONICAL_API',
+    }),
+  )
+})
+
+test('SCAN-2: AYNI hesapta hem 1 hem 3 → CREDENTIAL_ONLY REFUTED', () => {
+  const summary = billing.summarizeBillingScan([
+    candidate({ actualSuratWhoPays: '1', actualBillingParty: 'SELLER' }),
+    candidate({ actualSuratWhoPays: '3', actualBillingParty: 'TRENDYOL' }),
+  ])
+  assert.equal(summary.groups.length, 1, 'ayni baglam TEK grup')
+  assert.deepEqual(summary.groups[0].observedWhoPays, ['1', '3'])
+  assert.equal(summary.sameAccountBothWhoPays, true)
+  assert.equal(summary.credentialOnlyCausation, 'REFUTED')
+})
+
+test('SCAN-3: FARKLI hesaplarda 1 ve 3 CURUTMEZ (yanlis pozitif YOK)', () => {
+  const summary = billing.summarizeBillingScan([
+    candidate({ accountFingerprint: 'acc-aaaa', actualSuratWhoPays: '1' }),
+    candidate({ accountFingerprint: 'acc-bbbb', actualSuratWhoPays: '3' }),
+  ])
+  assert.equal(summary.groups.length, 2)
+  assert.equal(summary.sameAccountBothWhoPays, false)
+  // Kanıt yoksa "doğrulandı" DENMEZ.
+  assert.equal(summary.credentialOnlyCausation, 'UNRESOLVED')
+})
+
+test('SCAN-4: FARKLI servis modu ayri grup sayilir', () => {
+  const summary = billing.summarizeBillingScan([
+    candidate({ serviceMode: 'SURAT_CANONICAL_API', actualSuratWhoPays: '1' }),
+    candidate({ serviceMode: 'ORTAK_BARKOD_SOAP', actualSuratWhoPays: '3' }),
+  ])
+  assert.equal(summary.sameAccountBothWhoPays, false, 'mod farkli → nedensellik YOK')
+})
+
+test('SCAN-5: ham payer dagilimi dogru sayilir', () => {
+  const summary = billing.summarizeBillingScan([
+    candidate({ rawSourceField: 'whoPays', rawValue: '1' }),
+    candidate({ rawSourceField: 'whoPays', rawValue: '1' }),
+    candidate({ rawSourceField: 'whoPays', rawValue: '9' }),
+    candidate(),
+    candidate(),
+  ])
+  assert.equal(summary.sampledOrders, 5)
+  assert.equal(summary.rawWhoPays1Count, 2)
+  assert.equal(summary.rawOtherCount, 1)
+  assert.equal(summary.rawMissingCount, 2)
+  assert.deepEqual(summary.credentialClasses, { PRIMARY: 5 })
+})
+
+test('SCAN-6: gercek whoPays gozlenmemisse CURUTME YOK', () => {
+  // Yalnız ham taraf taranmışsa (getCargo yok) nedensellik ÇÖZÜLEMEZ.
+  const summary = billing.summarizeBillingScan([
+    candidate({ rawSourceField: 'whoPays', rawValue: '1' }),
+    candidate(),
+  ])
+  assert.deepEqual(summary.groups[0].observedWhoPays, [])
+  assert.equal(summary.credentialOnlyCausation, 'UNRESOLVED')
+})
