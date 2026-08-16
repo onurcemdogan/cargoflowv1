@@ -233,3 +233,84 @@ test('PRE-11: CLI fail-closed ve salt okunur', () => {
     assert.equal(source.includes(forbidden), false, `${forbidden} olmamali`)
   }
 })
+
+/* ═══ TENANT HAZIRLIĞI (B2.9) ══════════════════════════════════════════ */
+
+test('RDY-1: kapsama TAM olsa bile parite KABUL EDILMEDEN hazir DEGIL', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const id = await makeOrder(db, org, 'P1')
+  await orderRepo.markOrderLabelReady(db, org, id)
+
+  const readiness = await preflight.evaluateTenantReadiness(db, org)
+  assert.equal(readiness.migrationCompatible, true)
+  assert.equal(readiness.backfillComplete, true)
+  assert.equal(readiness.versionCurrent, true)
+  assert.equal(readiness.shadowParityAccepted, false, 'varsayilan KABUL EDILMEMIS')
+  assert.equal(readiness.ready, false, 'kendiliginden hazir OLAMAZ')
+  assert.deepEqual(readiness.blockers, ['SHADOW_PARITY_NOT_ACCEPTED'])
+})
+
+test('RDY-2: parite kabul edilince HAZIR', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const id = await makeOrder(db, org, 'P1')
+  await orderRepo.markOrderLabelReady(db, org, id)
+
+  const readiness = await preflight.evaluateTenantReadiness(db, org, {
+    shadowParityAccepted: true,
+  })
+  assert.equal(readiness.ready, true)
+  assert.deepEqual(readiness.blockers, [])
+})
+
+test('RDY-3: eksik backfill hazirligi ENGELLER', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  await makeOrder(db, org, 'P1')
+  await makeOrder(db, org, 'P2')
+
+  const readiness = await preflight.evaluateTenantReadiness(db, org, {
+    shadowParityAccepted: true,
+  })
+  assert.equal(readiness.staleCount, 2)
+  assert.equal(readiness.backfillComplete, false)
+  assert.equal(readiness.ready, false)
+  assert.ok(readiness.blockers.includes('BACKFILL_INCOMPLETE'))
+})
+
+test('RDY-4: 0008 yoksa hicbir sey hazir DEGIL', async (t) => {
+  const { pglite, db } = await makeDb({ withProjection: false })
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const readiness = await preflight.evaluateTenantReadiness(db, org, {
+    shadowParityAccepted: true,
+  })
+  assert.equal(readiness.migrationCompatible, false)
+  assert.equal(readiness.ready, false)
+  assert.ok(readiness.blockers.includes('MIGRATION_NOT_APPLIED'))
+})
+
+test('RDY-5: TENANT BAGIMSIZ — biri digerini ETKILEMEZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const orgA = await makeOrg(db)
+  const orgB = await makeOrg(db)
+  const covered = await makeOrder(db, orgA, 'A1')
+  await orderRepo.markOrderLabelReady(db, orgA, covered)
+  await makeOrder(db, orgB, 'B1')
+
+  const a = await preflight.evaluateTenantReadiness(db, orgA, { shadowParityAccepted: true })
+  const b = await preflight.evaluateTenantReadiness(db, orgB, { shadowParityAccepted: true })
+  assert.equal(a.ready, true)
+  assert.equal(b.ready, false, 'B hazir degil')
+  assert.equal(a.staleCount, 0)
+  assert.equal(b.staleCount, 1)
+  // Global bayrak YOK: modül tekil bir "hepsi hazır" değeri üretmez.
+  const source = nl(readFileSync('server/orders/orderProjectionPreflight.ts', 'utf8'))
+  assert.equal(source.includes('globalReady'), false)
+  assert.equal(source.includes('allTenantsReady'), false)
+})

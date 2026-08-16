@@ -20,6 +20,7 @@ import {
 } from './orderFilterProjection.ts'
 import { resolvePageSize } from './orderRepository.ts'
 import {
+  buildCandidateIdCondition,
   planProjectionPrefilter,
   selectPrefilteredOrderIds,
 } from './orderProjectionQuery.ts'
@@ -116,9 +117,10 @@ export async function compareProjectionShadow(
   const candidateIds = await selectPrefilteredOrderIds(
     db, organizationId, filters, marketplaceAccountId,
   )
+  const prefilter = candidateIds ? buildCandidateIdCondition(candidateIds) : null
   const projection = await loadFilteredProjection(
     db, organizationId, filters, marketplaceAccountId, externalProcessing,
-    candidateIds,
+    prefilter,
   )
   const projectionDurationMs = round(now() - projectionStart)
 
@@ -183,10 +185,11 @@ export async function listOrdersWithReadMode(
       const candidateIds = await selectPrefilteredOrderIds(
         db, organizationId, filters, marketplaceAccountId,
       )
-      if (candidateIds !== null) {
+      const prefilter = candidateIds ? buildCandidateIdCondition(candidateIds) : null
+      if (prefilter !== null) {
         const result = await loadFilteredProjection(
           db, organizationId, filters, marketplaceAccountId, externalProcessing,
-          candidateIds,
+          prefilter,
         )
         return {
           orders: result.visibleOrders.slice((page - 1) * pageSize, page * pageSize),

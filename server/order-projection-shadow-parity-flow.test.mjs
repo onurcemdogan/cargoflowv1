@@ -266,7 +266,7 @@ test('NARROW-1: on-eleme aday sayisini GERCEKTEN dusurur', async (t) => {
   const legacy = await legacyEngine.loadFilteredProjection(db, org, filters, null)
   const ids = await query.selectPrefilteredOrderIds(db, org, filters, null)
   const narrowed = await legacyEngine.loadFilteredProjection(
-    db, org, filters, null, null, ids,
+    db, org, filters, null, null, query.buildCandidateIdCondition(ids),
   )
   assert.equal(legacy.instrumentation.candidateRowsBeforeCanonical, 5)
   assert.equal(

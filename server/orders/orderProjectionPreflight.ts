@@ -249,6 +249,60 @@ export async function buildProjectionPreflightReport(
   }
 }
 
+export interface TenantReadiness {
+  organizationMasked: string
+  migrationCompatible: boolean
+  coverageComplete: boolean
+  versionCurrent: boolean
+  staleCount: number
+  backfillComplete: boolean
+  shadowParityAccepted: boolean
+  ready: boolean
+  blockers: string[]
+}
+
+/**
+ * TENANT HAZIRLIĞI — GLOBAL BAYRAK YOKTUR.
+ *
+ * Her tenant kendi başına değerlendirilir; biri diğerini ETKİLEMEZ. Gölge
+ * parite kabulü DIŞARIDAN verilir ve varsayılanı FALSE'tur: hiçbir tenant
+ * kendiliğinden "hazır" olamaz. Eksik bilgi = HAZIR DEĞİL.
+ */
+export async function evaluateTenantReadiness(
+  db: Db,
+  organizationId: string,
+  options: { shadowParityAccepted?: boolean } = {},
+): Promise<TenantReadiness> {
+  const report = await buildProjectionPreflightReport(db, { organizationId })
+  const tenant = report.tenants[0]
+  const staleCount = tenant?.staleEstimate ?? 0
+  // Tenant'ın hiç siparişi yoksa kapsama boş ama TAM sayılır.
+  const coverageComplete = report.schemaOk && staleCount === 0
+  const versionCurrent = Object.keys(tenant?.versionDistribution ?? {}).every(
+    (version) => Number(version) === ORDER_FILTER_PROJECTION_VERSION,
+  )
+  const shadowParityAccepted = options.shadowParityAccepted === true
+
+  const blockers: string[] = []
+  if (!report.migration0008Applied) blockers.push('MIGRATION_NOT_APPLIED')
+  if (!report.schemaOk) blockers.push('SCHEMA_NOT_COMPATIBLE')
+  if (staleCount > 0) blockers.push('BACKFILL_INCOMPLETE')
+  if (!versionCurrent) blockers.push('PROJECTION_VERSION_STALE')
+  if (!shadowParityAccepted) blockers.push('SHADOW_PARITY_NOT_ACCEPTED')
+
+  return {
+    organizationMasked: maskOrganization(organizationId),
+    migrationCompatible: report.migration0008Applied && report.schemaOk,
+    coverageComplete,
+    versionCurrent,
+    staleCount,
+    backfillComplete: staleCount === 0,
+    shadowParityAccepted,
+    ready: blockers.length === 0,
+    blockers,
+  }
+}
+
 /** Rapor satırları — CLI ve testler AYNI biçimi kullanır. */
 export function formatPreflightReport(
   report: ProjectionPreflightReport,

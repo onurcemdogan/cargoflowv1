@@ -43,6 +43,7 @@
     "platform-admin:create": "node server/admin/createPlatformAdminCli.ts",
     "platform-admin:reset-password": "node server/admin/resetPlatformAdminPasswordCli.ts",
     "org-user:reset-password": "node server/admin/resetOrgUserPasswordCli.ts",
+    "benchmark:projection-prefilter": "node server/perf/projectionPrefilterBenchmark.mjs",
     "projection:backfill": "node server/orders/orderProjectionBackfillCli.ts",
     "projection:preflight": "node server/orders/orderProjectionPreflightCli.ts",
     "db:verify": "node server/admin/verifyDatabaseCli.ts",
