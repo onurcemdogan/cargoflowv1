@@ -271,7 +271,7 @@ test('1-2) OrdersPage.tsx: sekme değişimi client-side filtreler, sync ATMAZ; Y
   assert.match(page, /disabled=\{busy\}/, 'Yenile butonu busy iken kapalı')
 })
 
-test('orderWorkflowService: DB okuma GET /api/orders; sync ayrı POST /api/orders/sync', () => {
+test('orderWorkflowService: DB okuma GET /api/orders; sync ayrı POST kabul ucu', () => {
   const svc = readSrc('src/services/orderWorkflowService.ts')
   // NOT: tek sayfa cekme private fetchOrdersPage'e tasindi; blok ikisini de
   // kapsayacak sekilde alinir (davranis sozlesmesi AYNI).
@@ -281,8 +281,10 @@ test('orderWorkflowService: DB okuma GET /api/orders; sync ayrı POST /api/order
   assert.match(loadBlock, /ORDERS_LOAD_PAGE_SIZE/, 'sayfali yukleme')
   assert.doesNotMatch(loadBlock, /\/api\/orders\/sync/, 'DB okuma sync tetiklemez')
   assert.doesNotMatch(loadBlock, /method:\s*'POST'/, 'DB okuma GET\'tir (POST değil)')
-  // 409 (sync zaten çalışıyor) veri kaybı yapmadan yüzeye çıkar.
-  assert.match(svc, /sync_in_progress/, '409 sync-in-progress durumu ele alınır')
+  // Zaten çalışan tur veri kaybı yapmadan yüzeye çıkar. Kabul eden uçta bu
+  // 409 değil, mevcut tura BİRLEŞTİRME (COALESCED) olarak gelir.
+  assert.match(svc, /COALESCED/, 'birlestirme durumu ele alinir')
+  assert.match(svc, /syncInProgress/, 'kullaniciya bildirilir')
 })
 
 // ── 8) 429 SINIRLI retry (bounded) — canlı server + mock Trendyol ───────────

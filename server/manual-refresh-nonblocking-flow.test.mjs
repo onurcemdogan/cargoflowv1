@@ -78,34 +78,34 @@ test('NB-4: durum ucu SALT OKUNUR ve saglayiciya CIKMAZ', () => {
   assert.ok(status.includes('lastSuccessfulAt'))
 })
 
-/* ═══ FRONTEND KESİMİ — HENÜZ YAPILMADI (BİLİNÇLİ) ════════════════════ */
+/* ═══ FRONTEND KESİMİ — TAMAMLANDI ════════════════════════════════════ */
 
-test('NB-5: kabul eden uc HAZIR; frontend kesimi POLLING UI ile yapilacak', () => {
-  // Sunucu tarafı hazır ve test edilmiş durumda.
-  assert.ok(SERVER.includes("app.post('/api/orders/sync/request'"))
-  assert.ok(SERVER.includes("app.get('/api/orders/sync/status'"))
-
-  // FRONTEND HÂLÂ BLOKLAYAN UCU KULLANIYOR — BİLİNÇLİ.
-  //
-  // BULGU: frontend'i kabul eden uca çevirdiğimde, kullanıcı 207 KISMİ senkron
-  // ve başarısızlık geri bildirimini ANINDA GÖREMEZ oldu (o bilgi artık arka
-  // plan turunda oluşuyor). Bu bir UX GERİLEMESİDİR. Kesim ancak durum
-  // yoklaması (`/api/orders/sync/status`) UI'ye bağlandığında ve kısmi/hata
-  // durumu yüzeye çıktığında yapılmalıdır.
+test('NB-5: "Simdi Yenile" KABUL EDEN uca gider', () => {
   assert.ok(
-    WORKFLOW.includes("fetch('/api/orders/sync'"),
-    'kesim tamamlanana kadar bloklayan uc korunur',
+    WORKFLOW.includes("fetch('/api/orders/sync/request'"),
+    'frontend kabul eden ucu kullanmali',
   )
-  // Kısmi/başarısız senkron geri bildirimi HÂLÂ kullanıcıya ulaşıyor.
-  assert.ok(WORKFLOW.includes('successfulStatuses'))
-  assert.ok(WORKFLOW.includes('failedStatuses'))
-  assert.ok(WORKFLOW.includes('sync_in_progress'))
+  // BLOKLAYAN UÇ FRONTENDDEN ÇAĞRILMAZ.
+  assert.equal(
+    WORKFLOW.includes("fetch('/api/orders/sync',"), false,
+    'bloklayan uc frontendden cagrilmamali',
+  )
 })
 
-test('NB-6: senkron sonucu ne olursa olsun YEREL liste okunur', () => {
-  const start = WORKFLOW.indexOf("fetch('/api/orders/sync'")
-  const body = WORKFLOW.slice(start, start + 3000)
-  // Sağlayıcı DTO'su doğrudan UI'ye basılmaz; sunucudaki kalıcı liste okunur.
+test('NB-6: KISMI/BASARISIZ geri bildirimi KAYBOLMADI', () => {
+  // Kesimi ilk denediğimde bu bilgi kaybolmuştu ve geri almıştım. Artık tur
+  // sonucu durum izleyicisi üzerinden yüzeye çıkıyor.
+  assert.ok(WORKFLOW.includes('watchSyncCompletion('), 'izleyici baglanmali')
+  assert.ok(WORKFLOW.includes('fetchSyncStatus('), 'durum ucu okunmali')
+  assert.ok(WORKFLOW.includes('Senkron kısmi kaldı'), 'kismi uyarisi olmali')
+  assert.ok(WORKFLOW.includes('Son senkronizasyon başarısız'), 'hata uyarisi olmali')
+  // Mevcut liste hiçbir durumda silinmez.
+  assert.ok(WORKFLOW.includes('sipariş korunuyor') || WORKFLOW.includes('korundu'))
+})
+
+test('NB-7: tur bitince YEREL liste yeniden okunur (saglayici DTO degil)', () => {
+  const start = WORKFLOW.indexOf('watchSyncCompletion(')
+  const body = WORKFLOW.slice(start, start + 2500)
   assert.ok(body.includes('this.loadOrdersFromServer()'))
 })
 

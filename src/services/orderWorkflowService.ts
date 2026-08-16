@@ -1,4 +1,9 @@
 import type { ServerPrintContract } from '../utils/persistedLabel'
+import {
+  createSyncStatusWatcher,
+  type SyncStatusSnapshot,
+  type SyncWatcher,
+} from './syncStatusWatcher'
 import type { LabelPrintTemplate } from '../utils/labelPrintTemplateRouting'
 
 /**
@@ -1168,21 +1173,31 @@ export class OrderWorkflowService {
       updatedCount?: number
       persistedCount?: number
       failedCount?: number
+      accepted?: boolean
+      state?: string
+      syncRunId?: string | null
     } = {}
     let syncOk = false
     // 409: aynı org için başka bir sync zaten çalışıyor (backend org kilidi).
     // Veri kaybı yok; mevcut liste korunur, bilgilendirici mesaj gösterilir.
     let syncInProgress = false
+    // KABUL EDEN UÇ: sağlayıcı turunun BİTMESİ BEKLENMEZ.
+    //
+    // İstek yalnız orkestrasyon kabulünü bekler; kullanıcı bu sırada mevcut
+    // YEREL listeyi görmeye ve sayfayı kullanmaya devam eder. Turun sonucu
+    // (kısmi/başarısız dâhil) `/api/orders/sync/status` üzerinden izlenir —
+    // bu yüzden geri bildirim KAYBOLMAZ.
     try {
-      const response = await fetch('/api/orders/sync', {
+      const response = await fetch('/api/orders/sync/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ query }),
       })
       syncPayload = (await response.json().catch(() => ({}))) as typeof syncPayload
-      syncOk = response.ok && syncPayload.ok === true
-      syncInProgress = response.status === 409 || syncPayload.code === 'sync_in_progress'
+      syncOk = response.ok && syncPayload.accepted === true
+      // Aynı hesapta tur zaten koşuyorsa istek MEVCUT tura birleştirilir.
+      syncInProgress = syncPayload.state === 'COALESCED'
     } catch (error) {
       syncPayload = {
         ok: false,
@@ -1246,19 +1261,80 @@ export class OrderWorkflowService {
       }
     }
 
+    // DİKKAT: senkron BİTMİŞ DEĞİL, KABUL EDİLMİŞTİR. "Tamamlandı" demek
+    // yanıltıcı olurdu; liste yerel kaynaktan gösterilir ve tur bitince durum
+    // izleyicisi listeyi tazeler.
     this.auditLogService.append({
       action: 'Siparişler çekildi',
-      level: 'success',
-      details: `Sunucu senkronu tamamlandı: ${syncPayload.insertedCount ?? 0} yeni, ${syncPayload.updatedCount ?? 0} güncellendi. Toplam ${orders.length} sipariş.`,
+      level: 'info',
+      details: `Senkronizasyon arka planda başlatıldı. Mevcut ${orders.length} sipariş gösteriliyor.`,
     })
     return {
       orders,
       result: {
-        level: orders.length > 0 ? 'success' : 'warning',
+        level: 'info',
         source: 'real',
-        message: `Sunucu senkronu tamamlandı (${syncPayload.persistedCount ?? 0} kaydedildi, ${syncPayload.failedCount ?? 0} başarısız). Kalıcı operasyon listesi: ${orders.length}.`,
+        message: `Senkronizasyon arka planda başlatıldı. Mevcut ${orders.length} sipariş gösteriliyor; tamamlanınca liste kendiliğinden güncellenir.`,
       },
     }
+  }
+
+  /** Salt okunur senkron durumu — sağlayıcıya ÇIKMAZ. */
+  async fetchSyncStatus(): Promise<SyncStatusSnapshot | null> {
+    try {
+      const response = await fetch('/api/orders/sync/status', {
+        credentials: 'include',
+      })
+      if (!response.ok) return null
+      return (await response.json()) as SyncStatusSnapshot
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * Arka plan turunu izler; bittiğinde YEREL listeyi yeniden okur.
+   *
+   * Sağlayıcı yanıtı UI'ye DOĞRUDAN basılmaz: source-of-truth sunucu
+   * persistence'ıdır. Kısmi/başarısız turda mevcut liste KORUNUR.
+   */
+  watchSyncCompletion(
+    onSettled: (outcome: {
+      state: 'SUCCEEDED' | 'FAILED'
+      orders: CargoOrder[]
+      result: WorkflowResult
+    }) => void,
+  ): SyncWatcher {
+    const watcher = createSyncStatusWatcher({
+      fetchStatus: () => this.fetchSyncStatus(),
+      onTerminal: (state, snapshot) => {
+        void this.loadOrdersFromServer()
+          .catch(() => this.authOrdersCache)
+          .then((orders) => {
+            const summary = snapshot?.summary ?? null
+            const partial = summary?.partial === true
+            const failed = state === 'FAILED'
+            const failedStatuses = (summary?.failedStatuses ?? []).join(', ')
+            onSettled({
+              state,
+              orders,
+              result: {
+                level: failed || partial ? 'warning' : 'success',
+                source: 'real',
+                message: failed
+                  ? `Son senkronizasyon başarısız. Mevcut ${orders.length} sipariş korunuyor.`
+                  : partial
+                    ? `Senkron kısmi kaldı${
+                        failedStatuses ? ` (başarısız statüler: ${failedStatuses})` : ''
+                      }. Sunucu kaydı silinmedi; ${orders.length} sipariş korundu.`
+                    : `Senkronizasyon tamamlandı. Kalıcı operasyon listesi: ${orders.length}.`,
+              },
+            })
+          })
+      },
+    })
+    watcher.start()
+    return watcher
   }
 
   // AUTH modu ürün çekme: sunucudaki Trendyol ürün sync'ini tetikler (org

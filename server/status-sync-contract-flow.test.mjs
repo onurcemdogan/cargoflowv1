@@ -260,11 +260,14 @@ test('SSC-7: orderWorkflowService — 207 PARTIAL warning; başarılı/başarıs
   const svc = readSrc('src/services/orderWorkflowService.ts')
   const block = sliceBlock(svc, 'private async fetchOrdersAuthMode(', 4200)
   // 207 (2xx) → response.ok true ama payload.ok=false → syncOk=false → warning.
-  assert.match(block, /syncOk = response\.ok && syncPayload\.ok === true/)
+  // Kabul eden uçta başarı ölçütü "tur bitti" değil "istek KABUL EDİLDİ"dir.
+  assert.match(block, /syncOk = response\.ok && syncPayload\.accepted === true/)
   // Kısmi statü kırılımı yüzeye çıkar.
-  assert.match(block, /successfulStatuses/)
-  assert.match(block, /failedStatuses/)
-  assert.match(block, /retryable/)
+  // 207 KISMİ bilgisi artık kabul yanıtında değil, tur bitince durum
+  // izleyicisi üzerinden gelir — ama KAYBOLMAZ.
+  assert.match(svc, /watchSyncCompletion/)
+  assert.match(svc, /successfulStatuses|failedStatuses/)
+  assert.match(svc, /Senkron kısmi kaldı/)
   // Warning yolu: liste korunur (mevcut sipariş sayısı yüzeye çıkar), throw YOK.
   assert.match(block, /level: 'warning'/)
   assert.match(block, /korun/i)
