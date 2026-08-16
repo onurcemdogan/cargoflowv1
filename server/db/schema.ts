@@ -693,8 +693,15 @@ export const orderFilterProjection = pgTable(
     shippingCityToken: text('shipping_city_token'),
     shippingDistrictToken: text('shipping_district_token'),
     customerSearchToken: text('customer_search_token'),
-    orderNumberSearchToken: text('order_number_search_token'),
-    cargoSlipSearchToken: text('cargo_slip_search_token'),
+    // ARAMA PARÇALARI KAYNAK YAŞAM DÖNGÜSÜNE GÖRE AYRIDIR.
+    // Her yazan YALNIZ kendi parçasını günceller; böylece sipariş yazımı
+    // shipment payload'ı açmak zorunda kalmaz ve eşzamanlı yazımlar
+    // birbirinin parçasını EZMEZ (lost-update yapısal olarak çözülür).
+    orderNumberOrderToken: text('order_number_order_token'),
+    orderNumberShipmentToken: text('order_number_shipment_token'),
+    cargoSlipOrderToken: text('cargo_slip_order_token'),
+    cargoSlipShipmentToken: text('cargo_slip_shipment_token'),
+    cargoSlipOperationToken: text('cargo_slip_operation_token'),
     orderDate: timestamp('order_date', { withTimezone: true }),
     projectionVersion: integer('projection_version').notNull().default(1),
     createdAt: timestamp('created_at', { withTimezone: true })

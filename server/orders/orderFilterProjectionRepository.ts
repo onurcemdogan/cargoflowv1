@@ -1,30 +1,34 @@
 // KANONİK FİLTRE PROJEKSİYONU — TEK YAZMA SINIRI (B2-1b-B1).
 //
-// "Projeksiyon NASIL yazılır" sorusu YALNIZ burada çözülür. Sipariş yazan
-// modüller yalnız ETKİLENEN SİPARİŞ KİMLİKLERİNİ bildirir; token türetimi
-// saf builder'da (buildOrderFilterProjection), kalıcılık burada olur.
+// "Projeksiyon NASIL yazılır" sorusu YALNIZ burada çözülür.
 //
-// TASARIM SINIRI (bilinçli): bu yenileyici YALNIZ `orders` tablosundaki
-// ilişkisel kolonlardan okur. Şifreli payload AÇILMAZ — sırf projeksiyon
-// üretmek için her sipariş güncellemesinde decrypt zinciri kurmayız.
-// Bu yüzden shipment kaynaklı arama alanları (ozelKargoTakipNo,
-// trendyolCargoTrackingNumber ve kargo fişi değerleri) BU yolda üretilmez;
-// onlar shipment yazma sınırının/backfill'in sorumluluğudur.
+// PARÇA SAHİPLİĞİ: her yaşam döngüsü YALNIZ kendi kolonlarını SET eder.
+//   ORDER      → marketplace/status/şehir/ilçe/müşteri/orderNumber(order)/
+//                cargoSlip(order)/orderDate
+//   SHIPMENT   → orderNumber(shipment), cargoSlip(shipment)
+//   OPERATION  → cargoSlip(operation)
+// Böylece eşzamanlı yazımlar birbirinin parçasını EZEMEZ (lost-update
+// yapısal olarak çözülür) ve sipariş yazımı shipment payload'ı AÇMAZ.
+//
+// SINIR: bu modül decrypt/ağ YAPMAZ. Şifreli kaynaklardan gelen değerler
+// çağıran tarafından ÇÖZÜLMÜŞ olarak verilir (write-time resolved values).
 import { and, eq, inArray, sql } from 'drizzle-orm'
 import { orderFilterProjection, orders } from '../db/schema.ts'
 import {
-  buildOrderFilterProjection,
+  buildOperationProjectionFragment,
+  buildOrderProjectionFragment,
+  buildShipmentProjectionFragment,
   ORDER_FILTER_PROJECTION_VERSION,
+  type OperationProjectionFragmentInput,
+  type ShipmentProjectionFragmentInput,
 } from './orderFilterProjectionBuilder.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
 
-/** Tek sipariş satırından projeksiyon satırı üretir (ilişkisel kaynaklar). */
-function projectionValuesFromOrderRow(row: Record<string, unknown>) {
-  const projection = buildOrderFilterProjection({
-    organizationId: String(row.organizationId),
-    orderId: String(row.id),
+/** Sipariş satırından ORDER parçasını üretir (yalnız ilişkisel kolonlar). */
+function orderFragmentFromRow(row: Record<string, unknown>) {
+  return buildOrderProjectionFragment({
     marketplace: row.marketplace,
     operationStatus: row.operationStatus,
     marketplaceStatus: row.marketplaceStatus,
@@ -40,55 +44,43 @@ function projectionValuesFromOrderRow(row: Record<string, unknown>) {
     externalOrderId: row.externalOrderId,
     cargoTrackingNumber: row.cargoTrackingNumber,
   })
-  return {
-    organizationId: projection.organizationId,
-    orderId: projection.orderId,
-    marketplaceToken: projection.marketplaceToken,
-    operationStatusToken: projection.operationStatusToken,
-    marketplaceStatus: projection.marketplaceStatus,
-    shippingCityToken: projection.shippingCityToken,
-    shippingDistrictToken: projection.shippingDistrictToken,
-    customerSearchToken: projection.customerSearchToken,
-    orderNumberSearchToken: projection.orderNumberSearchToken,
-    cargoSlipSearchToken: projection.cargoSlipSearchToken,
-    orderDate: row.orderDate ?? null,
-    projectionVersion: ORDER_FILTER_PROJECTION_VERSION,
-    updatedAt: new Date(),
-  }
+}
+
+/** `excluded.<col>` — çakışmada gelen değeri yazar (yalnız sabit literal). */
+function excluded(column: string) {
+  return sql.raw(`excluded.${column}`)
 }
 
 /**
- * ETKİLENEN SİPARİŞLERİN PROJEKSİYONUNU YENİLER.
+ * ORDER PARÇASI — etkilenen siparişleri `orders` satırından yeniler.
  *
- * IDEMPOTENT: aynı girdi iki kez gelirse sonuç aynıdır (ON CONFLICT
- * DO UPDATE). TENANT GÜVENLİĞİ: hem okuma hem yazma `organizationId` ile
- * kapsanır; başka tenant'ın satırı okunamaz/yazılamaz.
- *
- * Sipariş kimliği verilmezse hiçbir şey yapmaz (no-op).
+ * DECRYPT YOK: yalnız ilişkisel kolonlar okunur. Shipment/operation
+ * kolonlarına DOKUNULMAZ.
+ * IDEMPOTENT · TENANT KAPSAMLI.
  */
-export async function refreshOrderFilterProjections(
+export async function refreshOrderProjectionFragment(
   db: Db,
   organizationId: string,
   orderIds: readonly string[],
 ): Promise<{ refreshed: number }> {
   const ids = [...new Set(orderIds.map((id) => String(id)).filter(Boolean))]
   if (ids.length === 0) return { refreshed: 0 }
-
   let refreshed = 0
-  // Parametre tavanına takılmamak için parçalı işlenir.
   for (let index = 0; index < ids.length; index += 500) {
     const slice = ids.slice(index, index + 500)
     const rows = (await db
       .select()
       .from(orders)
       .where(
-        and(
-          eq(orders.organizationId, organizationId),
-          inArray(orders.id, slice),
-        ),
+        and(eq(orders.organizationId, organizationId), inArray(orders.id, slice)),
       )) as Record<string, unknown>[]
     if (rows.length === 0) continue
-    const values = rows.map(projectionValuesFromOrderRow)
+    const values = rows.map((row) => ({
+      organizationId,
+      orderId: String(row.id),
+      ...orderFragmentFromRow(row),
+      updatedAt: new Date(),
+    }))
     await db
       .insert(orderFilterProjection)
       .values(values)
@@ -97,17 +89,18 @@ export async function refreshOrderFilterProjections(
           orderFilterProjection.organizationId,
           orderFilterProjection.orderId,
         ],
+        // YALNIZ ORDER kolonları — shipment/operation parçaları KORUNUR.
         set: {
-          marketplaceToken: sqlExcluded('marketplace_token'),
-          operationStatusToken: sqlExcluded('operation_status_token'),
-          marketplaceStatus: sqlExcluded('marketplace_status'),
-          shippingCityToken: sqlExcluded('shipping_city_token'),
-          shippingDistrictToken: sqlExcluded('shipping_district_token'),
-          customerSearchToken: sqlExcluded('customer_search_token'),
-          orderNumberSearchToken: sqlExcluded('order_number_search_token'),
-          cargoSlipSearchToken: sqlExcluded('cargo_slip_search_token'),
-          orderDate: sqlExcluded('order_date'),
-          projectionVersion: sqlExcluded('projection_version'),
+          marketplaceToken: excluded('marketplace_token'),
+          operationStatusToken: excluded('operation_status_token'),
+          marketplaceStatus: excluded('marketplace_status'),
+          shippingCityToken: excluded('shipping_city_token'),
+          shippingDistrictToken: excluded('shipping_district_token'),
+          customerSearchToken: excluded('customer_search_token'),
+          orderNumberOrderToken: excluded('order_number_order_token'),
+          cargoSlipOrderToken: excluded('cargo_slip_order_token'),
+          orderDate: excluded('order_date'),
+          projectionVersion: excluded('projection_version'),
           updatedAt: new Date(),
         },
       })
@@ -116,8 +109,71 @@ export async function refreshOrderFilterProjections(
   return { refreshed }
 }
 
-/** `excluded.<col>` — ON CONFLICT DO UPDATE için gelen değeri yazar. */
-function sqlExcluded(column: string) {
-  // Sütun adı sabit literaldir; kullanıcı girdisi DEĞİLDİR.
-  return sql.raw(`excluded.${column}`)
+/**
+ * SHIPMENT PARÇASI — çağıran ÇÖZÜLMÜŞ değerleri verir.
+ * ORDER/OPERATION kolonlarına DOKUNULMAZ; decrypt/ağ YOK.
+ */
+export async function updateShipmentProjectionFragment(
+  db: Db,
+  organizationId: string,
+  orderId: string,
+  input: ShipmentProjectionFragmentInput,
+): Promise<{ updated: boolean }> {
+  if (!organizationId || !orderId) return { updated: false }
+  const fragment = buildShipmentProjectionFragment(input)
+  await db
+    .insert(orderFilterProjection)
+    .values({
+      organizationId,
+      orderId: String(orderId),
+      ...fragment,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [
+        orderFilterProjection.organizationId,
+        orderFilterProjection.orderId,
+      ],
+      set: {
+        orderNumberShipmentToken: excluded('order_number_shipment_token'),
+        cargoSlipShipmentToken: excluded('cargo_slip_shipment_token'),
+        updatedAt: new Date(),
+      },
+    })
+  return { updated: true }
 }
+
+/**
+ * OPERATION PARÇASI — create/verification sonucu ÇÖZÜLMÜŞ değerlerden.
+ * ORDER/SHIPMENT kolonlarına DOKUNULMAZ; decrypt/ağ YOK.
+ */
+export async function updateOperationProjectionFragment(
+  db: Db,
+  organizationId: string,
+  orderId: string,
+  input: OperationProjectionFragmentInput,
+): Promise<{ updated: boolean }> {
+  if (!organizationId || !orderId) return { updated: false }
+  const fragment = buildOperationProjectionFragment(input)
+  await db
+    .insert(orderFilterProjection)
+    .values({
+      organizationId,
+      orderId: String(orderId),
+      ...fragment,
+      updatedAt: new Date(),
+    })
+    .onConflictDoUpdate({
+      target: [
+        orderFilterProjection.organizationId,
+        orderFilterProjection.orderId,
+      ],
+      set: {
+        cargoSlipOperationToken: excluded('cargo_slip_operation_token'),
+        updatedAt: new Date(),
+      },
+    })
+  return { updated: true }
+}
+
+export { ORDER_FILTER_PROJECTION_VERSION }

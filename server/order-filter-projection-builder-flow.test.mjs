@@ -16,7 +16,7 @@ const BUILDER_SOURCE = nl(
   readFileSync('server/orders/orderFilterProjectionBuilder.ts', 'utf8'),
 )
 const SCHEMA_SOURCE = nl(readFileSync('server/db/schema.ts', 'utf8'))
-const MIGRATION = nl(readFileSync('drizzle/0008_true_devos.sql', 'utf8'))
+const MIGRATION = nl(readFileSync('drizzle/0008_busy_wong.sql', 'utf8'))
 
 const SEP = B.SEARCH_FIELD_SEPARATOR
 
@@ -74,9 +74,7 @@ test('PRJ-3: Turkce sehir varyantlari AYNI token uretir', () => {
     'İstanbul', 'ISTANBUL', 'Istanbul', 'İSTANBUL', 'İstanbul ',
     ' istanbul', 'Ist anbul', 'İstanbul.', 'i̇stanbul',
   ]
-  const tokens = variants.map((v) => B.buildOrderFilterProjection({
-    organizationId: 'o', orderId: 'x', shippingCity: v,
-  }).shippingCityToken)
+  const tokens = variants.map((v) => B.buildOrderProjectionFragment({ shippingCity: v }).shippingCityToken)
   // Projeksiyon, KANONIK fonksiyonun sonucuyla BIREBIR.
   for (let i = 0; i < variants.length; i += 1) {
     assert.equal(tokens[i], C.normalizedToken(variants[i]), variants[i])
@@ -88,17 +86,13 @@ test('PRJ-3: Turkce sehir varyantlari AYNI token uretir', () => {
 
 test('PRJ-4: aksanli isim / bos / null davranisi kanonikle AYNI', () => {
   for (const value of [null, undefined, '', '   ', 'Ömer Çağrı', 'ŞİŞLİ', 'a-b_c']) {
-    const row = B.buildOrderFilterProjection({
-      organizationId: 'o', orderId: 'x', shippingDistrict: value,
-    })
+    const row = B.buildOrderProjectionFragment({ shippingDistrict: value })
     assert.equal(row.shippingDistrictToken, C.normalizedToken(value), String(value))
   }
 })
 
 test('PRJ-5: marketplaceStatus EXACT kalir (normalize EDILMEZ)', () => {
-  const row = B.buildOrderFilterProjection({
-    organizationId: 'o', orderId: 'x', marketplaceStatus: 'AtCollectionPoint',
-  })
+  const row = B.buildOrderProjectionFragment({ marketplaceStatus: 'AtCollectionPoint' })
   assert.equal(row.marketplaceStatus, 'AtCollectionPoint')
 })
 
@@ -129,18 +123,46 @@ test('PRJ-8: cargoSlip arama paritesi', () => {
   }
 })
 
-test('PRJ-9: builder kaynaklari kanonik filtreyle AYNI', () => {
-  const row = B.buildOrderFilterProjection({
-    organizationId: 'org', orderId: 'ord',
+test('PRJ-9: parca kaynaklari kanonik filtreyle AYNI', () => {
+  const orderFrag = B.buildOrderProjectionFragment({
     customerName: CUSTOMER[0], customerPhone: CUSTOMER[1], customerEmail: CUSTOMER[2],
     orderNumber: ORDERNO[0], externalOrderId: ORDERNO[1],
-    cargoTrackingNumber: ORDERNO[2], ozelKargoTakipNo: ORDERNO[3],
-    trendyolCargoTrackingNumber: ORDERNO[4],
-    cargoSlipValues: CARGOSLIP,
+    cargoTrackingNumber: ORDERNO[2],
   })
-  assert.equal(row.customerSearchToken, B.buildSearchToken(CUSTOMER))
-  assert.equal(row.orderNumberSearchToken, B.buildSearchToken(ORDERNO))
-  assert.equal(row.cargoSlipSearchToken, B.buildSearchToken(CARGOSLIP))
+  assert.equal(orderFrag.customerSearchToken, B.buildSearchToken(CUSTOMER))
+  assert.equal(
+    orderFrag.orderNumberOrderToken,
+    B.buildSearchToken([ORDERNO[0], ORDERNO[1], ORDERNO[2]]),
+  )
+  const shipFrag = B.buildShipmentProjectionFragment({
+    ozelKargoTakipNo: ORDERNO[3], trendyolCargoTrackingNumber: ORDERNO[4],
+    cargoSlipShipmentValues: CARGOSLIP,
+  })
+  assert.equal(
+    shipFrag.orderNumberShipmentToken,
+    B.buildSearchToken([ORDERNO[3], ORDERNO[4]]),
+  )
+  assert.equal(shipFrag.cargoSlipShipmentToken, B.buildSearchToken(CARGOSLIP))
+})
+
+// ESKI tek-blob arama vs YENI parcali OR: BIREBIR ayni sonuc.
+test('PRJ-9B: split-token arama paritesi (orderNumber + cargoSlip)', () => {
+  const orderOwned = [ORDERNO[0], ORDERNO[1], ORDERNO[2]]
+  const shipOwned = [ORDERNO[3], ORDERNO[4]]
+  const opOwned = ['41176176501029', 'BRK99']
+  for (const q of [
+    '114100', '1141000042', 'ext', 'EXT-42', '727001042', '7270', 'yok', '',
+    'GND42', 'irs42', 'BRK', '4117617', 'brk99', 'Ömer', '   ',
+  ]) {
+    const oldHit = oldMatches([...orderOwned, ...shipOwned, ...opOwned], q)
+    const token = C.normalizedSearch(q)
+    const newHit = !token
+      ? true
+      : B.buildSearchToken(orderOwned).includes(token) ||
+        B.buildSearchToken(shipOwned).includes(token) ||
+        B.buildSearchToken(opOwned).includes(token)
+    assert.equal(newHit, oldHit, `split:"${q}"`)
+  }
 })
 
 // ═══ 10. LIKE DESENİ ══════════════════════════════════════════════════════
@@ -171,10 +193,11 @@ test('PRJ-11: builder SAF — ag/DB/decrypt/env YOK', () => {
 })
 
 test('PRJ-12: projeksiyona SIR girmez', () => {
-  const row = B.buildOrderFilterProjection({
-    organizationId: 'org', orderId: 'ord',
-    customerName: 'Ali', marketplace: 'Trendyol',
-  })
+  const row = {
+    ...B.buildOrderProjectionFragment({ customerName: 'Ali', marketplace: 'Trendyol' }),
+    ...B.buildShipmentProjectionFragment({}),
+    ...B.buildOperationProjectionFragment({}),
+  }
   const keys = Object.keys(row).join(' ').toLowerCase()
   for (const secret of [
     'password', 'sifre', 'secret', 'apikey', 'webpassword', 'credential', 'payload',
@@ -191,6 +214,11 @@ test('PRJ-13: tablo tenant kapsamli, 1:1 ve siparisle birlikte silinir', () => {
   assert.match(SCHEMA_SOURCE, /order_filter_projection_org_order_unique/)
   assert.match(SCHEMA_SOURCE, /onDelete: 'cascade'/)
   assert.match(SCHEMA_SOURCE, /projectionVersion/)
+  // Parca kolonlari kaynak yasam dongusune gore AYRI.
+  for (const col of [
+    'orderNumberOrderToken', 'orderNumberShipmentToken',
+    'cargoSlipOrderToken', 'cargoSlipShipmentToken', 'cargoSlipOperationToken',
+  ]) assert.match(SCHEMA_SOURCE, new RegExp(col), col)
 })
 
 test('PRJ-14: migration ADDITIVE — mevcut tablolara dokunmaz', () => {
@@ -220,5 +248,6 @@ test('PRJ-16: okuma yolu bu unitede DEGISMEDI', () => {
   // heniz OKUNMUYOR (B2-1b-B'de baglanacak).
   assert.match(projection, /buildVisibleOrders/)
   assert.equal(projection.includes('orderFilterProjectionBuilder'), false)
+  assert.equal(projection.includes('orderFilterProjectionRepository'), false)
   assert.equal(projection.includes('order_filter_projection'), false)
 })

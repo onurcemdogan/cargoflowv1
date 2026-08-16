@@ -39,84 +39,90 @@ export function buildSearchToken(values: unknown[]): string {
     .join(SEARCH_FIELD_SEPARATOR)
 }
 
-export interface OrderFilterProjectionInput {
-  organizationId: string
-  orderId: string
+/** ORDER yaşam döngüsünün sahip olduğu projeksiyon parçası. */
+export interface OrderProjectionFragmentInput {
   marketplace?: unknown
   operationStatus?: unknown
   marketplaceStatus?: unknown
   shippingCity?: unknown
   shippingDistrict?: unknown
   orderDate?: unknown
-  /** Müşteri arama kaynakları (kanonik filtre ile AYNI üçlü). */
   customerName?: unknown
   customerPhone?: unknown
   customerEmail?: unknown
-  /** Sipariş no arama kaynakları (kanonik filtre ile AYNI beşli). */
   orderNumber?: unknown
   externalOrderId?: unknown
   cargoTrackingNumber?: unknown
-  ozelKargoTakipNo?: unknown
-  trendyolCargoTrackingNumber?: unknown
-  /** Kargo fişi arama kaynakları — çağıran ÇÖZÜLMÜŞ değerleri verir. */
-  cargoSlipValues?: unknown[]
 }
 
-export interface OrderFilterProjectionRow {
-  organizationId: string
-  orderId: string
-  marketplaceToken: string
-  operationStatusToken: string
-  marketplaceStatus: string
-  shippingCityToken: string
-  shippingDistrictToken: string
-  customerSearchToken: string
-  orderNumberSearchToken: string
-  cargoSlipSearchToken: string
-  orderDate: string | null
-  projectionVersion: number
+/** SHIPMENT yaşam döngüsünün sahip olduğu parça (yazma anında ÇÖZÜLMÜŞ). */
+export interface ShipmentProjectionFragmentInput {
+  ozelKargoTakipNo?: unknown
+  trendyolCargoTrackingNumber?: unknown
+  /** shipment-owned kargo fişi kaynakları (trackingNumber, barcode, gonderiNo…). */
+  cargoSlipShipmentValues?: unknown[]
+}
+
+/** OPERATION yaşam döngüsünün sahip olduğu parça (create sonucu ÇÖZÜLMÜŞ). */
+export interface OperationProjectionFragmentInput {
+  /** create/verification sonucu T.No, barkod, doğrulama tanımlayıcıları. */
+  cargoSlipOperationValues?: unknown[]
 }
 
 /**
- * Tek siparişin kanonik filtre projeksiyonunu üretir.
- *
- * Eşitlik alanları `normalizedToken`, arama alanları `normalizedSearch`
- * kullanır — kanonik filtre hangisini kullanıyorsa O.
- *
- * GİZLİ VERİ TAŞINMAZ: parola/credential/token ve ham şifreli payload bu
- * çıktıya GİRMEZ. `customerSearchToken` arama için gereken müşteri
- * alanlarını içerir (ARANABİLİR PII) — bu alanlar zaten `orders`
- * tablosunda düz kolonlardır, yeni bir hassasiyet sınıfı oluşmaz.
+ * ORDER parçası. `orders` ilişkisel kolonlarından türer; shipment/operation
+ * kaynaklarına DOKUNMAZ (o kolonlar SET edilmez).
  */
-export function buildOrderFilterProjection(
-  input: OrderFilterProjectionInput,
-): OrderFilterProjectionRow {
+export function buildOrderProjectionFragment(
+  input: OrderProjectionFragmentInput,
+) {
   return {
-    organizationId: String(input.organizationId),
-    orderId: String(input.orderId),
-    // Eşitlik → normalizedToken (kanonik filtreyle AYNI)
     marketplaceToken: normalizedToken(input.marketplace),
     operationStatusToken: normalizedToken(input.operationStatus),
-    // marketplaceStatus kanonik tarafta EXACT karşılaştırılır; normalize
-    // EDİLMEZ, ham değer korunur.
+    // Kanonik filtre bunu EXACT karşılaştırır; normalize EDİLMEZ.
     marketplaceStatus: String(input.marketplaceStatus ?? '').trim(),
     shippingCityToken: normalizedToken(input.shippingCity),
     shippingDistrictToken: normalizedToken(input.shippingDistrict),
-    // Contains araması → normalizedSearch + güvenli ayırıcı
     customerSearchToken: buildSearchToken([
       input.customerName,
       input.customerPhone,
       input.customerEmail,
     ]),
-    orderNumberSearchToken: buildSearchToken([
+    orderNumberOrderToken: buildSearchToken([
       input.orderNumber,
       input.externalOrderId,
       input.cargoTrackingNumber,
+    ]),
+    cargoSlipOrderToken: buildSearchToken([input.cargoTrackingNumber]),
+    orderDate: input.orderDate ?? null,
+    projectionVersion: ORDER_FILTER_PROJECTION_VERSION,
+  }
+}
+
+/** SHIPMENT parçası — yalnız shipment-owned kolonlar. */
+export function buildShipmentProjectionFragment(
+  input: ShipmentProjectionFragmentInput,
+) {
+  return {
+    orderNumberShipmentToken: buildSearchToken([
       input.ozelKargoTakipNo,
       input.trendyolCargoTrackingNumber,
     ]),
-    cargoSlipSearchToken: buildSearchToken(input.cargoSlipValues ?? []),
-    orderDate: input.orderDate ? String(input.orderDate) : null,
+    cargoSlipShipmentToken: buildSearchToken(
+      input.cargoSlipShipmentValues ?? [],
+    ),
+    projectionVersion: ORDER_FILTER_PROJECTION_VERSION,
+  }
+}
+
+/** OPERATION parçası — yalnız operation-owned kolon. */
+export function buildOperationProjectionFragment(
+  input: OperationProjectionFragmentInput,
+) {
+  return {
+    cargoSlipOperationToken: buildSearchToken(
+      input.cargoSlipOperationValues ?? [],
+    ),
     projectionVersion: ORDER_FILTER_PROJECTION_VERSION,
   }
 }

@@ -1,5 +1,5 @@
 {
-  "id": "b87d6a29-3120-4b52-bad2-7079455ee23c",
+  "id": "a4c4379f-8421-48d6-b0ce-abd4ac5980ec",
   "prevId": "c07f11de-a944-41f2-b47f-2fde0156a1d2",
   "version": "7",
   "dialect": "postgresql",
@@ -467,14 +467,32 @@
           "primaryKey": false,
           "notNull": false
         },
-        "order_number_search_token": {
-          "name": "order_number_search_token",
+        "order_number_order_token": {
+          "name": "order_number_order_token",
           "type": "text",
           "primaryKey": false,
           "notNull": false
         },
-        "cargo_slip_search_token": {
-          "name": "cargo_slip_search_token",
+        "order_number_shipment_token": {
+          "name": "order_number_shipment_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cargo_slip_order_token": {
+          "name": "cargo_slip_order_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cargo_slip_shipment_token": {
+          "name": "cargo_slip_shipment_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "cargo_slip_operation_token": {
+          "name": "cargo_slip_operation_token",
           "type": "text",
           "primaryKey": false,
           "notNull": false
