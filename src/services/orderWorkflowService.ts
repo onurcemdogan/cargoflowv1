@@ -1168,21 +1168,31 @@ export class OrderWorkflowService {
       updatedCount?: number
       persistedCount?: number
       failedCount?: number
+      accepted?: boolean
+      state?: string
+      syncRunId?: string | null
     } = {}
     let syncOk = false
     // 409: aynı org için başka bir sync zaten çalışıyor (backend org kilidi).
     // Veri kaybı yok; mevcut liste korunur, bilgilendirici mesaj gösterilir.
     let syncInProgress = false
+    // KABUL EDEN UÇ: sağlayıcı turunun BİTMESİ BEKLENMEZ. İstek yalnız
+    // orkestrasyon kabulünü bekler; kullanıcı bu sırada mevcut YEREL listeyi
+    // görmeye ve sayfayı kullanmaya devam eder. Tur bitince durum yoklamasıyla
+    // (`/api/orders/sync/status`) liste yeniden okunur.
+    let acceptedRunId: string | null = null
     try {
-      const response = await fetch('/api/orders/sync', {
+      const response = await fetch('/api/orders/sync/request', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({ query }),
       })
       syncPayload = (await response.json().catch(() => ({}))) as typeof syncPayload
-      syncOk = response.ok && syncPayload.ok === true
-      syncInProgress = response.status === 409 || syncPayload.code === 'sync_in_progress'
+      syncOk = response.ok && syncPayload.accepted === true
+      acceptedRunId = syncPayload.syncRunId ?? null
+      // Aynı hesapta tur zaten koşuyorsa istek MEVCUT tura birleştirilir.
+      syncInProgress = syncPayload.state === 'COALESCED'
     } catch (error) {
       syncPayload = {
         ok: false,
@@ -1246,17 +1256,22 @@ export class OrderWorkflowService {
       }
     }
 
+    // DİKKAT: burada senkron BİTMİŞ DEĞİL, KABUL EDİLMİŞTİR. Kullanıcıya
+    // "tamamlandı" demek yanıltıcı olurdu; liste yerel kaynaktan gösterilir ve
+    // tur bittiğinde durum yoklaması listeyi tazeler.
     this.auditLogService.append({
       action: 'Siparişler çekildi',
-      level: 'success',
-      details: `Sunucu senkronu tamamlandı: ${syncPayload.insertedCount ?? 0} yeni, ${syncPayload.updatedCount ?? 0} güncellendi. Toplam ${orders.length} sipariş.`,
+      level: 'info',
+      details: `Senkronizasyon arka planda başlatıldı (${
+        acceptedRunId ?? 'run'
+      }). Mevcut ${orders.length} sipariş gösteriliyor.`,
     })
     return {
       orders,
       result: {
-        level: orders.length > 0 ? 'success' : 'warning',
+        level: 'info',
         source: 'real',
-        message: `Sunucu senkronu tamamlandı (${syncPayload.persistedCount ?? 0} kaydedildi, ${syncPayload.failedCount ?? 0} başarısız). Kalıcı operasyon listesi: ${orders.length}.`,
+        message: `Senkronizasyon arka planda başlatıldı. Mevcut ${orders.length} sipariş gösteriliyor; tamamlanınca liste kendiliğinden güncellenir.`,
       },
     }
   }

@@ -1215,7 +1215,12 @@ app.post('/api/orders/:id/label-printed', async (request, response) => {
 // enjekte edilir) çeker, normalize eder ve org bazında upsert eder. KISMİ/
 // başarısız sync sipariş SİLMEZ/ARŞİVLEMEZ; arşivleme yalnız kanıtlı TAM
 // sync'te (complete=true) reconcile ile yapılır.
-app.post('/api/orders/sync', async (request, response) => {
+// SENKRON TURU — TEK IMPLEMENTASYON.
+//
+// Hem ESKİ bloklayan uç hem YENİ kabul-eden uç AYNI gövdeyi çalıştırır.
+// `response` yerine toplayıcı geçirilerek tur arka planda koşturulabilir;
+// ikinci bir Trendyol/persistence yolu YOKTUR.
+async function executeOrdersSyncRound(request, response) {
   const context = await requireOrderPersistenceContext(request, response)
   if (!context) return
 
@@ -1461,6 +1466,113 @@ app.post('/api/orders/sync', async (request, response) => {
     // arka plan turu bu hesapta kalıcı olarak atlanırdı.
     endSyncFlight(flightKey)
   }
+}
+
+// ESKİ SÖZLEŞME (bloklayan): mevcut istemciler ve testler için AYNEN korunur.
+app.post('/api/orders/sync', executeOrdersSyncRound)
+
+/**
+ * Yanıt toplayıcı — turu HTTP yanıtından ayırır.
+ *
+ * Arka plan turunda gerçek `response` yoktur; gövde aynı kalsın diye aynı
+ * `status().json()` arayüzü taklit edilir.
+ */
+function collectSyncResponse() {
+  const collected = { httpStatus: 200, body: null, sent: false }
+  const api = {
+    collected,
+    status(code) {
+      collected.httpStatus = Number(code) || 200
+      return api
+    },
+    json(body) {
+      collected.body = body
+      collected.sent = true
+      return api
+    },
+  }
+  return api
+}
+
+// ── KABUL EDEN UÇ: "Şimdi Yenile" SAĞLAYICIYI BEKLEMEZ ───────────────────
+//
+// İstek yalnız orkestrasyon kabulünü bekler; Trendyol turu arka planda ilerler.
+// Kullanıcı bu sırada mevcut YEREL veriyi görmeye ve sayfayı kullanmaya devam
+// eder. Aynı hesapta koşan tur varsa yeni sağlayıcı turu AÇILMAZ (birleştirme).
+app.post('/api/orders/sync/request', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const accountScope = await resolveActiveMarketplaceAccountScope(
+    context.db,
+    context.organizationId,
+  )
+  if (accountScope.status !== 'ok') {
+    const resolutionError = accountScope.status === 'account_resolution_error'
+    response.status(resolutionError ? 503 : 409).json({
+      ok: false,
+      accepted: false,
+      code: accountScope.status,
+      message: resolutionError
+        ? 'Pazaryeri hesabı çözümlenemedi; senkron başlatılmadı.'
+        : 'Aktif Trendyol pazaryeri hesabı bulunamadı; senkron başlatılmadı.',
+    })
+    return
+  }
+  const orchestrator = await import('./sync/marketplaceSyncOrchestrator.ts')
+  // İSTEK ANLIK GÖRÜNTÜSÜ: Express isteği yanıt gönderildikten sonra arka
+  // planda KULLANILMAZ; tura yalnız gereken alanlar taşınır.
+  const snapshot = { auth: request.auth, body: request.body ?? {} }
+  const result = orchestrator.requestMarketplaceSync({
+    organizationId: context.organizationId,
+    marketplaceAccountId: accountScope.accountId,
+    reason: 'MANUAL_REFRESH',
+    run: async () => {
+      const collector = collectSyncResponse()
+      await executeOrdersSyncRound(snapshot, collector)
+      // Turun sonucu HTTP durumundan okunur; hata YUTULMAZ, sınıflandırılsın
+      // diye yukarı fırlatılır (orkestratör kaydeder, istek etkilenmez).
+      if (collector.collected.httpStatus >= 400) {
+        throw Object.assign(new Error('marketplace_sync_failed'), {
+          statusCode: collector.collected.httpStatus,
+        })
+      }
+      return collector.collected.body
+    },
+  })
+  response.status(202).json({
+    ok: true,
+    accepted: result.accepted,
+    state: result.state,
+    syncRunId: result.syncRunId,
+    reason: result.reason,
+  })
+})
+
+// ── SALT OKUNUR SENKRON DURUMU ───────────────────────────────────────────
+// Sağlayıcıya ÇIKMAZ. Sır/PII içermez; istemci geri çekilmeli (backoff) olarak
+// yoklar ve SUCCEEDED görünce YEREL veriyi yeniden okur.
+app.get('/api/orders/sync/status', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const accountScope = await resolveActiveMarketplaceAccountScope(
+    context.db,
+    context.organizationId,
+  )
+  const orchestrator = await import('./sync/marketplaceSyncOrchestrator.ts')
+  const status = orchestrator.getSyncStatus(
+    context.organizationId,
+    accountScope.status === 'ok' ? accountScope.accountId : null,
+  )
+  response.json({
+    ok: true,
+    running: Boolean(status.active),
+    state: status.active ? status.active.state : (status.last?.state ?? null),
+    syncRunId: status.active?.syncRunId ?? status.last?.syncRunId ?? null,
+    reason: status.active?.reason ?? status.last?.reason ?? null,
+    errorCategory: status.last?.errorCategory ?? null,
+    lastSuccessfulAt: status.lastSuccessfulAt,
+    pendingFollowUp: status.pendingFollowUp,
+  })
 })
 
 // Dashboard SATIŞ analitiği için CAP'SİZ, read-only dönemsel sipariş
