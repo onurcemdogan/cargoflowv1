@@ -30,6 +30,20 @@ export const ORDER_FILTER_PROJECTION_VERSION = 1
  */
 export const SEARCH_FIELD_SEPARATOR = '́'
 
+/**
+ * Tarihi güvenli biçimde `Date`'e çevirir.
+ *
+ * Üretim yolları drizzle satırı verdiği için zaten `Date` gelir; ama geri
+ * doldurma/onarım gibi ham SQL kullanan çağıranlarda metin gelebilir. Sessizce
+ * bozuk bir değer YAZMAK yerine burada tek noktada normalize edilir.
+ */
+function toProjectionDate(value: unknown): Date | null {
+  if (value === null || value === undefined || value === '') return null
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value
+  const parsed = new Date(value as string | number)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
 /** Alanları ayrı ayrı normalize edip güvenli ayırıcıyla birleştirir. */
 export function buildSearchToken(values: unknown[]): string {
   return values
@@ -94,7 +108,7 @@ export function buildOrderProjectionFragment(
       input.cargoTrackingNumber,
     ]),
     cargoSlipOrderToken: buildSearchToken([input.cargoTrackingNumber]),
-    orderDate: input.orderDate ?? null,
+    orderDate: toProjectionDate(input.orderDate),
     projectionVersion: ORDER_FILTER_PROJECTION_VERSION,
   }
 }
@@ -124,6 +138,57 @@ export function buildOperationProjectionFragment(
       input.cargoSlipOperationValues ?? [],
     ),
     projectionVersion: ORDER_FILTER_PROJECTION_VERSION,
+  }
+}
+
+/**
+ * KAYNAK SAHİPLİK HARİTASI — SHIPMENT.
+ *
+ * "Kargo fişi hangi alanlardan gelir" sorusunun TEK yanıtı. Hem canlı yazım
+ * hem geri doldurma AYNI listeyi kullanır; iki kopya tutulsaydı zamanla
+ * kayarlardı. Değerler çağıran tarafından ÇÖZÜLMÜŞ gelir.
+ */
+export function shipmentFragmentInput(
+  record: {
+    trackingNumber?: unknown
+    barcode?: unknown
+  },
+  payload: Record<string, unknown> = {},
+): ShipmentProjectionFragmentInput {
+  return {
+    ozelKargoTakipNo: payload.ozelKargoTakipNo,
+    trendyolCargoTrackingNumber: payload.trendyolCargoTrackingNumber,
+    cargoSlipShipmentValues: [
+      record.trackingNumber,
+      record.barcode,
+      payload.shipmentCode,
+      payload.trackingNumber,
+      payload.kargoTakipNo,
+      payload.tNo,
+      payload.barkodNo,
+      payload.barcodeValue,
+      payload.gonderiNo,
+      payload.waybillNo,
+      payload.irsaliyeNo,
+      payload.cargoKey,
+    ],
+  }
+}
+
+/** KAYNAK SAHİPLİK HARİTASI — OPERATION (create/doğrulama sonucu). */
+export function operationFragmentInput(
+  columns: { trackingNumber?: unknown },
+  payload: Record<string, unknown> = {},
+): OperationProjectionFragmentInput {
+  return {
+    cargoSlipOperationValues: [
+      columns.trackingNumber,
+      payload.carrierTrackingNumber,
+      payload.carrierBarcodeNumber,
+      payload.candidateTrackingNumber,
+      payload.candidateBarcodeNumber,
+      payload.ozelKargoTakipNo,
+    ],
   }
 }
 

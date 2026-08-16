@@ -10,6 +10,7 @@ import { homedir } from 'node:os'
 import { shipmentOperations } from '../db/schema.ts'
 import { orders } from '../db/schema.ts'
 import { updateOperationProjectionFragment } from '../orders/orderFilterProjectionRepository.ts'
+import { operationFragmentInput } from '../orders/orderFilterProjectionBuilder.ts'
 import { encryptShipmentPayload } from './shipmentEncryption.ts'
 import { upsertShipment } from './shipmentRepository.ts'
 import { SURAT_PERSISTENCE_PROVIDER } from './suratProvider.ts'
@@ -130,15 +131,12 @@ async function importOne(
         )
       const orderId = owner[0]?.id ? String(owner[0].id) : ''
       if (orderId) {
-        await updateOperationProjectionFragment(db, organizationId, orderId, {
-          cargoSlipOperationValues: [
-            trackingNumber,
-            record.carrierTrackingNumber,
-            record.carrierBarcodeNumber,
-            record.candidateTrackingNumber,
-            record.candidateBarcodeNumber,
-          ],
-        })
+        await updateOperationProjectionFragment(
+          db,
+          organizationId,
+          orderId,
+          operationFragmentInput({ trackingNumber }, record),
+        )
       }
     }
     if (opStatus === 'succeeded' && packageId) {

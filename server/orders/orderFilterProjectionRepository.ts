@@ -12,7 +12,7 @@
 //
 // SINIR: bu modül decrypt/ağ YAPMAZ. Şifreli kaynaklardan gelen değerler
 // çağıran tarafından ÇÖZÜLMÜŞ olarak verilir (write-time resolved values).
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, inArray, lte, sql } from 'drizzle-orm'
 import { orderFilterProjection, orders } from '../db/schema.ts'
 import {
   buildOperationProjectionFragment,
@@ -174,6 +174,79 @@ export async function updateOperationProjectionFragment(
       },
     })
   return { updated: true }
+}
+
+/**
+ * TOPLU GERİ DOLDURMA — üç parçayı TEK yazımda kurar (B2 backfill).
+ *
+ * Normal çalışma zamanı yazıcıları (yukarıdakiler) DEĞİŞMEDİ; bu yol yalnız
+ * sınırlı geri doldurma işçisi içindir ve iki ek kuralı vardır:
+ *
+ *  1. BAYAT YAZMA KORUMASI: işçi satırları `snapshotAt` anında okur. Araya
+ *     giren normal bir yazım projeksiyon satırını DAHA SONRA güncellediyse
+ *     (`updated_at > snapshotAt`) bu yazım ATLANIR — yani canlı değer bayat
+ *     anlık görüntüyle EZİLMEZ.
+ *  2. Parçalar burada birlikte yazılır: eski kayıtlarda hiçbir yaşam döngüsü
+ *     henüz projeksiyona dokunmamıştır, sahiplik çakışması oluşmaz.
+ *
+ * Normalizasyon YENİDEN YAZILMAZ: aynı FROZEN üretici fonksiyonlar çağrılır.
+ */
+export async function backfillProjectionRows(
+  db: Db,
+  organizationId: string,
+  entries: readonly {
+    orderRow: Record<string, unknown>
+    shipment?: ShipmentProjectionFragmentInput
+    operation?: OperationProjectionFragmentInput
+  }[],
+  snapshotAt: Date,
+): Promise<{ attempted: number; written: number; skippedStale: number }> {
+  if (entries.length === 0) {
+    return { attempted: 0, written: 0, skippedStale: 0 }
+  }
+  const now = new Date()
+  const values = entries.map((entry) => ({
+    organizationId,
+    orderId: String(entry.orderRow.id),
+    ...orderFragmentFromRow(entry.orderRow),
+    ...buildShipmentProjectionFragment(entry.shipment ?? {}),
+    ...buildOperationProjectionFragment(entry.operation ?? {}),
+    updatedAt: now,
+  }))
+  const written = await db
+    .insert(orderFilterProjection)
+    .values(values)
+    .onConflictDoUpdate({
+      target: [
+        orderFilterProjection.organizationId,
+        orderFilterProjection.orderId,
+      ],
+      set: {
+        marketplaceToken: excluded('marketplace_token'),
+        operationStatusToken: excluded('operation_status_token'),
+        marketplaceStatus: excluded('marketplace_status'),
+        shippingCityToken: excluded('shipping_city_token'),
+        shippingDistrictToken: excluded('shipping_district_token'),
+        customerSearchToken: excluded('customer_search_token'),
+        orderNumberOrderToken: excluded('order_number_order_token'),
+        orderNumberShipmentToken: excluded('order_number_shipment_token'),
+        cargoSlipOrderToken: excluded('cargo_slip_order_token'),
+        cargoSlipShipmentToken: excluded('cargo_slip_shipment_token'),
+        cargoSlipOperationToken: excluded('cargo_slip_operation_token'),
+        orderDate: excluded('order_date'),
+        projectionVersion: excluded('projection_version'),
+        updatedAt: now,
+      },
+      // BAYAT YAZMA KORUMASI — canlı yazımı EZME.
+      setWhere: lte(orderFilterProjection.updatedAt, snapshotAt),
+    })
+    .returning({ orderId: orderFilterProjection.orderId })
+  const count = Array.isArray(written) ? written.length : 0
+  return {
+    attempted: entries.length,
+    written: count,
+    skippedStale: entries.length - count,
+  }
 }
 
 export { ORDER_FILTER_PROJECTION_VERSION }

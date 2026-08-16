@@ -4,6 +4,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { shipments } from '../db/schema.ts'
 import { orders } from '../db/schema.ts'
 import { updateShipmentProjectionFragment } from '../orders/orderFilterProjectionRepository.ts'
+import { shipmentFragmentInput } from '../orders/orderFilterProjectionBuilder.ts'
 import {
   decryptShipmentPayload,
   encryptShipmentPayload,
@@ -176,23 +177,11 @@ export async function upsertShipment(
     )
   const orderId = owner[0]?.id ? String(owner[0].id) : ''
   if (orderId) {
-    await updateShipmentProjectionFragment(db, record.organizationId, orderId, {
-      ozelKargoTakipNo: payload.ozelKargoTakipNo,
-      trendyolCargoTrackingNumber: payload.trendyolCargoTrackingNumber,
-      cargoSlipShipmentValues: [
-        record.trackingNumber,
-        record.barcode,
-        payload.shipmentCode,
-        payload.trackingNumber,
-        payload.kargoTakipNo,
-        payload.tNo,
-        payload.barkodNo,
-        payload.barcodeValue,
-        payload.gonderiNo,
-        payload.waybillNo,
-        payload.irsaliyeNo,
-        payload.cargoKey,
-      ],
-    })
+    await updateShipmentProjectionFragment(
+      db,
+      record.organizationId,
+      orderId,
+      shipmentFragmentInput(record, payload),
+    )
   }
 }

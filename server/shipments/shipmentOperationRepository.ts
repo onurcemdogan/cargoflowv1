@@ -5,6 +5,7 @@ import { and, eq, inArray } from 'drizzle-orm'
 import { shipmentOperations } from '../db/schema.ts'
 import { orders } from '../db/schema.ts'
 import { updateOperationProjectionFragment } from '../orders/orderFilterProjectionRepository.ts'
+import { operationFragmentInput } from '../orders/orderFilterProjectionBuilder.ts'
 import {
   decryptShipmentPayload,
   encryptShipmentPayload,
@@ -292,16 +293,7 @@ export async function upsertCreateOperation(
       db,
       columns.organizationId,
       orderId,
-      {
-        cargoSlipOperationValues: [
-          columns.trackingNumber,
-          payload.carrierTrackingNumber,
-          payload.carrierBarcodeNumber,
-          payload.candidateTrackingNumber,
-          payload.candidateBarcodeNumber,
-          payload.ozelKargoTakipNo,
-        ],
-      },
+      operationFragmentInput(columns, payload),
     )
   }
 }
