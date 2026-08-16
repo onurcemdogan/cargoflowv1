@@ -3,6 +3,8 @@
 // üzerinden: eşzamanlı iki create'te yalnız biri rezervasyonu kazanır.
 import { and, eq, inArray } from 'drizzle-orm'
 import { shipmentOperations } from '../db/schema.ts'
+import { orders } from '../db/schema.ts'
+import { updateOperationProjectionFragment } from '../orders/orderFilterProjectionRepository.ts'
 import {
   decryptShipmentPayload,
   encryptShipmentPayload,
@@ -268,6 +270,40 @@ export async function upsertCreateOperation(
         updatedAt: new Date(),
       },
     })
+
+  // PROJEKSİYON BAKIMI — OPERATION parçası.
+  // `columns.payload` çağıran tarafından ZATEN çözülmüş bellekteki create
+  // sonucudur; burada YENİDEN DECRYPT YOK, ağ YOK, taşıyıcı çağrısı YOK.
+  // Yalnız operation-owned kolon SET edilir (ORDER/SHIPMENT korunur).
+  const payload = (columns.payload ?? {}) as Record<string, unknown>
+  const owner = await db
+    .select({ id: orders.id })
+    .from(orders)
+    .where(
+      and(
+        eq(orders.organizationId, columns.organizationId),
+        eq(orders.marketplace, columns.marketplace),
+        eq(orders.packageId, columns.packageId),
+      ),
+    )
+  const orderId = owner[0]?.id ? String(owner[0].id) : ''
+  if (orderId) {
+    await updateOperationProjectionFragment(
+      db,
+      columns.organizationId,
+      orderId,
+      {
+        cargoSlipOperationValues: [
+          columns.trackingNumber,
+          payload.carrierTrackingNumber,
+          payload.carrierBarcodeNumber,
+          payload.candidateTrackingNumber,
+          payload.candidateBarcodeNumber,
+          payload.ozelKargoTakipNo,
+        ],
+      },
+    )
+  }
 }
 
 export async function deleteCreateOperation(
