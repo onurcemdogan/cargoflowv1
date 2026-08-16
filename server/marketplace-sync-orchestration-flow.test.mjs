@@ -343,7 +343,7 @@ test('ORC-13: orkestratör SAGLAYICIYI TANIMAZ (ikinci istemci YOK)', () => {
   }
 })
 
-test('ORC-14: kayit alanlari yalniz KIMLIK/DURUM/ZAMAN', async () => {
+test('ORC-14: kayit alanlari yalniz KIMLIK/DURUM/ZAMAN/OZET', async () => {
   orchestrator.requestMarketplaceSync({
     organizationId: 'org-a', marketplaceAccountId: 'acc-a',
     reason: 'MANUAL_REFRESH', run: async () => {},
@@ -353,6 +353,41 @@ test('ORC-14: kayit alanlari yalniz KIMLIK/DURUM/ZAMAN', async () => {
   const status = orchestrator.getSyncStatus('org-a', 'acc-a')
   assert.deepEqual(Object.keys(status.last).sort(), [
     'coalescedRequests', 'errorCategory', 'finishedAt', 'marketplaceAccountId',
-    'organizationId', 'reason', 'startedAt', 'state', 'syncRunId',
+    'organizationId', 'reason', 'startedAt', 'state', 'summary', 'syncRunId',
   ])
+})
+
+test('ORC-15: tur ozeti BEYAZ LISTE — ham yanit SIZMAZ', async () => {
+  // Kısmi senkron uyarısı kullanıcıya ulaşmalı; ama YALNIZ izin verilen alanlar.
+  orchestrator.requestMarketplaceSync({
+    organizationId: 'org-a', marketplaceAccountId: 'acc-a',
+    reason: 'MANUAL_REFRESH',
+    run: async () => ({
+      ok: true,
+      partial: true,
+      syncStatus: 'PARTIAL',
+      successfulStatuses: ['Created', 'Picking'],
+      failedStatuses: [{ status: 'Shipped', httpStatus: 429, retryable: true }],
+      persistedCount: 12,
+      failedCount: 1,
+      // AŞAĞIDAKİLER ASLA DIŞARI ÇIKMAMALI:
+      credentials: { apiKey: 'SIR', sifre: 'SIR' },
+      rawResponse: { customerName: 'Ömer Şahin', phone: '05550001111' },
+      debug: { url: 'https://api.trendyol.com/...' },
+    }),
+  })
+  await flush()
+  await flush()
+  const summary = orchestrator.getSyncStatus('org-a', 'acc-a').last.summary
+  assert.deepEqual(Object.keys(summary).sort(), [
+    'failedCount', 'failedStatuses', 'partial', 'persistedCount',
+    'successfulStatuses', 'syncStatus',
+  ])
+  assert.equal(summary.partial, true)
+  assert.deepEqual(summary.successfulStatuses, ['Created', 'Picking'])
+  assert.deepEqual(summary.failedStatuses, ['Shipped'], 'yalniz statu adi')
+  const text = JSON.stringify(summary)
+  for (const secret of ['SIR', 'Ömer', '05550001111', 'trendyol.com', 'apiKey']) {
+    assert.equal(text.includes(secret), false, `sizinti: ${secret}`)
+  }
 })

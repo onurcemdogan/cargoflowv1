@@ -1570,6 +1570,8 @@ app.get('/api/orders/sync/status', async (request, response) => {
     syncRunId: status.active?.syncRunId ?? status.last?.syncRunId ?? null,
     reason: status.active?.reason ?? status.last?.reason ?? null,
     errorCategory: status.last?.errorCategory ?? null,
+    // Kısmi senkron uyarısı kullanıcıya ULAŞMALI (beyaz listeli özet).
+    summary: status.last?.summary ?? null,
     lastSuccessfulAt: status.lastSuccessfulAt,
     pendingFollowUp: status.pendingFollowUp,
   })

@@ -54,6 +54,45 @@ export interface SyncRun {
   errorCategory: SyncErrorCategory | null
   /** Bu turun birleştirdiği ek istek sayısı (gözlemlenebilirlik). */
   coalescedRequests: number
+  /**
+   * TURUN ÖZETİ — YALNIZ İZİN VERİLEN ALANLAR.
+   *
+   * Kullanıcının kısmi senkron uyarısını görebilmesi için gerekir. Ham
+   * sağlayıcı yanıtı, kimlik bilgisi ve müşteri verisi GİRMEZ.
+   */
+  summary: SyncRunSummary | null
+}
+
+export interface SyncRunSummary {
+  partial: boolean
+  syncStatus: string | null
+  successfulStatuses: string[]
+  failedStatuses: string[]
+  persistedCount: number | null
+  failedCount: number | null
+}
+
+const asString = (value: unknown): string => String(value ?? '').trim()
+
+/** Tur yanıtından İZİN VERİLEN alanları süzer (beyaz liste). */
+export function sanitizeRunSummary(value: unknown): SyncRunSummary | null {
+  if (!value || typeof value !== 'object') return null
+  const body = value as Record<string, unknown>
+  const failed = Array.isArray(body.failedStatuses) ? body.failedStatuses : []
+  return {
+    partial: body.partial === true || asString(body.syncStatus) === 'PARTIAL',
+    syncStatus: asString(body.syncStatus) || null,
+    successfulStatuses: (Array.isArray(body.successfulStatuses)
+      ? body.successfulStatuses
+      : []
+    ).map(asString).filter(Boolean),
+    failedStatuses: failed
+      .map((entry) => asString((entry as { status?: unknown })?.status ?? entry))
+      .filter(Boolean),
+    persistedCount:
+      typeof body.persistedCount === 'number' ? body.persistedCount : null,
+    failedCount: typeof body.failedCount === 'number' ? body.failedCount : null,
+  }
 }
 
 export interface SyncRequestResult {
@@ -144,7 +183,7 @@ export function isRetryableCategory(category: SyncErrorCategory): boolean {
 
 async function execute(state: KeyState, run: SyncRun, work: () => Promise<unknown>) {
   try {
-    await work()
+    run.summary = sanitizeRunSummary(await work())
     run.state = 'SUCCEEDED'
     run.finishedAt = new Date().toISOString()
     // BAŞARISIZ TUR `lastSuccessfulAt`i EZMEZ (mevcut veri güvende kalır).
@@ -180,6 +219,7 @@ function startRun(
     finishedAt: null,
     errorCategory: null,
     coalescedRequests: 0,
+    summary: null,
   }
   state.active = run
   // KOPUK ÇALIŞTIRMA: istek bu turu BEKLEMEZ. Hata yutulmaz, kaydedilir.
