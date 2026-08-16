@@ -15,6 +15,7 @@ import {
   sql,
 } from 'drizzle-orm'
 import { orderLines, orders, shipments } from '../db/schema.ts'
+import { refreshOrderProjectionFragment } from './orderFilterProjectionRepository.ts'
 import {
   marketplaceUpdateSet,
   toLineInsertValues,
@@ -337,6 +338,7 @@ export async function upsertMarketplaceOrders(
   let inserted = 0
   let updated = 0
   let failed = 0
+  const projectedOrderIds: string[] = []
   for (const order of normalizedOrders) {
     const packageId = String(order.packageId ?? order.shipmentPackageId ?? '').trim()
     if (!packageId) {
@@ -361,10 +363,16 @@ export async function upsertMarketplaceOrders(
       if (existing.has(packageId)) updated += 1
       else inserted += 1
       await replaceOrUpsertOrderLines(db, organizationId, String(row.id), order)
+      // PROJEKSİYON BAKIMI: ORDER parçası aynı yaşam döngüsünde yenilenir.
+      // Sipariş başına toplanır; toplu yenileme döngü sonunda yapılır.
+      projectedOrderIds.push(String(row.id))
     } catch {
       failed += 1
     }
   }
+  // ORDER parçası: TEK toplu yenileme (shipment/operation kolonlarına
+  // DOKUNULMAZ, decrypt/ağ YOK). Hata YUTULMAZ.
+  await refreshOrderProjectionFragment(db, organizationId, projectedOrderIds)
   return {
     persisted: inserted + updated,
     inserted,
@@ -539,6 +547,9 @@ export async function markOrderLabelReady(
     )
     .returning({ id: orders.id })
   if (updated.length > 0) {
+    // PROJEKSİYON BAKIMI: operationStatus değişti → ORDER parçası aynı yaşam
+    // döngüsünde güncellenir. Hata YUTULMAZ (sessiz bayat projeksiyon YASAK).
+    await refreshOrderProjectionFragment(db, organizationId, [orderId])
     return { found: true, updated: true, operationStatus: LABEL_READY_OPERATION_STATUS }
   }
   // UPDATE eşleşmedi: ya kayıt yok (tenant dışı/silinmiş) ya da zaten non-regress
@@ -634,6 +645,8 @@ export async function markOrderLabelPrinted(
     )
     .returning({ id: orders.id })
   if (updated.length > 0) {
+    // PROJEKSİYON BAKIMI: operationStatus değişti → ORDER parçası.
+    await refreshOrderProjectionFragment(db, organizationId, [orderId])
     return {
       found: true,
       updated: true,
