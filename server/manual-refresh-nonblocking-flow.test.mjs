@@ -78,34 +78,32 @@ test('NB-4: durum ucu SALT OKUNUR ve saglayiciya CIKMAZ', () => {
   assert.ok(status.includes('lastSuccessfulAt'))
 })
 
-/* ═══ FRONTEND ═════════════════════════════════════════════════════════ */
+/* ═══ FRONTEND KESİMİ — HENÜZ YAPILMADI (BİLİNÇLİ) ════════════════════ */
 
-test('NB-5: "Simdi Yenile" KABUL EDEN uca gider', () => {
+test('NB-5: kabul eden uc HAZIR; frontend kesimi POLLING UI ile yapilacak', () => {
+  // Sunucu tarafı hazır ve test edilmiş durumda.
+  assert.ok(SERVER.includes("app.post('/api/orders/sync/request'"))
+  assert.ok(SERVER.includes("app.get('/api/orders/sync/status'"))
+
+  // FRONTEND HÂLÂ BLOKLAYAN UCU KULLANIYOR — BİLİNÇLİ.
+  //
+  // BULGU: frontend'i kabul eden uca çevirdiğimde, kullanıcı 207 KISMİ senkron
+  // ve başarısızlık geri bildirimini ANINDA GÖREMEZ oldu (o bilgi artık arka
+  // plan turunda oluşuyor). Bu bir UX GERİLEMESİDİR. Kesim ancak durum
+  // yoklaması (`/api/orders/sync/status`) UI'ye bağlandığında ve kısmi/hata
+  // durumu yüzeye çıktığında yapılmalıdır.
   assert.ok(
-    WORKFLOW.includes("fetch('/api/orders/sync/request'"),
-    'frontend kabul eden ucu kullanmali',
+    WORKFLOW.includes("fetch('/api/orders/sync'"),
+    'kesim tamamlanana kadar bloklayan uc korunur',
   )
-  // Bloklayan uç frontend'den ÇAĞRILMAZ.
-  assert.equal(
-    WORKFLOW.includes("fetch('/api/orders/sync'"), false,
-    'bloklayan uc frontendden cagrilmamali',
-  )
+  // Kısmi/başarısız senkron geri bildirimi HÂLÂ kullanıcıya ulaşıyor.
+  assert.ok(WORKFLOW.includes('successfulStatuses'))
+  assert.ok(WORKFLOW.includes('failedStatuses'))
+  assert.ok(WORKFLOW.includes('sync_in_progress'))
 })
 
-test('NB-6: kullaniciya "tamamlandi" DENMEZ (yaniltici olurdu)', () => {
-  const start = WORKFLOW.indexOf("fetch('/api/orders/sync/request'")
-  const body = WORKFLOW.slice(start, start + 4000)
-  assert.ok(body.includes('arka planda başlatıldı'), 'kabul mesaji olmali')
-  // Kabul anında "senkron tamamlandı" iddiası KALMAMALI.
-  const claimStart = body.indexOf('Senkronizasyon arka planda başlatıldı')
-  assert.ok(claimStart > 0)
-  assert.equal(
-    body.slice(claimStart).includes('Sunucu senkronu tamamlandı'), false,
-  )
-})
-
-test('NB-7: senkron sonucu ne olursa olsun YEREL liste okunur', () => {
-  const start = WORKFLOW.indexOf("fetch('/api/orders/sync/request'")
+test('NB-6: senkron sonucu ne olursa olsun YEREL liste okunur', () => {
+  const start = WORKFLOW.indexOf("fetch('/api/orders/sync'")
   const body = WORKFLOW.slice(start, start + 3000)
   // Sağlayıcı DTO'su doğrudan UI'ye basılmaz; sunucudaki kalıcı liste okunur.
   assert.ok(body.includes('this.loadOrdersFromServer()'))
