@@ -337,6 +337,7 @@ export async function createCanonicalSuratShipmentForRequest(
     entegrasyonFirmasi: input.context.entegrasyonFirmasi,
     ozelKargoTakipNo: input.context.ozelKargoTakipNo,
     orderCargoTrackingNumber: params.order.cargoTrackingNumber,
+    trackingSource: input.context.trackingSource,
     billingParty: billing.billingParty,
     credential,
   })

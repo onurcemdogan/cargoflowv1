@@ -315,6 +315,8 @@ export function evaluateSuratCreatePreflight(params: {
   entegrasyonFirmasi?: unknown
   ozelKargoTakipNo?: unknown
   orderCargoTrackingNumber?: unknown
+  /** `resolveSuratMarketplaceContext` numarayı HANGİ alandan okudu. */
+  trackingSource?: string | null
   billingParty: BillingPartyV2
   credential: SuratCredentialContext
 }): SuratCreatePreflight {
@@ -336,6 +338,15 @@ export function evaluateSuratCreatePreflight(params: {
     // BİÇİM KURALI BLOKLAMAZ. Mevcut kanonik sözleşme yalnız "boş değil"
     // ister; buraya uydurma bir hane kuralı koymak gerçek gönderileri
     // engelleyebilirdi. Biçim yalnız teşhis olarak raporlanır.
+    // KİMLİK KAYNAĞI GUARD'I — biçimden DAHA ÖNEMLİ. Pazaryeri numarası
+    // sağlayıcının `cargoTrackingNumber` alanından GELMELİDİR; iç barkod,
+    // orderNumber veya packageId ikame edilirse Sürat yanlış cariye yazar.
+    if (
+      params.trackingSource !== undefined &&
+      params.trackingSource !== 'cargoTrackingNumber'
+    ) {
+      failures.push('OZEL_KARGO_TAKIP_NO_SOURCE_NOT_PROVIDER')
+    }
     const parcel = text(params.ozelKargoTakipNo)
     if (!parcel) failures.push('OZEL_KARGO_TAKIP_NO_MISSING')
     else if (
