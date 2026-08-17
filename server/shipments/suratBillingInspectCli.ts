@@ -44,6 +44,7 @@ import {
   readOrderRawPayload,
   resolveBillingInspectionTarget,
   resolveOrganizationByName,
+  traceBillingIdentityLookup,
 } from './suratBillingScanner.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -142,13 +143,19 @@ export async function inspectOrderBilling(
     { rawPayloadAvailability },
   )
 
+  // KUSUR DÜZELTMESİ: gönderiler ÇÖZÜLEN SİPARİŞİN paket kimliğiyle aranır.
+  // Önceki sürüm CLI argümanını kullanıyordu; kimlik `cargoTrackingNumber`
+  // (727…) ile çözüldüğünde bu değer `shipments.package_id` ile ASLA
+  // eşleşmez → gönderi bulunamaz → taşıyıcı ekseni yanlışlıkla
+  // "başlamadı" görünür ve faturalama hunisi bozulur.
+  const resolvedPackageId = String(orderRow.packageId ?? '').trim()
   const shipmentRows = (await db
     .select()
     .from(shipments)
     .where(
       and(
         eq(shipments.organizationId, organizationId),
-        eq(shipments.packageId, packageId),
+        eq(shipments.packageId, resolvedPackageId),
       ),
     )) as Record<string, unknown>[]
 
@@ -720,6 +727,28 @@ export async function runSuratBillingInspect(): Promise<number> {
     for (const line of formatConfigSummary(buildConfigSummary(surat))) {
       console.info(line)
     }
+    return 0
+  }
+
+  // KİMLİK ÇÖZÜM İZİ — "bulunamadı" mesajını teşhis edilebilir kılar.
+  if (hasFlag('lookup-trace')) {
+    console.info(`ORGANIZATION            ${mask(organizationId)}`)
+    console.info(`INPUT                   ${mask(packageId)}`)
+    console.info('LOOKUP_TRACE (tenant kapsamli, TAM EŞLEŞME, satir icerigi YOK)')
+    for (const entry of await traceBillingIdentityLookup(
+      db,
+      organizationId,
+      packageId,
+    )) {
+      console.info(`  ${entry.field.padEnd(28)}matches=${entry.matches}`)
+    }
+    const resolution = await resolveBillingInspectionTarget(
+      db,
+      organizationId,
+      packageId,
+    )
+    console.info(`RESOLUTION              ${resolution.status}`)
+    console.info(`MATCHED_FIELD           ${resolution.matchedField ?? '—'}`)
     return 0
   }
 

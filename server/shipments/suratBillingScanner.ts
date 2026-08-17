@@ -134,6 +134,55 @@ export interface BillingScanCandidate extends BillingCandidate {
   isGoldenParcel: boolean
   /** Taşıyıcı ekseni — kayıtlı gönderide taşıyıcı numarası VAR MI. */
   carrierCreateStatus: CarrierCreateStatus
+  /** Sipariş ↔ gönderi eşleşmesinin sonucu (sayaç ve teşhis için). */
+  shipmentJoin: 'RESOLVED' | 'MISSING' | 'AMBIGUOUS'
+  /** Kendi ürettiği kimlik teşhis aracınca çözülebiliyor mu (yalnız örnekler). */
+  inspectable?: boolean
+  inspectableMatchedField?: string | null
+}
+
+/** Kimlik/join çözünürlüğü — semantik sonuçlardan AYRI sayılır. */
+export interface BillingResolutionTotals {
+  orderIdentityResolved: number
+  orderIdentityUnresolved: number
+  shipmentJoinResolved: number
+  shipmentJoinMissing: number
+  shipmentJoinAmbiguous: number
+  carrierCreateSuccess: number
+  carrierCreateNotStarted: number
+  carrierCreateFailed: number
+  carrierCreateUnknown: number
+}
+
+export function summarizeBillingResolution(
+  candidates: readonly BillingScanCandidate[],
+): BillingResolutionTotals {
+  const totals: BillingResolutionTotals = {
+    orderIdentityResolved: 0,
+    orderIdentityUnresolved: 0,
+    shipmentJoinResolved: 0,
+    shipmentJoinMissing: 0,
+    shipmentJoinAmbiguous: 0,
+    carrierCreateSuccess: 0,
+    carrierCreateNotStarted: 0,
+    carrierCreateFailed: 0,
+    carrierCreateUnknown: 0,
+  }
+  for (const candidate of candidates) {
+    // Kimlik: aday için bir paket kimliği üretilebildi mi.
+    if (candidate.parcelIdentity) totals.orderIdentityResolved += 1
+    else totals.orderIdentityUnresolved += 1
+
+    if (candidate.shipmentJoin === 'RESOLVED') totals.shipmentJoinResolved += 1
+    else if (candidate.shipmentJoin === 'AMBIGUOUS') totals.shipmentJoinAmbiguous += 1
+    else totals.shipmentJoinMissing += 1
+
+    if (candidate.carrierCreateStatus === 'SUCCESS') totals.carrierCreateSuccess += 1
+    else if (candidate.carrierCreateStatus === 'FAILED') totals.carrierCreateFailed += 1
+    else if (candidate.carrierCreateStatus === 'UNKNOWN') totals.carrierCreateUnknown += 1
+    else totals.carrierCreateNotStarted += 1
+  }
+  return totals
 }
 
 /** Faturalama doğrulama dağılımı — HAM sayaçlardan AYRI katman. */
@@ -201,6 +250,7 @@ export interface BillingScanResult {
   ordersScanned: number
   summary: BillingScanSummary
   verification: BillingVerificationTotals
+  resolution: BillingResolutionTotals
   supplierCandidates: BillingScanCandidate[]
   trendyolPaysCandidates: BillingScanCandidate[]
   goldenFound: boolean
@@ -265,9 +315,18 @@ export async function scanTenantBillingCandidates(
     : []
   if (packageIds.length) dbQueryCount += 1
 
+  // JOIN ÇÖZÜNÜRLÜĞÜ: aynı pakete birden fazla gönderi düşerse "eşleşme yok"
+  // demek YANLIŞTIR — belirsizlik ayrı bir sonuçtur ve sayılır.
   const shipmentByPackage = new Map<string, Record<string, unknown>>()
+  const shipmentCountByPackage = new Map<string, number>()
   for (const row of shipmentRows) {
-    shipmentByPackage.set(text(row.packageId), row)
+    const key = text(row.packageId)
+    shipmentCountByPackage.set(key, (shipmentCountByPackage.get(key) ?? 0) + 1)
+    // Taşıyıcı numarası olan kayıt tercih edilir (create gerçekleşmiş olan).
+    const existing = shipmentByPackage.get(key)
+    if (!existing || (!text(existing.trackingNumber) && text(row.trackingNumber))) {
+      shipmentByPackage.set(key, row)
+    }
   }
 
   // Kredensiyal bağlamı tenant başına TEK kez çözülür (sipariş başına DEĞİL).
@@ -292,11 +351,16 @@ export async function scanTenantBillingCandidates(
       { rawPayloadAvailability },
     )
 
+    const packageKey = text(orderRow.packageId)
+    const shipmentRow = shipmentByPackage.get(packageKey)
+    const shipmentCount = shipmentCountByPackage.get(packageKey) ?? 0
+    const shipmentJoin: 'RESOLVED' | 'MISSING' | 'AMBIGUOUS' =
+      shipmentCount === 0 ? 'MISSING' : shipmentCount === 1 ? 'RESOLVED' : 'AMBIGUOUS'
+
     // Paket kimliği: mevcut kanonik kaynak (Trendyol kargo numarası), yoksa
     // gönderi yükündeki `ozelKargoTakipNo`. Yeni eşleme UYDURULMAZ.
     let parcelIdentity = text(orderRow.cargoTrackingNumber)
     if (!parcelIdentity) {
-      const shipmentRow = shipmentByPackage.get(text(orderRow.packageId))
       try {
         const payload = decryptShipmentPayload(
           (shipmentRow?.carrierPayloadEncrypted as string | null) ?? null,
@@ -324,13 +388,20 @@ export async function scanTenantBillingCandidates(
       senderCode: null,
       parcelIdentity: parcelIdentity || null,
       isGoldenParcel: parcelIdentity === GOLDEN_TRENDYOL_PAYS_PARCEL,
-      // Taşıyıcı numarası kayıtlı gönderide VARSA create gerçekleşmiştir.
+      shipmentJoin,
       // Ek sorgu YOK: gönderiler zaten toplu okundu.
-      carrierCreateStatus: text(
-        shipmentByPackage.get(text(orderRow.packageId))?.trackingNumber,
-      )
-        ? 'SUCCESS'
-        : 'NOT_STARTED',
+      //   gönderi + taşıyıcı numarası → SUCCESS
+      //   gönderi var, numara yok     → UNKNOWN (create denendi mi bilinmez)
+      //   birden fazla gönderi        → UNKNOWN (hangisi olduğu belirsiz)
+      //   gönderi yok                 → NOT_STARTED
+      carrierCreateStatus:
+        shipmentJoin === 'AMBIGUOUS'
+          ? 'UNKNOWN'
+          : shipmentJoin === 'MISSING'
+            ? 'NOT_STARTED'
+            : text(shipmentRow?.trackingNumber)
+              ? 'SUCCESS'
+              : 'UNKNOWN',
     }
   })
 
@@ -374,12 +445,41 @@ export async function scanTenantBillingCandidates(
     }
   }
 
+  // KENDİ ADAYINI DOĞRULA — SINIRLI. Tarayıcı, teşhis aracının çözemeyeceği
+  // bir kimliği komut olarak ÖNERMEMELİDİR (üretimde tam olarak bu oldu).
+  // 500 aday için N+1 YAPILMAZ; yalnız RAPORLANAN örnekler denetlenir.
+  const shown = [
+    ...supplierCandidates,
+    ...trendyolPaysCandidates,
+    ...(goldenCandidate ? [goldenCandidate] : []),
+  ].filter((candidate) => candidate.parcelIdentity)
+  const checked = new Map<string, { ok: boolean; matchedField: string | null }>()
+  for (const candidate of shown) {
+    const identity = candidate.parcelIdentity as string
+    if (!checked.has(identity)) {
+      const resolution = await resolveBillingInspectionTarget(
+        db,
+        organization.id,
+        identity,
+      )
+      dbQueryCount += 1
+      checked.set(identity, {
+        ok: resolution.status === 'ok',
+        matchedField: resolution.matchedField,
+      })
+    }
+    const result = checked.get(identity)
+    candidate.inspectable = result?.ok ?? false
+    candidate.inspectableMatchedField = result?.matchedField ?? null
+  }
+
   return {
     organizationMasked: maskIdentifier(organization.id),
     organizationName: organization.name,
     ordersScanned: orderRows.length,
     summary,
     verification: verificationTotals,
+    resolution: summarizeBillingResolution(candidates),
     supplierCandidates,
     trendyolPaysCandidates,
     goldenFound: goldenCandidate !== null,
@@ -501,19 +601,62 @@ export function formatScanReport(
     'GETCARGO_ROLE                     POST_CREATE_ACTUAL_VERIFICATION',
   )
 
-  const supplier = result.supplierCandidates[0]
-  const trendyol = result.goldenCandidate ?? result.trendyolPaysCandidates[0]
+  lines.push(
+    '',
+    'IDENTITY / JOIN RESOLUTION (arac kusuru semantik cevaptan AYRI)',
+    `ORDER_IDENTITY_RESOLVED      ${result.resolution.orderIdentityResolved}`,
+    `ORDER_IDENTITY_UNRESOLVED    ${result.resolution.orderIdentityUnresolved}`,
+    `ORDER_SHIPMENT_JOIN_RESOLVED ${result.resolution.shipmentJoinResolved}`,
+    `ORDER_SHIPMENT_JOIN_MISSING  ${result.resolution.shipmentJoinMissing}`,
+    `ORDER_SHIPMENT_JOIN_AMBIGUOUS ${result.resolution.shipmentJoinAmbiguous}`,
+    `CARRIER_CREATE_SUCCESS       ${result.resolution.carrierCreateSuccess}`,
+    `CARRIER_CREATE_NOT_STARTED   ${result.resolution.carrierCreateNotStarted}`,
+    `CARRIER_CREATE_FAILED        ${result.resolution.carrierCreateFailed}`,
+    `CARRIER_CREATE_UNKNOWN       ${result.resolution.carrierCreateUnknown}`,
+  )
+
+  // KENDİ ADAYINI DOĞRULAMA SONUCU — komut üretmeden ÖNCE.
+  const shown = [
+    ...result.supplierCandidates,
+    ...result.trendyolPaysCandidates,
+  ].filter((candidate) => candidate.parcelIdentity)
+  lines.push('', 'CANDIDATE SELF-CHECK')
+  if (shown.length === 0) lines.push('  —')
+  shown.forEach((candidate, index) => {
+    lines.push(
+      `  CANDIDATE_${index + 1}  INSPECTABLE ${candidate.inspectable ? 'YES' : 'NO'}` +
+        `  MATCHED_FIELD ${candidate.inspectableMatchedField ?? '—'}` +
+        `  parcel=${candidate.parcelIdentity}`,
+    )
+  })
+
+  const supplier = result.supplierCandidates.find((c) => c.inspectable)
+  const trendyol =
+    (result.goldenCandidate?.inspectable ? result.goldenCandidate : null) ??
+    result.trendyolPaysCandidates.find((c) => c.inspectable)
+  const rejected = shown.filter((candidate) => candidate.inspectable === false)
+
   lines.push('', 'NEXT COMMANDS')
+  // ÇÖZÜLEMEYEN BİR KİMLİK İÇİN KOMUT ÜRETİLMEZ. Üretimde tam olarak bu
+  // oldu: tarayıcı kendi çözemediği bir kimliği komut olarak yazdı.
   lines.push(
     supplier?.parcelIdentity
       ? `NEXT_SUPPLIER_INSPECT_COMMAND:\n  npm run surat:billing:inspect -- --name ${organizationName} --package ${supplier.parcelIdentity}`
-      : 'NEXT_SUPPLIER_INSPECT_COMMAND:\n  (supplier adayı bulunamadı)',
+      : 'NEXT_SUPPLIER_INSPECT_COMMAND:\n  (teshis edilebilir supplier adayi YOK)',
   )
   lines.push(
     trendyol?.parcelIdentity
       ? `NEXT_TRENDYOL_INSPECT_COMMAND:\n  npm run surat:billing:inspect -- --name ${organizationName} --package ${trendyol.parcelIdentity}`
-      : 'NEXT_TRENDYOL_INSPECT_COMMAND:\n  (Trendyol-pays adayı bulunamadı)',
+      : 'NEXT_TRENDYOL_INSPECT_COMMAND:\n  (teshis edilebilir Trendyol-pays adayi YOK)',
   )
+  if (rejected.length > 0) {
+    lines.push(
+      '',
+      `INTERNAL_IDENTITY_MISMATCH  ${rejected.length}`,
+      '  (tarayici bu kimlikleri uretti fakat teshis araci COZEMIYOR;',
+      '   funnel sayilari bu adaylar icin GUVENILIR DEGIL)',
+    )
+  }
   return lines
 }
 
@@ -564,7 +707,19 @@ export const BILLING_TARGET_FIELDS = [
   'externalOrderId',
   'orderNumber',
   'shipmentPackageId',
+  // GÖNDERİ TARAFINDAKİ TAŞIYICI KİMLİKLERİ — indeksli kolonlar.
+  'shipmentTrackingNumber',
+  'shipmentSenderNumber',
+  // ÜRETİMDE KIRAN YOL: tarayıcı, `orders.cargo_tracking_number` boşsa aday
+  // kimliği gönderi yükündeki `ozelKargoTakipNo`dan üretiyordu. Bu değer
+  // HİÇBİR indeksli kolonda yoktur; teşhis aracı bu yüzden kendi üretilen
+  // komutunu çözemiyordu. Son çare olarak SINIRLI sayıda gönderi yükü
+  // çözülür (tam tarama DEĞİL).
+  'shipmentOzelKargoTakipNo',
 ] as const
+
+/** Şifreli yük çözerek arama YAPILAN en fazla gönderi sayısı. */
+export const MAX_PAYLOAD_SCAN_SHIPMENTS = 500
 
 export type BillingTargetField = (typeof BILLING_TARGET_FIELDS)[number]
 
@@ -602,42 +757,151 @@ export async function resolveBillingInspectionTarget(
     }
   }
 
-  // Gönderi tarafındaki paket kimliği → sipariş (aynı tenant + pazaryeri).
-  const shipmentRows = (await db
+  // Gönderi tarafındaki İNDEKSLİ kimlikler → sipariş (aynı tenant).
+  const shipmentColumns: [BillingTargetField, unknown][] = [
+    ['shipmentPackageId', shipments.packageId],
+    ['shipmentTrackingNumber', shipments.trackingNumber],
+    ['shipmentSenderNumber', shipments.senderNumber],
+  ]
+  for (const [field, column] of shipmentColumns) {
+    const shipmentRows = (await db
+      .select({
+        marketplace: shipments.marketplace,
+        packageId: shipments.packageId,
+      })
+      .from(shipments)
+      .where(
+        and(
+          eq(shipments.organizationId, organizationId),
+          eq(column as never, needle),
+        ),
+      )
+      .limit(2)) as { marketplace: string; packageId: string }[]
+    if (shipmentRows.length === 0) continue
+    if (shipmentRows.length > 1) {
+      return { status: 'ambiguous', matchedField: field, matches: shipmentRows.length }
+    }
+    const resolved = await resolveOrderForShipment(db, scope, shipmentRows[0], field)
+    if (resolved) return resolved
+  }
+
+  // SON ÇARE — SINIRLI YÜK ÇÖZÜMÜ. `ozelKargoTakipNo` şifreli gövdenin
+  // İÇİNDEDİR ve indekslenemez; bu yüzden yalnız diğer tüm yollar
+  // tükendiğinde ve SINIRLI sayıda kayıtta aranır.
+  const payloadRows = (await db
     .select({
       marketplace: shipments.marketplace,
       packageId: shipments.packageId,
+      carrierPayloadEncrypted: shipments.carrierPayloadEncrypted,
     })
     .from(shipments)
-    .where(
-      and(
-        eq(shipments.organizationId, organizationId),
-        eq(shipments.packageId, needle),
-      ),
-    )
-    .limit(2)) as { marketplace: string; packageId: string }[]
-  if (shipmentRows.length === 1) {
-    const rows = (await db
-      .select()
-      .from(orders)
-      .where(
-        and(
-          scope,
-          eq(orders.marketplace, shipmentRows[0].marketplace),
-          eq(orders.packageId, shipmentRows[0].packageId),
-        ),
-      )
-      .limit(2)) as Record<string, unknown>[]
-    if (rows.length === 1) {
-      return { status: 'ok', order: rows[0], matchedField: 'shipmentPackageId' }
+    .where(eq(shipments.organizationId, organizationId))
+    .limit(MAX_PAYLOAD_SCAN_SHIPMENTS)) as {
+    marketplace: string
+    packageId: string
+    carrierPayloadEncrypted: string | null
+  }[]
+  const payloadMatches = payloadRows.filter((row) => {
+    try {
+      const payload = decryptShipmentPayload(row.carrierPayloadEncrypted) as Record<
+        string,
+        unknown
+      > | null
+      // Kimlik KARŞILAŞTIRMASI METİN üzerindedir; sayıya çevrilmez (727…
+      // değerleri 16 hane olabilir ve sayısal dönüşüm kimliği bozabilir).
+      return text(payload?.ozelKargoTakipNo) === needle
+    } catch {
+      return false
     }
-    if (rows.length > 1) {
-      return {
-        status: 'ambiguous',
-        matchedField: 'shipmentPackageId',
-        matches: rows.length,
-      }
+  })
+  if (payloadMatches.length > 1) {
+    return {
+      status: 'ambiguous',
+      matchedField: 'shipmentOzelKargoTakipNo',
+      matches: payloadMatches.length,
     }
   }
+  if (payloadMatches.length === 1) {
+    const resolved = await resolveOrderForShipment(
+      db,
+      scope,
+      payloadMatches[0],
+      'shipmentOzelKargoTakipNo',
+    )
+    if (resolved) return resolved
+  }
   return { status: 'not_found', matchedField: null }
+}
+
+/** Gönderi satırından siparişe geçiş — tenant + pazaryeri kapsamlı. */
+async function resolveOrderForShipment(
+  db: Db,
+  scope: unknown,
+  shipment: { marketplace: string; packageId: string },
+  matchedField: BillingTargetField,
+): Promise<BillingTargetResolution | null> {
+  const rows = (await db
+    .select()
+    .from(orders)
+    .where(
+      and(
+        scope as never,
+        eq(orders.marketplace, shipment.marketplace),
+        eq(orders.packageId, shipment.packageId),
+      ),
+    )
+    .limit(2)) as Record<string, unknown>[]
+  if (rows.length === 1) return { status: 'ok', order: rows[0], matchedField }
+  if (rows.length > 1) {
+    return { status: 'ambiguous', matchedField, matches: rows.length }
+  }
+  return null
+}
+
+/**
+ * KİMLİK ÇÖZÜM İZİ — SALT OKUNUR, DEĞER MASKELİ.
+ *
+ * Üretimde "bulunamadı" çıktısı hangi alanda kaç eşleşme olduğunu
+ * söylemiyordu; teşhis edilemez bir hata mesajıdır. Bu fonksiyon her
+ * kanonik alan için SAYIYI verir, satır İÇERİĞİNİ vermez.
+ */
+export async function traceBillingIdentityLookup(
+  db: Db,
+  organizationId: string,
+  identifier: string,
+): Promise<{ field: string; matches: number }[]> {
+  const needle = text(identifier)
+  if (!needle || !text(organizationId)) return []
+  const scope = eq(orders.organizationId, organizationId)
+  const trace: { field: string; matches: number }[] = []
+  const orderColumns: [string, unknown][] = [
+    ['packageId', orders.packageId],
+    ['cargoTrackingNumber', orders.cargoTrackingNumber],
+    ['externalOrderId', orders.externalOrderId],
+    ['orderNumber', orders.orderNumber],
+  ]
+  for (const [field, column] of orderColumns) {
+    const rows = (await db
+      .select({ id: orders.id })
+      .from(orders)
+      .where(and(scope, eq(column as never, needle)))
+      .limit(5)) as { id: string }[]
+    trace.push({ field, matches: rows.length })
+  }
+  const shipmentColumns: [string, unknown][] = [
+    ['shipmentPackageId', shipments.packageId],
+    ['shipmentTrackingNumber', shipments.trackingNumber],
+    ['shipmentSenderNumber', shipments.senderNumber],
+  ]
+  for (const [field, column] of shipmentColumns) {
+    const rows = (await db
+      .select({ id: shipments.id })
+      .from(shipments)
+      .where(
+        and(eq(shipments.organizationId, organizationId), eq(column as never, needle)),
+      )
+      .limit(5)) as { id: string }[]
+    trace.push({ field, matches: rows.length })
+  }
+  return trace
 }

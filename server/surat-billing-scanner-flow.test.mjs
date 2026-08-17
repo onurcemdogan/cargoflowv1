@@ -346,10 +346,25 @@ test('SCAN-CARD-1: 100 adayda N+1 YOK (sabit sorgu)', async (t) => {
   const statements = instrument(pglite)
   const result = await scanner.scanTenantBillingCandidates(db, org, { limit: 100 })
   assert.equal(result.ordersScanned, 30)
-  // Siparişler + gönderiler = 2 sorgu. Sipariş başına sorgu YOK.
-  assert.equal(result.dbQueryCount, 2)
+  // Siparişler + gönderiler = 2 sorgu. Buna ek olarak tarayıcı artık KENDİ
+  // ürettiği adayları çözülebilir mi diye denetliyor; bu denetim yalnız
+  // RAPORLANAN örnekler için çalışır (≤5+5), sipariş başına DEĞİL.
+  const first = result.dbQueryCount
+  assert.ok(first <= 13, `sorgu sayisi: ${first}`)
   const selects = statements.filter((s) => /^\s*select/i.test(s))
-  assert.ok(selects.length <= 4, `${selects.length} select — sabit olmali`)
+  assert.ok(selects.length <= 20, `${selects.length} select — sinirli olmali`)
+
+  // ASIL DEĞİŞMEZ: sipariş sayısı ikiye katlansa da sorgu sayısı ARTMAZ.
+  for (let i = 30; i < 60; i += 1) {
+    await seedOrder(db, org, {
+      packageId: `PKG-${i}`,
+      cargoTrackingNumber: `72700${String(i).padStart(4, '0')}`,
+      day: (i % 9) + 1,
+    })
+  }
+  const grown = await scanner.scanTenantBillingCandidates(db, org, { limit: 100 })
+  assert.equal(grown.ordersScanned, 60)
+  assert.equal(grown.dbQueryCount, first, 'sorgu sayisi siparisle BUYUMEMELI')
 })
 
 /* ═══ CLI SÖZLEŞMESİ ═══════════════════════════════════════════════════ */

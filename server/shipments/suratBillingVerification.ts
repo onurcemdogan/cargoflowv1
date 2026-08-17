@@ -24,10 +24,19 @@ import {
   type BillingPartySource,
 } from './suratBillingParty.ts'
 
+/**
+ * `UNKNOWN` ARAÇ KUSURUNU SEMANTİK SONUÇTAN AYIRIR.
+ *
+ * ÜRETİMDE ÇÖKTÜ: gönderi eşleşmesi kurulamadığında tarayıcı her kaydı
+ * "create başlamadı" sayıyordu ve sonuç `NOT_APPLICABLE=500` olarak
+ * görünüyordu. Bu, bir join başarısızlığını semantik bir cevap gibi
+ * gösterir. Eşleşme kurulamadıysa doğru cevap "bilmiyorum"dur.
+ */
 export const CARRIER_CREATE_STATUSES = [
   'NOT_STARTED',
   'SUCCESS',
   'FAILED',
+  'UNKNOWN',
 ] as const
 export type CarrierCreateStatus = (typeof CARRIER_CREATE_STATUSES)[number]
 
@@ -217,6 +226,15 @@ export function evaluateBillingVerification(params: {
     actualSource: params.actual?.evidence ?? 'UNKNOWN',
   } as const
 
+  // ARAÇ KUSURU SEMANTİK CEVAP GİBİ GÖSTERİLMEZ: taşıyıcı durumu
+  // belirlenemediyse sonuç ERROR'dır, "uygulanamaz" DEĞİL.
+  if (params.carrierCreateStatus === 'UNKNOWN') {
+    return {
+      ...base,
+      status: 'ERROR',
+      reason: 'CARRIER_CREATE_STATUS_UNKNOWN',
+    }
+  }
   if (params.carrierCreateStatus !== 'SUCCESS') {
     return {
       ...base,
