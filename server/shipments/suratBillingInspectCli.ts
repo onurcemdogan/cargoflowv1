@@ -19,7 +19,9 @@ import { rowToOrder } from '../orders/orderMapper.ts'
 import {
   buildCreateContextSummary,
   compareCreateContexts,
+  describeBillingWiring,
   formatCreateContextReport,
+  probeCredentialPresence,
 } from './suratCreateContextDryRun.ts'
 import {
   buildBillingObservation,
@@ -507,13 +509,16 @@ export async function runCreateContextDryRun(
   const order = rowToOrder(target.order, [])
   const reference = String(order.packageId ?? identifier)
 
+  // CASE A: GERÇEK sipariş, hiçbir enjeksiyon YOK → üretimin seçeceği bağlam.
   const caseA = buildCreateContextSummary({
     order,
     suratConfig,
     reference,
     cashOnDelivery: false,
   })
-  // CASE B: SADECE beklenen taraf sinyali değişir; sipariş kimliği AYNI kalır.
+  // CASE B: TEORİK. Sipariş üzerine `sellerPays` ENJEKTE edilir. Üretimde bu
+  // alanı yazan HİÇBİR kod yolu yoktur; bu yüzden çıktısı "simüle" diye
+  // etiketlenir ve gerçek davranış gibi sunulmaz.
   const caseB = buildCreateContextSummary({
     order: { ...order, sellerPays: true },
     suratConfig,
@@ -521,18 +526,71 @@ export async function runCreateContextDryRun(
     cashOnDelivery: false,
   })
   const comparison = compareCreateContexts(caseA, caseB)
+  const credentials = probeCredentialPresence(suratConfig)
+  const wiring = describeBillingWiring({ order, credentials })
+
+  const yesNo = (value: boolean): string => (value ? 'YES' : 'NO')
 
   console.info(`ORGANIZATION            ${mask(organizationId)}`)
   console.info(`MATCHED_FIELD           ${target.matchedField}`)
   console.info(`PACKAGE                 ${mask(target.order.packageId)}`)
   console.info('')
-  for (const line of formatCreateContextReport(caseA, 'A_EXPECTED_TRENDYOL')) {
+  console.info('CREDENTIAL_PRESENCE (degerler BASILMAZ)')
+  console.info(`  PRIMARY_USERNAME_PRESENT      ${yesNo(credentials.primaryUsername)}`)
+  console.info(`  PRIMARY_PASSWORD_PRESENT      ${yesNo(credentials.primaryPassword)}`)
+  console.info(`  SELLER_PAYS_USERNAME_PRESENT  ${yesNo(credentials.sellerPaysUsername)}`)
+  console.info(`  SELLER_PAYS_PASSWORD_PRESENT  ${yesNo(credentials.sellerPaysPassword)}`)
+  console.info(`  COD_USERNAME_PRESENT          ${yesNo(credentials.codUsername)}`)
+  console.info(`  COD_PASSWORD_PRESENT          ${yesNo(credentials.codPassword)}`)
+  console.info(`  RAW_KULLANICI_ADI_PRESENT     ${yesNo(credentials.rawKullaniciAdi)}`)
+  console.info(`  RAW_SIFRE_PRESENT             ${yesNo(credentials.rawSifre)}`)
+  console.info(`  LEGACY_WHO_PAYS_PRESENT       ${yesNo(credentials.legacyWhoPaysPresent)}`)
+  console.info(`  LEGACY_WHO_PAYS_VALUE         ${credentials.legacyWhoPaysValue ?? '—'}`)
+  console.info('')
+  console.info('REAL_RUNTIME_WIRING')
+  // FİDELİTE SINIRI — GİZLENMEZ: bu araç KAYITLI tenant yapılandırmasını
+  // okur; üretimdeki kanonik dal ise adaptöre İSTEMCİNİN GÖNDERDİĞİ gövdeyi
+  // geçirir (index.mjs kanonik dal). İkisi farklı anahtar kümesi taşıyabilir,
+  // bu yüzden kredensiyal ÇÖZÜMÜ birebir üretim sonucu SAYILMAZ. Alan
+  // kümesi/faturalama değerleri ise yapılandırmadan bağımsızdır ve birebirdir.
+  console.info('  CONFIG_SOURCE                 STORED_TENANT_CONFIG')
+  console.info('  PRODUCTION_CONFIG_SOURCE      CLIENT_REQUEST_BODY')
+  console.info('  CREDENTIAL_RESOLUTION_FIDELITY  BOUNDED')
+  console.info(
+    `  REAL_RUNTIME_BILLING_INPUT    ${wiring.presentInputs.join(', ') || 'NONE'}`,
+  )
+  console.info(`  REAL_RUNTIME_BILLING_PARTY    ${caseA.credentialClass}`)
+  console.info(`  REAL_RUNTIME_CREDENTIAL_CLASS ${caseA.credentialClass}`)
+  console.info(
+    `  REAL_RUNTIME_CREDENTIAL_CONFIG_PRESENT  ${yesNo(
+      credentials.primaryUsername && credentials.primaryPassword,
+    )}`,
+  )
+  console.info(
+    `  EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE  ${yesNo(
+      wiring.expectedPartyWiredToCreate,
+    )}`,
+  )
+  console.info(
+    `  SELLER_PAYS_CREDENTIAL_REACHABLE_IN_REAL_CREATE  ${yesNo(
+      wiring.sellerPaysReachable,
+    )}  ${wiring.sellerPaysUnreachableReason ?? ''}`,
+  )
+  console.info('')
+  for (const line of formatCreateContextReport(caseA, 'A_REAL_PRODUCTION_ORDER')) {
     console.info(line)
   }
   console.info('')
-  for (const line of formatCreateContextReport(caseB, 'B_EXPECTED_SELLER')) {
-    console.info(line)
-  }
+  console.info('B_SIMULATED_SELLER (TEORIK — uretimde bu yola girilmez)')
+  console.info(`  SIMULATED_CREDENTIAL_CLASS    ${caseB.credentialClass}`)
+  console.info(
+    `  CONFIG_AVAILABLE              ${yesNo(
+      credentials.sellerPaysUsername && credentials.sellerPaysPassword,
+    )}`,
+  )
+  console.info(
+    `  REAL_RUNTIME_REACHABLE        ${yesNo(wiring.sellerPaysReachable)}`,
+  )
   console.info('')
   console.info(
     `CREATE_CONTEXT_BILLING_INSENSITIVE  ${

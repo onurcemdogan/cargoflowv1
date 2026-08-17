@@ -35,6 +35,121 @@ import {
 
 const text = (value: unknown): string => String(value ?? '').trim()
 
+/* ═══ KREDENSİYAL VARLIK PROBU — DEĞER OKUNMAZ ═════════════════════════ */
+
+/** `hasOwnProperty` + dolu mu — DEĞER hiçbir koşulda dışarı çıkmaz. */
+function filled(config: Record<string, unknown>, key: string): boolean {
+  if (!Object.prototype.hasOwnProperty.call(config, key)) return false
+  return text(config[key]) !== ''
+}
+
+export interface CredentialPresence {
+  primaryUsername: boolean
+  primaryPassword: boolean
+  sellerPaysUsername: boolean
+  sellerPaysPassword: boolean
+  codUsername: boolean
+  codPassword: boolean
+  legacyWhoPaysPresent: boolean
+  legacyWhoPaysValue: string | null
+  /** Türev uygulanmadan önce ham anahtarlar da doluysa raporlanır. */
+  rawKullaniciAdi: boolean
+  rawSifre: boolean
+}
+
+/**
+ * TENANT KREDENSİYAL VARLIĞI — SIRSIZ.
+ *
+ * `deriveCanonicalPrimaryAccount` UYGULANMAZ: bu prob yapılandırmanın
+ * OLDUĞU GİBİ hâlini gösterir. Türevin uygulanıp uygulanmadığı ayrı bir
+ * sorudur ve `describeBillingWiring` tarafından yanıtlanır.
+ *
+ * `whoPays` bir kimlik bilgisi değil, tek haneli legacy faturalama kodudur;
+ * H6'yı kapatabilmek için DEĞERİ raporlanır.
+ */
+export function probeCredentialPresence(
+  config: Record<string, unknown> = {},
+): CredentialPresence {
+  const whoPaysPresent = filled(config, 'whoPays')
+  return {
+    primaryUsername:
+      filled(config, 'canonicalPrimaryKullaniciAdi') ||
+      filled(config, 'liveKullaniciAdi'),
+    primaryPassword:
+      filled(config, 'canonicalPrimarySifre') || filled(config, 'liveSifre'),
+    sellerPaysUsername: filled(config, 'sellerPaysKullaniciAdi'),
+    sellerPaysPassword: filled(config, 'sellerPaysSifre'),
+    codUsername: filled(config, 'codKullaniciAdi'),
+    codPassword: filled(config, 'codSifre'),
+    legacyWhoPaysPresent: whoPaysPresent,
+    legacyWhoPaysValue: whoPaysPresent ? text(config.whoPays) : null,
+    rawKullaniciAdi: filled(config, 'kullaniciAdi'),
+    rawSifre: filled(config, 'sifre'),
+  }
+}
+
+/* ═══ GERÇEK RUNTIME BAĞLANTISI ════════════════════════════════════════ */
+
+/**
+ * `resolveSuratBillingParty`nin GERÇEKTEN okuduğu sipariş alanları.
+ * Kaynak: suratCanonicalCreateAdapter.ts — `order.sellerPays`,
+ * `order.payer`, `order.shippingPayer`, `params.cashOnDelivery`.
+ *
+ * DİKKAT: Trendyol'dan türetilen `expectedBillingParty` bu listede YOKTUR.
+ */
+export const REAL_RUNTIME_BILLING_INPUT_FIELDS = [
+  'sellerPays',
+  'payer',
+  'shippingPayer',
+] as const
+
+export interface BillingWiring {
+  /** Gerçek siparişte bulunan payer sinyalleri (yoksa boş). */
+  presentInputs: string[]
+  /** Beklenen taraf create seçimine bağlı mı? */
+  expectedPartyWiredToCreate: boolean
+  /** SELLER_PAYS sınıfı gerçek çalışma zamanında seçilebilir mi? */
+  sellerPaysReachable: boolean
+  sellerPaysUnreachableReason: string | null
+}
+
+/**
+ * GERÇEK ÇALIŞMA ZAMANI BAĞLANTISI — kaynak-türetilmiş, simülasyonsuz.
+ *
+ * `expectedPartyWiredToCreate` SABİT `false`'tur ve bu bir varsayım değil,
+ * ölçülebilir bir olgudur: `resolveSuratBillingParty` yalnız yukarıdaki üç
+ * sipariş alanına ve COD bayrağına bakar; Trendyol `whoPays` türevine
+ * HİÇBİR yerden erişmez. Bu olgu testle kilitlenir.
+ *
+ * `sellerPaysReachable` iki AYRI koşula bağlıdır ve ikisi de gereklidir:
+ *   (1) sipariş üzerinde açık bir satıcı-öder sinyali BULUNMALI,
+ *   (2) tenant'ta sellerPays kredensiyali TANIMLI olmalı.
+ * Biri bile yoksa sınıf pratikte seçilemez.
+ */
+export function describeBillingWiring(params: {
+  order: Record<string, unknown>
+  credentials: CredentialPresence
+}): BillingWiring {
+  const presentInputs = REAL_RUNTIME_BILLING_INPUT_FIELDS.filter(
+    (field) => text(params.order[field]) !== '',
+  )
+  const hasSignal = presentInputs.length > 0
+  const hasCredential =
+    params.credentials.sellerPaysUsername && params.credentials.sellerPaysPassword
+  return {
+    presentInputs: [...presentInputs],
+    expectedPartyWiredToCreate: false,
+    sellerPaysReachable: hasSignal && hasCredential,
+    sellerPaysUnreachableReason: hasSignal && hasCredential
+      ? null
+      : !hasSignal && !hasCredential
+        ? 'NO_ORDER_SIGNAL_AND_NO_CREDENTIAL'
+        : !hasSignal
+          ? 'NO_ORDER_SIGNAL'
+          : 'NO_CREDENTIAL',
+  }
+}
+
 /** Gövdede ASLA görünmemesi gereken kök alanlar (değer bazında). */
 export const SECRET_REQUEST_FIELDS = ['KullaniciAdi', 'Sifre'] as const
 

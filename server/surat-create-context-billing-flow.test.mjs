@@ -422,7 +422,143 @@ test('ENF-4: sozlesme modulu uretim akisina BAGLI DEGIL', () => {
   }
 })
 
-/* ═══ CLI — GERÇEK SİPARİŞ ÜZERİNDE ════════════════════════════════════ */
+/* ═══ GERÇEK RUNTIME BAĞLANTISI ════════════════════════════════════════ */
+
+test('WIRE-1: expectedBillingParty GERCEK create secimine BAGLI DEGIL', () => {
+  // KAYNAK KANITI: `resolveSuratBillingParty` yalnız üç sipariş alanına ve
+  // COD bayrağına bakar. Trendyol `whoPays` türevine erişimi YOKTUR.
+  const adapter = codeOf('server/shipments/suratCanonicalCreateAdapter.ts')
+  const start = adapter.indexOf('export function resolveSuratBillingParty')
+  assert.ok(start > 0)
+  // SINIR: bir sonraki üst düzey bildirim. `\n}` ARANMAZ — imzadaki tip
+  // literali (`}): SuratBillingParty {`) gövdeyi erken keserdi.
+  const after = adapter.slice(start + 1)
+  const next = after.search(/^(?:export )?(?:async )?(?:function|const|interface|type) /m)
+  const body = next === -1 ? adapter.slice(start) : adapter.slice(start, start + 1 + next)
+  assert.ok(body.includes('order.sellerPays === true'))
+  assert.ok(body.includes('order.payer ?? order.shippingPayer'))
+  assert.ok(body.includes('cashOnDelivery'))
+  // Beklenen taraf modülü bu dosyada HİÇ geçmez.
+  assert.equal(adapter.includes('suratBillingParty'), false)
+  assert.equal(adapter.includes('expectedBillingParty'), false)
+  assert.equal(body.includes('whoPays'), false)
+
+  const wiring = dryRun.describeBillingWiring({
+    order: marketplaceOrder({ rawOrder: {} }),
+    credentials: dryRun.probeCredentialPresence(PROD_LIKE_CONFIG),
+  })
+  assert.equal(wiring.expectedPartyWiredToCreate, false)
+})
+
+test('WIRE-2: uretimde order.sellerPays / order.payer yazan KOD YOLU YOK', () => {
+  // Bu alanlar sipariş normalizasyonunda, mapper'da veya frontend'de
+  // ÜRETİLMİYOR. Dolayısıyla SELLER_PAYS dalı girdi açlığından ölü.
+  for (const file of [
+    'server/index.mjs',
+    'server/orders/orderMapper.ts',
+    'server/trendyol/historicalOrderFetch.ts',
+  ]) {
+    const code = codeOf(file)
+    for (const pattern of [
+      /\bsellerPays\s*[:=]\s*(true|1|'1')/,
+      /\bpayer\s*[:=]\s*['"]SELLER['"]/i,
+      /\bshippingPayer\s*[:=]/,
+    ]) {
+      assert.equal(pattern.test(code), false, `${file}: ${pattern} URETILMEMELI`)
+    }
+  }
+  // Gerçek bir siparişte hiçbiri yok → girdi kümesi BOŞ.
+  const wiring = dryRun.describeBillingWiring({
+    order: marketplaceOrder({ rawOrder: {} }),
+    credentials: dryRun.probeCredentialPresence(PROD_LIKE_CONFIG),
+  })
+  assert.deepEqual(wiring.presentInputs, [])
+})
+
+test('WIRE-3: SELLER_PAYS iki kosula birden bagli; biri yoksa ERISILEMEZ', () => {
+  const withCredential = dryRun.probeCredentialPresence(PROD_LIKE_CONFIG)
+  const withoutCredential = dryRun.probeCredentialPresence({
+    ...PROD_LIKE_CONFIG,
+    sellerPaysKullaniciAdi: '',
+    sellerPaysSifre: '',
+  })
+
+  // (1) kredensiyal VAR ama sipariş sinyali YOK.
+  assert.equal(
+    dryRun.describeBillingWiring({
+      order: marketplaceOrder(), credentials: withCredential,
+    }).sellerPaysUnreachableReason,
+    'NO_ORDER_SIGNAL',
+  )
+  // (2) sipariş sinyali VAR ama kredensiyal YOK — üretim durumu bu.
+  assert.equal(
+    dryRun.describeBillingWiring({
+      order: marketplaceOrder({ sellerPays: true }), credentials: withoutCredential,
+    }).sellerPaysUnreachableReason,
+    'NO_CREDENTIAL',
+  )
+  // (3) ikisi de yok.
+  assert.equal(
+    dryRun.describeBillingWiring({
+      order: marketplaceOrder(), credentials: withoutCredential,
+    }).sellerPaysUnreachableReason,
+    'NO_ORDER_SIGNAL_AND_NO_CREDENTIAL',
+  )
+  // (4) ikisi birden varsa erişilebilir.
+  const reachable = dryRun.describeBillingWiring({
+    order: marketplaceOrder({ sellerPays: true }), credentials: withCredential,
+  })
+  assert.equal(reachable.sellerPaysReachable, true)
+  assert.equal(reachable.sellerPaysUnreachableReason, null)
+})
+
+test('WIRE-4: kredensiyal probu DEGER BASMAZ, varlik hasOwnProperty ile', () => {
+  const presence = dryRun.probeCredentialPresence(PROD_LIKE_CONFIG)
+  assert.equal(presence.primaryUsername, true)
+  assert.equal(presence.sellerPaysUsername, true)
+  assert.equal(presence.codUsername, false)
+  assert.equal(presence.legacyWhoPaysPresent, false)
+  assert.equal(presence.legacyWhoPaysValue, null)
+
+  // BOŞ STRİNG varlık sayılmaz — anahtar var ama hesap yok demektir.
+  assert.equal(
+    dryRun.probeCredentialPresence({ sellerPaysKullaniciAdi: '   ' })
+      .sellerPaysUsername,
+    false,
+  )
+  // Prototip kirliliği kanıt DEĞİL.
+  const polluted = Object.create({ sellerPaysKullaniciAdi: 'X' })
+  assert.equal(dryRun.probeCredentialPresence(polluted).sellerPaysUsername, false)
+
+  // Sır DEĞERİ hiçbir alanda yok.
+  const text = JSON.stringify(presence)
+  for (const secret of ['GIZLI_PRIMARY_KULLANICI_1111', 'GIZLI_SELLER_SIFRE']) {
+    assert.equal(text.includes(secret), false, `${secret} SIZDI`)
+  }
+  // whoPays DEĞERİ raporlanır (kimlik değil, faturalama kodu).
+  assert.equal(
+    dryRun.probeCredentialPresence({ ...PROD_LIKE_CONFIG, whoPays: '3' })
+      .legacyWhoPaysValue,
+    '3',
+  )
+})
+
+test('WIRE-5: kanonik dal HAM body config alir, normalize edilmis config DEGIL', () => {
+  // ÜRETİM GERÇEĞİ: `normalizeSuratConfig` `deriveCanonicalPrimaryAccount`
+  // türevini üretir, fakat kanonik dal adaptöre HAM gövdeyi geçirir. Bu
+  // yüzden `canonicalPrimarySifre` yalnız istemcinin gönderdiği yükte varsa
+  // çözülür — türev burada devreye GİRMEZ.
+  const server = codeOf('server/index.mjs')
+  const branch = server.indexOf('if (config.serviceMode === SURAT_CANONICAL_SERVICE_MODE)')
+  assert.ok(branch > 0)
+  const block = server.slice(branch, branch + 1200)
+  assert.ok(
+    block.includes('config: request.body?.config?.surat ?? request.body?.config ?? {}'),
+    'kanonik dal HAM gövde config geciriyor',
+  )
+  // Normalize edilmiş `config` degiskeni bu cagriya GECIRILMIYOR.
+  assert.equal(block.includes('config: config,'), false)
+})
 
 async function makeDb() {
   const pglite = new PGlite()
@@ -481,13 +617,27 @@ test('CLI-1: gercek siparis satirindan kuru calistirma DB YAZMADAN calisir', asy
   assert.equal(code, 0)
 
   const text = logs.join('\n')
-  assert.ok(text.includes('CASE                    A_EXPECTED_TRENDYOL'))
-  assert.ok(text.includes('CASE                    B_EXPECTED_SELLER'))
+  assert.ok(text.includes('CASE                    A_REAL_PRODUCTION_ORDER'))
   assert.ok(text.includes('WHO_PAYS_PRESENT        NO'))
   assert.ok(text.includes('KIM_ODER_PRESENT        NO'))
   assert.ok(text.includes('FIRMA_ID_PRESENT        NO'))
   assert.ok(text.includes('ODEMETIPI_SOURCE        HARDCODED_SURAT_SERVICE_DEFAULTS'))
   assert.ok(text.includes('NETWORK_CALLS 0'))
+
+  // TEORİK case GERÇEK davranış gibi sunulmaz.
+  assert.ok(text.includes('B_SIMULATED_SELLER'))
+  assert.ok(text.includes('SIMULATED_CREDENTIAL_CLASS    SELLER_PAYS'))
+  assert.ok(text.includes('CONFIG_AVAILABLE              NO'))
+  assert.ok(text.includes('REAL_RUNTIME_REACHABLE        NO'))
+  // Gerçek çalışma zamanı bağlantısı açıkça raporlanır.
+  assert.ok(text.includes('REAL_RUNTIME_BILLING_INPUT    NONE'))
+  assert.ok(text.includes('EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE  NO'))
+  assert.ok(text.includes('SELLER_PAYS_CREDENTIAL_REACHABLE_IN_REAL_CREATE  NO'))
+  assert.ok(text.includes('CREDENTIAL_PRESENCE'))
+  // Fidelite sınırı gizlenmez: kayıtlı config ≠ üretimin aldığı gövde.
+  assert.ok(text.includes('CONFIG_SOURCE                 STORED_TENANT_CONFIG'))
+  assert.ok(text.includes('PRODUCTION_CONFIG_SOURCE      CLIENT_REQUEST_BODY'))
+  assert.ok(text.includes('CREDENTIAL_RESOLUTION_FIDELITY  BOUNDED'))
   // PII BASILMAZ.
   for (const pii of ['Gizli Mahalle 5', 'Kadıköy']) {
     assert.equal(text.includes(pii), false, `${pii} BASILMAMALI`)
