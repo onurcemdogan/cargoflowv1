@@ -86,6 +86,13 @@ test('classifyAnalyticsClaim statüleri doğru sınıflar', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { classifyAnalyticsClaim } = await vite.ssrLoadModule(
@@ -105,6 +112,13 @@ test('summarizeAcceptedClaimsForPeriod dedup (F) ve exclude (G)', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { summarizeAcceptedClaimsForPeriod } = await vite.ssrLoadModule(
@@ -132,6 +146,13 @@ test('dashboard satış kartları claim mutabakatı (A-E, H)', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { buildDashboardSalesPeriodCards } = await vite.ssrLoadModule(
@@ -234,6 +255,13 @@ test('claims verisi olmadan satış brüt kalır, operasyon paneli çalışır (
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { buildDashboardViewModel } = await vite.ssrLoadModule(

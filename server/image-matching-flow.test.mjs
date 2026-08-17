@@ -10,6 +10,13 @@ test('Varyant ve parent model görsel eşleşme sözleşmesi', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const {
@@ -292,6 +299,13 @@ test('Normalize katalog görsel eşleşmesi (A-H)', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const {
@@ -571,6 +585,13 @@ test('Kirli barkod + aile kimliği ambiguity fallback (currentSync)', async (t) 
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { resolveProductCacheMatch, resolveProductImage } =
@@ -669,6 +690,13 @@ test('Canlı katalog varyant kimlikleri üst ürün altında kaybolmaz', async (
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
   const { resolveProductImage } = await vite.ssrLoadModule(

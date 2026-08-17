@@ -74,7 +74,17 @@ async function operationStatusFor(db, packageId) {
 
 // ---- Rozet (badge) ve reload türetmesi: canonical operationStatus önceliği ----
 test('1,2,4,5: rozet canonical operationStatus önceliğini kullanır', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
+  })
   t.after(() => vite.close())
   const { mapOperationStatus } = await vite.ssrLoadModule('/src/utils/statusPresentation.ts')
   const { withDerivedOperationStatus } = await vite.ssrLoadModule('/src/utils/orderStatus.ts')

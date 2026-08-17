@@ -210,7 +210,17 @@ function salesOrder(over = {}) {
 }
 
 test('RDS-1/2/3: refundDataSource order_status / unavailable / persisted_claims', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
+  })
   t.after(() => vite.close())
   const { buildDashboardViewModel } = await vite.ssrLoadModule('/src/dashboard/dashboardViewModel.ts')
   const now = new Date('2026-07-19T12:00:00.000Z')

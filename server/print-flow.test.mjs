@@ -8,6 +8,13 @@ test('Zebra baskı state, hata ve yeniden baskı kuralları', async (t) => {
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
 
@@ -594,6 +601,13 @@ test('Toplu yazdırma tek dokümanda doğru alan eşlemesiyle çalışır', asyn
   const vite = await createServer({
     appType: 'custom',
     server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
   })
   t.after(() => vite.close())
 

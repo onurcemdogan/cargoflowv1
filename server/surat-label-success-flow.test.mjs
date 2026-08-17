@@ -82,7 +82,17 @@ function zplRecord(org, order, over = {}) {
 
 // ---- Saf helper testleri (resolveSuratCreateBusinessResult) ----
 test('1-3,5,8: labelCreationOk YALNIZ yazdırılabilir ZPL ile belirlenir', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
+  })
   t.after(() => vite.close())
   const { resolveSuratCreateBusinessResult } = await vite.ssrLoadModule(
     '/src/utils/suratCreateResult.ts',
@@ -231,7 +241,17 @@ test('9: farklı tenant başka tenant ZPL siparişini LABEL_READY yapamaz', asyn
 
 // ---- Debug sanitizasyonu (SOAP/ZPL/PII sızmaz) ----
 test('10: debug güvenli metadata — ham SOAP/ZPL/PII sızmaz', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
+  })
   t.after(() => vite.close())
   const { summarizeSuratRawResponse, buildSuratSafeRequestBody } = await vite.ssrLoadModule(
     '/src/utils/suratDebugSafe.ts',

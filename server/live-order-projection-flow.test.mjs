@@ -150,7 +150,17 @@ test('frontend: reconstructed order → 727 display, arama, capability, projecti
   await orderService.markLabelReady(db, org, row.id)
   const liveOrder = await orderService.getOrder(db, org, row.id)
 
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
+  })
   t.after(() => vite.close())
   const { displayOrderNumber, sourceOrderNumber } = await vite.ssrLoadModule('/src/utils/orderDisplay.ts')
   const { resolveOrderActionCapabilities } = await vite.ssrLoadModule('/src/utils/orderActionCapabilities.ts')

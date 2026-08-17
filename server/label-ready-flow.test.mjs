@@ -243,7 +243,17 @@ test('9) Farklı tenant siparişi DEĞİŞTİRİLEMEZ', async (t) => {
 // (3, 4, 10) Classifier: canonical LABEL_READY → Etiket Hazır (kısmi shipment
 // payload'ıyla bile) + sekme sayacı + fresh liste türetmesi.
 test('3 & 4 & 10) Canonical LABEL_READY sipariş Etiket Hazır sekmesinde görünür ve sayaç artar', async (t) => {
-  const vite = await createServer({ appType: 'custom', server: { middlewareMode: true, hmr: false } })
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+    // DEP-SCANNER YARIŞI: Vite bağımlılık taramasını createServer'dan SONRA
+    // asenkron başlatır. Bu test modülü yükleyip sunucuyu hemen kapattığı
+    // için tarama kapanmış plugin container'a çarpar ve dosya seviyesinde
+    // "server is being restarted or closed" hatası verir. SSR-only test
+    // sunucusunun tarayıcıya optimize edilmiş bağımlılık paketi GEREKMEZ;
+    // tarama tamamen kapatılır.
+    optimizeDeps: { noDiscovery: true, include: [] },
+  })
   t.after(() => vite.close())
   const { buildVisibleOrders, classifyOrderForTabs, orderMatchesQuickTab } =
     await vite.ssrLoadModule('/src/utils/orderClassification.ts')
