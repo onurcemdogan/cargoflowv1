@@ -91,13 +91,17 @@ async function seedShipment(db, org, s) {
 }
 
 async function seedOperation(db, org, o) {
+  const responsePayload = o.responsePayload
+    ? shipmentEncryption.encryptShipmentPayload(o.responsePayload)
+    : null
   await db.execute(sql`insert into shipment_operations
     (organization_id, marketplace, package_id, provider, operation_type,
-     idempotency_key, status, carrier_create_called, create_call_count)
+     idempotency_key, status, carrier_create_called, create_call_count,
+     response_payload_encrypted)
     values (${org.id}, 'Trendyol', ${o.packageId}, 'Surat',
       ${o.operationType ?? 'CREATE'},
       ${`SURAT:${org.id}:${o.packageId}:${o.operationType ?? 'CREATE'}`},
-      ${o.status}, ${o.carrierCreateCalled ?? false}, 1)`)
+      ${o.status}, ${o.carrierCreateCalled ?? false}, 1, ${responsePayload})`)
 }
 
 /* ═══ SEBEP SINIFLANDIRMASI — SAF ══════════════════════════════════════ */
@@ -545,6 +549,129 @@ test('GAP-4: billingParty GERCEK payer SAYILMAZ', async (t) => {
   assert.equal(result.actualWhoPaysFieldFound, false)
   assert.equal(result.payloadsWithActualPayer, 0)
   assert.deepEqual(result.cargoflowOriginPayerKeysSeen, ['billingParty'])
+})
+
+/* ═══ FAZ 4D: PENDING LIFECYCLE ════════════════════════════════════════ */
+
+test('LIFE-1: finalize YALNIZ dosya deposuna yaziyor — kaynak kaniti', () => {
+  // KÖK NEDEN: `record.status = 'SUCCESS'` yazan HER İKİ yer de
+  // `queueSuratCreateStoreUpdate` (dosya tabanlı JSON depo) icindedir ve
+  // DB-farkindali `writeSuratCreateOperation` CAGRILMAZ. DB kalicilik
+  // modunda finalize `shipment_operations`a HIC ULASMAZ → satir sonsuza
+  // dek `pending` kalir.
+  const server = codeOf('server/index.mjs')
+  const successSites = [...server.matchAll(/record\.status = 'SUCCESS'/g)]
+  assert.equal(successSites.length, 2, 'iki finalize yeri bekleniyor')
+  for (const site of successSites) {
+    // Her yazimin ONUNDEKI en yakin blok acilisini bul.
+    const before = server.slice(0, site.index)
+    const queueAt = before.lastIndexOf('queueSuratCreateStoreUpdate')
+    const dbAt = before.lastIndexOf('writeSuratCreateOperation')
+    assert.ok(
+      queueAt > dbAt,
+      'SUCCESS yazimi dosya deposu blogunda — DB yazicisi DEGIL',
+    )
+  }
+  // Create ANI ise DB yazicisini kullanir; ayrisma tam olarak burada.
+  assert.ok(server.includes('await writeSuratCreateOperation(record)'))
+  // Ve create-ani durumu legacy SOAP yolunda 'UNKNOWN' olabilir.
+  assert.ok(server.includes("? 'SUCCESS'\n      : explicitBusinessFailure\n        ? 'FAILED_SAFE'\n        : 'UNKNOWN'"))
+
+  // Eslesme: 'SUCCESS'/'FAILED_SAFE' disindaki HER SEY `pending` yazilir.
+  const persistence = codeOf('server/shipments/shipmentPersistenceService.ts')
+  assert.ok(persistence.includes("status === 'SUCCESS'"))
+  assert.ok(persistence.includes("status === 'FAILED_SAFE'"))
+  assert.ok(persistence.includes(": 'pending'"))
+})
+
+test('LIFE-2: carrierTrackingNumber YALNIZ onayli yolda dolar', () => {
+  // Bu, kalici yukten gercek basariyi cikarabilmemizin TEK dayanagi.
+  const server = codeOf('server/index.mjs')
+  assert.ok(
+    server.includes(
+      'verified || result?.shipment?.dispatchRegistrationConfirmed',
+    ),
+    'aday numara ile onayli numara AYRI alanlara yazilir',
+  )
+  assert.ok(server.includes('candidateTrackingNumber:'))
+
+  assert.equal(
+    discovery.classifyPersistedCarrierResponse({ carrierTrackingNumber: '114' }),
+    'SUCCESS',
+  )
+  // ADAY numara kanit DEGILDIR.
+  assert.equal(
+    discovery.classifyPersistedCarrierResponse({ candidateTrackingNumber: '114' }),
+    'UNKNOWN',
+  )
+  assert.equal(
+    discovery.classifyPersistedCarrierResponse({ status: 'FAILED_SAFE' }),
+    'FAILURE',
+  )
+  assert.equal(
+    discovery.classifyPersistedCarrierResponse({ verificationStatus: 'VERIFIED' }),
+    'SUCCESS',
+  )
+  assert.equal(discovery.classifyPersistedCarrierResponse({ status: 'UNKNOWN' }), 'UNKNOWN')
+})
+
+test('LIFE-3: pending + tasiyici basarisi AYRI eksen olarak sayilir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const at = '2026-08-12T08:00:00.000Z'
+  await seedOrder(db, org, {
+    packageId: 'PKG-P1', cargoTrackingNumber: '7270000000000041',
+  })
+  await seedShipment(db, org, {
+    packageId: 'PKG-P1', trackingNumber: '11419469827', createdAt: at,
+  })
+  // ÜRETİMDEKİ ŞEKİL: pending + called=true + yükte onaylı taşıyıcı numarası.
+  await seedOperation(db, org, {
+    packageId: 'PKG-P1',
+    operationType: 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+    status: 'pending', carrierCreateCalled: true,
+    responsePayload: { status: 'UNKNOWN', carrierTrackingNumber: '11419469827' },
+  })
+
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  // Audit durumu HÂLÂ pending — gevşetilmedi.
+  assert.equal(result.createSucceeded, 0)
+  assert.equal(result.createOtherStatus, 1)
+  // Ama taşıyıcı yanıtı başarıyı kanıtlıyor.
+  assert.equal(result.persistedResponseSuccess, 1)
+  assert.equal(result.responseSuccessOperationPending, 1, 'DEGISMEZ IHLALI gorunur')
+  assert.equal(result.createEvidence.CREATE_PROVEN_CARRIER_RESPONSE, 1)
+  assert.equal(result.createEvidence.CREATE_PROVEN_STRONG, 0)
+  assert.equal(result.realCreateSuccessProven, 1)
+
+  const report = forensics.formatCreateEvidenceReport(result).join('\n')
+  assert.ok(report.includes('CREATE_RESPONSE_SUCCESS_OPERATION_PENDING  1'))
+  assert.ok(report.includes('REAL_CREATE_SUCCESS_PROVEN        1'))
+})
+
+test('LIFE-4: yukte KANIT YOKSA pending SUCCESS a CEVRILMEZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  await seedShipment(db, org, {
+    packageId: 'PKG-P2', trackingNumber: '11419469827',
+    createdAt: '2026-08-12T08:00:00.000Z',
+  })
+  // Yalnız ADAY numara — onay YOK.
+  await seedOperation(db, org, {
+    packageId: 'PKG-P2',
+    operationType: 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+    status: 'pending', carrierCreateCalled: true,
+    responsePayload: { status: 'UNKNOWN', candidateTrackingNumber: '11419469827' },
+  })
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  assert.equal(result.persistedResponseSuccess, 0)
+  assert.equal(result.responseUnknownOperationPending, 1)
+  assert.equal(result.createEvidence.CREATE_PROVEN_CARRIER_RESPONSE, 0)
+  assert.equal(result.realCreateSuccessProven, 0)
+  // Numara var + local_create → yalnizca zayif sinif.
+  assert.equal(result.createEvidence.CREATE_PROVEN_PERSISTED_LOCAL, 1)
 })
 
 test('FOR-9: CLI --unknown-reasons bayragi bagli', () => {

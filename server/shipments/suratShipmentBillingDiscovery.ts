@@ -473,8 +473,39 @@ export type UnknownReason = (typeof UNKNOWN_REASON_PRECEDENCE)[number]
  * Taşıyıcı numarasının VARLIĞI tek başına ASLA yeterli değildir: kayıt
  * ithal edilmiş de olabilir. O durum `CREATE_POSSIBLE`dır.
  */
+/**
+ * KALICI TAŞIYICI YANITI SINIFLANDIRMASI — KAYNAKTAN KANITLI.
+ *
+ * `record.carrierTrackingNumber` üretimde YALNIZ şu koşulda doldurulur
+ * (index.mjs create kaydı oluşturucusu):
+ *   `verified || result.shipment.dispatchRegistrationConfirmed`
+ * Aksi hâlde BOŞ yazılır ve aday numara `candidateTrackingNumber`a gider.
+ * Dolayısıyla bu alanın DOLU olması taşıyıcı onayının kanıtıdır — tahmin
+ * değil, koşulun kendisi.
+ *
+ * `status` ve `verificationStatus` alanları da doğrudan başarı işaretidir.
+ */
+export const PERSISTED_RESPONSE_OUTCOMES = ['SUCCESS', 'FAILURE', 'UNKNOWN'] as const
+export type PersistedResponseOutcome = (typeof PERSISTED_RESPONSE_OUTCOMES)[number]
+
+export function classifyPersistedCarrierResponse(
+  payload: unknown,
+): PersistedResponseOutcome {
+  if (payload === null || typeof payload !== 'object') return 'UNKNOWN'
+  const record = payload as Record<string, unknown>
+  const status = text(record.status).toUpperCase()
+  if (status === 'SUCCESS') return 'SUCCESS'
+  if (status === 'FAILED_SAFE' || status === 'FAILED') return 'FAILURE'
+  if (text(record.verificationStatus).toUpperCase() === 'VERIFIED') return 'SUCCESS'
+  // Yalnız taşıyıcı onayı varken dolan alan.
+  if (text(record.carrierTrackingNumber)) return 'SUCCESS'
+  // ADAY numara kanıt DEĞİLDİR: onay olmadan da yazılır.
+  return 'UNKNOWN'
+}
+
 export const CREATE_EVIDENCE_CLASSES = [
   'CREATE_PROVEN_STRONG',
+  'CREATE_PROVEN_CARRIER_RESPONSE',
   'CREATE_PROVEN_PERSISTED_LOCAL',
   'CREATE_POSSIBLE',
   'CREATE_UNKNOWN',
@@ -486,12 +517,23 @@ export function classifyCreateEvidence(params: {
   carrierCreateCalled?: boolean | null
   source?: unknown
   trackingNumber?: unknown
+  /** Kalıcı operasyon yükünden çıkan taşıyıcı yanıtı sonucu. */
+  persistedResponse?: PersistedResponseOutcome
 }): CreateEvidenceClass {
   if (
     text(params.operationStatus).toLowerCase() === 'succeeded' &&
     params.carrierCreateCalled === true
   ) {
     return 'CREATE_PROVEN_STRONG'
+  }
+  // AUDIT DURUMU pending olsa BİLE taşıyıcı yanıtı başarıyı kanıtlıyorsa
+  // gönderi GERÇEKTEN oluşmuştur. Audit kusuru taşıyıcı gerçeğini silmez.
+  if (
+    params.persistedResponse === 'SUCCESS' &&
+    params.carrierCreateCalled === true &&
+    text(params.source) === 'local_create'
+  ) {
+    return 'CREATE_PROVEN_CARRIER_RESPONSE'
   }
   const hasTracking = text(params.trackingNumber) !== ''
   if (!hasTracking) return 'CREATE_UNKNOWN'

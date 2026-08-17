@@ -17,6 +17,7 @@ import {
   classifyUnknownReason,
   findPersistedActualWhoPays,
   GOLDEN_PARCEL,
+  classifyPersistedCarrierResponse,
   isCreateOperationType,
   isSuratProvider,
   CARGOFLOW_ORIGIN_PAYER_KEYS,
@@ -24,6 +25,7 @@ import {
 
   OPERATION_TRACKING_INTRODUCED,
   type CreateEvidenceClass,
+  type PersistedResponseOutcome,
   type UnknownReason,
 } from './suratShipmentBillingDiscovery.ts'
 
@@ -84,6 +86,14 @@ export interface CreateEvidenceForensics {
   expectedUnknown: number
 
   createEvidence: Record<CreateEvidenceClass, number>
+  persistedResponseSuccess: number
+  persistedResponseFailure: number
+  persistedResponseUnknown: number
+  responseSuccessOperationPending: number
+  responseFailureOperationPending: number
+  responseUnknownOperationPending: number
+  realCreateSuccessProven: number
+  operationPayloadsDecrypted: number
 
   operationTypeDistribution: Record<string, { count: number; statuses: Record<string, number>; called: Record<string, number> }>
   payloadsDecrypted: number
@@ -247,11 +257,20 @@ export async function analyzeSuratCreateEvidence(
     expectedUnknown: 0,
     createEvidence: {
       CREATE_PROVEN_STRONG: 0,
+      CREATE_PROVEN_CARRIER_RESPONSE: 0,
       CREATE_PROVEN_PERSISTED_LOCAL: 0,
       CREATE_POSSIBLE: 0,
       CREATE_UNKNOWN: 0,
     },
     operationTypeDistribution,
+    persistedResponseSuccess: 0,
+    persistedResponseFailure: 0,
+    persistedResponseUnknown: 0,
+    responseSuccessOperationPending: 0,
+    responseFailureOperationPending: 0,
+    responseUnknownOperationPending: 0,
+    realCreateSuccessProven: 0,
+    operationPayloadsDecrypted: 0,
     payloadsDecrypted: 0,
     payloadsWithActualPayer: 0,
     actualPayerFieldNames: [],
@@ -268,6 +287,7 @@ export async function analyzeSuratCreateEvidence(
     dbQueryCount,
   }
 
+  let operationPayloadsDecrypted = 0
   const stamps: string[] = []
   const analysed: {
     row: Record<string, unknown>
@@ -319,6 +339,38 @@ export async function analyzeSuratCreateEvidence(
     const source = text(row.source) || 'UNKNOWN'
     result.sourceDistribution[source] = (result.sourceDistribution[source] ?? 0) + 1
 
+    // KALICI TAŞIYICI YANITI. Operasyon yükü ŞİFRELİDİR; çözüm taranan
+    // küme ile SINIRLIDIR (`--limit`), tam tablo çözümü YOKTUR. Bu adım
+    // "audit durumu pending" ile "taşıyıcı gerçekten oluşturdu"yu ayırır.
+    let persistedResponse: PersistedResponseOutcome = 'UNKNOWN'
+    if (createOperation?.responsePayloadEncrypted) {
+      try {
+        persistedResponse = classifyPersistedCarrierResponse(
+          decryptShipmentPayload(
+            createOperation.responsePayloadEncrypted as string | null,
+          ),
+        )
+        operationPayloadsDecrypted += 1
+      } catch {
+        persistedResponse = 'UNKNOWN'
+      }
+    }
+    if (persistedResponse === 'SUCCESS') result.persistedResponseSuccess += 1
+    else if (persistedResponse === 'FAILURE') result.persistedResponseFailure += 1
+    else result.persistedResponseUnknown += 1
+
+    // DEĞİŞMEZ İHLALİ SAYAÇLARI: taşıyıcı yanıtı ile audit durumu ayrışmışsa
+    // bu ayrı bir veri kalitesi sorunudur ve GÖRÜNÜR kalmalıdır.
+    const operationPending =
+      createOperation !== undefined &&
+      text(createOperation.status).toLowerCase() === 'pending'
+    if (operationPending) {
+      if (persistedResponse === 'SUCCESS') result.responseSuccessOperationPending += 1
+      else if (persistedResponse === 'FAILURE') {
+        result.responseFailureOperationPending += 1
+      } else result.responseUnknownOperationPending += 1
+    }
+
     const evidence = classifyCreateEvidence({
       operationStatus: createOperation ? text(createOperation.status) : null,
       carrierCreateCalled: createOperation
@@ -326,8 +378,15 @@ export async function analyzeSuratCreateEvidence(
         : null,
       source: row.source,
       trackingNumber: row.trackingNumber,
+      persistedResponse,
     })
     result.createEvidence[evidence] += 1
+    if (
+      evidence === 'CREATE_PROVEN_STRONG' ||
+      evidence === 'CREATE_PROVEN_CARRIER_RESPONSE'
+    ) {
+      result.realCreateSuccessProven += 1
+    }
 
     let unknownReason: UnknownReason | null = null
     if (evidence !== 'CREATE_PROVEN_STRONG') {
@@ -493,6 +552,7 @@ export async function analyzeSuratCreateEvidence(
   }
   result.payloadFieldInventory = [...inventory].sort()
   result.distinctSenderCodes = senderCodes.size
+  result.operationPayloadsDecrypted = operationPayloadsDecrypted
 
   // GOLDEN ARAMASI — TAM EŞLEŞME, tenant kapsamlı, fuzzy YOK.
   const goldenOrders = (await db
@@ -615,8 +675,21 @@ export function formatCreateEvidenceReport(
     `  UNKNOWN_EXPECTED_SELLER           ${result.expectedSeller}`,
     `  UNKNOWN_EXPECTED_UNKNOWN          ${result.expectedUnknown}`,
     '',
+    'PERSISTED CARRIER RESPONSE (operasyon yukunden · SINIRLI cozum)',
+    `  PERSISTED_RESPONSE_SUCCESS          ${result.persistedResponseSuccess}`,
+    `  PERSISTED_RESPONSE_FAILURE          ${result.persistedResponseFailure}`,
+    `  PERSISTED_RESPONSE_UNKNOWN          ${result.persistedResponseUnknown}`,
+    `  OPERATION_PAYLOADS_DECRYPTED        ${result.operationPayloadsDecrypted}`,
+    '',
+    'AUDIT-STATE INVARIANT (tasiyici gercegi != audit durumu)',
+    `  CREATE_RESPONSE_SUCCESS_OPERATION_PENDING  ${result.responseSuccessOperationPending}`,
+    `  CREATE_RESPONSE_FAILURE_OPERATION_PENDING  ${result.responseFailureOperationPending}`,
+    `  CREATE_RESPONSE_UNKNOWN_OPERATION_PENDING  ${result.responseUnknownOperationPending}`,
+    '',
     'CREATE EVIDENCE CLASSES',
     `  CREATE_PROVEN_STRONG              ${result.createEvidence.CREATE_PROVEN_STRONG}`,
+    `  CREATE_PROVEN_CARRIER_RESPONSE    ${result.createEvidence.CREATE_PROVEN_CARRIER_RESPONSE}`,
+    `  REAL_CREATE_SUCCESS_PROVEN        ${result.realCreateSuccessProven}`,
     `  CREATE_PROVEN_PERSISTED_LOCAL              ${result.createEvidence.CREATE_PROVEN_PERSISTED_LOCAL}`,
     `  CREATE_POSSIBLE                   ${result.createEvidence.CREATE_POSSIBLE}`,
     `  CREATE_UNKNOWN                    ${result.createEvidence.CREATE_UNKNOWN}`,
