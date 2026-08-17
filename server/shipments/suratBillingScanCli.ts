@@ -3,6 +3,7 @@
 // Kullanım:
 //   npm run surat:billing:scan -- --name MonalisaToka
 //   npm run surat:billing:scan -- --org <organizationId> --limit 100
+//   npm run surat:billing:scan -- --name MonalisaToka --shipments --limit 1000
 //
 // AĞ ÇAĞRISI YAPMAZ: bu komutta `--get-cargo` gibi bir anahtar YOKTUR.
 // Vendor sorgusu yalnız `surat:billing:inspect --get-cargo` ile mümkündür.
@@ -17,6 +18,10 @@ import {
   resolveOrganizationByName,
   scanTenantBillingCandidates,
 } from './suratBillingScanner.ts'
+import {
+  discoverSuratShipmentBillingEvidence,
+  formatShipmentDiscoveryReport,
+} from './suratShipmentBillingDiscovery.ts'
 
 function readArg(name: string): string {
   const index = process.argv.indexOf(`--${name}`)
@@ -52,6 +57,17 @@ export async function runSuratBillingScan(): Promise<number> {
       return 1
     }
     organization = resolved.organization
+  }
+
+  // GÖNDERİ-ÖNCELİKLİ KEŞİF: sipariş-öncelikli tarama en yeni siparişleri
+  // alır ve bunlar henüz kargoya verilmemiş olabilir. Gerçek `whoPays`
+  // doğrulama evreni, taşıyıcı kaydı GERÇEKTEN oluşmuş gönderilerdir.
+  if (process.argv.includes('--shipments')) {
+    const discovery = await discoverSuratShipmentBillingEvidence(db, organization, {
+      limit: Number(readArg('limit')) || undefined,
+    })
+    for (const line of formatShipmentDiscoveryReport(discovery)) console.info(line)
+    return 0
   }
 
   // Tenant Sürat yapılandırması TEK kez okunur (sipariş başına DEĞİL).
