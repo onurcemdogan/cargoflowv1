@@ -12,6 +12,12 @@ import {
 import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
+// NOT: bu dosyada zaten ham zarfı AYRIŞTIRAN bir `classifySuratCreateResponse`
+// var. Aşağıdaki farklı bir sorumluluk taşır: ayrıştırılmış kod + üretilen
+// artefaktları TEK nihai sınıfa indirger. Ad çakışmasın diye takma ad verilir.
+import {
+  classifySuratCreateResponse as deriveSuratCreateOutcomeClass,
+} from './shipments/suratResponseClassification.ts'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
@@ -11982,6 +11988,18 @@ function buildSuratCreateLog({
     hasTrackingNumber: Boolean(outcome?.hasTrackingNumber),
     hasBarcode: Boolean(outcome?.hasBarcode),
     verifiedShipment: Boolean(outcome?.verifiedShipment),
+    // HTTP 200 tek başına başarı DEĞİLDİR: taşıma başarısı, iş kodu ve
+    // üretilen artefaktlar ayrı ayrı değerlendirilip tek sınıfa indirgenir.
+    // Aynı kod (016) farklı artefakt bileşiminde FARKLI sonuç demektir.
+    classification: deriveSuratCreateOutcomeClass({
+      httpSuccess: Number(responseStatus) >= 200 && Number(responseStatus) < 300,
+      businessCode: outcome?.code,
+      businessMessage: outcome?.message,
+      codeCategory: outcome?.responseCategory,
+      trackingNumber: KargoTakipNo,
+      barcode: Barcode,
+      zpl: BarcodeRaw,
+    }),
     KargoTakipNo,
     Barcode,
     BarcodeRaw,

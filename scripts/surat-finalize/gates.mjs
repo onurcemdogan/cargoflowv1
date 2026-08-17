@@ -93,11 +93,28 @@ export function buildPlaceholderGates(phase, description) {
   }]
 }
 
+/** FAZ B — taşıyıcı yanıt sınıflandırması. */
+export function buildPhaseBGates(scripts = readScripts()) {
+  return [
+    nodeTestGate(
+      'B1_RESPONSE_CLASSIFICATION', 'B',
+      'server/surat-response-classification-flow.test.mjs',
+      'HTTP 200 != basari · 016/039 ayrimi · is mesaji korunur',
+    ),
+    nodeTestGate(
+      'B2_SURAT_FLOW', 'B', 'server/surat-flow.test.mjs',
+      'mevcut create davranisi bozulmadi',
+    ),
+    npmGate(scripts, 'B3_FULL_SURAT', 'B', 'test:surat', 'Surat tam paketi'),
+    npmGate(scripts, 'B4_UI', 'B', 'test:ui', 'UI paketi'),
+    npmGate(scripts, 'B5_BUILD', 'B', 'build', 'production build'),
+    npmGate(scripts, 'B6_LINT', 'B', 'lint', 'lint'),
+  ]
+}
+
 export function buildGates(phase, scripts = readScripts()) {
   if (phase === 'A') return buildPhaseAGates(scripts)
-  if (phase === 'B') {
-    return buildPlaceholderGates('B', 'tasiyici yanit siniflandirmasi')
-  }
+  if (phase === 'B') return buildPhaseBGates(scripts)
   if (phase === 'C') return buildPlaceholderGates('C', 'trace v2 runtime')
   if (phase === 'D') return buildPlaceholderGates('D', 'COD/Debug arayuzu')
   if (phase === 'E') {
