@@ -18,6 +18,7 @@ import {
   findPersistedActualWhoPays,
   GOLDEN_PARCEL,
   classifyPersistedCarrierResponse,
+  hasCarrierArtifactEvidence,
   isCreateOperationType,
   isSuratProvider,
   CARGOFLOW_ORIGIN_PAYER_KEYS,
@@ -46,6 +47,21 @@ export const SHIPMENT_EVIDENCE_FIELDS = [
   'barcode',
   'trackingLink',
   'carrierPayloadEncrypted',
+] as const
+
+/** Alan kaynak matrisinde izlenen kanit alanlari. */
+export const EVIDENCE_FIELD_MATRIX_KEYS = [
+  'carrierTrackingNumber',
+  'candidateTrackingNumber',
+  'carrierBarcodeNumber',
+  'candidateBarcodeNumber',
+  'businessCode',
+  'businessMessage',
+  'completedAt',
+  'verificationStatus',
+  'status',
+  'operation',
+  'soapAction',
 ] as const
 
 export interface CreateEvidenceForensics {
@@ -93,7 +109,14 @@ export interface CreateEvidenceForensics {
   responseFailureOperationPending: number
   responseUnknownOperationPending: number
   realCreateSuccessProven: number
+  fieldSourceMatrix: Record<string, { shipmentKey: number; shipmentValue: number; operationKey: number; operationValue: number }>
+  shipmentPayloadCarrierTrackingPresent: number
+  shipmentPayloadCandidateTrackingOnly: number
+  shipmentPayloadCarrierBarcodePresent: number
+  shipmentPayloadCandidateBarcodeOnly: number
+  carrierArtifactPresent: number
   operationPayloadsDecrypted: number
+  shipmentPayloadsDecrypted: number
 
   operationTypeDistribution: Record<string, { count: number; statuses: Record<string, number>; called: Record<string, number> }>
   payloadsDecrypted: number
@@ -258,6 +281,7 @@ export async function analyzeSuratCreateEvidence(
     createEvidence: {
       CREATE_PROVEN_STRONG: 0,
       CREATE_PROVEN_CARRIER_RESPONSE: 0,
+      CREATE_PROVEN_CARRIER_ARTIFACT: 0,
       CREATE_PROVEN_PERSISTED_LOCAL: 0,
       CREATE_POSSIBLE: 0,
       CREATE_UNKNOWN: 0,
@@ -270,7 +294,14 @@ export async function analyzeSuratCreateEvidence(
     responseFailureOperationPending: 0,
     responseUnknownOperationPending: 0,
     realCreateSuccessProven: 0,
+    fieldSourceMatrix: {},
+    shipmentPayloadCarrierTrackingPresent: 0,
+    shipmentPayloadCandidateTrackingOnly: 0,
+    shipmentPayloadCarrierBarcodePresent: 0,
+    shipmentPayloadCandidateBarcodeOnly: 0,
+    carrierArtifactPresent: 0,
     operationPayloadsDecrypted: 0,
+    shipmentPayloadsDecrypted: 0,
     payloadsDecrypted: 0,
     payloadsWithActualPayer: 0,
     actualPayerFieldNames: [],
@@ -288,6 +319,7 @@ export async function analyzeSuratCreateEvidence(
   }
 
   let operationPayloadsDecrypted = 0
+  let shipmentPayloadsDecrypted = 0
   const stamps: string[] = []
   const analysed: {
     row: Record<string, unknown>
@@ -343,13 +375,13 @@ export async function analyzeSuratCreateEvidence(
     // küme ile SINIRLIDIR (`--limit`), tam tablo çözümü YOKTUR. Bu adım
     // "audit durumu pending" ile "taşıyıcı gerçekten oluşturdu"yu ayırır.
     let persistedResponse: PersistedResponseOutcome = 'UNKNOWN'
+    let operationPayload: Record<string, unknown> | null = null
     if (createOperation?.responsePayloadEncrypted) {
       try {
-        persistedResponse = classifyPersistedCarrierResponse(
-          decryptShipmentPayload(
-            createOperation.responsePayloadEncrypted as string | null,
-          ),
-        )
+        operationPayload = decryptShipmentPayload(
+          createOperation.responsePayloadEncrypted as string | null,
+        ) as Record<string, unknown> | null
+        persistedResponse = classifyPersistedCarrierResponse(operationPayload)
         operationPayloadsDecrypted += 1
       } catch {
         persistedResponse = 'UNKNOWN'
@@ -371,7 +403,53 @@ export async function analyzeSuratCreateEvidence(
       } else result.responseUnknownOperationPending += 1
     }
 
+    // GÖNDERİ YÜKÜ — kayıt varlığının sebebini taşıyan zarf. Çözüm taranan
+    // küme ile sınırlıdır; DEĞER basılmaz, yalnız varlık/sınıf sayılır.
+    let shipmentPayload: Record<string, unknown> | null
+    try {
+      shipmentPayload = decryptShipmentPayload(
+        (row.carrierPayloadEncrypted as string | null) ?? null,
+      ) as Record<string, unknown> | null
+      if (row.carrierPayloadEncrypted) shipmentPayloadsDecrypted += 1
+    } catch {
+      shipmentPayload = null
+    }
+    const carrierArtifact = hasCarrierArtifactEvidence(shipmentPayload)
+    if (carrierArtifact) result.carrierArtifactPresent += 1
+
+    // ALAN KAYNAK MATRİSİ: anahtar VAR mı ile DEĞER DOLU mu AYRI sayılır —
+    // üretimdeki yanılgı tam olarak buydu (anahtar vardı, değer boştu).
+    for (const field of EVIDENCE_FIELD_MATRIX_KEYS) {
+      const entry = result.fieldSourceMatrix[field] ?? {
+        shipmentKey: 0,
+        shipmentValue: 0,
+        operationKey: 0,
+        operationValue: 0,
+      }
+      if (shipmentPayload && Object.prototype.hasOwnProperty.call(shipmentPayload, field)) {
+        entry.shipmentKey += 1
+        if (text(shipmentPayload[field])) entry.shipmentValue += 1
+      }
+      if (operationPayload && Object.prototype.hasOwnProperty.call(operationPayload, field)) {
+        entry.operationKey += 1
+        if (text(operationPayload[field])) entry.operationValue += 1
+      }
+      result.fieldSourceMatrix[field] = entry
+    }
+    const payloadView = shipmentPayload ?? {}
+    if (text(payloadView.carrierTrackingNumber)) {
+      result.shipmentPayloadCarrierTrackingPresent += 1
+    } else if (text(payloadView.candidateTrackingNumber)) {
+      result.shipmentPayloadCandidateTrackingOnly += 1
+    }
+    if (text(payloadView.carrierBarcodeNumber)) {
+      result.shipmentPayloadCarrierBarcodePresent += 1
+    } else if (text(payloadView.candidateBarcodeNumber)) {
+      result.shipmentPayloadCandidateBarcodeOnly += 1
+    }
+
     const evidence = classifyCreateEvidence({
+      carrierArtifact,
       operationStatus: createOperation ? text(createOperation.status) : null,
       carrierCreateCalled: createOperation
         ? (createOperation.carrierCreateCalled as boolean | null)
@@ -383,7 +461,8 @@ export async function analyzeSuratCreateEvidence(
     result.createEvidence[evidence] += 1
     if (
       evidence === 'CREATE_PROVEN_STRONG' ||
-      evidence === 'CREATE_PROVEN_CARRIER_RESPONSE'
+      evidence === 'CREATE_PROVEN_CARRIER_RESPONSE' ||
+      evidence === 'CREATE_PROVEN_CARRIER_ARTIFACT'
     ) {
       result.realCreateSuccessProven += 1
     }
@@ -553,6 +632,7 @@ export async function analyzeSuratCreateEvidence(
   result.payloadFieldInventory = [...inventory].sort()
   result.distinctSenderCodes = senderCodes.size
   result.operationPayloadsDecrypted = operationPayloadsDecrypted
+  result.shipmentPayloadsDecrypted = shipmentPayloadsDecrypted
 
   // GOLDEN ARAMASI — TAM EŞLEŞME, tenant kapsamlı, fuzzy YOK.
   const goldenOrders = (await db
@@ -680,15 +760,31 @@ export function formatCreateEvidenceReport(
     `  PERSISTED_RESPONSE_FAILURE          ${result.persistedResponseFailure}`,
     `  PERSISTED_RESPONSE_UNKNOWN          ${result.persistedResponseUnknown}`,
     `  OPERATION_PAYLOADS_DECRYPTED        ${result.operationPayloadsDecrypted}`,
+    `  SHIPMENT_PAYLOADS_DECRYPTED         ${result.shipmentPayloadsDecrypted}`,
+    '  (taranan kume ile SINIRLI; derin ornek AYRI sayilir)',
     '',
     'AUDIT-STATE INVARIANT (tasiyici gercegi != audit durumu)',
     `  CREATE_RESPONSE_SUCCESS_OPERATION_PENDING  ${result.responseSuccessOperationPending}`,
     `  CREATE_RESPONSE_FAILURE_OPERATION_PENDING  ${result.responseFailureOperationPending}`,
     `  CREATE_RESPONSE_UNKNOWN_OPERATION_PENDING  ${result.responseUnknownOperationPending}`,
     '',
+    'FIELD_SOURCE_MATRIX (anahtar VAR vs DEGER DOLU · deger BASILMAZ)',
+    ...Object.entries(result.fieldSourceMatrix).map(
+      ([field, entry]) =>
+        `  ${field.padEnd(26)}shipment key=${entry.shipmentKey} value=${entry.shipmentValue}` +
+        `  |  operation key=${entry.operationKey} value=${entry.operationValue}`,
+    ),
+    '',
+    `SHIPMENT_PAYLOAD_CARRIER_TRACKING_PRESENT   ${result.shipmentPayloadCarrierTrackingPresent}`,
+    `SHIPMENT_PAYLOAD_CANDIDATE_TRACKING_ONLY    ${result.shipmentPayloadCandidateTrackingOnly}`,
+    `SHIPMENT_PAYLOAD_CARRIER_BARCODE_PRESENT    ${result.shipmentPayloadCarrierBarcodePresent}`,
+    `SHIPMENT_PAYLOAD_CANDIDATE_BARCODE_ONLY     ${result.shipmentPayloadCandidateBarcodeOnly}`,
+    `CARRIER_ARTIFACT_PRESENT                    ${result.carrierArtifactPresent}`,
+    '',
     'CREATE EVIDENCE CLASSES',
     `  CREATE_PROVEN_STRONG              ${result.createEvidence.CREATE_PROVEN_STRONG}`,
     `  CREATE_PROVEN_CARRIER_RESPONSE    ${result.createEvidence.CREATE_PROVEN_CARRIER_RESPONSE}`,
+    `  CREATE_PROVEN_CARRIER_ARTIFACT    ${result.createEvidence.CREATE_PROVEN_CARRIER_ARTIFACT}`,
     `  REAL_CREATE_SUCCESS_PROVEN        ${result.realCreateSuccessProven}`,
     `  CREATE_PROVEN_PERSISTED_LOCAL              ${result.createEvidence.CREATE_PROVEN_PERSISTED_LOCAL}`,
     `  CREATE_POSSIBLE                   ${result.createEvidence.CREATE_POSSIBLE}`,

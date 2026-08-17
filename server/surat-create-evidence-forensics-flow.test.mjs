@@ -674,6 +674,115 @@ test('LIFE-4: yukte KANIT YOKSA pending SUCCESS a CEVRILMEZ', async (t) => {
   assert.equal(result.createEvidence.CREATE_PROVEN_PERSISTED_LOCAL, 1)
 })
 
+/* ═══ FAZ 4E: KANIT ZARFI MUTABAKATI ══════════════════════════════════ */
+
+test('ENV-1: gonderi satirinin VAR OLMASI on-atanmis ZPL kanitidir', () => {
+  // `persistShipmentRecord` gonderiyi YALNIZ su kosulda yazar:
+  //   columns.status === 'succeeded' || isSuratRecordPreassignedReady(record)
+  // Audit pending iken satir varsa ikinci kosul saglanmis demektir:
+  // sert hata YOK ve teknik ZPL GELDI.
+  const persistence = codeOf('server/shipments/shipmentPersistenceService.ts')
+  assert.ok(
+    persistence.includes(
+      "columns.status === 'succeeded' || isSuratRecordPreassignedReady(record)",
+    ),
+  )
+  assert.ok(persistence.includes('record.technicalZpl ||'))
+  assert.ok(persistence.includes('shipment.barcodeRaw ||'))
+  // Ve gonderi tracking'i ADAY numaraya duser.
+  assert.ok(
+    persistence.includes(
+      'first(record.carrierTrackingNumber, record.candidateTrackingNumber)',
+    ) || persistence.includes('columns.trackingNumber'),
+  )
+
+  assert.equal(discovery.hasCarrierArtifactEvidence({ technicalZpl: '^XA' }), true)
+  assert.equal(
+    discovery.hasCarrierArtifactEvidence({ shipment: { barcodeRaw: '^XA' } }), true,
+  )
+  assert.equal(discovery.hasCarrierArtifactEvidence({ status: 'UNKNOWN' }), false)
+  assert.equal(discovery.hasCarrierArtifactEvidence(null), false)
+})
+
+test('ENV-2: ANAHTAR VAR ile DEGER DOLU ayri sayilir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  // ÜRETİMDEKİ ŞEKİL: anahtarlar var, onaylı değerler BOŞ, aday DOLU, ZPL VAR.
+  const record = {
+    status: 'UNKNOWN',
+    carrierTrackingNumber: '',
+    candidateTrackingNumber: '11419469827',
+    carrierBarcodeNumber: '',
+    candidateBarcodeNumber: '01231201025',
+    businessCode: '',
+    verificationStatus: '',
+    operation: 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+    soapAction: 'http://tempuri.org/x',
+    technicalZpl: '^XA^XZ',
+  }
+  await seedShipment(db, org, {
+    packageId: 'PKG-E1', trackingNumber: '11419469827',
+    createdAt: '2026-08-12T08:00:00.000Z', payloadExtra: record,
+  })
+  await seedOperation(db, org, {
+    packageId: 'PKG-E1',
+    operationType: 'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+    status: 'pending', carrierCreateCalled: true, responsePayload: record,
+  })
+
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  const matrix = result.fieldSourceMatrix
+  // Anahtar HER İKİ zarfta da var…
+  assert.equal(matrix.carrierTrackingNumber.shipmentKey, 1)
+  assert.equal(matrix.carrierTrackingNumber.operationKey, 1)
+  // …ama DEĞER hiçbirinde dolu değil. Üretimdeki yanılgı tam olarak buydu.
+  assert.equal(matrix.carrierTrackingNumber.shipmentValue, 0)
+  assert.equal(matrix.carrierTrackingNumber.operationValue, 0)
+  // Aday numara ise DOLU.
+  assert.equal(matrix.candidateTrackingNumber.shipmentValue, 1)
+
+  assert.equal(result.shipmentPayloadCarrierTrackingPresent, 0)
+  assert.equal(result.shipmentPayloadCandidateTrackingOnly, 1)
+  assert.equal(result.shipmentPayloadCandidateBarcodeOnly, 1)
+
+  // ZPL geldiği için taşıyıcı ARTEFAKT kanıtı VAR.
+  assert.equal(result.carrierArtifactPresent, 1)
+  assert.equal(result.createEvidence.CREATE_PROVEN_CARRIER_ARTIFACT, 1)
+  assert.equal(result.createEvidence.CREATE_PROVEN_CARRIER_RESPONSE, 0)
+  assert.equal(result.createEvidence.CREATE_PROVEN_STRONG, 0)
+  assert.equal(result.realCreateSuccessProven, 1)
+  // Audit durumu GEVSETILMEDI.
+  assert.equal(result.createSucceeded, 0)
+  assert.equal(result.persistedResponseSuccess, 0)
+
+  const report = forensics.formatCreateEvidenceReport(result).join('\n')
+  assert.ok(report.includes('FIELD_SOURCE_MATRIX'))
+  assert.ok(report.includes('SHIPMENT_PAYLOAD_CANDIDATE_TRACKING_ONLY    1'))
+  assert.ok(report.includes('CREATE_PROVEN_CARRIER_ARTIFACT    1'))
+  // Kimlik DEGERLERI raporda basilmaz.
+  assert.equal(report.includes('11419469827'), false)
+})
+
+test('ENV-3: ZPL YOKSA artefakt kaniti URETILMEZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  await seedShipment(db, org, {
+    packageId: 'PKG-E2', trackingNumber: '114',
+    payloadExtra: { status: 'UNKNOWN', candidateTrackingNumber: '114' },
+  })
+  await seedOperation(db, org, {
+    packageId: 'PKG-E2', operationType: 'OrtakBarkodOlustur',
+    status: 'pending', carrierCreateCalled: true,
+  })
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  assert.equal(result.carrierArtifactPresent, 0)
+  assert.equal(result.createEvidence.CREATE_PROVEN_CARRIER_ARTIFACT, 0)
+  assert.equal(result.realCreateSuccessProven, 0)
+  assert.equal(result.createEvidence.CREATE_PROVEN_PERSISTED_LOCAL, 1)
+})
+
 test('FOR-9: CLI --unknown-reasons bayragi bagli', () => {
   const code = codeOf('server/shipments/suratBillingScanCli.ts')
   assert.ok(code.includes("process.argv.includes('--unknown-reasons')"))

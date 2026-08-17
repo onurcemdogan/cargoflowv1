@@ -503,9 +503,40 @@ export function classifyPersistedCarrierResponse(
   return 'UNKNOWN'
 }
 
+/**
+ * TAŞIYICI ARTEFAKT KANITI — KAYIT VARLIĞININ SEBEBİ.
+ *
+ * `persistShipmentRecord` gönderiyi YALNIZ şu koşulda yazar:
+ *   `columns.status === 'succeeded' || isSuratRecordPreassignedReady(record)`
+ * İkinci koşul "sert hata değil VE teknik ZPL geldi" demektir. Yani audit
+ * durumu `pending` olan bir gönderi satırının VAR OLMASI, taşıyıcının
+ * gerçekten yanıt verip YAZDIRILABİLİR ETİKET döndürdüğünün kanıtıdır.
+ *
+ * Bu, "kayıt tesellümde doğar" modeliyle tutarlıdır: etiket create'te,
+ * kayıt kabulde. Etiketin varlığı create'i kanıtlar; TESELLÜMÜ kanıtlamaz.
+ */
+export const CARRIER_ARTIFACT_KEYS = [
+  'technicalZpl',
+  'technicalZplSha256',
+  'technicalZplLength',
+] as const
+
+export function hasCarrierArtifactEvidence(payload: unknown): boolean {
+  if (payload === null || typeof payload !== 'object') return false
+  const record = payload as Record<string, unknown>
+  if (CARRIER_ARTIFACT_KEYS.some((key) => text(record[key]))) return true
+  const shipment = (record.shipment ?? {}) as Record<string, unknown>
+  return Boolean(
+    text(shipment.barcodeRaw) ||
+      shipment.zplReady === true ||
+      shipment.technicalZplReceived === true,
+  )
+}
+
 export const CREATE_EVIDENCE_CLASSES = [
   'CREATE_PROVEN_STRONG',
   'CREATE_PROVEN_CARRIER_RESPONSE',
+  'CREATE_PROVEN_CARRIER_ARTIFACT',
   'CREATE_PROVEN_PERSISTED_LOCAL',
   'CREATE_POSSIBLE',
   'CREATE_UNKNOWN',
@@ -519,6 +550,8 @@ export function classifyCreateEvidence(params: {
   trackingNumber?: unknown
   /** Kalıcı operasyon yükünden çıkan taşıyıcı yanıtı sonucu. */
   persistedResponse?: PersistedResponseOutcome
+  /** Taşıyıcı yazdırılabilir etiket döndürmüş mü (ZPL kanıtı). */
+  carrierArtifact?: boolean
 }): CreateEvidenceClass {
   if (
     text(params.operationStatus).toLowerCase() === 'succeeded' &&
@@ -534,6 +567,11 @@ export function classifyCreateEvidence(params: {
     text(params.source) === 'local_create'
   ) {
     return 'CREATE_PROVEN_CARRIER_RESPONSE'
+  }
+  // Taşıyıcı YAZDIRILABİLİR ETİKET döndürmüş: create çağrısı gerçekten
+  // yapılmış ve yanıt alınmıştır. Tesellüm/kayıt onayı bu DEĞİLDİR.
+  if (params.carrierArtifact === true && text(params.source) === 'local_create') {
+    return 'CREATE_PROVEN_CARRIER_ARTIFACT'
   }
   const hasTracking = text(params.trackingNumber) !== ''
   if (!hasTracking) return 'CREATE_UNKNOWN'
