@@ -21,6 +21,12 @@ import {
   type BillingScanSummary,
   type RawPayloadAvailability,
 } from './suratBillingParty.ts'
+import {
+  billingExpectationStatus,
+  buildBillingExpectationSnapshot,
+  evaluateBillingVerification,
+  type CarrierCreateStatus,
+} from './suratBillingVerification.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -126,6 +132,67 @@ export interface BillingScanCandidate extends BillingCandidate {
   /** getCargo araştırması için operasyonel paket kimliği (PII DEĞİL). */
   parcelIdentity: string | null
   isGoldenParcel: boolean
+  /** Taşıyıcı ekseni — kayıtlı gönderide taşıyıcı numarası VAR MI. */
+  carrierCreateStatus: CarrierCreateStatus
+}
+
+/** Faturalama doğrulama dağılımı — HAM sayaçlardan AYRI katman. */
+export interface BillingVerificationTotals {
+  expectationKnown: number
+  expectationUnknown: number
+  verified: number
+  unverified: number
+  mismatch: number
+  error: number
+  notApplicable: number
+  pending: number
+}
+
+/**
+ * TARAMA ADAYLARINDAN DOĞRULAMA DAĞILIMI.
+ *
+ * Tarama ağa ÇIKMAZ, dolayısıyla gerçek taraf hiçbir kayıtta okunmamıştır.
+ * Beklenen taraf bilinse bile sonuç UNVERIFIED'dır — bu bir kusur değil,
+ * bugünkü gerçeğin dürüst ifadesidir.
+ */
+export function summarizeBillingVerification(
+  candidates: readonly BillingScanCandidate[],
+  capturedAt: string,
+): BillingVerificationTotals {
+  const totals: BillingVerificationTotals = {
+    expectationKnown: 0,
+    expectationUnknown: 0,
+    verified: 0,
+    unverified: 0,
+    mismatch: 0,
+    error: 0,
+    notApplicable: 0,
+    pending: 0,
+  }
+  for (const candidate of candidates) {
+    const expected = buildBillingExpectationSnapshot({
+      expectedParty: candidate.expectedBillingParty,
+      expectedSource: candidate.expectedBillingPartySource ?? 'UNKNOWN',
+      expectedEvidence: candidate.expectedBillingEvidence ?? 'UNKNOWN',
+      capturedAt,
+    })
+    if (billingExpectationStatus(expected) === 'KNOWN') totals.expectationKnown += 1
+    else totals.expectationUnknown += 1
+
+    const verification = evaluateBillingVerification({
+      carrierCreateStatus: candidate.carrierCreateStatus,
+      expected,
+      // Gerçek taraf OKUNMADI — uydurulmaz.
+      actual: null,
+    })
+    if (verification.status === 'VERIFIED') totals.verified += 1
+    else if (verification.status === 'MISMATCH') totals.mismatch += 1
+    else if (verification.status === 'ERROR') totals.error += 1
+    else if (verification.status === 'NOT_APPLICABLE') totals.notApplicable += 1
+    else if (verification.status === 'PENDING') totals.pending += 1
+    else totals.unverified += 1
+  }
+  return totals
 }
 
 export interface BillingScanResult {
@@ -133,6 +200,7 @@ export interface BillingScanResult {
   organizationName: string
   ordersScanned: number
   summary: BillingScanSummary
+  verification: BillingVerificationTotals
   supplierCandidates: BillingScanCandidate[]
   trendyolPaysCandidates: BillingScanCandidate[]
   goldenFound: boolean
@@ -155,7 +223,12 @@ export interface BillingScanResult {
 export async function scanTenantBillingCandidates(
   db: Db,
   organization: ResolvedOrganization,
-  options: { limit?: number; suratConfig?: Record<string, unknown> } = {},
+  options: {
+    limit?: number
+    suratConfig?: Record<string, unknown>
+    /** Beklenti anlık görüntüsü damgası — modül saat OKUMAZ. */
+    capturedAt?: string
+  } = {},
 ): Promise<BillingScanResult> {
   const limit = resolveScanLimit(options.limit)
   let dbQueryCount = 0
@@ -251,10 +324,21 @@ export async function scanTenantBillingCandidates(
       senderCode: null,
       parcelIdentity: parcelIdentity || null,
       isGoldenParcel: parcelIdentity === GOLDEN_TRENDYOL_PAYS_PARCEL,
+      // Taşıyıcı numarası kayıtlı gönderide VARSA create gerçekleşmiştir.
+      // Ek sorgu YOK: gönderiler zaten toplu okundu.
+      carrierCreateStatus: text(
+        shipmentByPackage.get(text(orderRow.packageId))?.trackingNumber,
+      )
+        ? 'SUCCESS'
+        : 'NOT_STARTED',
     }
   })
 
   const summary = summarizeBillingScan(candidates)
+  const verificationTotals = summarizeBillingVerification(
+    candidates,
+    options.capturedAt ?? '',
+  )
 
   const supplierCandidates = candidates
     .filter((candidate) => candidate.expectedBillingParty === 'SELLER')
@@ -295,6 +379,7 @@ export async function scanTenantBillingCandidates(
     organizationName: organization.name,
     ordersScanned: orderRows.length,
     summary,
+    verification: verificationTotals,
     supplierCandidates,
     trendyolPaysCandidates,
     goldenFound: goldenCandidate !== null,
@@ -340,6 +425,18 @@ export function formatScanReport(
   for (const [cls, count] of Object.entries(result.summary.credentialClasses)) {
     lines.push(`CREDENTIAL_${cls.padEnd(12)}${count}`)
   }
+  lines.push(
+    'BILLING VERIFICATION (tasiyici basarisi ile AYRI eksen)',
+    `BILLING_EXPECTATION_KNOWN    ${result.verification.expectationKnown}`,
+    `BILLING_EXPECTATION_UNKNOWN  ${result.verification.expectationUnknown}`,
+    `BILLING_VERIFIED             ${result.verification.verified}`,
+    `BILLING_UNVERIFIED           ${result.verification.unverified}`,
+    `BILLING_MISMATCH             ${result.verification.mismatch}`,
+    `BILLING_ERROR                ${result.verification.error}`,
+    `BILLING_NOT_APPLICABLE       ${result.verification.notApplicable}`,
+    '  (bu tarama AGA CIKMAZ; gercek taraf hicbir kayitta okunmadi)',
+    '',
+  )
   lines.push('', `GOLDEN_FOUND            ${result.goldenFound ? 'YES' : 'NO'}`)
   if (result.goldenCandidate) {
     lines.push(

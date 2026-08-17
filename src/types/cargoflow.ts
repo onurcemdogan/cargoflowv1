@@ -332,6 +332,28 @@ export interface Shipment {
     | 'LABEL_READY'
     | 'LABEL_READY_AWAITING_ACCEPTANCE'
     | 'FAILED'
+  /**
+   * FATURALAMA EKSENİ — TAŞIYICI EKSENİNDEN AYRI, GERİYE UYUMLU.
+   *
+   * `lifecycleStatus` gönderinin taşıyıcıdaki hâlini anlatır; ödeyen tarafın
+   * doğru olup olmadığını SÖYLEMEZ. Bu alan opsiyoneldir: alan yokken mevcut
+   * istemciler aynen çalışır ve hiçbir ekran "doğrulandı" varsaymaz.
+   *
+   * `UNVERIFIED` bir hata değildir — bugünkü gerçek durumdur (Sürat getCargo
+   * sözleşmesi elde olmadığı için gerçek taraf okunamıyor).
+   */
+  billingVerification?: {
+    status:
+      | 'NOT_APPLICABLE'
+      | 'PENDING'
+      | 'UNVERIFIED'
+      | 'VERIFIED'
+      | 'MISMATCH'
+      | 'ERROR'
+    expectedParty: 'SELLER' | 'TRENDYOL' | 'UNKNOWN'
+    actualParty: 'SELLER' | 'TRENDYOL' | 'UNKNOWN'
+    reason?: string
+  }
   source: ApiDataSource
   rawResponse: unknown
   rawSuratCreateResponse?: unknown

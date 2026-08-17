@@ -7,6 +7,12 @@
 // BU MODÜL bu boşluğu isimlendirir; hiçbir kod yolunu bağlamaz. Bağlama kararı
 // (§12 enforcement) ayrı bir fazdır ve üretim davranışını değiştirir.
 import type { BillingParty } from './suratBillingParty.ts'
+import {
+  evaluateBillingVerification,
+  type BillingExpectationSnapshot,
+  type BillingActualReading,
+  type BillingVerification,
+} from './suratBillingVerification.ts'
 
 /** Taşıyıcı create'in kendi sonucu — faturalamadan BAĞIMSIZ. */
 export type CarrierCreateStatus = 'SUCCESS' | 'FAILED' | 'UNKNOWN'
@@ -211,6 +217,109 @@ export function evaluatePreCreateBillingGuard(params: {
  * eksik yarısı gizlenmez.
  */
 export const RECOMMENDED_ENFORCEMENT = 'HYBRID' as const
+
+/* ═══ DURUM MAKİNESİ İLE BİRLEŞİK GÖRÜNÜM ══════════════════════════════ */
+
+/**
+ * Anlık görüntü + gerçek okuma → bileşik operasyon durumu.
+ *
+ * TEK KAYNAK: karşılaştırma mantığı burada TEKRARLANMAZ,
+ * `evaluateBillingVerification` çağrılır. İki ayrı karşılaştırıcı zamanla
+ * kaçınılmaz olarak birbirinden ayrışır ve hangisinin doğru olduğu
+ * bilinemez hâle gelir.
+ */
+export function classifyBillingOperationFromVerification(params: {
+  carrierCreateStatus: CarrierCreateStatus
+  expected?: BillingExpectationSnapshot | null
+  actual?: BillingActualReading | null
+}): {
+  verification: BillingVerification
+  classification: BillingOperationClassification
+} {
+  const verification = evaluateBillingVerification({
+    carrierCreateStatus:
+      params.carrierCreateStatus === 'SUCCESS'
+        ? 'SUCCESS'
+        : params.carrierCreateStatus === 'FAILED'
+          ? 'FAILED'
+          : 'NOT_STARTED',
+    expected: params.expected,
+    actual: params.actual,
+  })
+  return {
+    verification,
+    classification: classifyBillingOperationOutcome({
+      carrierCreateStatus: params.carrierCreateStatus,
+      expectedBillingParty: verification.expectedParty,
+      actualBillingParty: verification.actualParty,
+    }),
+  }
+}
+
+/* ═══ KALICILIK SÖZLEŞMESİ — BU TURDA YAZILMAZ ═════════════════════════ */
+
+/**
+ * MEVCUT ŞEMAYLA KALICILIK — MIGRATION GEREKMEDEN.
+ *
+ * `shipments.carrier_payload_encrypted` ve
+ * `shipment_operations.response_payload_encrypted` zaten şifreli JSON
+ * zarflardır. Doğrulama kaydı bu zarfa EK bir anahtar olarak yazılabilir;
+ * yeni kolon veya migration GEREKMEZ ve eski okuyucular kırılmaz.
+ *
+ * SINIRI AÇIKÇA SÖYLEMEK GEREKİR: şifreli bir gövdenin İÇİ sorgulanamaz.
+ * "Tüm MISMATCH gönderileri listele" gibi bir toplu sorgu, her kaydı
+ * çözmeden yapılamaz. Raporlanabilir/indekslenebilir bir durum isteniyorsa
+ * ayrı bir kolon ve migration ŞARTTIR — bu tur yalnız TASARLANIR.
+ */
+export const BILLING_STATE_PERSISTENCE_KEY = 'billingVerification' as const
+
+export interface BillingVerificationRecord {
+  version: 1
+  expectedParty: BillingParty
+  expectedSource: string
+  expectedEvidence: string
+  expectedCapturedAt: string
+  actualParty: BillingParty
+  actualSource: string
+  status: string
+  reason: string
+}
+
+/** Şifreli gönderi yüküne gömülecek EK blok — PII/secret İÇERMEZ. */
+export function buildBillingVerificationRecord(params: {
+  expected: BillingExpectationSnapshot
+  verification: BillingVerification
+}): BillingVerificationRecord {
+  return {
+    version: 1,
+    expectedParty: params.verification.expectedParty,
+    expectedSource: params.verification.expectedSource,
+    expectedEvidence: params.verification.expectedEvidence,
+    expectedCapturedAt: params.expected.capturedAt,
+    actualParty: params.verification.actualParty,
+    actualSource: params.verification.actualSource,
+    status: params.verification.status,
+    reason: params.verification.reason,
+  }
+}
+
+/**
+ * TASARLANAN (UYGULANMAYAN) MIGRATION.
+ *
+ * Yalnız toplu raporlama/alarm gerektiğinde. Additive ve nullable — mevcut
+ * satırları etkilemez.
+ */
+export const PROPOSED_BILLING_STATE_MIGRATION = {
+  applied: false,
+  table: 'shipments',
+  columns: [
+    { name: 'billing_verification_status', type: 'text', nullable: true },
+    { name: 'billing_expected_party', type: 'text', nullable: true },
+    { name: 'billing_actual_party', type: 'text', nullable: true },
+    { name: 'billing_verified_at', type: 'timestamptz', nullable: true },
+  ],
+  reason: 'sifreli yuk ICI sorgulanamaz; toplu MISMATCH raporu icin gerekir',
+} as const
 
 export const ENFORCEMENT_DESIGN = {
   preCreate: {

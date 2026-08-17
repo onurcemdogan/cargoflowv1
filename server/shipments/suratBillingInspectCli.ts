@@ -29,6 +29,13 @@ import {
   TRENDYOL_WHO_PAYS_FIELD,
 } from './suratBillingParty.ts'
 import {
+  buildBillingExpectationSnapshot,
+  evaluateBillingVerification,
+  readSuratActualBillingParty,
+  type BillingVerificationState,
+  type CarrierCreateStatus,
+} from './suratBillingVerification.ts'
+import {
   getSuratCargoByParcelUniqueId,
   isGetCargoConfigured,
 } from './suratGetCargoClient.ts'
@@ -61,6 +68,11 @@ const safe = (value: unknown): string => {
 }
 
 export interface BillingInspectionReport {
+  /** Taşıyıcı ekseni — faturalama ekseninden AYRIDIR. */
+  carrierCreateStatus: CarrierCreateStatus
+  /** Faturalama ekseni — barkod varlığı BURAYA etki etmez. */
+  billingVerificationState: BillingVerificationState
+  billingVerificationReason: string
   organizationMasked: string
   /** Kimliğin hangi kanonik alanda bulunduğu (teşhis şeffaflığı). */
   matchedField: string
@@ -97,8 +109,14 @@ export async function inspectOrderBilling(
   db: Db,
   organizationId: string,
   packageId: string,
-  options: { getCargo?: boolean; getCargoConfig?: Record<string, unknown> } = {},
+  options: {
+    getCargo?: boolean
+    getCargoConfig?: Record<string, unknown>
+    /** Anlık görüntü damgası — modül saat OKUMAZ, çağıran verir. */
+    inspectedAt?: string
+  } = {},
 ): Promise<BillingInspectionReport | null> {
+  const inspectedAt = options.inspectedAt ?? new Date().toISOString()
   // ÇOK ALANLI ÇÖZÜM: tarayıcı aday olarak `cargoTrackingNumber` (727…) üretiyor;
   // tek alanlı `packageId` araması bu yüzden çalışmıyordu.
   const target = await resolveBillingInspectionTarget(db, organizationId, packageId)
@@ -174,7 +192,48 @@ export async function inspectOrderBilling(
     senderCode,
   })
 
+  // TAŞIYICI DURUMU mevcut veriden türetilir: kayıtlı gönderi + taşıyıcı
+  // numarası varsa create GERÇEKLEŞMİŞTİR. Uydurma durum ÜRETİLMEZ.
+  const carrierCreateStatus: CarrierCreateStatus = shipmentRows.some(
+    (row) => String(row.trackingNumber ?? '').trim() !== '',
+  )
+    ? 'SUCCESS'
+    : 'NOT_STARTED'
+
+  // BEKLENTİ ANLIK GÖRÜNTÜSÜ. `capturedAt` bu teşhis anıdır; create anında
+  // alınmış bir kayıt HENÜZ YOK (kalıcılık bu turda bağlanmadı) ve bu
+  // gerçek `expectedCapturedAt` üzerinden görünür kalır.
+  const expected = buildBillingExpectationSnapshot({
+    expectedParty: observation.expectedBillingParty,
+    expectedSource: observation.expectedBillingPartySource,
+    expectedEvidence: observation.expectedBillingEvidence,
+    capturedAt: inspectedAt,
+  })
+  // GERÇEK TARAF: yalnız getCargo AÇIKÇA istendiyse ve okunabildiyse.
+  const actual = !options.getCargo
+    ? null
+    : whoPays !== null
+      ? readSuratActualBillingParty({ whoPays, senderCode })
+      : {
+          status:
+            getCargoStatus === 'NOT_CONFIGURED'
+              ? ('NOT_CONFIGURED' as const)
+              : ('CONTRACT_UNAVAILABLE' as const),
+          actualWhoPays: null,
+          actualParty: 'UNKNOWN' as const,
+          senderCode: null,
+          evidence: 'UNKNOWN' as const,
+        }
+  const verification = evaluateBillingVerification({
+    carrierCreateStatus,
+    expected,
+    actual,
+  })
+
   return {
+    carrierCreateStatus,
+    billingVerificationState: verification.status,
+    billingVerificationReason: verification.reason,
     organizationMasked: mask(organizationId),
     matchedField,
     packageIdMasked: mask(orderRow.packageId),
@@ -235,7 +294,14 @@ export function formatBillingReport(report: BillingInspectionReport): string[] {
     `ACTUAL_SURAT_WHO_PAYS   ${safe(report.actualSuratWhoPays)}`,
     `ACTUAL_BILLING_PARTY    ${report.actualBillingParty}`,
     `SENDER_CODE             ${safe(report.senderCode)}`,
-    `VERIFICATION            ${report.billingVerificationStatus}`,
+    '',
+    // İKİ AYRI EKSEN: taşıyıcı kaydı ile faturalama doğruluğu.
+    `CARRIER_CREATE_STATUS       ${report.carrierCreateStatus}`,
+    `EXPECTED_BILLING_PARTY      ${report.expectedBillingParty}`,
+    `EXPECTED_BILLING_SOURCE     ${report.expectedBillingPartySource}`,
+    `ACTUAL_BILLING_PARTY        ${report.actualBillingParty}`,
+    `BILLING_VERIFICATION_STATUS ${report.billingVerificationState}`,
+    `BILLING_VERIFICATION_REASON ${report.billingVerificationReason}`,
     '',
     // Bugünkü "başarı" tanımı T.No + barkod + artifact'tir; ÖDEYEN TARAF
     // doğrulanmaz. Beklenen taraf artık biliniyor, gerçek taraf bilinmiyor.
@@ -246,7 +312,7 @@ export function formatBillingReport(report: BillingInspectionReport): string[] {
       report.actualBillingParty === 'UNKNOWN' ? 'NO' : 'YES'
     }`,
     `BILLING_SUCCESS_GAP               ${
-      report.billingVerificationStatus === 'VERIFIED' ? 'CLOSED' : 'CONFIRMED'
+      report.billingVerificationState === 'VERIFIED' ? 'CLOSED' : 'CONFIRMED'
     }`,
     'GETCARGO_ROLE                     POST_CREATE_ACTUAL_VERIFICATION',
   ]
@@ -699,7 +765,7 @@ export async function runSuratBillingInspect(): Promise<number> {
     return 1
   }
   for (const line of formatBillingReport(report)) console.info(line)
-  if (report.billingVerificationStatus === 'MISMATCH') {
+  if (report.billingVerificationState === 'MISMATCH') {
     // GÖZLEM: bu tur baskıyı/başarıyı ETKİLEMEZ, yalnız raporlar.
     console.info('')
     console.info('[surat:billing] BILLING_PARTY_MISMATCH — yalnız gözlem.')
