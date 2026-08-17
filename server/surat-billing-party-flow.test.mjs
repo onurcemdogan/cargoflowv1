@@ -67,27 +67,34 @@ test('BILL-8: taraflardan biri UNKNOWN ise UNVERIFIED', () => {
 
 /* ═══ TRENDYOL KAYNAK TEŞHİSİ ══════════════════════════════════════════ */
 
-test('BILL-SRC-1: payer alani YOKSA UNKNOWN — "eksik=Trendyol" VARSAYIMI YOK', () => {
+test('BILL-SRC-1: SAGLAYICI SOZLESMESI — whoPays property YOK → TRENDYOL', () => {
+  // SÖZLEŞME DEĞİŞTİ (bu tur): eskiden "alan yok → UNKNOWN" idi. Artık
+  // Trendyol paket sözleşmesine göre alanın HİÇ GÖNDERİLMEMESİ Trendyol
+  // anlaşması demektir. Çıkarım YALNIZ yük gerçekten sağlayıcı ham paketi ise
+  // geçerlidir — burada `orderNumber`/`cargoTrackingNumber` bunu kanıtlar.
   const inspection = billing.inspectTrendyolBillingSource({
-    marketplace: 'Trendyol',
     rawOrder: { orderNumber: '1141000001', cargoTrackingNumber: '727000001' },
   })
   assert.equal(inspection.sourceField, null)
-  assert.equal(inspection.billingParty, 'UNKNOWN')
-  assert.equal(inspection.source, 'UNKNOWN')
-  assert.match(inspection.interpretation, /varsayım yapılmadı/)
+  assert.equal(inspection.rawFieldPresent, false)
+  assert.equal(inspection.billingParty, 'TRENDYOL')
+  assert.equal(inspection.source, 'TRENDYOL_WHO_PAYS_ABSENT')
+  assert.equal(inspection.provenance, 'PROVIDER_RAW')
+  // Geçmiş veri sağlayıcı paritesi KANITLANMADIĞI için kanıt seviyesi düşük.
+  assert.equal(inspection.evidence, 'UNVERIFIED_HISTORICAL_RAW')
 })
 
-test('BILL-SRC-2: SAGLAYICI SOZLESME VARSAYIMI — whoPays=1 → SELLER', () => {
-  // NOT: repoda gerçek Trendyol payer fixture'ı YOK. Bu test bir
-  // PROVIDER CONTRACT ASSUMPTION'dır: alan gerçekten `whoPays` ise ve
-  // değeri `1` ise satıcı öder. Diğer değerler UNKNOWN kalır.
+test('BILL-SRC-2: SAGLAYICI SOZLESMESI — whoPays=1 → SELLER', () => {
+  // TRENDYOL PROVIDER CONTRACT:
+  //   whoPays=1        → satıcı anlaşması
+  //   whoPays omitted  → Trendyol anlaşması
   const inspection = billing.inspectTrendyolBillingSource({
     rawOrder: { whoPays: 1 },
   })
   assert.equal(inspection.sourceField, 'whoPays')
+  assert.equal(inspection.rawFieldPresent, true)
   assert.equal(inspection.billingParty, 'SELLER')
-  assert.equal(inspection.source, 'TRENDYOL_WHO_PAYS')
+  assert.equal(inspection.source, 'TRENDYOL_WHO_PAYS_EXPLICIT_1')
 })
 
 test('BILL-SRC-3: kanitlanmamis whoPays degeri UNKNOWN kalir', () => {
@@ -96,27 +103,35 @@ test('BILL-SRC-3: kanitlanmamis whoPays degeri UNKNOWN kalir', () => {
   })
   // Trendyol tarafında `3`ün anlamı KANITLANMADI (Sürat kodlaması değil).
   assert.equal(inspection.billingParty, 'UNKNOWN')
-  assert.match(inspection.interpretation, /kanıtlanmış eşleme YOK/)
+  assert.equal(inspection.source, 'TRENDYOL_WHO_PAYS_UNSUPPORTED')
+  assert.match(inspection.interpretation, /sözleşmede tanımlı değil/)
 })
 
-test('BILL-SRC-4: sellerPays=true ve payer=SELLER sinyalleri', () => {
-  assert.equal(
-    billing.inspectTrendyolBillingSource({ rawOrder: { sellerPays: true } })
-      .billingParty, 'SELLER',
-  )
-  assert.equal(
-    billing.inspectTrendyolBillingSource({ rawOrder: { payer: 'SELLER' } })
-      .billingParty, 'SELLER',
-  )
-  assert.equal(
-    billing.inspectTrendyolBillingSource({ rawOrder: { payer: 'TRENDYOL' } })
-      .billingParty, 'TRENDYOL',
-  )
-  // sellerPays=false bir KANIT DEĞİLDİR (Trendyol öder demek değil).
-  assert.equal(
-    billing.inspectTrendyolBillingSource({ rawOrder: { sellerPays: false } })
-      .billingParty, 'UNKNOWN',
-  )
+test('BILL-SRC-4: payer/sellerPays TARAF BELIRLEMEZ, yalniz raporlanir', () => {
+  // Bu iki alan Faz 2'de KANITSIZ tahminlerdi. Sözleşme `whoPays` VARLIĞINA
+  // dayandığı için ikisini birlikte karar verici tutmak TUTARSIZ olurdu:
+  // `whoPays` yokken `payer=SELLER` hem "Trendyol öder" hem "satıcı öder" derdi.
+  const seller = billing.inspectTrendyolBillingSource({
+    rawOrder: { packageId: '1', sellerPays: true },
+  })
+  assert.equal(seller.billingParty, 'TRENDYOL', 'sozlesme whoPays VARLIGIDIR')
+  assert.deepEqual(seller.auxiliarySignals, [
+    { field: 'sellerPays', rawValue: 'true' },
+  ])
+
+  const payer = billing.inspectTrendyolBillingSource({
+    rawOrder: { packageId: '1', payer: 'SELLER' },
+  })
+  assert.equal(payer.billingParty, 'TRENDYOL')
+  assert.deepEqual(payer.auxiliarySignals, [
+    { field: 'payer', rawValue: 'SELLER' },
+  ])
+
+  // Açık `whoPays` her zaman yardımcı sinyalin ÖNÜNDEDİR.
+  const explicit = billing.inspectTrendyolBillingSource({
+    rawOrder: { packageId: '1', whoPays: 1, payer: 'TRENDYOL' },
+  })
+  assert.equal(explicit.billingParty, 'SELLER')
 })
 
 /* ═══ GOLDEN ═══════════════════════════════════════════════════════════ */
