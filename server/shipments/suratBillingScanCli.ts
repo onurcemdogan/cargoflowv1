@@ -4,6 +4,7 @@
 //   npm run surat:billing:scan -- --name MonalisaToka
 //   npm run surat:billing:scan -- --org <organizationId> --limit 100
 //   npm run surat:billing:scan -- --name MonalisaToka --shipments --limit 1000
+//   npm run surat:billing:scan -- --name MonalisaToka --unknown-reasons --limit 1000
 //
 // AĞ ÇAĞRISI YAPMAZ: bu komutta `--get-cargo` gibi bir anahtar YOKTUR.
 // Vendor sorgusu yalnız `surat:billing:inspect --get-cargo` ile mümkündür.
@@ -22,6 +23,10 @@ import {
   discoverSuratShipmentBillingEvidence,
   formatShipmentDiscoveryReport,
 } from './suratShipmentBillingDiscovery.ts'
+import {
+  analyzeSuratCreateEvidence,
+  formatCreateEvidenceReport,
+} from './suratCreateEvidenceForensics.ts'
 
 function readArg(name: string): string {
   const index = process.argv.indexOf(`--${name}`)
@@ -62,6 +67,16 @@ export async function runSuratBillingScan(): Promise<number> {
   // GÖNDERİ-ÖNCELİKLİ KEŞİF: sipariş-öncelikli tarama en yeni siparişleri
   // alır ve bunlar henüz kargoya verilmemiş olabilir. Gerçek `whoPays`
   // doğrulama evreni, taşıyıcı kaydı GERÇEKTEN oluşmuş gönderilerdir.
+  // UNKNOWN KÖK NEDEN FORENSİĞİ: "300 gönderi UNKNOWN" sonucunun NEDENİNİ
+  // sayarak kanıtlar. "Create yapılmadı" ile "sınıflandıramıyorum" AYRIDIR.
+  if (process.argv.includes('--unknown-reasons')) {
+    const forensics = await analyzeSuratCreateEvidence(db, organization, {
+      limit: Number(readArg('limit')) || undefined,
+    })
+    for (const line of formatCreateEvidenceReport(forensics)) console.info(line)
+    return 0
+  }
+
   if (process.argv.includes('--shipments')) {
     const discovery = await discoverSuratShipmentBillingEvidence(db, organization, {
       limit: Number(readArg('limit')) || undefined,

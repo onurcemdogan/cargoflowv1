@@ -385,6 +385,102 @@ export async function discoverSuratShipmentBillingEvidence(
   return result
 }
 
+/* ═══ UNKNOWN KÖK NEDEN FORENSİĞİ ══════════════════════════════════════ */
+
+/**
+ * OPERASYON İZLEMENİN SİSTEME GİRİŞİ — git + migration ile KANITLANDI.
+ *
+ * `shipment_operations` tablosu ve `carrier_create_called` kolonu
+ * `drizzle/0001_next_outlaw_kid.sql` içinde, `218e448` commit'iyle
+ * 2026-07-20'de geldi. Bu tarihten ÖNCE oluşmuş bir gönderi için operasyon
+ * kaydı BEKLENEMEZ; yokluğu "create yapılmadı" anlamına GELMEZ.
+ */
+export const OPERATION_TRACKING_INTRODUCED = {
+  commit: '218e448',
+  date: '2026-07-20',
+  migration: '0001_next_outlaw_kid.sql',
+  columns: ['shipment_operations.carrier_create_called'],
+} as const
+
+/** UNKNOWN sebepleri — SIRA precedence'tır, ilk eşleşen birincil sebeptir. */
+export const UNKNOWN_REASON_PRECEDENCE = [
+  'UNKNOWN_IMPORTED',
+  'UNKNOWN_LEGACY_SCHEMA',
+  'UNKNOWN_NO_OPERATION_ROWS',
+  'UNKNOWN_NO_CREATE_OPERATION',
+  'UNKNOWN_CREATE_OPERATION_STATUS_MISSING',
+  'UNKNOWN_CARRIER_CREATE_CALLED_MISSING',
+  'UNKNOWN_CARRIER_CREATE_CALLED_FALSE',
+  'UNKNOWN_CREATE_OPERATION_STATUS_OTHER',
+  'UNKNOWN_OTHER',
+] as const
+export type UnknownReason = (typeof UNKNOWN_REASON_PRECEDENCE)[number]
+
+/**
+ * İKİNCİ DERECEDEN KANIT SINIFLARI.
+ *
+ * `CREATE_PROVEN_LEGACY` yalnız şema + tarih ile GERÇEKTEN savunulabilen
+ * kombinasyondur: `source='local_create'` (kaydı CargoFlow oluşturdu, ithal
+ * veya pazaryeri kaynaklı değil) VE taşıyıcı numarası dolu. O yolda numara
+ * ancak taşıyıcı yanıtından gelebilir.
+ *
+ * Taşıyıcı numarasının VARLIĞI tek başına ASLA yeterli değildir: kayıt
+ * ithal edilmiş de olabilir. O durum `CREATE_POSSIBLE`dır.
+ */
+export const CREATE_EVIDENCE_CLASSES = [
+  'CREATE_PROVEN_STRONG',
+  'CREATE_PROVEN_LEGACY',
+  'CREATE_POSSIBLE',
+  'CREATE_UNKNOWN',
+] as const
+export type CreateEvidenceClass = (typeof CREATE_EVIDENCE_CLASSES)[number]
+
+export function classifyCreateEvidence(params: {
+  operationStatus?: string | null
+  carrierCreateCalled?: boolean | null
+  source?: unknown
+  trackingNumber?: unknown
+}): CreateEvidenceClass {
+  if (
+    text(params.operationStatus).toLowerCase() === 'succeeded' &&
+    params.carrierCreateCalled === true
+  ) {
+    return 'CREATE_PROVEN_STRONG'
+  }
+  const hasTracking = text(params.trackingNumber) !== ''
+  if (!hasTracking) return 'CREATE_UNKNOWN'
+  return text(params.source) === 'local_create'
+    ? 'CREATE_PROVEN_LEGACY'
+    : 'CREATE_POSSIBLE'
+}
+
+export function classifyUnknownReason(params: {
+  hasAnyOperation: boolean
+  hasCreateOperation: boolean
+  createStatus?: string | null
+  carrierCreateCalled?: boolean | null
+  source?: unknown
+  createdAt?: unknown
+}): UnknownReason {
+  if (text(params.source) === 'imported_legacy') return 'UNKNOWN_IMPORTED'
+  const createdAt = text(params.createdAt)
+  if (createdAt && createdAt < OPERATION_TRACKING_INTRODUCED.date) {
+    return 'UNKNOWN_LEGACY_SCHEMA'
+  }
+  if (!params.hasAnyOperation) return 'UNKNOWN_NO_OPERATION_ROWS'
+  if (!params.hasCreateOperation) return 'UNKNOWN_NO_CREATE_OPERATION'
+  const status = text(params.createStatus).toLowerCase()
+  if (!status) return 'UNKNOWN_CREATE_OPERATION_STATUS_MISSING'
+  if (status === 'succeeded') {
+    if (params.carrierCreateCalled === null || params.carrierCreateCalled === undefined) {
+      return 'UNKNOWN_CARRIER_CREATE_CALLED_MISSING'
+    }
+    if (params.carrierCreateCalled === false) return 'UNKNOWN_CARRIER_CREATE_CALLED_FALSE'
+  }
+  if (status === 'pending') return 'UNKNOWN_CREATE_OPERATION_STATUS_OTHER'
+  return 'UNKNOWN_OTHER'
+}
+
 /** Rapor satırları — PII YOK, kimlik bilgisi YOK. */
 export function formatShipmentDiscoveryReport(
   result: SuratShipmentDiscoveryResult,

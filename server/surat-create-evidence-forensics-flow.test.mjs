@@ -1,0 +1,435 @@
+import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { randomBytes } from 'node:crypto'
+import test from 'node:test'
+import { PGlite } from '@electric-sql/pglite'
+import { drizzle } from 'drizzle-orm/pglite'
+import { sql } from 'drizzle-orm'
+
+// SURAT_CREATE_UNKNOWN=300 KÖK NEDEN FORENSİĞİ.
+//
+// EN KRİTİK AYRIM: "create yapılmadı" ile "sınıflandıramıyorum" AYRI
+// ŞEYLERDİR. Üretimde 300 kalıcı Sürat gönderisi var ve hepsi UNKNOWN;
+// bu, gönderilerin oluşmadığı anlamına GELMEZ.
+//
+// KANITLANAN TARİH: `shipment_operations` + `carrier_create_called`
+// 2026-07-20'de (`218e448`, drizzle/0001) geldi. Bu tarihten ÖNCEKİ bir
+// gönderi için operasyon kaydı BEKLENEMEZ.
+
+const here = dirname(fileURLToPath(import.meta.url))
+process.env.ORDER_DATA_ENCRYPTION_KEY = randomBytes(32).toString('hex')
+process.env.SHIPMENT_ENCRYPTION_KEY = randomBytes(32).toString('hex')
+
+const schema = await import('./db/schema.ts')
+const forensics = await import('./shipments/suratCreateEvidenceForensics.ts')
+const discovery = await import('./shipments/suratShipmentBillingDiscovery.ts')
+const orderEncryption = await import('./orders/orderEncryption.ts')
+const shipmentEncryption = await import('./shipments/shipmentEncryption.ts')
+
+const nl = (v) => v.split('\r\n').join('\n')
+const rowsOf = (r) => (Array.isArray(r) ? r : r.rows) ?? []
+const codeOf = (file) =>
+  nl(readFileSync(file, 'utf8'))
+    .split(/\r?\n/)
+    .filter((line) => {
+      const t = line.trim()
+      return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*')
+    })
+    .join('\n')
+
+async function makeDb() {
+  const pglite = new PGlite()
+  const dir = join(here, '..', 'drizzle')
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) {
+    for (const statement of readFileSync(join(dir, file), 'utf8')
+      .split('--> statement-breakpoint')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
+      await pglite.exec(statement)
+    }
+  }
+  return { pglite, db: drizzle(pglite, { schema }) }
+}
+
+async function makeOrg(db, name = 'MonalisaToka') {
+  const rows = rowsOf(await db.execute(sql.raw(
+    `insert into organizations (name, slug)
+     values ('${name}','${name.toLowerCase()}-${randomBytes(3).toString('hex')}')
+     returning id, name`)))
+  return { id: String(rows[0].id), name: rows[0].name }
+}
+
+async function seedOrder(db, org, o) {
+  const raw = orderEncryption.encryptOrderPayload({
+    packageId: o.packageId, orderNumber: o.orderNumber ?? 'ORD-1', lines: [],
+  })
+  await db.execute(sql`insert into orders
+    (organization_id, marketplace, package_id, order_number, marketplace_status,
+     operation_status, cargo_tracking_number, order_date, raw_payload_encrypted)
+    values (${org.id}, 'Trendyol', ${o.packageId}, ${o.orderNumber ?? 'ORD-1'},
+      'Created', 'NEW', ${o.cargoTrackingNumber ?? null},
+      '2026-03-01T09:00:00.000Z', ${raw})`)
+}
+
+async function seedShipment(db, org, s) {
+  const payload = s.noPayload
+    ? null
+    : shipmentEncryption.encryptShipmentPayload({
+        ozelKargoTakipNo: s.ozelKargoTakipNo ?? null,
+        serviceMode: s.serviceMode ?? 'SURAT_CANONICAL_API',
+        ...(s.payloadExtra ?? {}),
+      })
+  await db.execute(sql`insert into shipments
+    (organization_id, marketplace, package_id, provider, source, status,
+     tracking_number, barcode, carrier_payload_encrypted, created_at)
+    values (${org.id}, 'Trendyol', ${s.packageId}, 'Surat',
+      ${s.source ?? 'local_create'}, 'CREATED', ${s.trackingNumber ?? null},
+      ${s.barcode ?? null}, ${payload},
+      ${s.createdAt ?? '2026-07-25T10:00:00.000Z'})`)
+}
+
+async function seedOperation(db, org, o) {
+  await db.execute(sql`insert into shipment_operations
+    (organization_id, marketplace, package_id, provider, operation_type,
+     idempotency_key, status, carrier_create_called, create_call_count)
+    values (${org.id}, 'Trendyol', ${o.packageId}, 'Surat',
+      ${o.operationType ?? 'CREATE'},
+      ${`SURAT:${org.id}:${o.packageId}:${o.operationType ?? 'CREATE'}`},
+      ${o.status}, ${o.carrierCreateCalled ?? false}, 1)`)
+}
+
+/* ═══ SEBEP SINIFLANDIRMASI — SAF ══════════════════════════════════════ */
+
+test('RSN-1: ithal kayit BIRINCIL sebep olarak ISARETLENIR', () => {
+  // İthal kayıtta operasyon kaydı BEKLENMEZ; tarih ne olursa olsun sebep budur.
+  assert.equal(
+    discovery.classifyUnknownReason({
+      hasAnyOperation: false, hasCreateOperation: false,
+      source: 'imported_legacy', createdAt: '2026-08-01T00:00:00.000Z',
+    }),
+    'UNKNOWN_IMPORTED',
+  )
+})
+
+test('RSN-2: operasyon izlemesi ONCESI kayit LEGACY_SCHEMA', () => {
+  // 2026-07-20 ÖNCESİ: operasyon kaydı beklenemez.
+  assert.equal(
+    discovery.classifyUnknownReason({
+      hasAnyOperation: false, hasCreateOperation: false,
+      source: 'local_create', createdAt: '2026-07-17T10:00:00.000Z',
+    }),
+    'UNKNOWN_LEGACY_SCHEMA',
+  )
+  // SONRASI: artık mekanik sebep geçerlidir.
+  assert.equal(
+    discovery.classifyUnknownReason({
+      hasAnyOperation: false, hasCreateOperation: false,
+      source: 'local_create', createdAt: '2026-07-25T10:00:00.000Z',
+    }),
+    'UNKNOWN_NO_OPERATION_ROWS',
+  )
+})
+
+test('RSN-3: mekanik sebepler deterministik sirayla ayrisir', () => {
+  const at = '2026-08-01T00:00:00.000Z'
+  assert.equal(
+    discovery.classifyUnknownReason({
+      hasAnyOperation: true, hasCreateOperation: false,
+      source: 'local_create', createdAt: at,
+    }),
+    'UNKNOWN_NO_CREATE_OPERATION',
+  )
+  assert.equal(
+    discovery.classifyUnknownReason({
+      hasAnyOperation: true, hasCreateOperation: true, createStatus: '',
+      source: 'local_create', createdAt: at,
+    }),
+    'UNKNOWN_CREATE_OPERATION_STATUS_MISSING',
+  )
+  assert.equal(
+    discovery.classifyUnknownReason({
+      hasAnyOperation: true, hasCreateOperation: true, createStatus: 'succeeded',
+      carrierCreateCalled: null, source: 'local_create', createdAt: at,
+    }),
+    'UNKNOWN_CARRIER_CREATE_CALLED_MISSING',
+  )
+  assert.equal(
+    discovery.classifyUnknownReason({
+      hasAnyOperation: true, hasCreateOperation: true, createStatus: 'succeeded',
+      carrierCreateCalled: false, source: 'local_create', createdAt: at,
+    }),
+    'UNKNOWN_CARRIER_CREATE_CALLED_FALSE',
+  )
+  assert.equal(
+    discovery.classifyUnknownReason({
+      hasAnyOperation: true, hasCreateOperation: true, createStatus: 'pending',
+      source: 'local_create', createdAt: at,
+    }),
+    'UNKNOWN_CREATE_OPERATION_STATUS_OTHER',
+  )
+})
+
+test('EVD-1: tracking TEK BASINA success DEGIL, kaynak sarttir', () => {
+  // Güçlü kanıt.
+  assert.equal(
+    discovery.classifyCreateEvidence({
+      operationStatus: 'succeeded', carrierCreateCalled: true,
+    }),
+    'CREATE_PROVEN_STRONG',
+  )
+  // local_create + numara → o yolda numara ancak taşıyıcı yanıtından gelir.
+  assert.equal(
+    discovery.classifyCreateEvidence({
+      source: 'local_create', trackingNumber: '11419469827',
+    }),
+    'CREATE_PROVEN_LEGACY',
+  )
+  // İthal/pazaryeri kaynaklı numara create KANITI DEĞİLDİR.
+  assert.equal(
+    discovery.classifyCreateEvidence({
+      source: 'imported_legacy', trackingNumber: '11419469827',
+    }),
+    'CREATE_POSSIBLE',
+  )
+  assert.equal(
+    discovery.classifyCreateEvidence({
+      source: 'marketplace_external', trackingNumber: '114',
+    }),
+    'CREATE_POSSIBLE',
+  )
+  // Numara yoksa hiçbir şey kanıtlanamaz.
+  assert.equal(
+    discovery.classifyCreateEvidence({ source: 'local_create' }),
+    'CREATE_UNKNOWN',
+  )
+})
+
+/* ═══ ÜRETİM ŞEKLİNİN YENİDEN ÜRETİMİ ══════════════════════════════════ */
+
+test('FOR-1: uretim deseni — numara VAR, operasyon YOK → UNKNOWN sebebi', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  // Üretimdeki şekil: 3 gönderi, hepsinde taşıyıcı numarası, operasyon YOK.
+  for (let index = 0; index < 3; index += 1) {
+    await seedOrder(db, org, {
+      packageId: `PKG-${index}`, orderNumber: `ORD-${index}`,
+      cargoTrackingNumber: `72700000000${String(index).padStart(5, '0')}`,
+    })
+    await seedShipment(db, org, {
+      packageId: `PKG-${index}`, trackingNumber: `1141946982${index}`,
+      createdAt: '2026-07-17T10:00:00.000Z',
+    })
+  }
+
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 1000 })
+  assert.equal(result.shipmentsScanned, 3)
+  assert.equal(result.shipmentsWithoutAnyOperation, 3)
+  assert.equal(result.shipmentsWithCreateOperation, 0)
+  assert.equal(result.createSucceeded, 0)
+  // Tarih operasyon izlemesinden ÖNCE → birincil sebep LEGACY_SCHEMA.
+  assert.equal(result.unknownReasonBreakdown.UNKNOWN_LEGACY_SCHEMA, 3)
+  assert.equal(result.shipmentsBeforeOperationTracking, 3)
+  assert.equal(result.shipmentsAfterOperationTracking, 0)
+  // Yardımcı bayraklar birincil sebep dışındaki olguları KAYBETMEZ.
+  assert.equal(result.auxiliaryFlags.NO_OPERATION_ROWS, 3)
+  assert.equal(result.auxiliaryFlags.HAS_TRACKING_NUMBER, 3)
+  assert.equal(result.auxiliaryFlags.SOURCE_LOCAL_CREATE, 3)
+  // İkinci derece kanıt: bunlar aslında create edilmiş kayıtlar.
+  assert.equal(result.createEvidence.CREATE_PROVEN_LEGACY, 3)
+  assert.equal(result.createEvidence.CREATE_PROVEN_STRONG, 0)
+  // Ters join ve beklenen taraf ayrıca ölçülür.
+  assert.equal(result.orderJoinResolved, 3)
+  assert.equal(result.expectedTrendyol, 3)
+})
+
+test('FOR-2: 300 sayisi sinir mi gercek mi — COUNT ile ayrisir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  for (let index = 0; index < 7; index += 1) {
+    await seedShipment(db, org, {
+      packageId: `PKG-${index}`, trackingNumber: `114${index}`,
+    })
+  }
+  // İstenen limit toplamdan BÜYÜK → taranan sayı gerçek toplamdır.
+  const wide = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 1000 })
+  assert.equal(wide.totalSuratShipmentsInScope, 7)
+  assert.equal(wide.shipmentsScanned, 7)
+  assert.equal(wide.queryLimitEffective, 1000)
+
+  // İstenen limit toplamdan KÜÇÜK → kesilme GÖRÜNÜR olur.
+  const narrow = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 3 })
+  assert.equal(narrow.totalSuratShipmentsInScope, 7)
+  assert.equal(narrow.shipmentsScanned, 3)
+  assert.ok(narrow.shipmentsScanned < narrow.totalSuratShipmentsInScope)
+})
+
+test('FOR-3: operasyon kapsamasi dogru sayilir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const at = '2026-08-01T10:00:00.000Z'
+  // (1) güçlü kanıt
+  await seedShipment(db, org, { packageId: 'P1', trackingNumber: '114', createdAt: at })
+  await seedOperation(db, org, {
+    packageId: 'P1', status: 'succeeded', carrierCreateCalled: true,
+  })
+  // (2) CREATE var ama called=false
+  await seedShipment(db, org, { packageId: 'P2', trackingNumber: '115', createdAt: at })
+  await seedOperation(db, org, {
+    packageId: 'P2', status: 'succeeded', carrierCreateCalled: false,
+  })
+  // (3) operasyon var ama CREATE DEĞİL
+  await seedShipment(db, org, { packageId: 'P3', trackingNumber: '116', createdAt: at })
+  await seedOperation(db, org, {
+    packageId: 'P3', operationType: 'LABEL', status: 'succeeded',
+  })
+
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 1000 })
+  assert.equal(result.shipmentsWithAnyOperation, 3)
+  assert.equal(result.shipmentsWithCreateOperation, 2)
+  assert.equal(result.shipmentsWithoutCreateOperation, 1)
+  assert.equal(result.createSucceeded, 2)
+  assert.equal(result.carrierCreateCalledTrue, 1)
+  assert.equal(result.carrierCreateCalledFalse, 1)
+  assert.equal(result.createEvidence.CREATE_PROVEN_STRONG, 1)
+  assert.equal(result.unknownReasonBreakdown.UNKNOWN_CARRIER_CREATE_CALLED_FALSE, 1)
+  assert.equal(result.unknownReasonBreakdown.UNKNOWN_NO_CREATE_OPERATION, 1)
+})
+
+/* ═══ YÜK ÖRNEKLEMESİ ══════════════════════════════════════════════════ */
+
+test('FOR-4: yuk ornegi SINIRLI, yalniz ALAN ADLARI raporlanir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  for (let index = 0; index < 25; index += 1) {
+    await seedShipment(db, org, {
+      packageId: `PKG-${index}`, trackingNumber: `114${index}`,
+      ozelKargoTakipNo: `72700000000${String(index).padStart(5, '0')}`,
+      payloadExtra: { gizliMusteriAdi: 'Ömer Şahin' },
+      createdAt: `2026-07-${String((index % 28) + 1).padStart(2, '0')}T10:00:00.000Z`,
+    })
+  }
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 1000 })
+  assert.ok(
+    result.payloadsDecrypted <= discovery.MAX_CANDIDATE_PAYLOADS,
+    `cozulen: ${result.payloadsDecrypted}`,
+  )
+  assert.ok(result.candidates.length <= discovery.MAX_CANDIDATE_PAYLOADS)
+  // Alan ADLARI görünür, DEĞERLER görünmez.
+  assert.ok(result.payloadFieldInventory.includes('ozelKargoTakipNo'))
+  assert.ok(result.payloadFieldInventory.includes('gizliMusteriAdi'))
+  const report = forensics.formatCreateEvidenceReport(result).join('\n')
+  assert.equal(report.includes('Ömer Şahin'), false, 'PII BASILMAMALI')
+  assert.ok(report.includes('PAYLOAD_FIELD_INVENTORY'))
+  // Servis modu dağılımı YALNIZ örnekten gelir — bu açıkça yazılır.
+  assert.ok(report.includes('YALNIZ cozulen ornekler'))
+})
+
+test('FOR-5: gercek whoPays alani varsa provenance ile raporlanir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  await seedShipment(db, org, {
+    packageId: 'PKG-W', trackingNumber: '114', payloadExtra: { whoPays: '3' },
+  })
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  assert.equal(result.actualWhoPaysFieldFound, true)
+  assert.equal(result.actualWhoPaysProvenance, 'persistedCarrierPayload.whoPays')
+
+  // Tahmini alan adi KABUL EDILMEZ.
+  const { pglite: p2, db: db2 } = await makeDb()
+  t.after(() => p2.close())
+  const org2 = await makeOrg(db2)
+  await seedShipment(db2, org2, {
+    packageId: 'PKG-X', trackingNumber: '114', payloadExtra: { whoPaysCode: '3' },
+  })
+  const guessed = await forensics.analyzeSuratCreateEvidence(db2, org2, { limit: 100 })
+  assert.equal(guessed.actualWhoPaysFieldFound, false)
+})
+
+/* ═══ GOLDEN ARAMASI ═══════════════════════════════════════════════════ */
+
+test('FOR-6: golden TAM ESLESME ile aranir, bulunmazsa NO', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  await seedShipment(db, org, { packageId: 'PKG-N', trackingNumber: '114' })
+
+  const missing = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  assert.equal(missing.goldenSearchOrder, false)
+  assert.equal(missing.goldenSearchShipment, false)
+  assert.equal(missing.goldenSearchPayload, false)
+
+  // Siparişte varsa bulunur.
+  await seedOrder(db, org, {
+    packageId: 'PKG-G', orderNumber: 'ORD-G',
+    cargoTrackingNumber: discovery.GOLDEN_PARCEL,
+  })
+  await seedShipment(db, org, {
+    packageId: 'PKG-G', trackingNumber: '115',
+    ozelKargoTakipNo: discovery.GOLDEN_PARCEL,
+  })
+  const found = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  assert.equal(found.goldenSearchOrder, true)
+  assert.equal(found.goldenSearchPayload, true)
+})
+
+/* ═══ İZOLASYON · PERFORMANS · GÜVENLİK ════════════════════════════════ */
+
+test('FOR-7: tenant izolasyonu + sabit sorgu butcesi + YAZMA YOK', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const mine = await makeOrg(db, 'MonalisaToka')
+  const other = await makeOrg(db, 'BaskaFirma')
+  await seedShipment(db, other, { packageId: 'PKG-OTHER', trackingNumber: '114' })
+  for (let index = 0; index < 20; index += 1) {
+    await seedOrder(db, mine, { packageId: `PKG-${index}`, orderNumber: `ORD-${index}` })
+    await seedShipment(db, mine, {
+      packageId: `PKG-${index}`, trackingNumber: `114${index}`,
+    })
+  }
+
+  const writes = []
+  const original = pglite.query.bind(pglite)
+  pglite.query = (query, ...rest) => {
+    writes.push(String(query))
+    return original(query, ...rest)
+  }
+  const result = await forensics.analyzeSuratCreateEvidence(db, mine, { limit: 1000 })
+  assert.equal(result.shipmentsScanned, 20, 'baska tenant SIZMAMALI')
+  assert.equal(result.totalSuratShipmentsInScope, 20)
+  // count + gönderiler + operasyonlar + siparişler + 2 golden = 6. SABİT.
+  assert.equal(result.dbQueryCount, 6)
+  for (const statement of writes) {
+    assert.equal(
+      /\b(insert|update|delete)\b/i.test(statement), false,
+      `YAZMA: ${statement.slice(0, 60)}`,
+    )
+  }
+})
+
+test('FOR-8: forensik modul AG/YAZMA/CREATE icermez', () => {
+  const code = codeOf('server/shipments/suratCreateEvidenceForensics.ts')
+  for (const forbidden of ['.insert(', '.update(', '.delete(', 'migrate(']) {
+    assert.equal(code.includes(forbidden), false, `${forbidden} OLMAMALI`)
+  }
+  assert.equal(/\bfetch\(/.test(code), false, 'ag cagrisi OLMAMALI')
+  assert.equal(code.includes('suratGetCargoClient'), false)
+  // Operasyon izleme tarihi SABIT ve kanitli.
+  assert.equal(discovery.OPERATION_TRACKING_INTRODUCED.commit, '218e448')
+  assert.equal(discovery.OPERATION_TRACKING_INTRODUCED.date, '2026-07-20')
+  assert.equal(
+    discovery.OPERATION_TRACKING_INTRODUCED.migration, '0001_next_outlaw_kid.sql',
+  )
+})
+
+test('FOR-9: CLI --unknown-reasons bayragi bagli', () => {
+  const code = codeOf('server/shipments/suratBillingScanCli.ts')
+  assert.ok(code.includes("process.argv.includes('--unknown-reasons')"))
+  assert.ok(code.includes('analyzeSuratCreateEvidence'))
+})
