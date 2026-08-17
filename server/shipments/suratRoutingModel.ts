@@ -183,9 +183,12 @@ const ROLE_FIELDS: Record<
   SuratCredentialRole,
   { user: string[]; secret: string[]; source: string }
 > = {
+  // ALAN LİSTESİ `resolveCanonicalTenantSuratAccount` İLE BİREBİR AYNIDIR.
+  // Farklı olsaydı router "çözüldü" derken sır okuyucu `null` dönebilir ve
+  // create sessizce kimliksiz giderdi.
   PRIMARY_MARKETPLACE: {
-    user: ['canonicalPrimaryKullaniciAdi', 'liveKullaniciAdi', 'kullaniciAdi'],
-    secret: ['canonicalPrimarySifre', 'liveSifre', 'sifre'],
+    user: ['canonicalPrimaryKullaniciAdi', 'liveKullaniciAdi'],
+    secret: ['canonicalPrimarySifre', 'liveSifre'],
     source: 'tenant.surat.primary',
   },
   SELLER_PAYS: {
@@ -274,6 +277,15 @@ export function resolveSuratCredentialContext(params: {
   }
 }
 
+/** Router rolü → mevcut sır okuyucusunun anahtarı (TEK eşleme). */
+export function credentialRoleToAccountKey(
+  role: SuratCredentialRole,
+): 'PRIMARY' | 'SELLER_PAYS' | 'CASH_ON_DELIVERY' {
+  if (role === 'COD') return 'CASH_ON_DELIVERY'
+  if (role === 'SELLER_PAYS') return 'SELLER_PAYS'
+  return 'PRIMARY'
+}
+
 /* ═══ 5) PAZARYERİ SÖZLEŞME ÖN KONTROLÜ ════════════════════════════════ */
 
 export interface SuratCreatePreflight {
@@ -282,6 +294,8 @@ export interface SuratCreatePreflight {
   failures: string[]
   expectedBillingParty: BillingPartyV2
   expectedSuratWhoPays: string | null
+  /** Teşhis: pazaryeri numarası beklenen biçimde mi (BLOKLAMAZ). */
+  parcelIdentityFormatValid: boolean
 }
 
 /** Trendyol kargo numarası biçimi — mevcut kanonik doğrulama. */
@@ -319,11 +333,12 @@ export function evaluateSuratCreatePreflight(params: {
     if (text(params.entegrasyonFirmasi) !== 'Trendyol') {
       failures.push('ENTEGRASYON_FIRMASI_INVALID')
     }
+    // BİÇİM KURALI BLOKLAMAZ. Mevcut kanonik sözleşme yalnız "boş değil"
+    // ister; buraya uydurma bir hane kuralı koymak gerçek gönderileri
+    // engelleyebilirdi. Biçim yalnız teşhis olarak raporlanır.
     const parcel = text(params.ozelKargoTakipNo)
     if (!parcel) failures.push('OZEL_KARGO_TAKIP_NO_MISSING')
-    else if (!isTrendyolParcelIdentity(parcel)) {
-      failures.push('OZEL_KARGO_TAKIP_NO_FORMAT_INVALID')
-    } else if (
+    else if (
       text(params.orderCargoTrackingNumber) &&
       text(params.orderCargoTrackingNumber) !== parcel
     ) {
@@ -340,5 +355,6 @@ export function evaluateSuratCreatePreflight(params: {
     failures,
     expectedBillingParty: params.billingParty,
     expectedSuratWhoPays: expected,
+    parcelIdentityFormatValid: isTrendyolParcelIdentity(params.ozelKargoTakipNo),
   }
 }

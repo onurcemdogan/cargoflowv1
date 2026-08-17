@@ -141,11 +141,15 @@ test('MTX-8: 727 eksik/bozuk/baska kaynak → BLOCKED', () => {
       'OZEL_KARGO_TAKIP_NO_MISSING',
     ),
   )
-  assert.ok(
-    validPreflight({ ozelKargoTakipNo: 'PKG-1' }).failures.includes(
-      'OZEL_KARGO_TAKIP_NO_FORMAT_INVALID',
-    ),
-  )
+  // BİÇİM BLOKLAMAZ — mevcut kanonik sözleşme yalnız "boş değil" ister.
+  // Uydurma bir hane kuralı gerçek gönderileri engelleyebilirdi; biçim
+  // yalnız TEŞHİS olarak raporlanır.
+  const oddFormat = validPreflight({
+    ozelKargoTakipNo: 'PKG-1', orderCargoTrackingNumber: 'PKG-1',
+  })
+  assert.equal(oddFormat.valid, true, 'bicim BLOKLAMAZ')
+  assert.equal(oddFormat.parcelIdentityFormatValid, false, 'ama RAPORLANIR')
+  assert.equal(validPreflight().parcelIdentityFormatValid, true)
   // Numara SIPARISTEN gelmeli; baska kaynak faturalamayi bozar.
   assert.ok(
     validPreflight({
@@ -333,10 +337,16 @@ test('TRC-4: alan durumlari operator icin isaretlenir', () => {
 
 /* ═══ ÜRETİM DAVRANIŞI DEĞİŞMEDİ ══════════════════════════════════════ */
 
-test('SAFE-1: yonlendirme modeli create yoluna BAGLANMADI', () => {
+test('SAFE-1: yonlendirme OTORITER create sinirina BAGLANDI', () => {
+  // Faz 5C: model artik GERCEK create yolunda. Tek otoriter sinir adaptor.
+  const adapter = codeOf('server/shipments/suratCanonicalCreateAdapter.ts')
+  assert.ok(adapter.includes('resolveSuratCredentialContext('))
+  assert.ok(adapter.includes('evaluateSuratCreatePreflight('))
+  assert.ok(adapter.includes('resolveBillingPartyV2('))
+  assert.ok(adapter.includes('buildTraceId('))
+
+  // Alt katmanlar HALA saf: model/istemci yonlendirme bilmez.
   for (const file of [
-    'server/shipments/suratCanonicalCreateAdapter.ts',
-    'server/shipments/suratCanonicalShipmentService.ts',
     'server/shipments/suratCanonicalGonderiModel.ts',
     'server/shipments/suratWebApiClient.ts',
   ]) {

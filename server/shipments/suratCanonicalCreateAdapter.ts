@@ -5,8 +5,25 @@
 // PRODUCTION-FIRST: env credential yok, api01 yok, SOAP yok, test/prova yok.
 import {
   resolveSuratMarketplaceContext,
+  CANONICAL_GONDERI_FIELDS,
+  SURAT_SERVICE_DEFAULTS,
   type CanonicalShipmentInput,
 } from './suratCanonicalGonderiModel.ts'
+import {
+  credentialRoleToAccountKey,
+  describeOdemeTipi,
+  evaluateSuratCreatePreflight,
+  expectedSuratWhoPays,
+  resolveBillingPartyV2,
+  resolveCodContext,
+  resolveCodCredentialPolicy,
+  resolveSuratCredentialContext,
+} from './suratRoutingModel.ts'
+import {
+  buildTraceId,
+  buildUserFacingError,
+  describeWireWhoPays,
+} from './suratCreateTrace.ts'
 import {
   resolveSuratPrintableArtifact,
   buildSuratArtifactLogContext,
@@ -297,10 +314,90 @@ export async function createCanonicalSuratShipmentForRequest(
     reference: params.reference,
     resolveAddress: params.resolveAddress,
   })
-  const billingParty = resolveSuratBillingParty({
-    order: params.order,
-    cashOnDelivery: params.cashOnDelivery,
+
+  // ═══ OTORİTER YÖNLENDİRME (Faz 5C) ═══════════════════════════════════
+  // Kredensiyal seçimi ARTIK dağınık sipariş alanlarından (sellerPays /
+  // payer / shippingPayer) YAPILMAZ. Tek sınır: `resolveSuratCredentialContext`.
+  const rawOrder = (params.order.rawOrder ?? {}) as Record<string, unknown>
+  const billing = resolveBillingPartyV2(rawOrder)
+  const cod = resolveCodContext({
+    enabled: params.cashOnDelivery === true,
+    collectionType: params.config.kapidanOdemeTahsilatTipi,
+    amount: params.order.cashOnDeliveryAmount,
   })
+  const credential = resolveSuratCredentialContext({
+    config: params.config,
+    billingParty: billing.billingParty,
+    cod,
+    codPolicy: resolveCodCredentialPolicy(params.config.codCredentialPolicy),
+  })
+  const preflight = evaluateSuratCreatePreflight({
+    marketplace: params.order.marketplace,
+    pazaryerimi: input.context.pazaryerimi,
+    entegrasyonFirmasi: input.context.entegrasyonFirmasi,
+    ozelKargoTakipNo: input.context.ozelKargoTakipNo,
+    orderCargoTrackingNumber: params.order.cargoTrackingNumber,
+    billingParty: billing.billingParty,
+    credential,
+  })
+
+  const traceId = buildTraceId(
+    `${params.organizationId}:${params.order.packageId ?? params.reference}`,
+  )
+  const wire = describeWireWhoPays({ contractFields: CANONICAL_GONDERI_FIELDS })
+  const attemptContext = {
+    traceId,
+    billingParty: billing.billingParty,
+    billingEvidence: billing.billingEvidence,
+    expectedSuratWhoPays: expectedSuratWhoPays(billing.billingParty),
+    ...describeOdemeTipi(SURAT_SERVICE_DEFAULTS.OdemeTipi),
+    codEnabled: cod.codEnabled,
+    codCollectionType: cod.codCollectionType,
+    codAmountPresent: cod.codAmountPresent,
+    credentialRole: credential.role,
+    credentialSource: credential.source,
+    maskedAccount: credential.maskedAccount,
+    credentialReason: credential.reason,
+    credentialResolved: credential.resolved,
+    credentialErrorCode: credential.errorCode,
+    pazaryerimi: input.context.pazaryerimi,
+    entegrasyonFirmasi: input.context.entegrasyonFirmasi,
+    ozelKargoTakipNoPresent: Boolean(input.context.ozelKargoTakipNo),
+    serviceMode: SURAT_CANONICAL_SERVICE_MODE,
+    serviceType: SURAT_CANONICAL_SERVICE_TYPE,
+    operation: SURAT_CANONICAL_OPERATION_NAME,
+    ...wire,
+    preflightValid: preflight.valid,
+    preflightFailures: preflight.failures,
+  }
+
+  // FAIL-CLOSED: bağlam bozuksa TAŞIYICIYA GİDİLMEZ. Yanlış bağlamda
+  // oluşan gönderi yanlış cariye yazılır ve geri alınamaz.
+  if (!preflight.valid) {
+    return {
+      ok: false,
+      source: 'real',
+      errorSource: 'Frontend',
+      // MEVCUT YANIT SÖZLEŞMESİ KORUNUR: kimlik eksikliği dışarıya hâlâ
+      // `SURAT_ACCOUNT_NOT_CONFIGURED` olarak çıkar; ince sebep izdedir.
+      errorCode: credential.resolved
+        ? preflight.errorCode
+        : 'SURAT_ACCOUNT_NOT_CONFIGURED',
+      message: buildUserFacingError({ traceId }),
+      canonicalCreate: {
+        adapter: 'SURAT_WEB_API',
+        carrierCreateStatus: 'NOT_STARTED',
+        carrierCreateAttempts: 0,
+        billingParty: credential.role,
+        accountFingerprint: credential.maskedAccount,
+      },
+      suratCreateTrace: attemptContext,
+    }
+  }
+
+  const billingParty = credentialRoleToAccountKey(
+    credential.role,
+  ) as SuratBillingParty
   const account = resolveCanonicalTenantSuratAccount(params.config, billingParty)
   const result = await createCanonicalSuratShipment({
     organizationId: params.organizationId,
@@ -315,7 +412,19 @@ export async function createCanonicalSuratShipmentForRequest(
     idempotency: createHeldIdempotencyPort(),
     fetchImpl: params.fetchImpl,
   })
-  return mapCanonicalResultToCreateResponse({ result, input, account })
+  const response = mapCanonicalResultToCreateResponse({ result, input, account })
+  // AYNI traceId tüm aşamalarda taşınır: PRE_FLIGHT → ROUTING →
+  // REQUEST_READY → CARRIER_CALL → CARRIER_RESPONSE → FINAL.
+  return {
+    ...response,
+    suratCreateTrace: {
+      ...attemptContext,
+      carrierCreateStatus: result.carrierCreateStatus,
+      carrierCreateAttempts: result.carrierCreateAttempts,
+      trackingPresent: Boolean(result.trackingNo),
+      barcodePresent: result.barcode.length > 0,
+    },
+  }
 }
 
 export { buildCanonicalIdempotencyKey }

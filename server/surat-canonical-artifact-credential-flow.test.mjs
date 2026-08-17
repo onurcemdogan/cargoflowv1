@@ -108,12 +108,32 @@ test('3B-3: COD NORMAL gonderiyi ELE GECIREMEZ', async () => {
   } finally { spy.restore() }
 })
 
-test('3B-4: ACIK gonderici-oder siparisi sellerPays hesabina gider', async () => {
+test('3B-4: LEGACY payer alani ARTIK kredensiyal SECMEZ (Faz 5C)', async () => {
+  // DAVRANIŞ DEĞİŞİKLİĞİ: kredensiyal artık dağınık sipariş alanlarından
+  // (`payer`/`sellerPays`/`shippingPayer`) seçilmez. Otoriter kaynak
+  // Trendyol sözleşmesidir (`rawOrder.whoPays`) ve tek sınır
+  // `resolveSuratCredentialContext`tir. Bu alanları hiçbir üretim kod yolu
+  // zaten DOLDURMUYORDU (Faz 4C, WIRE-2).
   const spy = installFetchSpy(() => jsonResponse(okBody()))
   try {
     const result = await runCanonical({ order: { payer: 'SELLER' } })
+    assert.equal(
+      JSON.parse(spy.calls[0].init.body).KullaniciAdi, 'PRIMARY_LIVE_1111',
+      'legacy alan kredensiyali DEGISTIRMEMELI',
+    )
+    assert.equal(result.canonicalCreate.billingParty, 'PRIMARY')
+  } finally { spy.restore() }
+})
+
+test('3B-4b: OTORITER kaynak Trendyol sozlesmesidir', async () => {
+  // Ham yükte `whoPays=1` VARSA satıcı öder kimliği kullanılır.
+  const spy = installFetchSpy(() => jsonResponse(okBody()))
+  try {
+    const result = await runCanonical({ order: { rawOrder: { whoPays: 1 } } })
     assert.equal(JSON.parse(spy.calls[0].init.body).KullaniciAdi, 'SELLERPAYS_2222')
     assert.equal(result.canonicalCreate.billingParty, 'SELLER_PAYS')
+    assert.equal(result.suratCreateTrace.billingParty, 'SELLER_PAYS')
+    assert.equal(result.suratCreateTrace.expectedSuratWhoPays, '1')
   } finally { spy.restore() }
 })
 
