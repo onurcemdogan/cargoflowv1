@@ -148,7 +148,7 @@ test('SCAN-3: varsayilan sinir 100, tavan uygulanir', () => {
 
 /* ═══ HAM PAYER SAYIMI ═════════════════════════════════════════════════ */
 
-test('SCAN-4/5: whoPays=1 sayilir; EKSIK "Trendyol" DIYE etiketlenmez', async (t) => {
+test('SCAN-4/5: HAM sayaclar korunur, SEMANTIK sinif ayri turetilir', async (t) => {
   const { pglite, db } = await makeProductionBaseDb()
   t.after(() => pglite.close())
   const org = await makeOrg(db, 'MonalisaToka')
@@ -160,19 +160,42 @@ test('SCAN-4/5: whoPays=1 sayilir; EKSIK "Trendyol" DIYE etiketlenmez', async (t
   await seedOrder(db, org, { packageId: 'PKG-3', cargoTrackingNumber: '727000003', day: 3 })
 
   const result = await scanner.scanTenantBillingCandidates(db, org, { limit: 50 })
+
+  // (1) HAM GÖZLEM — sözleşme değişse de AYNI kalır (veri ≠ yorum).
   assert.equal(result.summary.rawWhoPays1Count, 1)
   assert.equal(result.summary.rawMissingCount, 2)
+  assert.equal(result.summary.rawOtherCount, 0)
+
+  // (2) SEMANTİK SINIFLANDIRMA — sağlayıcı sözleşmesinden TÜRETİLİR.
+  assert.equal(result.summary.expectedSellerPaysCount, 1)
+  assert.equal(result.summary.expectedTrendyolPaysCount, 2)
+  assert.equal(result.summary.expectedUnknownCount, 0)
+  assert.equal(result.summary.expectedSourceExplicit1Count, 1)
+  assert.equal(result.summary.expectedSourceAbsentCount, 2)
+  assert.equal(result.summary.expectedSourceUnsupportedCount, 0)
+
   assert.equal(result.supplierCandidates.length, 1)
   assert.equal(result.supplierCandidates[0].expectedBillingParty, 'SELLER')
 
-  // EKSİK payer adayları "TRENDYOL" olarak İDDİA EDİLMEZ.
+  // GERÇEK taraf hâlâ BİLİNMİYOR: getCargo çağrılmadı, uydurulmadı.
   for (const candidate of result.trendyolPaysCandidates) {
-    assert.equal(candidate.expectedBillingParty, 'UNKNOWN')
+    assert.equal(candidate.expectedBillingParty, 'TRENDYOL')
+    assert.equal(candidate.expectedBillingPartySource, 'TRENDYOL_WHO_PAYS_ABSENT')
+    // Geçmiş veri sağlayıcı paritesi kanıtlanmadığı için kanıt seviyesi düşük.
+    assert.equal(candidate.expectedBillingEvidence, 'UNVERIFIED_HISTORICAL_RAW')
     assert.equal(candidate.actualBillingParty, 'UNKNOWN')
     assert.equal(candidate.actualSuratWhoPays, null, 'gercek whoPays UYDURULMAZ')
   }
   const report = scanner.formatScanReport(result, org.name).join('\n')
-  assert.ok(report.includes('TRENDYOL_PAYS_CANDIDATE_UNKNOWN'))
+  assert.ok(report.includes('RAW OBSERVATION'))
+  assert.ok(report.includes('SEMANTIC CLASSIFICATION'))
+  assert.ok(report.includes('EXPECTED_TRENDYOL_PAYS  2'))
+  assert.ok(report.includes('EVIDENCE_UNVERIFIED_HISTORICAL_RAW'))
+  // Beklenen taraf BİLİNİYOR, gerçek taraf hâlâ DOĞRULANMIYOR.
+  assert.ok(report.includes('EXPECTED_BILLING_PARTY_AVAILABLE  YES'))
+  assert.ok(report.includes('ACTUAL_BILLING_PARTY_AVAILABLE    NO'))
+  assert.ok(report.includes('BILLING_SUCCESS_GAP               CONFIRMED'))
+  // Kanıtlanmamış bir şey "doğrulandı" olarak BASILMAZ.
   assert.equal(report.includes('TRENDYOL_PAYS_CONFIRMED'), false)
 })
 

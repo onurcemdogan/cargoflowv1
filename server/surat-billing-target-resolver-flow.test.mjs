@@ -24,6 +24,7 @@ process.env.SHIPMENT_ENCRYPTION_KEY = randomBytes(32).toString('hex')
 
 const schema = await import('./db/schema.ts')
 const scanner = await import('./shipments/suratBillingScanner.ts')
+const orderEncryption = await import('./orders/orderEncryption.ts')
 
 const rowsOf = (r) => (Array.isArray(r) ? r : r.rows) ?? []
 
@@ -50,13 +51,23 @@ async function makeOrg(db, name = 'MonalisaToka') {
 }
 
 async function seedOrder(db, org, o) {
+  // GERÇEKÇİ FİKSTÜR: üretimde `raw_payload_encrypted` SAĞLAYICI ham paketini
+  // taşır. Boş bırakmak faturalama sınıflandırmasını (haklı olarak) UNKNOWN'a
+  // düşürür ve aday üretimini engellerdi.
+  const raw = orderEncryption.encryptOrderPayload({
+    packageId: o.packageId,
+    orderNumber: o.orderNumber ?? 'ORD-1',
+    cargoTrackingNumber: o.cargoTrackingNumber ?? null,
+    lines: [],
+  })
   await db.execute(sql`insert into orders
     (organization_id, marketplace, package_id, order_number, external_order_id,
      marketplace_status, operation_status, shipping_city, cargo_tracking_number,
-     order_date)
+     order_date, raw_payload_encrypted)
     values (${org.id}, 'Trendyol', ${o.packageId}, ${o.orderNumber ?? 'ORD-1'},
       ${o.externalOrderId ?? null}, 'Created', 'NEW', 'İstanbul',
-      ${o.cargoTrackingNumber ?? null}, ${o.orderDate ?? '2026-03-01T09:00:00.000Z'})`)
+      ${o.cargoTrackingNumber ?? null}, ${o.orderDate ?? '2026-03-01T09:00:00.000Z'},
+      ${raw})`)
 }
 
 const PARCEL = '7270035942963454'

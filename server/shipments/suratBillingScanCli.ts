@@ -55,7 +55,7 @@ export async function runSuratBillingScan(): Promise<number> {
   }
 
   // Tenant Sürat yapılandırması TEK kez okunur (sipariş başına DEĞİL).
-  let suratConfig: Record<string, unknown> = {}
+  let suratConfig: Record<string, unknown>
   try {
     // Tip sınırı: repo genelinde kullanılan gevşetme (bkz. diğer CLI'lar).
     const config = await loadOrganizationIntegrationConfig(

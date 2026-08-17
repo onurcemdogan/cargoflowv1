@@ -13,11 +13,11 @@ import { and, eq } from 'drizzle-orm'
 import { closePool, getDb, isDatabaseConfigured } from '../db/client.ts'
 import { loadOrganizationIntegrationConfig } from '../integrations/credentialService.ts'
 import { organizationSettings, shipments } from '../db/schema.ts'
-import { decryptOrderPayload } from '../orders/orderEncryption.ts'
 import { decryptShipmentPayload } from './shipmentEncryption.ts'
 import {
   buildBillingObservation,
   inspectTrendyolBillingSource,
+  TRENDYOL_WHO_PAYS_FIELD,
 } from './suratBillingParty.ts'
 import {
   getSuratCargoByParcelUniqueId,
@@ -25,6 +25,7 @@ import {
 } from './suratGetCargoClient.ts'
 import {
   maskIdentifier,
+  readOrderRawPayload,
   resolveBillingInspectionTarget,
   resolveOrganizationByName,
 } from './suratBillingScanner.ts'
@@ -57,9 +58,15 @@ export interface BillingInspectionReport {
   packageIdMasked: string
   marketplace: string
   rawSourceField: string | null
+  /** Sözleşme alanı GERÇEKTEN kendi property'si olarak var mıydı. */
+  rawPayerPresent: boolean
   rawValue: string | null
+  rawPayloadAvailability: string
+  rawDataProvenance: string
   expectedBillingParty: string
   expectedBillingPartySource: string
+  expectedBillingEvidence: string
+  auxiliaryPayerSignals: string[]
   credentialClass: string
   parcelUniqueId: string | null
   shipmentIds: string[]
@@ -98,19 +105,15 @@ export async function inspectOrderBilling(
   const matchedField = target.matchedField
 
   // Ham Trendyol yükü YALNIZ bu tek kayıt için çözülür (sınırlı teşhis).
-  let rawOrder: Record<string, unknown> = {}
-  try {
-    const decrypted = decryptOrderPayload(
-      orderRow.rawPayloadEncrypted as string | null,
-    )
-    if (decrypted && typeof decrypted === 'object') {
-      rawOrder = decrypted as Record<string, unknown>
-    }
-  } catch {
-    rawOrder = {}
-  }
+  // Tarayıcı ile AYNI çözüm yolu kullanılır — iki araç aynı siparişte farklı
+  // sonuç veremez.
+  const { rawOrder, rawPayloadAvailability } = readOrderRawPayload(orderRow)
 
-  const inspection = inspectTrendyolBillingSource({ ...orderRow, rawOrder })
+  // Sözleşme YALNIZ sağlayıcı yükü üzerinde okunur; DB satırı kaynak DEĞİL.
+  const inspection = inspectTrendyolBillingSource(
+    { rawOrder },
+    { rawPayloadAvailability },
+  )
 
   const shipmentRows = (await db
     .select()
@@ -156,7 +159,8 @@ export async function inspectOrderBilling(
   }
 
   const observation = buildBillingObservation({
-    order: { ...orderRow, rawOrder },
+    order: { rawOrder },
+    rawPayloadAvailability,
     suratWhoPays: whoPays,
     senderCode,
   })
@@ -166,10 +170,17 @@ export async function inspectOrderBilling(
     matchedField,
     packageIdMasked: mask(orderRow.packageId),
     marketplace: String(orderRow.marketplace ?? ''),
-    rawSourceField: inspection.sourceField,
+    rawSourceField: inspection.sourceField ?? TRENDYOL_WHO_PAYS_FIELD,
+    rawPayerPresent: inspection.rawFieldPresent,
     rawValue: inspection.rawValue,
+    rawPayloadAvailability: inspection.rawPayloadAvailability,
+    rawDataProvenance: inspection.provenance,
     expectedBillingParty: observation.expectedBillingParty,
     expectedBillingPartySource: observation.expectedBillingPartySource,
+    expectedBillingEvidence: observation.expectedBillingEvidence,
+    auxiliaryPayerSignals: inspection.auxiliarySignals.map(
+      (signal) => `${signal.field}=${signal.rawValue}`,
+    ),
     // Bugünkü üretim davranışı: açık satıcı-öder sinyali olmadığı sürece
     // birincil hesap kullanılır (forensic audit bulgusu). Bu tur bunu
     // DEĞİŞTİRMEZ; yalnız raporlar.
@@ -194,9 +205,17 @@ export function formatBillingReport(report: BillingInspectionReport): string[] {
     `MARKETPLACE             ${safe(report.marketplace)}`,
     '',
     `RAW_PAYER_FIELD         ${safe(report.rawSourceField)}`,
-    `RAW_PAYER_VALUE         ${safe(report.rawValue)}`,
+    // ABSENT ile null AYRI BASILIR: ikisi farklı sonuç doğurur.
+    `RAW_PAYER_PRESENT       ${report.rawPayerPresent ? 'YES' : 'NO'}`,
+    `RAW_PAYER_VALUE         ${
+      report.rawPayerPresent ? safe(report.rawValue) : '<ABSENT>'
+    }`,
+    `RAW_PAYLOAD             ${report.rawPayloadAvailability}`,
+    `RAW_DATA_PROVENANCE     ${report.rawDataProvenance}`,
     `EXPECTED_BILLING_PARTY  ${report.expectedBillingParty}`,
     `EXPECTED_SOURCE         ${report.expectedBillingPartySource}`,
+    `EVIDENCE_LEVEL          ${report.expectedBillingEvidence}`,
+    `AUX_PAYER_SIGNALS       ${report.auxiliaryPayerSignals.join(', ') || '—'}`,
     `CREDENTIAL_CLASS        ${report.credentialClass}`,
     '',
     `PARCEL_UNIQUE_ID        ${safe(report.parcelUniqueId)}`,
@@ -208,6 +227,19 @@ export function formatBillingReport(report: BillingInspectionReport): string[] {
     `ACTUAL_BILLING_PARTY    ${report.actualBillingParty}`,
     `SENDER_CODE             ${safe(report.senderCode)}`,
     `VERIFICATION            ${report.billingVerificationStatus}`,
+    '',
+    // Bugünkü "başarı" tanımı T.No + barkod + artifact'tir; ÖDEYEN TARAF
+    // doğrulanmaz. Beklenen taraf artık biliniyor, gerçek taraf bilinmiyor.
+    `EXPECTED_BILLING_PARTY_AVAILABLE  ${
+      report.expectedBillingParty === 'UNKNOWN' ? 'NO' : 'YES'
+    }`,
+    `ACTUAL_BILLING_PARTY_AVAILABLE    ${
+      report.actualBillingParty === 'UNKNOWN' ? 'NO' : 'YES'
+    }`,
+    `BILLING_SUCCESS_GAP               ${
+      report.billingVerificationStatus === 'VERIFIED' ? 'CLOSED' : 'CONFIRMED'
+    }`,
+    'GETCARGO_ROLE                     POST_CREATE_ACTUAL_VERIFICATION',
   ]
 }
 
@@ -303,7 +335,7 @@ export async function inspectConfigKeys(
   db: Db,
   organizationId: string,
 ): Promise<{ suratKeys: ReturnType<typeof describeConfigKeys>; settingsKeys: string[] }> {
-  let suratKeys: ReturnType<typeof describeConfigKeys> = []
+  let suratKeys: ReturnType<typeof describeConfigKeys>
   try {
     const config = (await loadOrganizationIntegrationConfig(
       db as never,
@@ -313,7 +345,7 @@ export async function inspectConfigKeys(
   } catch {
     suratKeys = []
   }
-  let settingsKeys: string[] = []
+  let settingsKeys: string[]
   try {
     const rows = (await db
       .select({ settings: organizationSettings.settingsJson })
@@ -459,7 +491,7 @@ export async function runSuratBillingInspect(): Promise<number> {
 
   // YAPILANDIRMA ÖZETİ: izin listeli alanların değeri + diğerlerinin yalnız adı.
   if (hasFlag('config-summary')) {
-    let surat: Record<string, unknown> = {}
+    let surat: Record<string, unknown>
     try {
       const config = (await loadOrganizationIntegrationConfig(
         db as never,

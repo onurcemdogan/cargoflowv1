@@ -19,6 +19,7 @@ import {
   summarizeBillingScan,
   type BillingCandidate,
   type BillingScanSummary,
+  type RawPayloadAvailability,
 } from './suratBillingParty.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -88,6 +89,37 @@ export async function resolveOrganizationByName(
   if (pool.length === 0) return { status: 'not_found', candidates: [] }
   if (pool.length > 1) return { status: 'ambiguous', candidates: pool }
   return { status: 'ok', organization: pool[0] }
+}
+
+/**
+ * SAKLANAN HAM SAĞLAYICI YÜKÜNÜ ÇÖZ — ÜÇ DURUM AYRI TUTULUR.
+ *
+ * Tarayıcı ve teşhis aracı AYNI yolu kullanır; aksi halde ikisi aynı sipariş
+ * için farklı sonuç üretebilirdi.
+ *
+ *   kolon NULL        → MISSING     (yük hiç yok)
+ *   çözülemedi/atipik → UNREADABLE  (yük var ama okunamadı)
+ *   nesne             → AVAILABLE
+ *
+ * MISSING/UNREADABLE durumunda "alan gönderilmemiş" ÇIKARIMI YASAKTIR.
+ */
+export function readOrderRawPayload(orderRow: Record<string, unknown>): {
+  rawOrder: unknown
+  rawPayloadAvailability: RawPayloadAvailability
+} {
+  const encrypted = orderRow.rawPayloadEncrypted as string | null | undefined
+  if (encrypted === null || encrypted === undefined || text(encrypted) === '') {
+    return { rawOrder: null, rawPayloadAvailability: 'MISSING' }
+  }
+  try {
+    const decrypted = decryptOrderPayload(encrypted)
+    if (decrypted !== null && typeof decrypted === 'object') {
+      return { rawOrder: decrypted, rawPayloadAvailability: 'AVAILABLE' }
+    }
+    return { rawOrder: null, rawPayloadAvailability: 'UNREADABLE' }
+  } catch {
+    return { rawOrder: null, rawPayloadAvailability: 'UNREADABLE' }
+  }
 }
 
 export interface BillingScanCandidate extends BillingCandidate {
@@ -178,18 +210,14 @@ export async function scanTenantBillingCandidates(
   )
 
   const candidates: BillingScanCandidate[] = orderRows.map((orderRow) => {
-    let rawOrder: Record<string, unknown> = {}
-    try {
-      const decrypted = decryptOrderPayload(
-        orderRow.rawPayloadEncrypted as string | null,
-      )
-      if (decrypted && typeof decrypted === 'object') {
-        rawOrder = decrypted as Record<string, unknown>
-      }
-    } catch {
-      rawOrder = {}
-    }
-    const inspection = inspectTrendyolBillingSource({ ...orderRow, rawOrder })
+    // "YÜK YOK" ile "ALAN YOK" AYRI SAYILIR: çözülemeyen bir yükten
+    // "whoPays gönderilmemiş" sonucu ÇIKARILAMAZ (fail-closed).
+    const { rawOrder, rawPayloadAvailability } = readOrderRawPayload(orderRow)
+    // Sözleşme YALNIZ sağlayıcı yükü üzerinde okunur; DB satırı kaynak DEĞİL.
+    const inspection = inspectTrendyolBillingSource(
+      { rawOrder },
+      { rawPayloadAvailability },
+    )
 
     // Paket kimliği: mevcut kanonik kaynak (Trendyol kargo numarası), yoksa
     // gönderi yükündeki `ozelKargoTakipNo`. Yeni eşleme UYDURULMAZ.
@@ -211,6 +239,9 @@ export async function scanTenantBillingCandidates(
       rawSourceField: inspection.sourceField,
       rawValue: inspection.rawValue,
       expectedBillingParty: inspection.billingParty,
+      expectedBillingPartySource: inspection.source,
+      expectedBillingEvidence: inspection.evidence,
+      expectedRawProvenance: inspection.provenance,
       credentialClass,
       accountFingerprint,
       serviceMode,
@@ -228,12 +259,14 @@ export async function scanTenantBillingCandidates(
   const supplierCandidates = candidates
     .filter((candidate) => candidate.expectedBillingParty === 'SELLER')
     .slice(0, 5)
-  // KRİTİK: payer alanı YOK demek "Trendyol öder" DEMEK DEĞİLDİR. Bu liste
-  // yalnız ADAY'dır; etiketi de bunu söyler.
+  // Sağlayıcı sözleşmesine göre BEKLENEN Trendyol-öder kayıtları. Ham alan
+  // yokluğu artık kör bir tahmin değil, sözleşmenin kendisidir — ancak kanıt
+  // gücü ayrıca `evidence` ile raporlanır (geçmiş veri DOĞRULANMIŞ değildir).
   const trendyolPaysCandidates = candidates
     .filter(
       (candidate) =>
-        candidate.rawSourceField === null && candidate.parcelIdentity !== null,
+        candidate.expectedBillingParty === 'TRENDYOL' &&
+        candidate.parcelIdentity !== null,
     )
     .slice(0, 5)
 
@@ -281,11 +314,29 @@ export function formatScanReport(
     `ORDERS_SCANNED          ${result.ordersScanned}`,
     `DB_QUERIES              ${result.dbQueryCount}`,
     '',
+    'RAW OBSERVATION (veri — yorum İÇERMEZ)',
     `RAW_WHO_PAYS_1          ${result.summary.rawWhoPays1Count}`,
     `RAW_PAYER_MISSING       ${result.summary.rawMissingCount}`,
     `RAW_OTHER               ${result.summary.rawOtherCount}`,
     '',
+    'SEMANTIC CLASSIFICATION (Trendyol sağlayıcı sözleşmesi)',
+    `EXPECTED_SELLER_PAYS    ${result.summary.expectedSellerPaysCount}`,
+    `EXPECTED_TRENDYOL_PAYS  ${result.summary.expectedTrendyolPaysCount}`,
+    `EXPECTED_UNKNOWN        ${result.summary.expectedUnknownCount}`,
+    '',
+    `EXPECTED_SOURCE_TRENDYOL_EXPLICIT_1  ${result.summary.expectedSourceExplicit1Count}`,
+    `EXPECTED_SOURCE_TRENDYOL_ABSENT      ${result.summary.expectedSourceAbsentCount}`,
+    `EXPECTED_SOURCE_UNSUPPORTED          ${result.summary.expectedSourceUnsupportedCount}`,
+    '',
   ]
+  // KANIT SEVİYESİ: sınıflandırma ile kanıt gücü AYRI raporlanır.
+  for (const [level, count] of Object.entries(result.summary.evidenceLevels)) {
+    lines.push(`EVIDENCE_${level.padEnd(30)}${count}`)
+  }
+  for (const [origin, count] of Object.entries(result.summary.rawProvenances)) {
+    lines.push(`RAW_DATA_PROVENANCE_${origin.padEnd(20)}${count}`)
+  }
+  lines.push('')
   for (const [cls, count] of Object.entries(result.summary.credentialClasses)) {
     lines.push(`CREDENTIAL_${cls.padEnd(12)}${count}`)
   }
@@ -313,7 +364,7 @@ export function formatScanReport(
 
   lines.push(
     '',
-    'TRENDYOL_PAYS_CANDIDATE_UNKNOWN (payer alanı YOK — kanıt DEĞİL)',
+    'EXPECTED_TRENDYOL_PAYS_CANDIDATES (whoPays absent → sözleşme gereği)',
   )
   if (result.trendyolPaysCandidates.length === 0) lines.push('  —')
   result.trendyolPaysCandidates.forEach((candidate, index) => {
@@ -333,6 +384,24 @@ export function formatScanReport(
     '',
     `CREDENTIAL_ONLY_CAUSATION  ${result.summary.credentialOnlyCausation}`,
     '  (çürütme için GERÇEK whoPays gerekir — bu tarama ağa ÇIKMAZ)',
+  )
+
+  // FATURALAMA BAŞARI BOŞLUĞU: bugün "başarı" T.No + barkod + artifact ile
+  // tanımlı; ÖDEYEN TARAF doğrulanmıyor. Artık beklenen taraf BİLİNİYOR,
+  // gerçek taraf hâlâ DOĞRULANMIYOR — fark açıkça isimlendirilir.
+  const expectedAvailable = result.summary.expectedSellerPaysCount +
+    result.summary.expectedTrendyolPaysCount > 0
+  const actualAvailable = result.summary.groups.some(
+    (group) => group.observedWhoPays.length > 0,
+  )
+  lines.push(
+    '',
+    `EXPECTED_BILLING_PARTY_AVAILABLE  ${expectedAvailable ? 'YES' : 'NO'}`,
+    `ACTUAL_BILLING_PARTY_AVAILABLE    ${actualAvailable ? 'YES' : 'NO'}`,
+    `BILLING_SUCCESS_GAP               ${
+      expectedAvailable && !actualAvailable ? 'CONFIRMED' : 'CLOSED'
+    }`,
+    'GETCARGO_ROLE                     POST_CREATE_ACTUAL_VERIFICATION',
   )
 
   const supplier = result.supplierCandidates[0]
