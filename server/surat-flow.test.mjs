@@ -434,7 +434,8 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
     windowsHide: true,
   })
   t.after(() => apiProcess.kill())
-  await waitForHealth(apiPort, apiProcess)
+  const apiOutput = captureChildOutput(apiProcess)
+  await waitForHealth(apiPort, apiProcess, apiOutput)
 
   const order = buildOrder()
   const legacyConfig = buildConfig({
@@ -471,7 +472,11 @@ test('Sürat ortak barkod, ön kayıt ve tracking durumları doğru ayrılır', 
       false,
       JSON.stringify(response),
     )
-    assert.equal(response.serviceType, 'GonderiyiKargoyaGonderRestJson')
+    assert.equal(
+      response.serviceType,
+      'GonderiyiKargoyaGonderRestJson',
+      JSON.stringify(response),
+    )
     assert.equal(response.payloadFormat, 'JSON')
     assert.equal(response.suratCreateLog.responseCode, expectedCode)
     assert.equal(
@@ -2371,6 +2376,9 @@ function buildConfig(overrides) {
 function buildOrder() {
   return {
     id: 'order-1',
+    // Finansal kapı pazaryeri bağlamı KANITLANMADAN create'e izin vermez;
+    // bu fikstür kapı öncesinden kaldığı için pazaryeri alanı eksikti.
+    marketplace: 'Trendyol',
     orderNumber: 'ORDER123',
     packageId: 'PKG123',
     cargoTrackingNumber: '7270033563324593',
@@ -2451,21 +2459,76 @@ async function getFreePort() {
   return port
 }
 
-async function waitForHealth(port, child) {
+// Sağlık bekleme bütçesi SÜREYE bağlıdır, deneme sayısına değil.
+// Ölçüm: doğrudan koşuda sunucu ~0.6 sn'de ayağa kalkar; testin kendisi bir
+// alt süreçten (orkestratör/npm) doğduğunda soğuk modül yüklemesi bunu
+// belirgin biçimde uzatır. Eski 50×50ms (~2.5 sn) penceresi bu iç içe
+// senaryoda dolmadan bitiyordu — sunucu ölmüyor, yalnız geç açılıyordu.
+const HEALTH_BUDGET_MS = 30_000
+const HEALTH_POLL_MS = 50
+
+/** Rapora giren çocuk çıktısı üst sınırı (yaklaşık 8 KB). */
+const CHILD_OUTPUT_TAIL = 8_192
+
+/** Çocuk sürecin stdout/stderr'ini SINIRLI halkada tutar. */
+function captureChildOutput(child) {
+  const buffers = { stdout: '', stderr: '' }
+  for (const stream of ['stdout', 'stderr']) {
+    child[stream]?.on('data', (chunk) => {
+      buffers[stream] = `${buffers[stream]}${chunk}`.slice(-CHILD_OUTPUT_TAIL)
+    })
+  }
+  child.on('error', (error) => { buffers.spawnError = String(error) })
+  return buffers
+}
+
+/** Sırları maskeler — tanılama çıktısı kimlik bilgisi taşımaz. */
+function redactChildOutput(text) {
+  return String(text ?? '').replace(
+    /((?:sifre|password|secret|token|apikey|authorization)"?\s*[:=]\s*)("[^"]*"|\S+)/gi,
+    (_match, head) => `${head}«REDACTED»`,
+  )
+}
+
+async function waitForHealth(port, child, output) {
+  const healthUrl = `http://${host}:${port}/api/health`
+  const spawnAt = Date.now()
   let lastError
-  for (let attempt = 0; attempt < 50; attempt += 1) {
-    if (child.exitCode != null) {
-      throw new Error(`CargoFlow API erken kapandı: ${child.exitCode}`)
+  // Tanılama YALNIZ başarısızlıkta basılır; yeşil koşuda gürültü yok.
+  const fail = (reason) => {
+    const cause = lastError?.cause ?? {}
+    const detail = [
+      `SURAT_FLOW_HARNESS_FAILURE=${reason}`,
+      `apiPort=${port}`,
+      `healthUrl=${healthUrl}`,
+      `healthWaitedMs=${Date.now() - spawnAt}`,
+      `budgetMs=${HEALTH_BUDGET_MS}`,
+      `exitCode=${child.exitCode}`,
+      `signal=${child.signalCode}`,
+      `spawnError=${output?.spawnError ?? 'none'}`,
+      `lastFetchError=${lastError?.name}: ${lastError?.message}`,
+      `cause.code=${cause.code} errno=${cause.errno}`,
+      `cause.address=${cause.address} cause.port=${cause.port}`,
+      `--- child stdout tail ---\n${redactChildOutput(output?.stdout)}`,
+      `--- child stderr tail ---\n${redactChildOutput(output?.stderr)}`,
+    ].join('\n')
+    return new Error(detail, { cause: lastError })
+  }
+
+  while (Date.now() - spawnAt < HEALTH_BUDGET_MS) {
+    // Çocuk sağlık vermeden ölürse 50 tur BEKLEME — derhal düş.
+    if (child.exitCode != null || child.signalCode != null) {
+      throw fail('CHILD_PROCESS_EARLY_EXIT')
     }
     try {
-      const response = await fetch(`http://${host}:${port}/api/health`)
-      if (response.ok) return
+      const response = await fetch(healthUrl)
+      if (response.ok) return Date.now() - spawnAt
     } catch (error) {
       lastError = error
     }
-    await new Promise((resolve) => setTimeout(resolve, 50))
+    await new Promise((resolve) => setTimeout(resolve, HEALTH_POLL_MS))
   }
-  throw lastError ?? new Error('CargoFlow API başlatılamadı')
+  throw fail('STARTUP_TIMEOUT')
 }
 
 async function postJson(port, path, body) {

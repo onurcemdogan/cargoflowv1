@@ -3136,6 +3136,32 @@ async function createSuratShipmentCore(request, response) {
     return
   }
 
+  // ═══ OTORİTER FİNANSAL KAPI (Faz 5C.2) ══════════════════════════════
+  // serviceMode dallarının HEPSİNİN ÜSTÜNDE. Hangi mod seçilirse seçilsin
+  // taşıyıcıya giden her yol önce buradan geçer; "legacy mod = guard
+  // bypass" durumu OLUŞAMAZ. Kapı ağa çıkmaz, DB'ye yazmaz.
+  const { evaluateSuratFinancialGate } = await import(
+    './shipments/suratFinancialGate.ts'
+  )
+  const financialGate = evaluateSuratFinancialGate({
+    config,
+    order: orderForSurat,
+    cashOnDelivery: credentialSelection.cashOnDelivery === true,
+    serviceMode: config.serviceMode,
+  })
+  if (!financialGate.ok) {
+    // FAIL-CLOSED: yanlış cariye yazılan gönderi geri alınamaz.
+    response.json({
+      ok: false,
+      source: 'real',
+      errorSource: 'Frontend',
+      errorCode: financialGate.errorCode,
+      message: financialGate.message,
+      suratCreateTrace: financialGate.trace,
+    })
+    return
+  }
+
   // KANONİK SÜRAT WEB API DALI (api02 · POST /api/OrtakBarkodOlustur).
   // Credential çözümü, DTO eşlemesi, marketplace faturalama bağlamı ve
   // ResultMesaj ayrıştırması tamamen Ünite 1/2/3A-1 servislerindedir.

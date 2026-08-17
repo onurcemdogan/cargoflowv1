@@ -228,6 +228,8 @@ export function resolveSuratCredentialContext(params: {
   billingParty: BillingPartyV2
   cod: CodContext
   codPolicy?: CodCredentialPolicy
+  /** Kimlik ALANLARI moda göre değişir (aşağıdaki nota bakınız). */
+  serviceMode?: unknown
 }): SuratCredentialContext {
   const config = params.config ?? {}
   const policy = params.codPolicy ?? DEFAULT_COD_CREDENTIAL_POLICY
@@ -253,9 +255,27 @@ export function resolveSuratCredentialContext(params: {
         : 'BILLING_UNKNOWN_DEFAULT_PRIMARY'
   }
 
+  // MOD-ÖZEL KİMLİK ALANLARI — finansal semantik AYNI, ALAN ADLARI FARKLI.
+  //
+  // Kanonik yol `kullaniciAdi`/`sifre` alanlarını BİLEREK okumaz: bunları
+  // `SURAT_LIVE_*`/`SURAT_TEST_*` ENV değişkenleri EZEBİLİR ve tenant'ın
+  // kendi hesabı yerine ortam hesabı kullanılabilirdi. Legacy SOAP/REST
+  // yolları ise taşıyıcıya TAM OLARAK bu alanlarla kimlik doğrular
+  // (bkz. legacy REST gövdesi: KullaniciAdi/Sifre/FirmaId).
+  //
+  // Kimlik ZORUNLULUĞU hiçbir modda gevşemez; yalnız DOĞRU alandan okunur.
+  const canonicalMode = text(params.serviceMode) === 'SURAT_CANONICAL_API'
   const fields = ROLE_FIELDS[role]
-  const account = pickField(config, fields.user)
-  const secret = pickField(config, fields.secret)
+  const userFields =
+    !canonicalMode && role === 'PRIMARY_MARKETPLACE'
+      ? [...fields.user, 'kullaniciAdi', 'cariKodu']
+      : fields.user
+  const secretFields =
+    !canonicalMode && role === 'PRIMARY_MARKETPLACE'
+      ? [...fields.secret, 'sifre', 'password']
+      : fields.secret
+  const account = pickField(config, userFields)
+  const secret = pickField(config, secretFields)
   const resolved = Boolean(account && secret)
 
   // SESSİZ DÜŞÜŞ YOK: eksik kimlikte başka role GEÇİLMEZ.

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "surat-finalization",
-  "currentPhase": "A",
+  "currentPhase": "B",
   "liveCreateAllowed": false,
   "knownEvidence": {
     "note": "Onceki oturumlarda kanitlandi. CACHED PASS DEGILDIR — gate'ler yeniden dogrular.",
@@ -12,10 +12,30 @@
     "LEGACY_CREDENTIAL_OVERRIDE": "IMPOSSIBLE"
   },
   "phases": {
-    "A": { "status": "in_progress", "completedAt": null, "commit": null },
-    "B": { "status": "locked", "completedAt": null, "commit": null },
-    "C": { "status": "locked", "completedAt": null, "commit": null },
-    "D": { "status": "locked", "completedAt": null, "commit": null },
-    "E": { "status": "locked", "completedAt": null, "commit": null }
+    "A": {
+      "status": "passed",
+      "completedAt": "2026-08-17T22:28:51.939Z",
+      "commit": null
+    },
+    "B": {
+      "status": "in_progress",
+      "completedAt": null,
+      "commit": null
+    },
+    "C": {
+      "status": "locked",
+      "completedAt": null,
+      "commit": null
+    },
+    "D": {
+      "status": "locked",
+      "completedAt": null,
+      "commit": null
+    },
+    "E": {
+      "status": "locked",
+      "completedAt": null,
+      "commit": null
+    }
   }
 }
