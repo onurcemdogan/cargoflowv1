@@ -36,3 +36,6 @@ order-backfill-*.json
 
 # Gecici gorsel dogrulama ciktilari
 .tmp-preview/
+
+# Surat finalization runtime raporlari (git disi)
+.var/surat-finalization/

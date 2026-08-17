@@ -1,0 +1,117 @@
+// Gate tanımları. Komut adları TAHMİN EDİLMEZ — package.json'dan doğrulanır.
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { REPO_ROOT } from './state.mjs'
+
+export const GATE_STATUSES = [
+  'PENDING', 'PASS', 'FAIL', 'BLOCKED', 'NOT_RUN',
+]
+
+/** package.json'daki gerçek script adları. */
+export function readScripts(root = REPO_ROOT) {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  return pkg.scripts ?? {}
+}
+
+/** Script yoksa gate uydurulmaz; BLOCKED olarak işaretlenir. */
+function npmGate(scripts, id, phase, script, description) {
+  const exists = Object.prototype.hasOwnProperty.call(scripts, script)
+  return {
+    id,
+    phase,
+    description,
+    command: exists ? ['npm', 'run', script] : null,
+    required: true,
+    safe: true,
+    status: exists ? 'PENDING' : 'BLOCKED',
+    evidence: exists ? null : `SCRIPT_NOT_FOUND: ${script}`,
+  }
+}
+
+function nodeTestGate(id, phase, file, description) {
+  return {
+    id,
+    phase,
+    description,
+    command: ['node', '--test', file],
+    required: true,
+    safe: true,
+    status: 'PENDING',
+    evidence: null,
+  }
+}
+
+/**
+ * FAZ A — finansal kapı. Değişmezler ayrı bir gate paketiyle doğrulanır;
+ * "önceden kanıtlandı" bilgisi cache'lenmiş PASS olarak KULLANILMAZ.
+ */
+export function buildPhaseAGates(scripts = readScripts()) {
+  const flow = 'server/surat-flow.test.mjs'
+  return [
+    nodeTestGate('A1_SURAT_FLOW_RUN_1', 'A', flow, 'surat-flow 1. temiz kosu'),
+    nodeTestGate('A2_SURAT_FLOW_RUN_2', 'A', flow, 'surat-flow 2. temiz kosu'),
+    nodeTestGate('A3_SURAT_FLOW_RUN_3', 'A', flow, 'surat-flow 3. temiz kosu'),
+    nodeTestGate(
+      'A4_FINANCIAL_ZERO_BYPASS', 'A',
+      'server/surat-zero-bypass-gate-flow.test.mjs',
+      'sifir bypass finansal kapi',
+    ),
+    // A5–A8 değişmezleri, kapının mimarisini kilitleyen testin İÇİNDE
+    // doğrulanır (GATE-ARCH / GATE-MODES / GATE-FP). Ayrı bir "audit"
+    // betiği uydurmak yerine mevcut deterministik testler kullanılır.
+    nodeTestGate(
+      'A5_FINANCIAL_GUARD', 'A',
+      'server/surat-financial-guard-flow.test.mjs',
+      'bozuk baglamda tasiyici cagrisi 0',
+    ),
+    nodeTestGate(
+      'A6_ROUTING_MODEL', 'A',
+      'server/surat-routing-model-flow.test.mjs',
+      'yetkili kimlik yonlendirme modeli',
+    ),
+    npmGate(scripts, 'A9_FULL_SURAT', 'A', 'test:surat', 'Surat tam paketi'),
+    npmGate(scripts, 'A9B_FULL_UI', 'A', 'test:ui', 'UI paketi'),
+    npmGate(scripts, 'A10_BUILD', 'A', 'build', 'production build'),
+    npmGate(scripts, 'A11_LINT', 'A', 'lint', 'lint'),
+  ]
+}
+
+/**
+ * B–E fazlarının gate'leri, o faz açıldığında ilgili testler var olduğunda
+ * tanımlanır. Şu an yalnız kapsam bildirimi taşırlar — sahte PASS üretmezler.
+ */
+export function buildPlaceholderGates(phase, description) {
+  return [{
+    id: `${phase}0_NOT_IMPLEMENTED`,
+    phase,
+    description,
+    command: null,
+    required: true,
+    safe: true,
+    status: 'BLOCKED',
+    evidence: 'PHASE_NOT_IMPLEMENTED_YET',
+  }]
+}
+
+export function buildGates(phase, scripts = readScripts()) {
+  if (phase === 'A') return buildPhaseAGates(scripts)
+  if (phase === 'B') {
+    return buildPlaceholderGates('B', 'tasiyici yanit siniflandirmasi')
+  }
+  if (phase === 'C') return buildPlaceholderGates('C', 'trace v2 runtime')
+  if (phase === 'D') return buildPlaceholderGates('D', 'COD/Debug arayuzu')
+  if (phase === 'E') {
+    return [{
+      id: 'E1_PRODUCTION_CONFIG_READ_ONLY',
+      phase: 'E',
+      description: 'production config read-only ozeti',
+      command: null,
+      required: true,
+      safe: true,
+      // Bu ortamda production erisimi yoksa FAIL degil BLOCKED_EXTERNAL.
+      status: 'BLOCKED',
+      evidence: 'BLOCKED_EXTERNAL: production DB/config erisimi dogrulanmadi',
+    }]
+  }
+  return []
+}

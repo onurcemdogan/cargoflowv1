@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "workflow": "surat-finalization",
+  "currentPhase": "A",
+  "liveCreateAllowed": false,
+  "knownEvidence": {
+    "note": "Onceki oturumlarda kanitlandi. CACHED PASS DEGILDIR — gate'ler yeniden dogrular.",
+    "ALL_CREATE_PATHS_GUARDED": "YES",
+    "LEGACY_BYPASS_PATHS": "0",
+    "FINANCIAL_FINGERPRINT_COMPLETE": "YES",
+    "MARKETPLACE_IDENTITY_SOURCE_GUARDED": "YES",
+    "LEGACY_CREDENTIAL_OVERRIDE": "IMPOSSIBLE"
+  },
+  "phases": {
+    "A": { "status": "in_progress", "completedAt": null, "commit": null },
+    "B": { "status": "locked", "completedAt": null, "commit": null },
+    "C": { "status": "locked", "completedAt": null, "commit": null },
+    "D": { "status": "locked", "completedAt": null, "commit": null },
+    "E": { "status": "locked", "completedAt": null, "commit": null }
+  }
+}
