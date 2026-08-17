@@ -3,6 +3,7 @@
 // Kullanım:
 //   npm run surat:billing:inspect -- --org <organizationId> --package <packageId>
 //   npm run surat:billing:inspect -- --org <organizationId> --package <packageId> --get-cargo
+//   npm run surat:billing:inspect -- --name <tenant> --package <id> --create-context
 //
 // VARSAYILAN OLARAK AĞA ÇIKMAZ. `--get-cargo` verilmedikçe yalnız yerel veriye
 // bakar. Hiçbir yazma, hiçbir create, hiçbir config değişikliği yapmaz.
@@ -14,6 +15,12 @@ import { closePool, getDb, isDatabaseConfigured } from '../db/client.ts'
 import { loadOrganizationIntegrationConfig } from '../integrations/credentialService.ts'
 import { organizationSettings, shipments } from '../db/schema.ts'
 import { decryptShipmentPayload } from './shipmentEncryption.ts'
+import { rowToOrder } from '../orders/orderMapper.ts'
+import {
+  buildCreateContextSummary,
+  compareCreateContexts,
+  formatCreateContextReport,
+} from './suratCreateContextDryRun.ts'
 import {
   buildBillingObservation,
   inspectTrendyolBillingSource,
@@ -377,6 +384,12 @@ export const CONFIG_SUMMARY_ALLOWLIST = [
   'entegrasyonFirmasi',
   'odemeTipi',
   'allowPreRegistrationRest',
+  // Legacy SOAP zincirinde `<WhoPays>` YALNIZ bu tenant ayarı doluysa
+  // gönderiliyordu. Kanonik göç sırasında bir payer sinyalinin kaybolup
+  // kaybolmadığını ancak bu alanın üretimdeki DEĞERİ söyleyebilir.
+  // Kimlik bilgisi değil, tek haneli bir faturalama kodudur.
+  'whoPays',
+  'kWebGonderiGirisiKaynak',
 ] as const
 
 /** Adı sır çağrıştıran her alan — DEĞERİ ASLA gösterilmez. */
@@ -456,6 +469,84 @@ export function formatConfigSummary(summary: ConfigSummary): string[] {
   return lines
 }
 
+/**
+ * CREATE BAĞLAMI KURU ÇALIŞTIRMA — GERÇEK SİPARİŞ, GERÇEK BUILDER, SIFIR AĞ.
+ *
+ * İki semantik durumu karşılaştırır:
+ *   CASE_A  expectedBillingParty = TRENDYOL  (gerçek üretim siparişi)
+ *   CASE_B  expectedBillingParty = SELLER    (aynı sipariş, açık satıcı sinyali)
+ *
+ * Üretilen gövdeler aynıysa create bağlamı beklenen ödeyen tarafa KÖRDÜR ve
+ * bu, faturalama kök nedeni için birinci derece kanıttır.
+ *
+ * Sipariş görünüm modeli üretimdeki `rowToOrder` ile AYNI şekilde kurulur;
+ * teşhise özel ikinci bir eşleme yazılmaz.
+ */
+export async function runCreateContextDryRun(
+  db: Db,
+  organizationId: string,
+  identifier: string,
+): Promise<number> {
+  const target = await resolveBillingInspectionTarget(db, organizationId, identifier)
+  if (target.status !== 'ok') {
+    console.error('[surat:billing] Sipariş bulunamadı (tenant kapsamında).')
+    return 1
+  }
+  let suratConfig: Record<string, unknown>
+  try {
+    const config = (await loadOrganizationIntegrationConfig(
+      db as never,
+      organizationId,
+    )) as Record<string, unknown> | null
+    suratConfig = (config?.surat ?? {}) as Record<string, unknown>
+  } catch {
+    suratConfig = {}
+  }
+
+  // Satır → sipariş görünüm modeli (üretimin create'e verdiği şekil).
+  const order = rowToOrder(target.order, [])
+  const reference = String(order.packageId ?? identifier)
+
+  const caseA = buildCreateContextSummary({
+    order,
+    suratConfig,
+    reference,
+    cashOnDelivery: false,
+  })
+  // CASE B: SADECE beklenen taraf sinyali değişir; sipariş kimliği AYNI kalır.
+  const caseB = buildCreateContextSummary({
+    order: { ...order, sellerPays: true },
+    suratConfig,
+    reference,
+    cashOnDelivery: false,
+  })
+  const comparison = compareCreateContexts(caseA, caseB)
+
+  console.info(`ORGANIZATION            ${mask(organizationId)}`)
+  console.info(`MATCHED_FIELD           ${target.matchedField}`)
+  console.info(`PACKAGE                 ${mask(target.order.packageId)}`)
+  console.info('')
+  for (const line of formatCreateContextReport(caseA, 'A_EXPECTED_TRENDYOL')) {
+    console.info(line)
+  }
+  console.info('')
+  for (const line of formatCreateContextReport(caseB, 'B_EXPECTED_SELLER')) {
+    console.info(line)
+  }
+  console.info('')
+  console.info(
+    `CREATE_CONTEXT_BILLING_INSENSITIVE  ${
+      comparison.identical ? 'CONFIRMED' : 'REFUTED'
+    }`,
+  )
+  for (const difference of comparison.differences) {
+    console.info(`  DIFF  ${difference}`)
+  }
+  console.info('')
+  console.info('NETWORK_CALLS 0 · DB_WRITES 0 · CREATE_CALLS 0 · PRINT_CALLS 0')
+  return 0
+}
+
 export async function runSuratBillingInspect(): Promise<number> {
   if (!isDatabaseConfigured()) {
     console.error('[surat:billing] DATABASE_URL tanımlı değil.')
@@ -506,6 +597,12 @@ export async function runSuratBillingInspect(): Promise<number> {
       console.info(line)
     }
     return 0
+  }
+
+  // CREATE BAĞLAMI KURU ÇALIŞTIRMA — AĞA ÇIKMAZ, KAYIT YAZMAZ.
+  if (hasFlag('create-context')) {
+    const code = await runCreateContextDryRun(db, organizationId, packageId)
+    return code
   }
 
   // ANAHTAR KEŞFİ: getCargo sözleşmesini üretim yapılandırmasında aramak için.
