@@ -17,13 +17,18 @@ import {
   classifyUnknownReason,
   findPersistedActualWhoPays,
   GOLDEN_PARCEL,
+  isCreateOperationType,
   isSuratProvider,
+  CARGOFLOW_ORIGIN_PAYER_KEYS,
   resolveShipmentScanLimit,
-  MAX_CANDIDATE_PAYLOADS,
+
   OPERATION_TRACKING_INTRODUCED,
   type CreateEvidenceClass,
   type UnknownReason,
 } from './suratShipmentBillingDiscovery.ts'
+
+/** Faz 4C: kanit sinifi homojenlestigi icin ornek genisletildi. */
+export const MAX_FORENSIC_PAYLOADS = 20
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -80,7 +85,13 @@ export interface CreateEvidenceForensics {
 
   createEvidence: Record<CreateEvidenceClass, number>
 
+  operationTypeDistribution: Record<string, { count: number; statuses: Record<string, number>; called: Record<string, number> }>
   payloadsDecrypted: number
+  payloadsWithActualPayer: number
+  actualPayerFieldNames: string[]
+  cargoflowOriginPayerKeysSeen: string[]
+  senderCodeAvailableCount: number
+  distinctSenderCodes: number
   payloadFieldInventory: string[]
   actualWhoPaysFieldFound: boolean
   actualWhoPaysProvenance: string | null
@@ -152,11 +163,33 @@ export async function analyzeSuratCreateEvidence(
   if (packageIds.length) dbQueryCount += 1
 
   const anyOperationByPackage = new Map<string, Record<string, unknown>[]>()
+  const operationTypeDistribution: CreateEvidenceForensics['operationTypeDistribution'] =
+    {}
   for (const row of operationRows) {
     const key = text(row.packageId)
     const list = anyOperationByPackage.get(key) ?? []
     list.push(row)
     anyOperationByPackage.set(key, list)
+
+    // GERÇEK operasyon tipi dağılımı: "300 kayıtta operasyon var ama CREATE
+    // yok" çelişkisini ancak bu tablo açıklar.
+    const type = text(row.operationType) || 'UNKNOWN'
+    const entry = operationTypeDistribution[type] ?? {
+      count: 0,
+      statuses: {},
+      called: {},
+    }
+    entry.count += 1
+    const status = text(row.status) || 'UNKNOWN'
+    entry.statuses[status] = (entry.statuses[status] ?? 0) + 1
+    const called =
+      row.carrierCreateCalled === true
+        ? 'true'
+        : row.carrierCreateCalled === false
+          ? 'false'
+          : 'missing'
+    entry.called[called] = (entry.called[called] ?? 0) + 1
+    operationTypeDistribution[type] = entry
   }
 
   // (4) Siparişler — ters join.
@@ -214,11 +247,17 @@ export async function analyzeSuratCreateEvidence(
     expectedUnknown: 0,
     createEvidence: {
       CREATE_PROVEN_STRONG: 0,
-      CREATE_PROVEN_LEGACY: 0,
+      CREATE_PROVEN_PERSISTED_LOCAL: 0,
       CREATE_POSSIBLE: 0,
       CREATE_UNKNOWN: 0,
     },
+    operationTypeDistribution,
     payloadsDecrypted: 0,
+    payloadsWithActualPayer: 0,
+    actualPayerFieldNames: [],
+    cargoflowOriginPayerKeysSeen: [],
+    senderCodeAvailableCount: 0,
+    distinctSenderCodes: 0,
     payloadFieldInventory: [],
     actualWhoPaysFieldFound: false,
     actualWhoPaysProvenance: null,
@@ -241,7 +280,7 @@ export async function analyzeSuratCreateEvidence(
     const key = text(row.packageId)
     const operations = anyOperationByPackage.get(key) ?? []
     const createOperations = operations.filter(
-      (operation) => text(operation.operationType) === 'CREATE',
+      (operation) => isCreateOperationType(operation.operationType),
     )
     // En güçlü kanıt tercih edilir.
     const createOperation =
@@ -355,7 +394,7 @@ export async function analyzeSuratCreateEvidence(
   )
   const sample: typeof analysed = []
   const push = (entry: (typeof analysed)[number]) => {
-    if (sample.length >= MAX_CANDIDATE_PAYLOADS) return
+    if (sample.length >= MAX_FORENSIC_PAYLOADS) return
     if (sample.some((existing) => existing.row.id === entry.row.id)) return
     sample.push(entry)
   }
@@ -369,6 +408,7 @@ export async function analyzeSuratCreateEvidence(
   }
 
   const inventory = new Set<string>()
+  const senderCodes = new Set<string>()
   for (const entry of sample) {
     let payload: Record<string, unknown> | null
     try {
@@ -392,9 +432,33 @@ export async function analyzeSuratCreateEvidence(
     }
     result.serviceModeDistribution[serviceMode] =
       (result.serviceModeDistribution[serviceMode] ?? 0) + 1
-    if (actual && !result.actualWhoPaysFieldFound) {
-      result.actualWhoPaysFieldFound = true
-      result.actualWhoPaysProvenance = `persistedCarrierPayload.${actual.key}`
+    if (actual) {
+      result.payloadsWithActualPayer += 1
+      if (!result.actualPayerFieldNames.includes(actual.key)) {
+        result.actualPayerFieldNames.push(actual.key)
+      }
+      if (!result.actualWhoPaysFieldFound) {
+        result.actualWhoPaysFieldFound = true
+        result.actualWhoPaysProvenance = `persistedCarrierPayload.${actual.key}`
+      }
+    }
+    if (payload) {
+      // CargoFlow KÖKENLİ alanlar ayrı raporlanır: `billingParty` bizim
+      // kredensiyal sınıfımızdır, taşıyıcının payer cevabı DEĞİLDİR.
+      for (const key of CARGOFLOW_ORIGIN_PAYER_KEYS) {
+        if (
+          Object.prototype.hasOwnProperty.call(payload, key) &&
+          !result.cargoflowOriginPayerKeysSeen.includes(key)
+        ) {
+          result.cargoflowOriginPayerKeysSeen.push(key)
+        }
+      }
+      // `senderCode` kaynağı — FirmaId ile KARIŞTIRILMAZ, ayrı alandır.
+      const senderCode = text(payload.senderCode)
+      if (senderCode) {
+        result.senderCodeAvailableCount += 1
+        senderCodes.add(senderCode)
+      }
     }
 
     const key = text(entry.row.packageId)
@@ -428,6 +492,7 @@ export async function analyzeSuratCreateEvidence(
     })
   }
   result.payloadFieldInventory = [...inventory].sort()
+  result.distinctSenderCodes = senderCodes.size
 
   // GOLDEN ARAMASI — TAM EŞLEŞME, tenant kapsamlı, fuzzy YOK.
   const goldenOrders = (await db
@@ -479,6 +544,22 @@ export function formatCreateEvidenceReport(
   for (const [reason, value] of reasons) {
     lines.push(`  ${reason.padEnd(42)}${value}`)
   }
+  lines.push('', 'OPERATION_TYPE_DISTRIBUTION (GERCEK operation_type degerleri)')
+  const types = Object.entries(result.operationTypeDistribution)
+  if (types.length === 0) lines.push('  —')
+  for (const [type, entry] of types) {
+    const statuses = Object.entries(entry.statuses)
+      .map(([status, value]) => `${status}=${value}`)
+      .join(' ')
+    const called = Object.entries(entry.called)
+      .map(([flag, value]) => `called:${flag}=${value}`)
+      .join(' ')
+    lines.push(
+      `  ${type.padEnd(46)}${entry.count}  ${statuses}  ${called}` +
+        `  ${isCreateOperationType(type) ? '[CREATE]' : '[NON-CREATE]'}`,
+    )
+  }
+
   lines.push('', 'AUXILIARY_FLAGS (birincil sebep disindaki olgular)')
   const flags = Object.entries(result.auxiliaryFlags)
   if (flags.length === 0) lines.push('  —')
@@ -536,7 +617,7 @@ export function formatCreateEvidenceReport(
     '',
     'CREATE EVIDENCE CLASSES',
     `  CREATE_PROVEN_STRONG              ${result.createEvidence.CREATE_PROVEN_STRONG}`,
-    `  CREATE_PROVEN_LEGACY              ${result.createEvidence.CREATE_PROVEN_LEGACY}`,
+    `  CREATE_PROVEN_PERSISTED_LOCAL              ${result.createEvidence.CREATE_PROVEN_PERSISTED_LOCAL}`,
     `  CREATE_POSSIBLE                   ${result.createEvidence.CREATE_POSSIBLE}`,
     `  CREATE_UNKNOWN                    ${result.createEvidence.CREATE_UNKNOWN}`,
     '',
@@ -548,6 +629,16 @@ export function formatCreateEvidenceReport(
       result.actualWhoPaysFieldFound ? 'YES' : 'NO'
     }`,
     `ACTUAL_WHO_PAYS_PROVENANCE          ${result.actualWhoPaysProvenance ?? '—'}`,
+    `PAYLOADS_WITH_ACTUAL_PAYER          ${result.payloadsWithActualPayer}`,
+    `ACTUAL_PAYER_FIELD_NAMES            ${
+      result.actualPayerFieldNames.join(', ') || '—'
+    }`,
+    `CARGOFLOW_ORIGIN_PAYER_KEYS_SEEN    ${
+      result.cargoflowOriginPayerKeysSeen.join(', ') || '—'
+    }`,
+    '  (billingParty CargoFlow kredensiyal SINIFIDIR — tasiyici cevabi DEGIL)',
+    `SENDER_CODE_AVAILABLE_COUNT         ${result.senderCodeAvailableCount}`,
+    `DISTINCT_SENDER_CODES               ${result.distinctSenderCodes}`,
     '',
     `GOLDEN_SEARCH_ORDER                 ${result.goldenSearchOrder ? 'FOUND' : 'NO'}`,
     `GOLDEN_SEARCH_SHIPMENT              ${result.goldenSearchShipment ? 'FOUND' : 'NO'}`,

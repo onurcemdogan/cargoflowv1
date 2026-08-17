@@ -146,12 +146,22 @@ test('EV-3: gercek whoPays ALAN ADINDAN TAHMIN EDILMEZ', () => {
     discovery.findPersistedActualWhoPays({ KimOder: 1 }),
     { key: 'KimOder', value: '1' },
   )
-  // Benzer isimli alanlar KABUL EDİLMEZ.
+  // `payer` bilinen TAM anahtarlardandır (Faz 4C'de eklendi).
+  assert.deepEqual(
+    discovery.findPersistedActualWhoPays({ payer: 'TRENDYOL' }),
+    { key: 'payer', value: 'TRENDYOL' },
+  )
+  // Benzer/tahmini isimler KABUL EDİLMEZ.
   for (const payload of [
-    { whoPaysCode: '3' }, { who_pays: '3' }, { payer: 'TRENDYOL' }, {},
+    { whoPaysCode: '3' }, { who_pays: '3' }, { payerName: 'X' }, {},
   ]) {
     assert.equal(discovery.findPersistedActualWhoPays(payload), null)
   }
+  // `billingParty` CargoFlow KÖKENLİDİR — taşıyıcı cevabı SAYILMAZ.
+  assert.equal(
+    discovery.findPersistedActualWhoPays({ billingParty: 'PRIMARY' }), null,
+  )
+  assert.ok(discovery.CARGOFLOW_ORIGIN_PAYER_KEYS.includes('billingParty'))
   // Boş değer kanıt değildir.
   assert.equal(discovery.findPersistedActualWhoPays({ whoPays: '' }), null)
   assert.equal(discovery.findPersistedActualWhoPays(null), null)

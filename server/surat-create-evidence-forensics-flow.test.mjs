@@ -184,7 +184,7 @@ test('EVD-1: tracking TEK BASINA success DEGIL, kaynak sarttir', () => {
     discovery.classifyCreateEvidence({
       source: 'local_create', trackingNumber: '11419469827',
     }),
-    'CREATE_PROVEN_LEGACY',
+    'CREATE_PROVEN_PERSISTED_LOCAL',
   )
   // İthal/pazaryeri kaynaklı numara create KANITI DEĞİLDİR.
   assert.equal(
@@ -238,7 +238,7 @@ test('FOR-1: uretim deseni — numara VAR, operasyon YOK → UNKNOWN sebebi', as
   assert.equal(result.auxiliaryFlags.HAS_TRACKING_NUMBER, 3)
   assert.equal(result.auxiliaryFlags.SOURCE_LOCAL_CREATE, 3)
   // İkinci derece kanıt: bunlar aslında create edilmiş kayıtlar.
-  assert.equal(result.createEvidence.CREATE_PROVEN_LEGACY, 3)
+  assert.equal(result.createEvidence.CREATE_PROVEN_PERSISTED_LOCAL, 3)
   assert.equal(result.createEvidence.CREATE_PROVEN_STRONG, 0)
   // Ters join ve beklenen taraf ayrıca ölçülür.
   assert.equal(result.orderJoinResolved, 3)
@@ -426,6 +426,125 @@ test('FOR-8: forensik modul AG/YAZMA/CREATE icermez', () => {
   assert.equal(
     discovery.OPERATION_TRACKING_INTRODUCED.migration, '0001_next_outlaw_kid.sql',
   )
+})
+
+/* ═══ KÖK NEDEN: operation_type SABİT 'CREATE' DEĞİL ═══════════════════ */
+
+test('GAP-1: operation_type TASIYICI OPERASYON ADIDIR — kaynak kaniti', () => {
+  // ÜRETİMDE KIRAN VARSAYIM: 300/300 WITH_ANY_OPERATION ama 0/300
+  // WITH_CREATE_OPERATION. Sebep: `recordToColumns`
+  // `first(record.operation, 'CREATE')` yazar ve `record.operation`
+  // `resolveSuratCreateOperationName(config)` sonucudur.
+  const persistence = codeOf('server/shipments/shipmentPersistenceService.ts')
+  assert.ok(
+    persistence.includes("operationType: first(record.operation, 'CREATE')"),
+    'operationType record.operation dan gelir',
+  )
+  const server = codeOf('server/index.mjs')
+  assert.ok(server.includes('operation: resolveSuratCreateOperationName(config)'))
+
+  // Cozucudeki HER donus degeri kanit kumesinde OLMALI — aksi halde o
+  // servis modunun create kayitlari yine gorunmez olur.
+  const start = server.indexOf('function resolveSuratCreateOperationName')
+  assert.ok(start > 0)
+  const body = server.slice(start, server.indexOf('\n}', start + 60))
+  const returned = [...body.matchAll(/return '([^']+)'/g)].map((m) => m[1])
+  assert.ok(returned.length >= 5, `cozucu donusleri: ${returned.length}`)
+  for (const name of returned) {
+    assert.ok(
+      discovery.SURAT_CREATE_OPERATION_TYPES.includes(name),
+      `${name} kanit kumesinde EKSIK`,
+    )
+  }
+  // Takip/sorgu operasyonlari kanit SAYILMAZ.
+  for (const nonCreate of [
+    'KargoTakipHareketDetayi', 'CariKoduveSifre', 'TrendyolUpdatePackageStatus',
+    'KargoBarkodu', 'WebSiparisKodu', 'TakipNo',
+  ]) {
+    assert.equal(
+      discovery.isCreateOperationType(nonCreate), false,
+      `${nonCreate} create kaniti OLMAMALI`,
+    )
+  }
+})
+
+test('GAP-2: OrtakBarkodOlustur kaydi artik CREATE olarak GORULUR', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  await seedOrder(db, org, {
+    packageId: 'PKG-OB', cargoTrackingNumber: '7270000000000031',
+  })
+  await seedShipment(db, org, {
+    packageId: 'PKG-OB', trackingNumber: '11419469827',
+    createdAt: '2026-08-12T08:00:00.000Z',
+  })
+  // ÜRETİMDEKİ GERÇEK YAZIM: operation_type = 'OrtakBarkodOlustur'.
+  await seedOperation(db, org, {
+    packageId: 'PKG-OB', operationType: 'OrtakBarkodOlustur',
+    status: 'succeeded', carrierCreateCalled: true,
+  })
+  // Takip operasyonu da var — kanıt SAYILMAMALI.
+  await seedOperation(db, org, {
+    packageId: 'PKG-OB', operationType: 'KargoTakipHareketDetayi',
+    status: 'succeeded', carrierCreateCalled: true,
+  })
+
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  assert.equal(result.shipmentsWithAnyOperation, 1)
+  assert.equal(result.shipmentsWithCreateOperation, 1, 'ARTIK gorulmeli')
+  assert.equal(result.createEvidence.CREATE_PROVEN_STRONG, 1)
+  assert.deepEqual(result.unknownReasonBreakdown, {}, 'UNKNOWN kalmamali')
+
+  // Gerçek operasyon tipi dağılımı çelişkiyi açıklar.
+  assert.equal(result.operationTypeDistribution.OrtakBarkodOlustur.count, 1)
+  assert.equal(result.operationTypeDistribution.KargoTakipHareketDetayi.count, 1)
+  const report = forensics.formatCreateEvidenceReport(result).join('\n')
+  assert.ok(report.includes('OPERATION_TYPE_DISTRIBUTION'))
+  assert.ok(/OrtakBarkodOlustur\s+1\s+succeeded=1\s+called:true=1\s+\[CREATE\]/.test(report))
+  assert.ok(/KargoTakipHareketDetayi.*\[NON-CREATE\]/.test(report))
+
+  // Kesif araci da AYNI sonucu vermeli (iki arac ayrismamali).
+  const found = await discovery.discoverSuratShipmentBillingEvidence(db, org, {
+    limit: 100,
+  })
+  assert.equal(found.suratCreateSuccess, 1)
+  assert.equal(found.suratCreateUnknown, 0)
+})
+
+test('GAP-3: senderCode kaynagi raporlanir, FirmaId ile KARISTIRILMAZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  await seedShipment(db, org, {
+    packageId: 'PKG-SC', trackingNumber: '114',
+    payloadExtra: { senderCode: '496056', firmaId: '1411052622' },
+  })
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  assert.equal(result.senderCodeAvailableCount, 1)
+  assert.equal(result.distinctSenderCodes, 1)
+  // Alan envanterinde ikisi AYRI durur.
+  assert.ok(result.payloadFieldInventory.includes('senderCode'))
+  assert.ok(result.payloadFieldInventory.includes('firmaId'))
+  // DEĞERLER raporda basılmaz.
+  const report = forensics.formatCreateEvidenceReport(result).join('\n')
+  assert.equal(report.includes('496056'), false)
+  assert.equal(report.includes('1411052622'), false)
+})
+
+test('GAP-4: billingParty GERCEK payer SAYILMAZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  await seedShipment(db, org, {
+    packageId: 'PKG-BP', trackingNumber: '114',
+    payloadExtra: { billingParty: 'PRIMARY' },
+  })
+  const result = await forensics.analyzeSuratCreateEvidence(db, org, { limit: 100 })
+  // CargoFlow'un KENDİ kredensiyal sınıfı taşıyıcı cevabı DEĞİLDİR.
+  assert.equal(result.actualWhoPaysFieldFound, false)
+  assert.equal(result.payloadsWithActualPayer, 0)
+  assert.deepEqual(result.cargoflowOriginPayerKeysSeen, ['billingParty'])
 })
 
 test('FOR-9: CLI --unknown-reasons bayragi bagli', () => {

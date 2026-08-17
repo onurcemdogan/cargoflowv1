@@ -6,7 +6,8 @@
 // Doğru evren, GERÇEKTEN taşıyıcı kaydı oluşmuş gönderilerdir.
 //
 // KANIT GÜCÜ SIRASI (tahmin YOK, şemadan türetildi):
-//   1) `shipment_operations` — operationType=CREATE, status='succeeded',
+//   1) `shipment_operations` — operationType TAŞIYICI CREATE adlarından biri
+//      (bkz. `SURAT_CREATE_OPERATION_TYPES`), status='succeeded',
 //      carrier_create_called=true. Taşıyıcıya GERÇEKTEN gidildiğinin ve
 //      başarıyla döndüğünün en güçlü kanıtı.
 //   2) `shipments.tracking_number` — taşıyıcı numarası atanmış. Tek başına
@@ -31,6 +32,35 @@ export const DEFAULT_SHIPMENT_SCAN_LIMIT = 500
 export const MAX_SHIPMENT_SCAN_LIMIT = 1000
 /** Şifreli yük çözülen EN FAZLA aday (tam tablo çözümü YASAK). */
 export const MAX_CANDIDATE_PAYLOADS = 10
+
+/**
+ * TAŞIYICI CREATE OPERASYON ADLARI — ÜRETİMDE KIRAN VARSAYIM DÜZELTMESİ.
+ *
+ * BULGU: `shipment_operations.operation_type` sabit `'CREATE'` DEĞİLDİR.
+ * `recordToColumns` `first(record.operation, 'CREATE')` yazar ve
+ * `record.operation` `resolveSuratCreateOperationName(config)` sonucudur —
+ * yani servis moduna göre TAŞIYICI OPERASYON ADI. Üretimde 300 gönderinin
+ * hepsinde operasyon kaydı VARDI fakat `operation_type='CREATE'` filtresi
+ * hiçbirini görmüyordu.
+ *
+ * Bu küme `resolveSuratCreateOperationName` ile SENKRON tutulur (testle
+ * kilitli). Takip/sorgu operasyonları (KargoTakipHareketDetayi,
+ * CariKoduveSifre, TrendyolUpdatePackageStatus…) BİLEREK dışarıdadır —
+ * onlar create kanıtı DEĞİLDİR.
+ */
+export const SURAT_CREATE_OPERATION_TYPES = [
+  'CREATE',
+  'OrtakBarkodOlustur',
+  'KargoBarkoduSiparis',
+  'GonderiyiKargoyaGonderYeniSiparisBarkodOlustur',
+  'GonderiyiKargoyaGonder',
+  'GonderiyiKargoyaGonderYeni',
+  'GonderiOlusturV2',
+] as const
+
+export function isCreateOperationType(value: unknown): boolean {
+  return (SURAT_CREATE_OPERATION_TYPES as readonly string[]).includes(text(value))
+}
 
 /** Sürat sağlayıcı adı — kayıtlarda farklı yazımlar görülebilir. */
 export function isSuratProvider(value: unknown): boolean {
@@ -120,7 +150,21 @@ export const GOLDEN_PARCEL = '7270035725579605'
  * hangisinde bulunduğu kaynak olarak raporlanır. Benzer isimli bir alanı
  * "herhalde budur" diye kabul etmek sessiz yanlış faturalama üretirdi.
  */
-export const KNOWN_ACTUAL_WHO_PAYS_KEYS = ['whoPays', 'WhoPays', 'KimOder'] as const
+export const KNOWN_ACTUAL_WHO_PAYS_KEYS = [
+  'whoPays',
+  'WhoPays',
+  'KimOder',
+  'payer',
+] as const
+
+/**
+ * CARGOFLOW KÖKENLİ — TAŞIYICI CEVABI SANILMAMALI.
+ *
+ * `canonicalVendorArtifact.billingParty` CargoFlow'un KENDİ kredensiyal
+ * sınıfıdır (PRIMARY/SELLER_PAYS/COD). Sürat'ın "kim ödedi" cevabı DEĞİLDİR.
+ * Gerçek payer sayılırsa kendi girdimizi kanıt sanmış oluruz.
+ */
+export const CARGOFLOW_ORIGIN_PAYER_KEYS = ['billingParty'] as const
 
 export function findPersistedActualWhoPays(
   payload: unknown,
@@ -173,7 +217,6 @@ export async function discoverSuratShipmentBillingEvidence(
         .where(
           and(
             eq(shipmentOperations.organizationId, organization.id),
-            eq(shipmentOperations.operationType, 'CREATE'),
             inArray(shipmentOperations.packageId, packageIds),
           ),
         )) as Record<string, unknown>[])
@@ -182,6 +225,9 @@ export async function discoverSuratShipmentBillingEvidence(
 
   const operationByPackage = new Map<string, Record<string, unknown>>()
   for (const row of operationRows) {
+    // YALNIZ TAŞIYICI CREATE operasyonları kanıttır. Takip/sorgu kayıtları
+    // (KargoTakipHareketDetayi vb.) create kanıtı DEĞİLDİR.
+    if (!isCreateOperationType(row.operationType)) continue
     const key = text(row.packageId)
     const existing = operationByPackage.get(key)
     // En güçlü kanıt tercih edilir: succeeded > diğer.
@@ -419,7 +465,7 @@ export type UnknownReason = (typeof UNKNOWN_REASON_PRECEDENCE)[number]
 /**
  * İKİNCİ DERECEDEN KANIT SINIFLARI.
  *
- * `CREATE_PROVEN_LEGACY` yalnız şema + tarih ile GERÇEKTEN savunulabilen
+ * `CREATE_PROVEN_PERSISTED_LOCAL` yalnız şema + tarih ile GERÇEKTEN savunulabilen
  * kombinasyondur: `source='local_create'` (kaydı CargoFlow oluşturdu, ithal
  * veya pazaryeri kaynaklı değil) VE taşıyıcı numarası dolu. O yolda numara
  * ancak taşıyıcı yanıtından gelebilir.
@@ -429,7 +475,7 @@ export type UnknownReason = (typeof UNKNOWN_REASON_PRECEDENCE)[number]
  */
 export const CREATE_EVIDENCE_CLASSES = [
   'CREATE_PROVEN_STRONG',
-  'CREATE_PROVEN_LEGACY',
+  'CREATE_PROVEN_PERSISTED_LOCAL',
   'CREATE_POSSIBLE',
   'CREATE_UNKNOWN',
 ] as const
@@ -450,7 +496,7 @@ export function classifyCreateEvidence(params: {
   const hasTracking = text(params.trackingNumber) !== ''
   if (!hasTracking) return 'CREATE_UNKNOWN'
   return text(params.source) === 'local_create'
-    ? 'CREATE_PROVEN_LEGACY'
+    ? 'CREATE_PROVEN_PERSISTED_LOCAL'
     : 'CREATE_POSSIBLE'
 }
 
