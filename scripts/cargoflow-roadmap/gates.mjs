@@ -113,6 +113,35 @@ export function buildPhaseP3Gates(scripts = readScripts()) {
   ]
 }
 
+/** FAZ P4 — Hepsiburada/n11 temeli (denetim: P4_AUDIT.md, sozlesme 2026-08-19). */
+export function buildPhaseP4Gates(scripts = readScripts()) {
+  return [
+    nodeTestGate(
+      'P4_MARKETPLACE_CONTRACTS', 'P4_HEPSIBURADA_N11',
+      'server/marketplaces-hepsiburada-n11-flow.test.mjs',
+      'HB/n11 resmi sozlesme sekilleri · kimlik · pencere · sayfalama · yetenek',
+    ),
+    ...qualityGates(scripts, 'P4_HEPSIBURADA_N11', 'P4'),
+  ]
+}
+
+/** FAZ P5 — Aras tasiyici temeli (denetim: P5_AUDIT.md). */
+export function buildPhaseP5Gates(scripts = readScripts()) {
+  return [
+    nodeTestGate(
+      'P5_CARRIER_NEUTRAL', 'P5_ARAS',
+      'server/carrier-neutral-foundation-flow.test.mjs',
+      'Surat yolu yabanci gonderiyi SAHIPLENMEZ',
+    ),
+    nodeTestGate(
+      'P5_ARAS_CONTRACT', 'P5_ARAS',
+      'server/carrier-aras-contract-flow.test.mjs',
+      'SetOrder zarfi · IntegrationCode idempotency · GetBarcode artefaktlari',
+    ),
+    ...qualityGates(scripts, 'P5_ARAS', 'P5'),
+  ]
+}
+
 export function buildGates(phase, scripts = readScripts()) {
   if (phase === 'S1_SURAT_HARDENING') {
     return [
@@ -157,12 +186,12 @@ export function buildGates(phase, scripts = readScripts()) {
   if (phase === 'P1_B2_PERFORMANCE') return buildPhaseP1Gates(scripts)
   if (phase === 'P2_B3_INCREMENTAL_SYNC') return buildPhaseP2Gates(scripts)
   if (phase === 'P3_B4_BARCODE_WORKER') return buildPhaseP3Gates(scripts)
+  if (phase === 'P4_HEPSIBURADA_N11') return buildPhaseP4Gates(scripts)
+  if (phase === 'P5_ARAS') return buildPhaseP5Gates(scripts)
   const pending = {
     // DENETIM YAPILDI (docs/cargoflow-roadmap/P1_AUDIT.md): sayfalama, N+1
     // kaldirma, sayim ve aralik sorgusu ZATEN VAR. Kalan: 0008 migration +
     // arac zinciri (preflight/prova/backfill/golge parite/geri alma) + benchmark.
-    P4_HEPSIBURADA_N11: 'saglayici-notr temel; dis sozlesme dogrulanmali',
-    P5_ARAS: 'tasiyici-notr temel; dis sozlesme dogrulanmali',
     P6_SURAT_NON_MARKETPLACE: 'pazaryeri disi sozlesme kaniti gerekli',
   }
   if (pending[phase]) {
