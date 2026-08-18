@@ -135,3 +135,30 @@ test('RM-9: cikis kodu 0 tek basina PASS URETMEZ', async () => {
   assert.equal(result.exitCode, 0)
   assert.equal(result.status, 'FAIL')
 })
+
+test('RM-10: dusen testin hata metni RAPORDAN ATILMAZ', () => {
+  // OLCULEN KUSUR (P3): 1.2 MB suite ciktisi bas+son kirpilinca ORTA atiliyor
+  // ve dosya seviyesindeki hata metni tam olarak orada duruyordu.
+  const noise = Array.from({ length: 4000 }, (_, i) => `✔ gecen test ${i}`)
+  const needle = 'HATA: modul yuklenemedi — SEBEP BURADA'
+  const text = [...noise.slice(0, 2000), needle, ...noise.slice(2000)].join('\n')
+  assert.ok(text.length > RUNNER.OUTPUT_TAIL_BYTES, 'senaryo siniri asmali')
+
+  const bounded = RUNNER.boundOutput(text)
+  assert.ok(bounded.includes(needle), 'hata metni kirpilip ATILDI')
+  assert.ok(bounded.length <= RUNNER.OUTPUT_TAIL_BYTES + 200, 'sinir asildi')
+  assert.match(bounded, /gecen alt test satiri atlandi/)
+})
+
+test('RM-10b: sinir altindaki cikti AYNEN korunur', () => {
+  const text = '✔ tek gecen test\nbitti'
+  assert.equal(RUNNER.boundOutput(text), text)
+})
+
+test('RM-10c: gurultu atildiktan sonra hala uzunsa kirpma YAPILIR', () => {
+  // Hepsi hata satiri: atilacak gurultu yok, son care kirpma devreye girer.
+  const text = Array.from({ length: 20_000 }, (_, i) => `hata satiri ${i}`).join('\n')
+  const bounded = RUNNER.boundOutput(text)
+  assert.ok(bounded.length <= RUNNER.OUTPUT_TAIL_BYTES + 200)
+  assert.match(bounded, /bayt atlandi/)
+})

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "cargoflow-roadmap",
-  "currentPhase": "P3_B4_BARCODE_WORKER",
+  "currentPhase": "P4_HEPSIBURADA_N11",
   "liveCreateAllowed": false,
   "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
   "phases": {
@@ -27,14 +27,14 @@
       "branch": "perf/orders-b3-incremental-sync"
     },
     "P3_B4_BARCODE_WORKER": {
-      "status": "in_progress",
-      "completedAt": null,
-      "commit": null,
+      "status": "passed",
+      "completedAt": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
       "plannedBranch": "feat/surat-barcode-worker-finalization",
-      "branch": null
+      "branch": "feat/surat-barcode-worker-finalization"
     },
     "P4_HEPSIBURADA_N11": {
-      "status": "locked",
+      "status": "in_progress",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/marketplaces-hepsiburada-n11-foundation",
@@ -342,6 +342,87 @@
       "timestamp": "2026-08-18T19:37:57.263Z",
       "commit": "7f1a8cd",
       "branch": "perf/orders-b3-incremental-sync",
+      "evidence": null
+    },
+    {
+      "phase": "P3_B4_BARCODE_WORKER",
+      "gate": "P3_IDEMPOTENCY_SEMANTICS",
+      "status": "PASS",
+      "timestamp": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P3_B4_BARCODE_WORKER",
+      "gate": "P3_ZERO_BYPASS",
+      "status": "PASS",
+      "timestamp": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P3_B4_BARCODE_WORKER",
+      "gate": "P3_FINANCIAL_GUARD",
+      "status": "PASS",
+      "timestamp": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P3_B4_BARCODE_WORKER",
+      "gate": "P3_CREATE_LIFECYCLE",
+      "status": "PASS",
+      "timestamp": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P3_B4_BARCODE_WORKER",
+      "gate": "P3_ORCHESTRATOR",
+      "status": "PASS",
+      "timestamp": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P3_B4_BARCODE_WORKER",
+      "gate": "P3_SURAT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P3_B4_BARCODE_WORKER",
+      "gate": "P3_UI",
+      "status": "PASS",
+      "timestamp": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P3_B4_BARCODE_WORKER",
+      "gate": "P3_BUILD",
+      "status": "PASS",
+      "timestamp": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P3_B4_BARCODE_WORKER",
+      "gate": "P3_LINT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T20:10:29.185Z",
+      "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
       "evidence": null
     }
   ],

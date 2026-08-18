@@ -6,12 +6,39 @@ import { redactText } from './redact.mjs'
 /** Rapora giren çıktı üst sınırı (baş + son). */
 export const OUTPUT_TAIL_BYTES = 12_000
 
+/** Geçen alt test satırları. Bir gate DÜŞTÜĞÜNDE bunlar kanıt DEĞİLDİR. */
+const PASSING_LINE = /^\s*(?:[✔✓]|ok \d+)\s/
+
+/**
+ * ÖNCE GÜRÜLTÜYÜ AT, SONRA KIRP.
+ *
+ * ÖLÇÜLEN KUSUR (P3): 1,2 MB'lık suite çıktısı baş+son yarıya kırpılınca ORTA
+ * kısım atılır — ve dosya seviyesindeki hata metni tam olarak ORADADIR. Düşen
+ * bir dosyanın sebebi bu yüzden raporda GÖRÜNMEDİ; tanı için 20 dakikalık
+ * suite'i elle tekrar koşmak gerekti.
+ *
+ * Sınır aşıldığında önce GEÇEN alt test satırları düşürülür; kalan hâlâ uzunsa
+ * baş+son kırpması uygulanır. Kırpma artık SON ÇAREDİR.
+ *
+ * Gate KARARI bundan ETKİLENMEZ: `requireOutput`/`forbidOutput` TAM metne
+ * uygulanır; burada üretilen yalnız RAPORA giren kayıttır.
+ */
 export function boundOutput(text, limit = OUTPUT_TAIL_BYTES) {
   const value = String(text ?? '')
   if (value.length <= limit) return value
+
+  const lines = value.split('\n')
+  const kept = lines.filter((line) => !PASSING_LINE.test(line))
+  const dropped = lines.length - kept.length
+  const filtered =
+    dropped > 0
+      ? `${kept.join('\n')}\n…[${dropped} gecen alt test satiri atlandi]…`
+      : value
+  if (filtered.length <= limit) return filtered
+
   const half = Math.floor(limit / 2)
-  return `${value.slice(0, half)}\n…[${value.length - limit} bayt atlandi]…\n${
-    value.slice(-half)}`
+  return `${filtered.slice(0, half)}\n…[${filtered.length - limit} bayt atlandi]…\n${
+    filtered.slice(-half)}`
 }
 
 /**
