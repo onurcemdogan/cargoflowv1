@@ -199,3 +199,37 @@ test('IDS-13: parmak izi ANAHTARA katilmaz (ikinci gonderi dogmaz)', () => {
     /idempotencyKey: `SURAT:\$\{tenantId\}:\$\{orderId\}:CREATE`/,
   )
 })
+
+/* ═══ KUYRUK ÖNCESİ FİNANSAL ÖN KONTROL ══════════════════════════════ */
+
+const APP = readFileSync(join(here, '..', 'src', 'App.tsx'), 'utf8')
+const PLAN = readFileSync(
+  join(here, '..', 'src', 'utils', 'suratCreatePrintPlan.ts'), 'utf8',
+)
+
+test('IDS-14: plan finansal predicate DESTEKLER ve kuyruk oncesi eler', () => {
+  assert.match(PLAN, /resolveFinancialBlock\?: \(order: CargoOrder\) => string \| null/)
+  // Eleme create kuyruguna girmeden ONCE olmali.
+  const checkAt = PLAN.indexOf('const financialBlock = input.resolveFinancialBlock')
+  const needsCreateAt = PLAN.indexOf('plan.needsCreate.push')
+  assert.ok(checkAt > 0, 'finansal predicate plana baglanmamis')
+  assert.ok(checkAt < needsCreateAt, 'eleme create kuyrugundan SONRA')
+  // Bloklanan siparis create/print gruplarina DUSMEZ.
+  const region = PLAN.slice(checkAt, needsCreateAt)
+  assert.match(region, /plan\.blocked\.push/)
+})
+
+test('IDS-15: gercek cagiran predicate i WIRE eder', () => {
+  // Optional predicate hic baglanmazsa eleme YAPILMAZ; baglandigi olculur.
+  assert.match(APP, /resolveFinancialBlock: \(order\) =>/)
+  assert.match(APP, /cargoTrackingNumber/)
+})
+
+test('IDS-16: sunucu kapisi hala OTORITER kalir', () => {
+  // Istemci elemesi kapinin YERINE GECMEZ: sunucu on kosulu yerinde durmali.
+  assert.match(
+    SOURCE,
+    /Trendyol cargoTrackingNumber bulunamadı\. Sürat pazaryeri gönderisi oluşturulamaz\./,
+  )
+  assert.match(SOURCE, /if \(!financialGate\.ok\)/)
+})

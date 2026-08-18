@@ -81,6 +81,38 @@ export function buildPhaseP2Gates(scripts = readScripts()) {
   ]
 }
 
+/** FAZ P3 — barkod worker (denetim: docs/cargoflow-roadmap/P3_AUDIT.md). */
+export function buildPhaseP3Gates(scripts = readScripts()) {
+  return [
+    nodeTestGate(
+      'P3_IDEMPOTENCY_SEMANTICS', 'P3_B4_BARCODE_WORKER',
+      'server/surat-idempotency-semantics-flow.test.mjs',
+      'semantik degisince NE replay NE create · kuyruk oncesi eleme',
+    ),
+    nodeTestGate(
+      'P3_ZERO_BYPASS', 'P3_B4_BARCODE_WORKER',
+      'server/surat-zero-bypass-gate-flow.test.mjs',
+      'finansal kapi TUM serviceMode dallarinin USTUNDE',
+    ),
+    nodeTestGate(
+      'P3_FINANCIAL_GUARD', 'P3_B4_BARCODE_WORKER',
+      'server/surat-financial-guard-flow.test.mjs',
+      'fail-closed finansal koruma',
+    ),
+    nodeTestGate(
+      'P3_CREATE_LIFECYCLE', 'P3_B4_BARCODE_WORKER',
+      'server/surat-lifecycle.test.mjs',
+      'idempotent create yasam dongusu',
+    ),
+    nodeTestGate(
+      'P3_ORCHESTRATOR', 'P3_B4_BARCODE_WORKER',
+      'server/surat-one-click-orchestrator-flow.test.mjs',
+      'uygun siparis secimi ve toplu calistirma',
+    ),
+    ...qualityGates(scripts, 'P3_B4_BARCODE_WORKER', 'P3'),
+  ]
+}
+
 export function buildGates(phase, scripts = readScripts()) {
   if (phase === 'S1_SURAT_HARDENING') {
     return [
@@ -124,11 +156,11 @@ export function buildGates(phase, scripts = readScripts()) {
   }
   if (phase === 'P1_B2_PERFORMANCE') return buildPhaseP1Gates(scripts)
   if (phase === 'P2_B3_INCREMENTAL_SYNC') return buildPhaseP2Gates(scripts)
+  if (phase === 'P3_B4_BARCODE_WORKER') return buildPhaseP3Gates(scripts)
   const pending = {
     // DENETIM YAPILDI (docs/cargoflow-roadmap/P1_AUDIT.md): sayfalama, N+1
     // kaldirma, sayim ve aralik sorgusu ZATEN VAR. Kalan: 0008 migration +
     // arac zinciri (preflight/prova/backfill/golge parite/geri alma) + benchmark.
-    P3_B4_BARCODE_WORKER: 'uygun siparis secimi, kuyruk oncesi finansal on kontrol',
     P4_HEPSIBURADA_N11: 'saglayici-notr temel; dis sozlesme dogrulanmali',
     P5_ARAS: 'tasiyici-notr temel; dis sozlesme dogrulanmali',
     P6_SURAT_NON_MARKETPLACE: 'pazaryeri disi sozlesme kaniti gerekli',

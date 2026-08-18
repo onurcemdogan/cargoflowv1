@@ -974,6 +974,19 @@ function App() {
             String(order.address ?? '').trim() && String(order.customerName ?? '').trim()
               ? null
               : 'Alıcı adı veya açık adres eksik.',
+          // KUYRUK ÖNCESİ FİNANSAL ÖN KONTROL. Sunucu, pazaryeri kimliği
+          // olmayan Trendyol siparişi için create'i KESİN reddeder
+          // (`cargoTrackingNumber` yoksa Sürat pazaryeri gönderisi
+          // oluşturulamaz). Bu siparişi kuyruğa almak bir create denemesini
+          // boşa harcar ve hatayı toplu işin ortasında gösterir.
+          //
+          // Otoriter kapı SUNUCUDADIR ve fail-closed kalır; burası yalnız
+          // kesin bilineni önden eler.
+          resolveFinancialBlock: (order) =>
+            String(order.marketplace ?? 'Trendyol').toLocaleLowerCase('tr-TR') ===
+              'trendyol' && !String(order.cargoTrackingNumber ?? '').trim()
+              ? 'Trendyol kargo takip numarası yok; Sürat pazaryeri gönderisi oluşturulamaz.'
+              : null,
           resolveDesiBlock: (order) =>
             resolveEffectiveLabelDesi(order, order.shipment, products, integrationConfig.desi)
               .blockedReason ?? null,

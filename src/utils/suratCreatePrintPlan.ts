@@ -59,6 +59,18 @@ export interface PlanPreflightInput {
   resolveFitBlock: (order: CargoOrder) => string | null
   /** Adres/alıcı gibi kritik alanlar tam mı (mesaj döner). */
   resolveDataBlock: (order: CargoOrder) => string | null
+  /**
+   * KUYRUK ÖNCESİ FİNANSAL ÖN KONTROL (mesaj döner).
+   *
+   * Sunucudaki otoriter finansal kapı fail-closed'dır; bu predicate onun
+   * YERİNE GEÇMEZ ve para güvenliği ona bağlı KALIR. Buradaki amaç kuyruk
+   * hijyenidir: kesinlikle reddedilecek bir sipariş kuyruğa alınıp create
+   * denemesi harcamasın ve kullanıcı hatayı toplu işin ORTASINDA görmesin.
+   *
+   * Verilmezse eleme YAPILMAZ (mevcut davranış korunur) — sunucu kapısı yine
+   * de devrededir.
+   */
+  resolveFinancialBlock?: (order: CargoOrder) => string | null
   /** Kayıtlı/üretilebilir etiket var mı. */
   hasPrintableLabel: (order: CargoOrder) => boolean
   /** Sipariş daha önce basıldı mı. */
@@ -116,6 +128,14 @@ export function resolveSuratCreateAndPrintPlan(
     const dataBlock = input.resolveDataBlock(order)
     if (dataBlock) {
       plan.blocked.push(entryOf(order, 'PREFLIGHT_BLOCKED', dataBlock))
+      continue
+    }
+    // Finansal eleme veri kontrolünden SONRA, fit/desi'den ÖNCE: eksik alan
+    // zaten daha anlaşılır bir mesaj verir, ama finansal olarak kesin
+    // reddedilecek sipariş pahalı sığdırma/desi hesabına GİRMEMELİDİR.
+    const financialBlock = input.resolveFinancialBlock?.(order) ?? null
+    if (financialBlock) {
+      plan.blocked.push(entryOf(order, 'PREFLIGHT_BLOCKED', financialBlock))
       continue
     }
     // Ürün sığdırma HER durumda kontrol edilir: sığmayan etiket ne basılabilir

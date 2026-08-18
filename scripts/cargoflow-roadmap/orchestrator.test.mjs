@@ -65,7 +65,7 @@ test('RM-6: uygulanmamis is SAHTE PASS uretmez', () => {
   // Belirli bir gate adina baglanmaz; DEGISMEZ test edilir: komutu olmayan
   // her zorunlu gate BLOCKED + NOT_IMPLEMENTED tasimali. Ornek faz, HENUZ
   // uygulanmamis olan siradaki fazdir (P2 baglandi: bkz. RM-6c).
-  const pending = GATES.buildGates('P3_B4_BARCODE_WORKER')
+  const pending = GATES.buildGates('P4_HEPSIBURADA_N11')
     .filter((gate) => gate.command === null)
   assert.ok(pending.length > 0, 'uygulanmamis is BLOCKED kalmali')
   for (const gate of pending) {
@@ -101,7 +101,7 @@ test('RM-7: gate komutlari package.json ile dogrulanir', () => {
   // Script yoksa komut UYDURULMAZ; hem baglanmis hem bekleyen fazda gecerli.
   for (const [phase, id] of [
     ['P2_B3_INCREMENTAL_SYNC', 'P2_BUILD'],
-    ['P3_B4_BARCODE_WORKER', 'P3_B4_BARCODE_WORKER_BUILD'],
+    ['P4_HEPSIBURADA_N11', 'P4_HEPSIBURADA_N11_BUILD'],
   ]) {
     const build = GATES.buildGates(phase, { 'test:surat': 'x' })
       .find((gate) => gate.id === id)

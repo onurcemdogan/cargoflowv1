@@ -112,10 +112,50 @@ ORTASINDA görür. P3 kapsamı bunu açıkça "kuyruk öncesi ön kontrol" diye 
 - Mevcut idempotency dış sözleşmesi (hata kodları, blocked mesajları) korunur;
   YALNIZ yeni mismatch kodu eklenir.
 
-## Sonraki somut adım
+---
 
-1. `financialFingerprint`i create kaydına yaz.
-2. Replay yolunda kayıtlı fingerprint ile gelen isteği KIYASLA; fark varsa
-   fail-closed reddet (C seçeneği).
-3. Plana finansal predicate ekle (kuyruk öncesi eleme).
-4. `P3_B4_BARCODE_WORKER` gate'ini gerçek testlere bağla.
+# BAĞLAMA — YAPILDI
+
+Karar katmanı: [suratIdempotencySemantics.ts](../../server/shipments/suratIdempotencySemantics.ts)
+· testler: [surat-idempotency-semantics-flow.test.mjs](../../server/surat-idempotency-semantics-flow.test.mjs)
+(16/16).
+
+| Açık | Çözüm | Test |
+| --- | --- | --- |
+| 1 — fingerprint okunmuyor | her iki fingerprint replay dallarından ÖNCE kıyaslanır | `IDS-2`, `IDS-10` |
+| 2 — finansal fingerprint kayda ulaşmıyor | `operation` bağlamında taşınır, kayda yazılır | `IDS-3`, `IDS-11` |
+| 3 — kuyruk öncesi eleme yok | plana `resolveFinancialBlock` predicate'i eklendi ve App.tsx wire etti | `IDS-14`, `IDS-15` |
+
+## Korunan sözleşmeler
+
+- **Anahtar DEĞİŞMEDİ** (`IDS-13`): semantik anahtara katılsaydı aynı sipariş
+  için ikinci fiziksel gönderi doğardı.
+- **Eski kayıtlar bloklanmaz** (`IDS-6`, `IDS-7`): yalnız İKİ tarafta da bulunan
+  eksen kıyaslanır. "Kanıt yokluğu" ≠ "farklı".
+- **Aynı semantikte davranış bit-bit aynı** (`IDS-1`).
+- **Sunucu kapısı hâlâ otoriter** (`IDS-16`): istemci elemesi kapının YERİNE
+  GEÇMEZ; para güvenliği fail-closed sunucu kapısına bağlı KALIR.
+- **Migration YOK**: fingerprint mevcut şifreli `payload` kaydının içinde
+  taşınır (`recordToColumns` tüm record'u saklar).
+
+## Mimari not — neden ayrı bir fingerprint yüzeyi
+
+Parmak izi `resolveSuratFinancialFingerprint` ile alınır,
+`evaluateSuratFinancialGate` DOĞRUDAN çağrılmaz. Sebep ölçüldü: sıfır-bypass
+testi otoriter kapıyı ÇAĞRI YERİNDEN bulur (`indexOf`), ve dosyada daha ERKEN
+duran ikinci bir `evaluateSuratFinancialGate({` çağrısı o değişmezi gölgeliyordu.
+Ayrı isim, "burası karar uygulamaz" bilgisini hem koda hem teste taşır.
+
+## Gate
+
+`P3_B4_BARCODE_WORKER` artık `notImplemented` DEĞİL:
+
+| Gate | Test |
+| --- | --- |
+| `P3_IDEMPOTENCY_SEMANTICS` | `surat-idempotency-semantics-flow.test.mjs` |
+| `P3_ZERO_BYPASS` | `surat-zero-bypass-gate-flow.test.mjs` |
+| `P3_FINANCIAL_GUARD` | `surat-financial-guard-flow.test.mjs` |
+| `P3_CREATE_LIFECYCLE` | `surat-lifecycle.test.mjs` |
+| `P3_ORCHESTRATOR` | `surat-one-click-orchestrator-flow.test.mjs` |
+
+Ardından ortak kalite kapıları (`P3_SURAT`, `P3_UI`, `P3_BUILD`, `P3_LINT`).
