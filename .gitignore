@@ -39,3 +39,6 @@ order-backfill-*.json
 
 # Surat finalization runtime raporlari (git disi)
 .var/surat-finalization/
+
+# CargoFlow yol haritasi runtime raporlari (git disi)
+.var/cargoflow-roadmap/

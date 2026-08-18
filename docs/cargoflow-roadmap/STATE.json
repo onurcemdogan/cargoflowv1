@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "workflow": "cargoflow-roadmap",
+  "currentPhase": "S1_SURAT_HARDENING",
+  "liveCreateAllowed": false,
+  "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
+  "phases": {
+    "S1_SURAT_HARDENING": {
+      "status": "in_progress",
+      "completedAt": null,
+      "commit": null,
+      "plannedBranch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui"
+    },
+    "P1_B2_PERFORMANCE": {
+      "status": "locked",
+      "completedAt": null,
+      "commit": null,
+      "plannedBranch": "perf/orders-b2-production-rollout",
+      "branch": null
+    },
+    "P2_B3_INCREMENTAL_SYNC": {
+      "status": "locked",
+      "completedAt": null,
+      "commit": null,
+      "plannedBranch": "perf/orders-b3-incremental-sync",
+      "branch": null
+    },
+    "P3_B4_BARCODE_WORKER": {
+      "status": "locked",
+      "completedAt": null,
+      "commit": null,
+      "plannedBranch": "feat/surat-barcode-worker-finalization",
+      "branch": null
+    },
+    "P4_HEPSIBURADA_N11": {
+      "status": "locked",
+      "completedAt": null,
+      "commit": null,
+      "plannedBranch": "feat/marketplaces-hepsiburada-n11-foundation",
+      "branch": null
+    },
+    "P5_ARAS": {
+      "status": "locked",
+      "completedAt": null,
+      "commit": null,
+      "plannedBranch": "feat/carrier-aras-foundation",
+      "branch": null
+    },
+    "P6_SURAT_NON_MARKETPLACE": {
+      "status": "locked",
+      "completedAt": null,
+      "commit": null,
+      "plannedBranch": "feat/surat-non-marketplace-contract",
+      "branch": null
+    }
+  },
+  "history": []
+}

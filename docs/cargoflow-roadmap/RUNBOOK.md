@@ -1,0 +1,67 @@
+# CargoFlow yol haritası — runbook
+
+Bu dosya sohbet hafızasının yerini alır. Yeni oturum yalnız şunu çalıştırır:
+
+```bash
+node scripts/cargoflow-roadmap/orchestrator.mjs status
+```
+
+Sonra sırayla:
+
+```bash
+node scripts/cargoflow-roadmap/orchestrator.mjs continue
+```
+
+`continue` **yalnız gate çalıştırır**. Kodu Claude düzeltir; düşen gate'in kök
+nedenini kanıtlar, minimum düzeltmeyi yapar, hedefli testi koşar, sonra tekrar
+`continue`. Faz atlama, force ve reset komutu **yoktur**.
+
+Rapor: `node scripts/cargoflow-roadmap/orchestrator.mjs report`
+Çıktılar: `.var/cargoflow-roadmap/latest-report.{json,md}` (git dışı).
+
+## Fazlar
+
+| Faz | Dal | Kapsam |
+| --- | --- | --- |
+| S1_SURAT_HARDENING | `fix/surat-canonical-kargobarkod-and-debug-ui` | Kimlik parite kapısı, Canlı Debug, başarısız create durumu |
+| P1_B2_PERFORMANCE | `perf/orders-b2-production-rollout` | Sayfalama, sayımlar, N+1, 0008 araçları |
+| P2_B3_INCREMENTAL_SYNC | `perf/orders-b3-incremental-sync` | Kiracı checkpoint, artımlı imleç, resume |
+| P3_B4_BARCODE_WORKER | `feat/surat-barcode-worker-finalization` | Kuyruk öncesi finansal ön kontrol, idempotency |
+| P4_HEPSIBURADA_N11 | `feat/marketplaces-hepsiburada-n11-foundation` | Sağlayıcı-nötr temel |
+| P5_ARAS | `feat/carrier-aras-foundation` | Taşıyıcı-nötr temel |
+| P6_SURAT_NON_MARKETPLACE | `feat/surat-non-marketplace-contract` | Pazaryeri dışı sözleşme |
+
+## Değişmez kurallar
+
+- `master`'a **push yok**; her faz kendi dalında.
+- Gerçek taşıyıcı create **yok**. Tüm fazlar bitse bile `liveCreateAllowed=false`.
+- Üretim migration/restart **yok**.
+- Operasyonel veri **silinmez**: orders, shipments, shipment_operations,
+  idempotency, tracking, printZpl, technicalZpl, Trace V2.
+- Dış sözleşme eksikliği yalnız P4/P5/P6'da ilerlemeye izin verir; uygulanabilir
+  bir fazı "sözleşme yok" diyerek atlamak yasaktır (RM-4 bunu kilitler).
+- Uygulanmamış iş `NOT_IMPLEMENTED` ile **BLOCKED** kalır — sahte PASS yok.
+
+## S1'de kalanlar
+
+`S1_LIVE_DEBUG_UI` ve `S1_FAILED_ORDER_STATE` bilerek BLOCKED. Yapılacaklar:
+
+1. Canlı Debug'ı Trace V2'ye bağla (5 sekme: Özet · Karar/Mapping · Request ·
+   Response · Geçmiş). Varsayılan ekranda legacy satır sayısı **0** olmalı.
+2. Çapraz deneme karışımını gider: seçilen tek `traceId` bütün sekmeleri sürsün.
+   Bilinen doğru değerler — `ReferansNo=4085791254`,
+   `OzelKargoTakipNo=7270036019076954`.
+3. `CREATE_FAILED` siparişi başarılı kayıt gibi göstermeyen bir durum kullan.
+
+Hazır bileşenler: [SuratLiveDebugPanel](../../src/components/SuratLiveDebugPanel.tsx)
+ve [görünüm modeli](../../src/debug/suratLiveDebugViewModel.ts) — Trace V2'den
+okur ve legacy v1 kayıtlarını aday listesine hiç almaz.
+
+## Yeni oturum için hazır istem
+
+> Read docs/cargoflow-roadmap/CONTRACT.md and RUNBOOK.md.
+> Run the roadmap status command.
+> Work only on CURRENT_PHASE and its FAILED_GATE.
+> Do not skip phases. Do not push master.
+> After the minimum evidenced fix, run continue. Repeat until the phase passes.
+> Never perform a real carrier create.
