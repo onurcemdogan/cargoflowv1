@@ -152,18 +152,7 @@ export function buildPhaseDGates(scripts = readScripts()) {
     npmGate(scripts, 'D2_UI', 'D', 'test:ui', 'UI paketi (COD politika alani)'),
     npmGate(scripts, 'D3_BUILD', 'D', 'build', 'production build'),
     npmGate(scripts, 'D4_LINT', 'D', 'lint', 'lint'),
-    // Canlı Debug arayüzü HENÜZ YOK. Gate bilerek BLOCKED: eksik iş
-    // "tamamlandı" görünmesin diye faz burada AÇIK kalır.
-    {
-      id: 'D5_LIVE_DEBUG_UI',
-      phase: 'D',
-      description: 'Canlı Debug arayuzu Trace V2 uzerinden (5 sekme)',
-      command: null,
-      required: true,
-      safe: true,
-      status: 'BLOCKED',
-      evidence: 'NOT_IMPLEMENTED: Canlı Debug arayuzu + legacy debug denetimi',
-    },
+    npmGate(scripts, 'D5_FULL_SURAT', 'D', 'test:surat', 'Surat tam paketi'),
   ]
 }
 

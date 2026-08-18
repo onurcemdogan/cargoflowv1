@@ -1,0 +1,153 @@
+import { describe, expect, it } from 'vitest'
+import {
+  LEGACY_DEBUG_STORAGE_KEY, TRACE_RETENTION_MAX_PER_TENANT,
+  appendTrace, applyRetention, selectCurrentTrace, selectValidTraces,
+} from '../services/suratTraceDebugStore'
+import {
+  LIVE_DEBUG_TABS, buildLiveDebugViewModel, buildTraceableUserError,
+  describeWireWhoPaysForDisplay,
+} from '../debug/suratLiveDebugViewModel'
+
+const trace = (id: string, over: Record<string, unknown> = {}) => ({
+  traceId: id, schemaVersion: 2,
+  createdAt: (over.createdAt as string) ?? '2026-08-18T10:00:00.000Z',
+  stages: [
+    { stage: 'PRE_FLIGHT', at: 'x', section: 'BILLING', data: {
+      billingParty: 'TRENDYOL_PAYS', expectedSuratWhoPays: '3',
+      odemeTipi: '1', codEnabled: false, preflightValid: true,
+      preflightFailures: [], ...(over.pre as object ?? {}) } },
+    { stage: 'ROUTING', at: 'x', section: 'CREDENTIAL_ROUTING', data: {
+      credentialRole: 'PRIMARY_MARKETPLACE', credentialSource: 'tenant',
+      maskedAccount: '49****56', sifre: 'COK_GIZLI' } },
+    { stage: 'REQUEST_READY', at: 'x', section: 'REQUEST', data: {
+      wireWhoPaysPresent: false,
+      wireWhoPaysReason: 'CONTRACT_HAS_NO_WHO_PAYS_FIELD' } },
+    { stage: 'CARRIER_CALL', at: 'x', section: 'SERVICE_ROUTING', data: {} },
+    { stage: 'CARRIER_RESPONSE', at: 'x', section: 'RESPONSE', data: {
+      businessCode: '016', businessMessage: `yanit-${id}`,
+      ...(over.response as object ?? {}) } },
+    { stage: 'VERIFICATION', at: 'x', section: 'VERIFICATION', data: {
+      trackingPresent: true, barcodePresent: true } },
+    { stage: 'FINAL', at: 'x', section: 'FINAL_RESULT', data: {
+      carrierCreateStatus: 'SUCCESS', carrierCalled: true,
+      ...(over.final as object ?? {}) } },
+  ],
+})
+
+describe('Canlı Debug — Trace V2 kaynagi', () => {
+  it('bes sekme tanimli', () => {
+    expect([...LIVE_DEBUG_TABS]).toEqual([
+      'Son Deneme', 'Karar / Mapping', 'Request', 'Response', 'Geçmiş',
+    ])
+  })
+
+  it('eski v1 debug kaydi ADAY DEGILDIR', () => {
+    // v1 kaydin zaman damgasi DAHA YENI olsa bile secilemez.
+    const legacy = { key: LEGACY_DEBUG_STORAGE_KEY, traceId: 'v1',
+      createdAt: '2099-01-01T00:00:00.000Z', stages: [] }
+    const current = selectCurrentTrace([legacy, trace('CF-A')])
+    expect(current?.traceId).toBe('CF-A')
+    expect(selectValidTraces([legacy])).toHaveLength(0)
+  })
+
+  it('Son Deneme EN YENI v2 izini secer', () => {
+    const older = trace('CF-OLD', { createdAt: '2026-08-18T09:00:00.000Z' })
+    const newer = trace('CF-NEW', { createdAt: '2026-08-18T11:00:00.000Z' })
+    expect(selectCurrentTrace([older, newer])?.traceId).toBe('CF-NEW')
+  })
+
+  it('saklama sayi sinirini uygular', () => {
+    const many = Array.from({ length: 250 }, (_, index) =>
+      trace(`CF-${index}`))
+    expect(applyRetention(many, Date.parse('2026-08-18T12:00:00.000Z')))
+      .toHaveLength(TRACE_RETENTION_MAX_PER_TENANT)
+  })
+
+  it('yeni deneme basa eklenir', () => {
+    const next = appendTrace([trace('CF-A')],
+      trace('CF-B', { createdAt: '2026-08-18T11:00:00.000Z' }),
+      Date.parse('2026-08-18T12:00:00.000Z'))
+    expect(next[0].traceId).toBe('CF-B')
+  })
+})
+
+describe('Canlı Debug — gorunum modeli', () => {
+  it('beklenen ile tel AYRI bolumlerde', () => {
+    const model = buildLiveDebugViewModel(trace('CF-A'))!
+    expect(model.expected.expectedSuratWhoPays).toBe('3')
+    expect(model.wire.wireWhoPaysPresent).toBe(false)
+    const wire = describeWireWhoPaysForDisplay(model)
+    expect(wire.label).toBe('GÖNDERİLMEDİ')
+    expect(wire.reason).toBe('CONTRACT_HAS_NO_WHO_PAYS_FIELD')
+    // Bu bir HATA DEGILDIR.
+    expect(wire.isError).toBe(false)
+  })
+
+  it('uc alan BIRBIRINDEN BAGIMSIZ gosterilir', () => {
+    const model = buildLiveDebugViewModel(trace('CF-A'))!
+    expect(model.decision.billing.billingParty).toBe('TRENDYOL_PAYS')
+    expect(model.decision.payment.odemeTipi).toBe('1')
+    expect(model.decision.cod.codEnabled).toBe(false)
+    // Odeme/COD bolumleri fatura tarafini TASIMAZ.
+    expect(model.decision.payment).not.toHaveProperty('billingParty')
+    expect(model.decision.cod).not.toHaveProperty('billingParty')
+  })
+
+  it('kimlik rolu/maskeli cari gosterilir, sir GOSTERILMEZ', () => {
+    const model = buildLiveDebugViewModel(trace('CF-A'))!
+    expect(model.decision.credential.credentialRole).toBe('PRIMARY_MARKETPLACE')
+    expect(model.decision.credential.credentialSource).toBe('tenant')
+    expect(model.decision.credential.maskedAccount).toBe('49****56')
+    expect(JSON.stringify(model)).not.toContain('COK_GIZLI')
+  })
+
+  it('Trace A, Trace B yanitini ASLA gostermez', () => {
+    const a = buildLiveDebugViewModel(trace('CF-A'))!
+    const b = buildLiveDebugViewModel(trace('CF-B'))!
+    expect(a.response.businessMessage).toBe('yanit-CF-A')
+    expect(b.response.businessMessage).toBe('yanit-CF-B')
+    expect(JSON.stringify(a)).not.toContain('yanit-CF-B')
+  })
+
+  it('bloklanan deneme: CARRIER_CALL yok', () => {
+    const blocked = { ...trace('CF-BLOCK'),
+      stages: trace('CF-BLOCK').stages.filter((entry) =>
+        ['PRE_FLIGHT', 'ROUTING', 'FINAL'].includes(entry.stage)) }
+    const model = buildLiveDebugViewModel(blocked)!
+    expect(model.carrierCalled).toBe(false)
+    expect(model.stages).not.toContain('CARRIER_CALL')
+  })
+
+  it('039 izlenebilir kullanici hatasi uretir', () => {
+    const model = buildLiveDebugViewModel(trace('CF-039', {
+      response: { businessCode: '039',
+        businessMessage: 'Sipariş kaydedildi, barkod oluşturulamadı' },
+      final: { carrierCreateStatus: 'FAILED' },
+    }))!
+    const message = buildTraceableUserError(model)!
+    expect(message).toContain('039')
+    expect(message).toContain('CF-039')
+    expect(message).not.toBe('Barkod oluşturulamadı')
+  })
+
+  it('basarili denemede hata mesaji URETILMEZ', () => {
+    expect(buildTraceableUserError(buildLiveDebugViewModel(trace('CF-A'))!))
+      .toBeNull()
+  })
+
+  it('016 varyantlari FARKLI dogrulama tasir', () => {
+    const complete = buildLiveDebugViewModel(trace('CF-1'))!
+    const partial = { ...trace('CF-2') }
+    partial.stages = partial.stages.map((entry) =>
+      entry.stage === 'VERIFICATION'
+        ? { ...entry, data: { trackingPresent: false, barcodePresent: true } }
+        : entry)
+    const incomplete = buildLiveDebugViewModel(partial)!
+    expect(complete.verification.trackingPresent).toBe(true)
+    expect(incomplete.verification.trackingPresent).toBe(false)
+  })
+
+  it('iz yoksa model null', () => {
+    expect(buildLiveDebugViewModel(null)).toBeNull()
+  })
+})

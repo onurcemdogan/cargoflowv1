@@ -16,6 +16,7 @@ import {
   Truck,
 } from 'lucide-react'
 import { useState } from 'react'
+import { SuratLiveDebugPanel } from '../components/SuratLiveDebugPanel'
 import { ActionResult } from '../components/ActionResult'
 import { PageHeader } from '../components/PageHeader'
 import {
@@ -1040,6 +1041,8 @@ function SuratSettingsPanel({
                 gönderi oluşturulmaz.
               </p>
             )}
+
+            <SuratLiveDebugPanel />
           </>
         ) : null}
 
