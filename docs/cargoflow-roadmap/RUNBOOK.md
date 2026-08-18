@@ -42,73 +42,74 @@ Rapor: `node scripts/cargoflow-roadmap/orchestrator.mjs report`
   bir fazı "sözleşme yok" diyerek atlamak yasaktır (RM-4 bunu kilitler).
 - Uygulanmamış iş `NOT_IMPLEMENTED` ile **BLOCKED** kalır — sahte PASS yok.
 
-## Guncel konum — YOL HARITASI TAMAMLANDI
+## Guncel konum
 
-`CURRENT_PHASE=COMPLETE`. Uygulanabilir dort fazin HEPSI gecti; kalan uc faz
-DIS SOZLESME eksikligiyle bloklu. `liveCreateAllowed=false` (her durumda).
+**S1 · P1 · P2 · P3 = passed.** **P4 · P5 = dis sozlesme DOGRULANDI ve yeniden
+acildi (2026-08-19).** **P6 = blocked_external_contract (INSUFFICIENT).**
 
-| Faz | Durum | Dal |
+`liveCreateAllowed=false` · `marketplaceWritesEnabled=false` (her durumda).
+
+### Dis sozlesme durumu
+
+| Faz | external_contract_status | Not |
 | --- | --- | --- |
-| S1_SURAT_HARDENING | passed | `fix/surat-canonical-kargobarkod-and-debug-ui` |
-| P1_B2_PERFORMANCE | passed | `perf/orders-b2-production-rollout` |
-| P2_B3_INCREMENTAL_SYNC | passed | `perf/orders-b3-incremental-sync` |
-| P3_B4_BARCODE_WORKER | passed | `feat/surat-barcode-worker-finalization` |
-| P4_HEPSIBURADA_N11 | blocked_external_contract | — |
-| P5_ARAS | blocked_external_contract | `feat/carrier-aras-foundation` |
-| P6_SURAT_NON_MARKETPLACE | blocked_external_contract | `feat/surat-non-marketplace-contract` |
+| P4_HEPSIBURADA_N11 | `VERIFIED_PUBLIC_OFFICIAL` | HB uc nokta YOLLARI kanitlanmadi → yapilandirmadan gelir |
+| P5_ARAS | `VERIFIED_PUBLIC_OFFICIAL_TEST_CONTRACT` | `production_endpoint_status=UNVERIFIED`; COD deger tablosu YOK |
+| P6_SURAT_NON_MARKETPLACE | `INSUFFICIENT` | `Pazaryerimi=0` is semantigi kanitlanmadi |
 
-### P2 · P3 (gecti)
+Kanit ayrintisi (kaynak ailesi, tarih, dogrulanan olgular ve KANITLANMAYANLAR):
+`STATE.json → phases.*.externalContract`. **Sir YAZILMAZ.**
 
-- **P2**: imlec artik OKUNUYOR — cekim penceresi `integration_sync_state`ten
-  turetiliyor, imlec pencerenin UST SINIRINA yaziliyor ve YALNIZ tam basarili
-  sync'te ilerliyor. Periyodik genis tarama imlecin ZAMAN KOVASINDAN turetildi:
-  migration GEREKMEDI. [P2_AUDIT.md](P2_AUDIT.md)
-- **P3**: `requestFingerprint` ve `financialFingerprint` artik replay'den ONCE
-  kiyaslaniyor. Duzeltilmis desi ya da degismis odeyen taraf eski etiketi
-  "basarili" diye geri oynatamaz; fark varsa NE replay NE create.
-  [P3_AUDIT.md](P3_AUDIT.md)
+### Hazirlik maddeleri — kod fazini BLOKLAMAZ
 
-### P4 · P5 · P6 (dis sozlesme bekliyor)
+| Madde | Durum |
+| --- | --- |
+| `HB_N11_LIVE_CREDENTIAL_VERIFICATION` | BLOCKED_EXTERNAL_ENVIRONMENT |
+| `ARAS_PRODUCTION_ENDPOINT` | BLOCKED_EXTERNAL_ENVIRONMENT |
+| `ARAS_PRODUCTION_CREDENTIAL` | BLOCKED_EXTERNAL_ENVIRONMENT |
+| `ARAS_COD_VALUE_TABLE` | BLOCKED_EXTERNAL_CONTRACT (COD fail-closed) |
 
-Ucunde de kural AYNI: **dis API alani TAHMIN EDILMEDI.** Her fazin denetimi,
-sozlesme geldiginde ne gerektigini madde madde yaziyor.
+### Yeni kod haritasi
 
-- **P4** — Hepsiburada/N11 sozlesmesi repoda YOK (adapter/WSDL/fixture/credential
-  = sifir). Saglayici-notr temel OLCULDU: depolama, izolasyon ve mutabakat
-  ZATEN notr; kimlik allowlist'i, kapali `IntegrationProvider` birlesimi ve
-  index.mjs'e gomulu fetch/normalize notr DEGIL. Adaptor arayuzu BILEREK
-  yazilmadi. [P4_AUDIT.md](P4_AUDIT.md)
-- **P5** — Aras sozlesmesi YOK. Tasiyici-notr temelin sozlesmeden BAGIMSIZ
-  yarisi tamamlandi ve kilitlendi: Surat yolu yabanci gonderiyi ne create'te ne
-  render'da sahiplenir (`carrier-neutral-foundation-flow`, 7/7).
-  [P5_AUDIT.md](P5_AUDIT.md)
-- **P6** — Surat ENTEGRE; eksik olan sozlesmenin pazaryeri DISI dali. Model
-  pazaryeri disini zaten taniyor ve fail-closed dogruluyor, ama
-  `ownPlatformReference` icin URETIM CAGIRANI YOK ve bu BILEREK boyle. Eksik tek
-  gercek: `Pazaryerimi=0` gonderisinde `OzelKargoTakipNo` NE olmali.
-  [P6_AUDIT.md](P6_AUDIT.md)
-
-### Yeni komut — `block-external`
-
-```bash
-node scripts/cargoflow-roadmap/orchestrator.mjs block-external <FAZ> "<gerekce>"
+```
+server/marketplaces/
+  marketplaceOrderSource.ts        ← UC gercek modelden turetilen seam
+  hepsiburada/{Contract,OrderSource,LabelCapability}.ts
+  n11/{Contract,OrderSource}.ts
+server/carriers/aras/
+  {arasContract,arasSetOrder,arasLabelArtifact,arasVerification}.ts
 ```
 
-Faz ATLAMA komutu DEGILDIR. Kapilari: yalniz P4/P5/P6, yalniz SIRADAKI faz,
-`passed` faz geri alinamaz, gerekce ZORUNLU. RM-11 S1/P1/P2/P3'un bu kapidan
-GECEMEDIGINI kilitler.
+`server/index.mjs` DEGISMEDI → **Trendyol davranisi aynen korundu.**
 
-### Faz ACILIRSA ne yapilir
+### Degismezler — kolay bozulan yerler
 
-Sozlesme kaniti geldiginde: ilgili `P*_AUDIT.md`nin "Sozlesme geldiginde gereken
-KANIT" bolumunu karsila, sonra fazi `in_progress` yapip gate'i gercek testlere
-bagla. P6'da `NM-4`, P5'te `CN-6`/`CN-7` bilerek konmus BEKCILERDIR: o gun
-duserler ve karar BILINCLI verilir.
+- **HB `-sit` kurali** yalniz DOGRULANMIS hepsiburada hostlarinda uygulanir.
+  Aras'ta boyle bir kural YOKTUR; uretim adresi disaridan gelir.
+- **HTTP 200 basari DEGILDIR**: HB ortak barkodunda 101/102/400/500 is kodlari
+  ve artefakt varligi ayrica denetlenir.
+- **n11'de `cargoSenderNumber`=TAKIP, `cargoTrackingNumber`=BARKOD.** Isimler
+  sezgiye ters; yer degistirirlerse yanlis numara sorgulanir ve yanlis barkod
+  basilir.
+- **Sayfalama karistirilmaz**: HB `offset/limit`, n11 `page`(0)/`size`(<=100).
+- **Pencere**: Trendyol <=30 gun · HB paket 24 saat · n11 15 gun.
+- **COD**: alanin VARLIGI degerini KANITLAMAZ. Dogrulanmamis kod ile COD
+  gonderi ACILMAZ.
+
+### Yeni komut — `reopen-external`
+
+```bash
+node scripts/cargoflow-roadmap/orchestrator.mjs reopen-external <FAZ> "<kanit>"
+```
+
+`block-external`in tersi ve onun kadar dardir: faz GERCEKTEN bloklu olmali,
+kanit kaynagi YAZILMALI, onceki fazlar calistirilabilir olmali. Onceki engel
+gerekcesi `previousBlockerDetail` olarak KORUNUR. RM-16..RM-19 kilitler.
 
 ### DIKKAT — ayni anda IKI gate kosusu BASLATMA
 
-P3'te `P3_SURAT` bir kez dustu. Sebep repo DEGILDI: ayni `continue` iki kez
-baslatilmisti ve iki tam suite es zamanli kostu. Tek kosuda 1875/1875 gecti.
+P3'te `P3_SURAT` bir kez dustu; sebep repo DEGILDI, ayni `continue` iki kez
+baslatilmisti. Gate kosusu SERI baslatilmalidir.
 
 ## S1 gecmisi
 

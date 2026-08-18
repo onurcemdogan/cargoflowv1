@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "cargoflow-roadmap",
-  "currentPhase": "P4_HEPSIBURADA_N11",
+  "currentPhase": "P5_ARAS",
   "liveCreateAllowed": false,
   "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
   "phases": {
@@ -34,11 +34,11 @@
       "branch": "feat/surat-barcode-worker-finalization"
     },
     "P4_HEPSIBURADA_N11": {
-      "status": "in_progress",
-      "completedAt": null,
-      "commit": null,
+      "status": "passed",
+      "completedAt": "2026-08-18T21:59:37.858Z",
+      "commit": "6f423e0",
       "plannedBranch": "feat/marketplaces-hepsiburada-n11-foundation",
-      "branch": "feat/surat-barcode-worker-finalization",
+      "branch": "feat/marketplaces-hepsiburada-n11-foundation",
       "previousBlockerDetail": "Hepsiburada/N11 dis sozlesmesi repoda YOK: adapter/client/endpoint kodu, WSDL/OpenAPI/Postman, fixture ve credential girdisi arandi, sifir bulundu. Kodda gecen adlar yalnizca enabled:false gorunum kaydi ve Surat entegrasyonFirmasi string alani. Detay: docs/cargoflow-roadmap/P4_AUDIT.md",
       "contractEvidence": "VERIFIED_PUBLIC_OFFICIAL (2026-08-19): Hepsiburada Developer Portal (Basic auth, -sit SIT/prod kurali, merchantId, offset/limit + begindate/enddate, 429 + X-RateLimit-* basliklari, paket modeli packageNumber/barcode/cargoCompany/trackingInfoCode, ortak barkod HepsiJet+Aras ve 101/102/400/500 is kodlari) ve n11 Magaza Destek Merkezi (REST GET /rest/delivery/v1/shipmentPackages, appkey/appsecret basliklari, 1000 istek/dk, page 0-tabanli size<=100, 15 gunluk pencere kurallari, statu alan adlari, cargoSenderNumber vs cargoTrackingNumber ayrimi).",
       "externalContract": {
@@ -76,12 +76,11 @@
       }
     },
     "P5_ARAS": {
-      "status": "blocked_external_contract",
+      "status": "in_progress",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/carrier-aras-foundation",
       "branch": null,
-      "blockerDetail": "Aras dis sozlesmesi repoda YOK: WSDL/OpenAPI/Postman, fixture, credential girdisi ve adapter/endpoint kodu arandi, sifir bulundu. Gercek iki gecis yalnizca enabled:false gorunum kaydi ve yabanci-tasiyici test ornegi. Tasiyici-notr temelin sozlesmeden bagimsiz yarisi TAMAMLANDI ve testle kilitlendi (carrier-neutral-foundation-flow, 7/7). Detay: docs/cargoflow-roadmap/P5_AUDIT.md",
       "externalContract": {
         "status": "VERIFIED_PUBLIC_OFFICIAL_TEST_CONTRACT",
         "retrievedAt": "2026-08-19",
@@ -117,7 +116,9 @@
             "note": "COD gonderi fail-closed kalir."
           }
         ]
-      }
+      },
+      "previousBlockerDetail": "Aras dis sozlesmesi repoda YOK: WSDL/OpenAPI/Postman, fixture, credential girdisi ve adapter/endpoint kodu arandi, sifir bulundu. Gercek iki gecis yalnizca enabled:false gorunum kaydi ve yabanci-tasiyici test ornegi. Tasiyici-notr temelin sozlesmeden bagimsiz yarisi TAMAMLANDI ve testle kilitlendi (carrier-neutral-foundation-flow, 7/7). Detay: docs/cargoflow-roadmap/P5_AUDIT.md",
+      "contractEvidence": "VERIFIED_PUBLIC_OFFICIAL_TEST_CONTRACT (2026-08-19): Aras Kargo resmi genel TEST web servisi customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx — SetOrder alan kumesi, SetOrder sonucu (ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId), GetBarcode (Username/Password/integrationCode → Images/ZebraZpl/ZebraEpl/BarcodeModelLst) ve okuma uclari dogrulandi. KANITLANMAYAN: uretim host adresi (test host undan TURETILMEZ), COD deger tablosu, ResultCode anlam tablosu. Detay: docs/cargoflow-roadmap/P5_AUDIT.md"
     },
     "P6_SURAT_NON_MARKETPLACE": {
       "status": "blocked_external_contract",
@@ -551,6 +552,51 @@
       "timestamp": "2026-08-18T20:53:25.731Z",
       "commit": "cf0189b",
       "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_MARKETPLACE_CONTRACTS",
+      "status": "PASS",
+      "timestamp": "2026-08-18T21:59:37.858Z",
+      "commit": "6f423e0",
+      "branch": "feat/marketplaces-hepsiburada-n11-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_SURAT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T21:59:37.858Z",
+      "commit": "6f423e0",
+      "branch": "feat/marketplaces-hepsiburada-n11-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_UI",
+      "status": "PASS",
+      "timestamp": "2026-08-18T21:59:37.858Z",
+      "commit": "6f423e0",
+      "branch": "feat/marketplaces-hepsiburada-n11-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_BUILD",
+      "status": "PASS",
+      "timestamp": "2026-08-18T21:59:37.858Z",
+      "commit": "6f423e0",
+      "branch": "feat/marketplaces-hepsiburada-n11-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_LINT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T21:59:37.858Z",
+      "commit": "6f423e0",
+      "branch": "feat/marketplaces-hepsiburada-n11-foundation",
       "evidence": null
     }
   ],

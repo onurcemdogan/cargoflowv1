@@ -304,3 +304,51 @@ test('RM-19: gecerli kanit fazi acar ve ENGEL GECMISINI korur', () => {
   // Canli create HER durumda kapali kalir.
   assert.equal(state.liveCreateAllowed, false)
 })
+
+test('RM-20: gecen faz, SONRAKI bloklu fazi SESSIZCE ACMAZ', () => {
+  // OLCULEN KUSUR: advancePhase siradaki fazi kosulsuz in_progress yapiyordu.
+  // Bloklu faz, onceki faz gectigi anda kanitsiz aciliyor ve `blockerDetail`
+  // ("sozlesme YOK") ile `in_progress` yan yana duruyordu.
+  const state = fresh()
+  for (const phase of STATE.PHASE_ORDER.slice(0, 4)) {
+    state.phases[phase].status = 'passed'
+  }
+  state.currentPhase = 'P4_HEPSIBURADA_N11'
+  state.phases.P4_HEPSIBURADA_N11.status = 'in_progress'
+  state.phases.P5_ARAS.status = 'blocked_external_contract'
+  state.phases.P5_ARAS.blockerDetail = 'sozlesme YOK'
+
+  STATE.advancePhase(state, 'P4_HEPSIBURADA_N11')
+
+  assert.equal(
+    state.phases.P5_ARAS.status, 'blocked_external_contract',
+    'bloklu faz kanitsiz ACILDI',
+  )
+  assert.equal(state.phases.P5_ARAS.blockerDetail, 'sozlesme YOK')
+  // Sira bloklu fazi ATLAR (CONTRACT: engel sonraki fazi acabilir).
+  assert.equal(state.currentPhase, 'P6_SURAT_NON_MARKETPLACE')
+  assert.equal(state.phases.P6_SURAT_NON_MARKETPLACE.status, 'in_progress')
+})
+
+test('RM-21: TUM kalanlar bloklu ise COMPLETE olunur', () => {
+  const state = fresh()
+  for (const phase of STATE.PHASE_ORDER.slice(0, 4)) {
+    state.phases[phase].status = 'passed'
+  }
+  state.currentPhase = 'P4_HEPSIBURADA_N11'
+  state.phases.P4_HEPSIBURADA_N11.status = 'in_progress'
+  state.phases.P5_ARAS.status = 'blocked_external_contract'
+  state.phases.P6_SURAT_NON_MARKETPLACE.status = 'blocked_external_contract'
+
+  STATE.advancePhase(state, 'P4_HEPSIBURADA_N11')
+  assert.equal(state.currentPhase, 'COMPLETE')
+  assert.equal(state.phases.P5_ARAS.status, 'blocked_external_contract')
+  assert.equal(state.phases.P6_SURAT_NON_MARKETPLACE.status, 'blocked_external_contract')
+})
+
+test('RM-22: bloklu OLMAYAN siradaki faz normalde acilir', () => {
+  const state = fresh()
+  STATE.advancePhase(state, 'S1_SURAT_HARDENING')
+  assert.equal(state.currentPhase, 'P1_B2_PERFORMANCE')
+  assert.equal(state.phases.P1_B2_PERFORMANCE.status, 'in_progress')
+})

@@ -64,13 +64,34 @@ export function advancePhase(state, phase, options = {}) {
   entry.commit = options.commit ?? null
   entry.branch = options.branch ?? entry.branch ?? null
   if (options.blockerDetail) entry.blockerDetail = options.blockerDetail
-  const next = PHASE_ORDER[PHASE_ORDER.indexOf(phase) + 1]
-  if (next && isPhaseRunnable(state, next)) {
-    state.phases[next].status = 'in_progress'
-    state.currentPhase = next
-  } else if (!next) {
-    state.currentPhase = 'COMPLETE'
+  // SIRADAKI FAZI AC — ama DIS SOZLESME ENGELINI SESSIZCE KALDIRMA.
+  //
+  // OLCULEN KUSUR: burasi eskiden siradaki fazin durumunu KOSULSUZ
+  // `in_progress` yapiyordu. Bloklu bir faz, kendisinden onceki faz gectigi
+  // anda sessizce aciliyordu: `blockerDetail` ("sozlesme YOK") yerinde
+  // kalirken durum `in_progress` oluyor, kanit ise HIC yazilmiyordu. Bu,
+  // `reopen-external`in kanit sartini tamamen BYPASS ediyordu.
+  //
+  // Dogru davranis: bloklu faz BLOKLU KALIR ve sira ondan SONRAKINE gecer
+  // (CONTRACT: P4/P5/P6 engeli sonraki fazi acabilir). Bloklu bir fazi
+  // yeniden acmanin TEK yolu YAZILI KANITLA `reopenExternalContract`tir.
+  let index = PHASE_ORDER.indexOf(phase) + 1
+  let opened = false
+  while (index < PHASE_ORDER.length) {
+    const candidate = PHASE_ORDER[index]
+    const entry = state.phases[candidate]
+    if (entry?.status === 'blocked_external_contract') {
+      index += 1
+      continue
+    }
+    if (isPhaseRunnable(state, candidate)) {
+      entry.status = 'in_progress'
+      state.currentPhase = candidate
+      opened = true
+    }
+    break
   }
+  if (!opened && index >= PHASE_ORDER.length) state.currentPhase = 'COMPLETE'
   // Canlı taşıyıcı create'i HER durumda insan kararıdır.
   state.liveCreateAllowed = false
   return state
