@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "cargoflow-roadmap",
-  "currentPhase": "P5_ARAS",
+  "currentPhase": "COMPLETE",
   "liveCreateAllowed": false,
   "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
   "phases": {
@@ -76,11 +76,11 @@
       }
     },
     "P5_ARAS": {
-      "status": "in_progress",
-      "completedAt": null,
-      "commit": null,
+      "status": "passed",
+      "completedAt": "2026-08-18T22:17:28.060Z",
+      "commit": "a085df3",
       "plannedBranch": "feat/carrier-aras-foundation",
-      "branch": null,
+      "branch": "feat/carrier-aras-foundation",
       "externalContract": {
         "status": "VERIFIED_PUBLIC_OFFICIAL_TEST_CONTRACT",
         "retrievedAt": "2026-08-19",
@@ -597,6 +597,60 @@
       "timestamp": "2026-08-18T21:59:37.858Z",
       "commit": "6f423e0",
       "branch": "feat/marketplaces-hepsiburada-n11-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P5_ARAS",
+      "gate": "P5_CARRIER_NEUTRAL",
+      "status": "PASS",
+      "timestamp": "2026-08-18T22:17:28.060Z",
+      "commit": "a085df3",
+      "branch": "feat/carrier-aras-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P5_ARAS",
+      "gate": "P5_ARAS_CONTRACT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T22:17:28.060Z",
+      "commit": "a085df3",
+      "branch": "feat/carrier-aras-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P5_ARAS",
+      "gate": "P5_SURAT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T22:17:28.060Z",
+      "commit": "a085df3",
+      "branch": "feat/carrier-aras-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P5_ARAS",
+      "gate": "P5_UI",
+      "status": "PASS",
+      "timestamp": "2026-08-18T22:17:28.060Z",
+      "commit": "a085df3",
+      "branch": "feat/carrier-aras-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P5_ARAS",
+      "gate": "P5_BUILD",
+      "status": "PASS",
+      "timestamp": "2026-08-18T22:17:28.060Z",
+      "commit": "a085df3",
+      "branch": "feat/carrier-aras-foundation",
+      "evidence": null
+    },
+    {
+      "phase": "P5_ARAS",
+      "gate": "P5_LINT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T22:17:28.060Z",
+      "commit": "a085df3",
+      "branch": "feat/carrier-aras-foundation",
       "evidence": null
     }
   ],
