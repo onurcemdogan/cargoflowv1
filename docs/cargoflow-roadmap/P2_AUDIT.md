@@ -98,6 +98,26 @@ Bugün pencere `query.startDate`/`query.endDate`ten geliyor; yoksa son 7 gün
 - İstemci açıkça `startDate`/`endDate` gönderdiyse ONLAR kazanır (manuel
   geri-dolum yolu bozulmamalı) — bu davranış test edilmeli.
 
+### KESİN BAĞLAMA NOKTASI (ölçüldü)
+
+Gerçek çekim penceresi `callTrendyolOrders` içinde türetiliyor:
+
+```
+server/index.mjs:10868
+const startDate = Number(query.startDate ?? now - 1000 * 60 * 60 * 24 * 7)
+const endDate   = Number(query.endDate ?? now)
+```
+
+**EN GÜVENLİ YOL: `callTrendyolOrders`'a DOKUNMA.** Bunun yerine ÇAĞIRAN
+tarafta, istemci tarih vermediğinde `query.startDate`/`query.endDate` alanlarını
+`resolveSyncWindow(...)` sonucuyla DOLDUR.
+
+Neden bu yol:
+- `?? ` operatörü sayesinde **açık istemci tarihi kendiliğinden kazanır**
+  (manuel geri-dolum yolu korunur; ek dallanma gerekmez).
+- 30 günlük üst sınır ve `endDate < startDate` doğrulaması olduğu yerde kalır.
+- Emniyet payı örtüşmesi bu sınırların İÇİNDE kalır (24s + artımlı aralık ≪ 30g).
+
 ## 2. Checkpoint'i yalnız tam başarıda ilerlet
 
 Sync sonunda `advanceCheckpoint({ currentCheckpointMs, candidateCheckpointMs:
