@@ -25,13 +25,23 @@ const freshState = () => ({
 
 /* ═══ DURUM YÜKLEME ════════════════════════════════════════════════════ */
 
-test('ORCH-1: repodaki STATE.json yuklenir ve A fazinda baslar', () => {
+test('ORCH-1: repodaki STATE.json yuklenir ve TUTARLI', () => {
   const state = STATE.loadState()
   assert.equal(state.schemaVersion, 1)
-  assert.equal(state.currentPhase, 'A')
+  // Faz ilerledikce degisen bir deger SABIT beklenmez; degismezler test edilir.
+  assert.ok(
+    [...STATE.PHASE_ORDER, 'COMPLETE'].includes(state.currentPhase),
+    state.currentPhase,
+  )
+  // Canlı create HER durumda insan karari olarak kapali kalir.
   assert.equal(state.liveCreateAllowed, false)
-  // Onceki kanitlar CACHED PASS olarak tasinmaz.
-  assert.notEqual(state.phases.A.status, 'passed')
+  // Gecmis fazlar passed olmadan siradaki faz acilamaz.
+  const index = STATE.PHASE_ORDER.indexOf(state.currentPhase)
+  if (index > 0) {
+    for (const earlier of STATE.PHASE_ORDER.slice(0, index)) {
+      assert.equal(state.phases[earlier].status, 'passed', earlier)
+    }
+  }
 })
 
 /* ═══ FAZ KİLİDİ ═══════════════════════════════════════════════════════ */

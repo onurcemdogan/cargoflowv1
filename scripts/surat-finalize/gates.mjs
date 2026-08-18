@@ -112,10 +112,32 @@ export function buildPhaseBGates(scripts = readScripts()) {
   ]
 }
 
+/** FAZ C — trace v2: tek kimlik, tam döngü, değişmezlik, yalıtım. */
+export function buildPhaseCGates(scripts = readScripts()) {
+  return [
+    nodeTestGate(
+      'C1_TRACE_V2', 'C', 'server/surat-trace-v2-flow.test.mjs',
+      'sema v2 · dongu · degismezlik · yalitim · maskeleme · saklama',
+    ),
+    nodeTestGate(
+      'C2_ROUTING_MODEL', 'C', 'server/surat-routing-model-flow.test.mjs',
+      'beklenen vs tel ayrimi bozulmadi',
+    ),
+    nodeTestGate(
+      'C3_SURAT_FLOW', 'C', 'server/surat-flow.test.mjs',
+      'create davranisi bozulmadi',
+    ),
+    npmGate(scripts, 'C4_FULL_SURAT', 'C', 'test:surat', 'Surat tam paketi'),
+    npmGate(scripts, 'C5_UI', 'C', 'test:ui', 'UI paketi'),
+    npmGate(scripts, 'C6_BUILD', 'C', 'build', 'production build'),
+    npmGate(scripts, 'C7_LINT', 'C', 'lint', 'lint'),
+  ]
+}
+
 export function buildGates(phase, scripts = readScripts()) {
   if (phase === 'A') return buildPhaseAGates(scripts)
   if (phase === 'B') return buildPhaseBGates(scripts)
-  if (phase === 'C') return buildPlaceholderGates('C', 'trace v2 runtime')
+  if (phase === 'C') return buildPhaseCGates(scripts)
   if (phase === 'D') return buildPlaceholderGates('D', 'COD/Debug arayuzu')
   if (phase === 'E') {
     return [{

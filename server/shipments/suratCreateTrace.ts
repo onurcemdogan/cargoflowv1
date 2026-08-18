@@ -235,3 +235,133 @@ export function applyTraceRetention<T extends { createdAt?: unknown }>(
     })
     .slice(-TRACE_RETENTION_MAX_PER_TENANT)
 }
+
+/* ═══ FAZ C — DENEME YAŞAM DÖNGÜSÜ VE DEĞİŞMEZ ANLIK GÖRÜNTÜ ══════════ */
+
+// Tek deneme = tek correlationId. Aşamalar bu kimlik altında SIRALANIR;
+// böylece "hangi istek hangi yanıtla eşleşti" sorusu birleştirme (join)
+// tahminine değil, taşınan kimliğe dayanır.
+export const TRACE_LIFECYCLE_STAGES = [
+  'PRE_FLIGHT',
+  'ROUTING',
+  'REQUEST_READY',
+  'CARRIER_CALL',
+  'CARRIER_RESPONSE',
+  'VERIFICATION',
+  'FINAL',
+] as const
+
+export const TRACE_SECTIONS = [
+  'IDENTITY',
+  'BILLING',
+  'PAYMENT',
+  'COD',
+  'CREDENTIAL_ROUTING',
+  'SERVICE_ROUTING',
+  'REQUEST',
+  'RESPONSE',
+  'VERIFICATION',
+  'FINAL_RESULT',
+] as const
+
+const TRACE_SECRET_HINTS = [
+  'password', 'sifre', 'secret', 'token', 'apikey', 'apisecret',
+  'authorization', 'webpassword',
+]
+
+// `credentialRole` / `credentialSource` gibi alanlar SIR DEĞİLDİR; teşhis
+// için gereken yönlendirme kararıdır. Yalnız ham kimlik değerleri maskelenir.
+const TRACE_SAFE_SUFFIXES = ['role', 'source', 'policy', 'reason', 'resolved']
+
+/**
+ * Sırları ayıklar. `maskedAccount`/`maskedCari` gibi zaten maskeli alanlar
+ * korunur — bunlar sır değil, teşhis için gereken kimliktir.
+ */
+export function redactTraceValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(redactTraceValue)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [key, inner] of Object.entries(value)) {
+      const lowered = key.toLowerCase()
+      const isSecret = TRACE_SECRET_HINTS.some((hint) => lowered.includes(hint))
+      const isSafe = lowered.includes('masked')
+        || TRACE_SAFE_SUFFIXES.some((suffix) => lowered.endsWith(suffix))
+      out[key] = isSecret && !isSafe
+        ? '«REDACTED»'
+        : redactTraceValue(inner)
+    }
+    return out
+  }
+  return value
+}
+
+/** Derin dondurma — anlık görüntü sonradan DEĞİŞTİRİLEMEZ. */
+function deepFreeze<T>(value: T): T {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    Object.freeze(value)
+    for (const inner of Object.values(value)) deepFreeze(inner)
+  }
+  return value
+}
+
+export interface SuratTraceAttempt {
+  traceId: string
+  schemaVersion: number
+  createdAt: string
+  stages: ReadonlyArray<{
+    stage: (typeof TRACE_LIFECYCLE_STAGES)[number]
+    at: string
+    section: (typeof TRACE_SECTIONS)[number] | null
+    data: unknown
+  }>
+}
+
+/**
+ * Deneme açar. Dönen nesne DONDURULMUŞTUR: sonradan config değişse bile
+ * geçmiş deneme kendini yeniden yorumlamaz — karar ANINDA saklanır.
+ */
+export function createTraceAttempt(params: {
+  traceId: string
+  createdAt: string
+}): SuratTraceAttempt {
+  return deepFreeze({
+    traceId: params.traceId,
+    schemaVersion: SURAT_TRACE_SCHEMA_VERSION,
+    createdAt: params.createdAt,
+    stages: [],
+  })
+}
+
+/**
+ * Aşama ekler ve YENİ bir değişmez deneme döndürür; girdi denemesi
+ * DEĞİŞMEZ. Böylece iki deneme aynı nesneyi paylaşıp birbirine karışamaz.
+ */
+export function appendTraceStage(
+  attempt: SuratTraceAttempt,
+  entry: {
+    stage: (typeof TRACE_LIFECYCLE_STAGES)[number]
+    at: string
+    section?: (typeof TRACE_SECTIONS)[number] | null
+    data?: unknown
+  },
+): SuratTraceAttempt {
+  return deepFreeze({
+    ...attempt,
+    stages: [
+      ...attempt.stages,
+      {
+        stage: entry.stage,
+        at: entry.at,
+        section: entry.section ?? null,
+        // Sırlar denemeye HİÇ girmez — sonradan temizlemeye güvenilmez.
+        data: redactTraceValue(entry.data ?? null),
+      },
+    ],
+  })
+}
+
+/** Yaşam döngüsü tamamlandı mı — PRE_FLIGHT ile başlayıp FINAL ile biter. */
+export function isTraceLifecycleComplete(attempt: SuratTraceAttempt): boolean {
+  const seen = attempt.stages.map((entry) => entry.stage)
+  return seen[0] === 'PRE_FLIGHT' && seen[seen.length - 1] === 'FINAL'
+}

@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "surat-finalization",
-  "currentPhase": "C",
+  "currentPhase": "D",
   "liveCreateAllowed": false,
   "knownEvidence": {
     "note": "Onceki oturumlarda kanitlandi. CACHED PASS DEGILDIR — gate'ler yeniden dogrular.",
@@ -23,12 +23,12 @@
       "commit": null
     },
     "C": {
-      "status": "in_progress",
-      "completedAt": null,
+      "status": "passed",
+      "completedAt": "2026-08-18T06:09:20.651Z",
       "commit": null
     },
     "D": {
-      "status": "locked",
+      "status": "in_progress",
       "completedAt": null,
       "commit": null
     },
