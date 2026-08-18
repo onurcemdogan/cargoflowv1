@@ -3,7 +3,11 @@
 Dal: `perf/orders-b3-incremental-sync` · taban: `0e94a08`
 
 > P1 dersi: "zaten var" iddiası ÖLÇÜLMEDEN yazılmaz. Aşağıdakiler dosya/satır
-> okunarak doğrulandı; davranış testi henüz yazılmadı.
+> okunarak doğrulandı; davranış testleri ayrıca yazıldı (aşağıda).
+>
+> **Dersin ters yönü de geçerli:** "YOK" iddiası da ölçülmeden yazılmaz.
+> Bu denetimin ilk turunda 2–4 numaralı maddeler "görülmedi/ölçülmedi" diye
+> açık bırakılmıştı; kod okununca ÜÇÜ DE mevcut çıktı (bkz. son bölüm).
 
 ## Zaten VAR (doğrulandı)
 
@@ -18,10 +22,7 @@ Dal: `perf/orders-b3-incremental-sync` · taban: `0e94a08`
 | Kısmi sync koruması | `persistSyncResult(..., { complete })` — `complete=false` HİÇBİR kaydı arşivlemez |
 | Pencere kapsamlı mutabakat | `staleOpenReconciler` yalnız sync penceresindeki kayıtları reconcile eder |
 
-## DENETİM DÜZELTMESİ — davranış testleri ZATEN VAR
-
-İlk listede "doğrulanmamış" dediğim maddelerin bir kısmı aslında test edilmiş.
-Testler çalıştırıldı: **19/19 PASS**.
+## Davranış testleri (ilk turda "yok" sanılmıştı)
 
 | Konu | Kapsayan test |
 | --- | --- |
@@ -36,114 +37,135 @@ Testler çalıştırıldı: **19/19 PASS**.
 Dosyalar: [sync-single-flight-flow.test.mjs](../../server/sync-single-flight-flow.test.mjs),
 [active-sync-reconciliation-flow.test.mjs](../../server/active-sync-reconciliation-flow.test.mjs)
 
-## GERÇEKTEN AÇIK KALAN (P2 kapsamı)
+---
 
-1. **Artımlı imleç daraltması — ÖLÇÜLDÜ: KULLANILMIYOR.**
+# 1. ARTIMLI İMLEÇ — ÖLÇÜLDÜ, KARAR VERİLDİ, BAĞLANDI
 
-   `lastSuccessfulSyncAt` yalnız YAZILIYOR ve durum yanıtlarında gösteriliyor
-   (`index.mjs:434`, `:1845`). Çekim penceresini DARALTMAK için hiçbir yerde
-   OKUNMUYOR. Pencere istemci parametrelerinden geliyor; yoksa varsayılan
-   **son 7 gün** (`index.mjs:1240-1248`).
+## Ölçüm (denetim anı)
 
-   Yani bugünkü davranış artımlı değil, **kayan sabit pencere**.
+`lastSuccessfulSyncAt` yalnız YAZILIYOR ve durum yanıtlarında gösteriliyordu.
+Çekim penceresini DARALTMAK için hiçbir yerde OKUNMUYORDU. Pencere istemci
+parametrelerinden geliyor, yoksa **son 7 gün** varsayılıyordu. Yani davranış
+artımlı değil, **kayan sabit pencere**ydi.
 
-   **BU BİR HATA OLMAYABİLİR.** Kayan pencere kendini onarır: bir sync
-   "başarılı" deyip kayıt düşürdüyse sonraki çekim onu yine yakalar. Saf imleç
-   ise o kaydı KALICI olarak atlar — eksik gönderi, eksik ciro. Bu yüzden
-   imlece geçiş TEK BAŞINA bir iyileştirme sayılamaz; kanıtsız yapılmadı.
+Bu bir hata DEĞİLDİ: kayan pencere kendini onarır. Bir sync "başarılı" deyip
+kayıt düşürdüyse sonraki çekim onu yine yakalar. Saf imleç ise o kaydı KALICI
+olarak atlar — eksik gönderi, eksik ciro. Bu yüzden imlece geçiş tek başına bir
+iyileştirme sayılmadı.
 
-   Karar gerekiyor:
-   - **A)** Kayan pencere KORUNSUN (güvenli, biraz fazla okuma yapar) —
-     `lastSuccessfulSyncAt` yalnız gözlemlenebilirlik alanı olarak kalır.
-   - **B)** İmleç + GÜVENLİK PAYI (ör. `lastSuccessfulSyncAt - 24s`) ve
-     periyodik tam-pencere mutabakatı; boşluk riski telafi edilir.
-   - **C)** Üretimde ölç: 7 günlük pencere gerçekten maliyetli mi? Değilse
-     değiştirmeye gerek yok.
-2. **Sınırlı çekim (bounded pull)**: sayfa/limit üst sınırı ölçülmedi.
-3. **Backoff politikası**: retry'in KENDİSİ var (SINGLEFLIGHT-7); üstel/
-   sınıflandırılmış backoff görülmedi.
-4. **Rate-limit (429/Retry-After)** işleme yolu görülmedi.
+## Karar: **B seçeneği** — imleç + emniyet payı + periyodik geniş tarama
+
+Üç mekanizma BİRLİKTE çalışır; biri olmadan diğerleri güvenli değildir:
+
+1. imleç GERİYE emniyet payı kadar kaydırılır (örtüşme KASITLIDIR),
+2. imleç YALNIZ tam başarılı sync sonunda ilerler,
+3. geniş pencere periyodik olarak yeniden taranır (kendini onarma).
+
+Politika: [syncWindowPolicy.ts](../../server/orders/syncWindowPolicy.ts)
+· testler: [orders-b3-sync-window-flow.test.mjs](../../server/orders-b3-sync-window-flow.test.mjs)
+(19/19).
+
+## Bağlama — YAPILDI
+
+### 1.1 Çekim penceresi imleçten türetilir
+
+Bağlama noktası `callTrendyolOrders`ın İÇİ DEĞİL, **ÇAĞIRAN taraf**tır. Sebep:
+oradaki `query.startDate ?? son 7 gün` ifadesi sayesinde açık istemci tarihi
+KENDİLİĞİNDEN kazanır; 30 günlük üst sınır ve `endDate < startDate` doğrulaması
+olduğu yerde kalır. Ek dallanma gerekmedi.
+
+`POST /api/orders/sync` artık sync başında `integration_sync_state` satırından
+imleci okur, `resolveSyncWindow(...)` çağırır ve **istemci tarih vermediyse**
+`query.startDate`/`query.endDate` alanlarını doldurur.
+
+Ölçülen tuzak: `Number(null) === 0`. İmleci olmayan kiracı 0'a düşseydi pencere
+1970'ten başlar ve 30 günlük üst sınır çekimi TAMAMEN reddederdi. `epochMsOrNull`
+"yok" ile "epoch" ayrımını korur (`B3W-5`).
+
+### 1.2 İmleç watermark olarak yazılır
+
+`lastSuccessfulSyncAt` artık **pencerenin üst sınırı**dır, `now()` değil.
+Çekim sürerken oluşan siparişler `now` ile pencere sınırı arasına düşer; imleç
+`now` yapılsaydı o aralık bir daha SORULMAZDI.
+
+`recordSyncState` ve `updateAccountSyncMeta` opsiyonel `successfulSyncAt` alır;
+verilmezse eski davranış (`now`) korunur — geriye dönük uyumlu.
+
+İlerletme kararı `advanceCheckpoint(...)`tan gelir: kısmi sonuç, kurtarılamayan
+hata veya rate-limit tükenmesinde imleç KORUNUR (`B3W-8`).
+
+### 1.3 Periyodik tarama — MIGRATION'SIZ
+
+`RECONCILIATION` modu "son geniş tarama ne zamandı" bilgisini ister;
+`integration_sync_state` içinde böyle bir kolon YOK ve eklemek üretim
+migration'ı demek. Bunun yerine mevcut veriden türetildi:
+**imlecin düştüğü zaman kovası**.
+
+`deriveReconciliationAnchorMs` = `floor(checkpoint / interval) * interval`.
+Böylece `now - anchor >= interval` koşulu TAM OLARAK "şimdi, imlecin
+kovasından SONRAKİ bir kovada" anlamına gelir:
+
+- her kovada EN ÇOK bir geniş tarama (tarama fırtınası yok — `SW-16`, `SW-18`),
+- sync'ler sürdükçe her kovada EN AZ bir geniş tarama (`SW-17`),
+- kolon yok, migration yok, ek yazma yok.
+
+### 1.4 Reconcile kapsamı = çekim penceresi
+
+Reconcile penceresi eskiden KENDİ 7 günlük varsayılanını hesaplıyordu. İki
+tarafın ayrışması arşivleme kapsamını bozardı. Artık ikisi de aynı çözülmüş
+`query.startDate`/`endDate` değerlerinden türer (`B3W-3`).
+
+### 1.5 Arka plan turu BİLEREK dokunulmadı
+
+`syncTrendyolOrdersForOrganization` sabit penceresinde kaldı. Sebep ölçüme
+dayanır: o tur `complete:false` ile çalışır, imleci ASLA ilerletmez ve işi
+pazaryeri statüsünü tazelemektir. Trendyol penceresinin hangi tarih eksenini
+(sipariş tarihi mi, paket son güncelleme mi) filtrelediği bu repoda kanıtlanmış
+DEĞİLDİR; imleçle daraltmak eski açık kayıtların statü tazelemesini sessizce
+kesebilirdi. Kanıt gelene kadar daraltma YAPILMAZ.
+
+---
+
+# 2–4. SINIRLI ÇEKİM · BACKOFF · 429 — DENETİM DÜZELTMESİ
+
+İlk turda üçü de "ölçülmedi/görülmedi" diye açık bırakılmıştı. **Kod okundu:
+üçü de VAR.** Davranış testleriyle kilitlendi:
+[orders-b3-bounded-pull-flow.test.mjs](../../server/orders-b3-bounded-pull-flow.test.mjs)
+(11/11).
+
+| İlk iddia | Ölçüm | Test |
+| --- | --- | --- |
+| "bounded pull ölçülmedi" | `maxPages = min(totalPages, query.maxPages ?? 100)`; `size` 200'e kelepçeli; aralık 30 günle sınırlı | `B3P-8`, `B3P-9`, `B3P-10` |
+| "sınıflandırılmış backoff görülmedi" | 429/5xx/ağ = geçici → üstel `[2000,4000,8000]` + jitter; kalıcı 4xx TEKRAR DENENMEZ; sayı üst sınırlı | `B3P-1`, `B3P-2`, `B3P-3`, `B3P-4` |
+| "429/Retry-After yolu görülmedi" | `parseRetryAfterMs` saniye ve HTTP-date çözer, 60 sn'ye kelepçeler; 429'da taban gecikme yerine Retry-After kullanılır | `B3P-5`, `B3P-6`, `B3P-7` |
+
+Ek olarak düşen sayfa BAŞTAN değil kaldığı yerden devam eder
+(`partialContent` + `failedPage`) — `B3P-11`.
+
+# 8. Replay / idempotency
+
+Örtüşme kasıtlı olduğu için aynı kayıt ardışık iki pencerede de gelir. Upsert
+tekilliği sayesinde DUPLICATE üretmez; artık varsayım değil, ölçüm: `B3W-11`
+aynı siparişi iki kez yazar ve tek satır + tek order line bekler.
+
+---
 
 ## Kurallar
 
 - Testlerde dış ağ MOCK'lanır; gerçek pazaryeri çağrısı YOK.
 - Sözleşme gerektirmedikçe pazaryeri MUTASYONU yok.
-- Kiracı izolasyonu bozulmaz.
+- Kiracı izolasyonu bozulmaz (`B3W-10`: hesaplar birbirinin imlecini görmez).
 
-## Sonraki somut adım
+## Gate
 
-Hermetik test: iki kiracı + iki hesap için `integration_sync_state` kilidinin
-ve `complete=false` korumasının davranışını kanıtla; ardından artımlı imlecin
-sonraki çekimi gerçekten daralttığını ölç.
+`P2_B3_INCREMENTAL_SYNC` artık `notImplemented` DEĞİL. Bağlı gate'ler:
 
----
-
-# P2 KALAN İŞ — KESİN BAĞLAMA PLANI
-
-Karar: **B seçeneği** (imleç + emniyet payı + periyodik geniş tarama).
-Politika katmanı HAZIR ve testli: [syncWindowPolicy.ts](../../server/orders/syncWindowPolicy.ts)
-· [orders-b3-sync-window-flow.test.mjs](../../server/orders-b3-sync-window-flow.test.mjs) (14/14).
-
-**Henüz BAĞLANMADI.** Aşağıdaki adımlar sıradaki oturumun işidir.
-
-## 1. Çekim penceresini imleçten türet
-
-Bugün pencere `query.startDate`/`query.endDate`ten geliyor; yoksa son 7 gün
-(`index.mjs:1242-1249`). Yapılacak:
-
-- Sync başında `integration_sync_state` satırından `lastSuccessfulSyncAt` oku
-  (org + provider + resource + marketplaceAccountId kapsamında).
-- `resolveSyncWindow({ checkpointMs, nowMs, lastReconciliationAtMs })` çağır.
-- Dönen `startMs`/`endMs` değerlerini **fetch**'e ver (yalnız reconcile'a değil).
-- İstemci açıkça `startDate`/`endDate` gönderdiyse ONLAR kazanır (manuel
-  geri-dolum yolu bozulmamalı) — bu davranış test edilmeli.
-
-### KESİN BAĞLAMA NOKTASI (ölçüldü)
-
-Gerçek çekim penceresi `callTrendyolOrders` içinde türetiliyor:
-
-```
-server/index.mjs:10868
-const startDate = Number(query.startDate ?? now - 1000 * 60 * 60 * 24 * 7)
-const endDate   = Number(query.endDate ?? now)
-```
-
-**EN GÜVENLİ YOL: `callTrendyolOrders`'a DOKUNMA.** Bunun yerine ÇAĞIRAN
-tarafta, istemci tarih vermediğinde `query.startDate`/`query.endDate` alanlarını
-`resolveSyncWindow(...)` sonucuyla DOLDUR.
-
-Neden bu yol:
-- `?? ` operatörü sayesinde **açık istemci tarihi kendiliğinden kazanır**
-  (manuel geri-dolum yolu korunur; ek dallanma gerekmez).
-- 30 günlük üst sınır ve `endDate < startDate` doğrulaması olduğu yerde kalır.
-- Emniyet payı örtüşmesi bu sınırların İÇİNDE kalır (24s + artımlı aralık ≪ 30g).
-
-## 2. Checkpoint'i yalnız tam başarıda ilerlet
-
-Sync sonunda `advanceCheckpoint({ currentCheckpointMs, candidateCheckpointMs:
-window.candidateCheckpointMs, complete, rateLimited, errorCode })` çağır ve
-`advanced === true` ise `lastSuccessfulSyncAt`'i **watermark** değeriyle yaz.
-Bugün bu alan `now()` ile yazılıyor
-(`marketplaceAccountRepository.ts:232`) — watermark'a çevrilmeli.
-
-## 3. Periyodik tarama zaman damgası
-
-`RECONCILIATION` modunun tetiklenmesi için `lastReconciliationAt` benzeri bir
-alan gerekiyor. Şu an `integration_sync_state` içinde YOK; eklenmesi küçük bir
-migration gerektirir. Alternatif: mevcut bir alandan türet ve migration'dan
-kaçın — hangisi seçilirse KANITLA.
-
-## 4. Kalan davranışsal testler
-
-| Kural | Durum |
+| Gate | Test |
 | --- | --- |
-| 7 — bounded pagination | ÖLÇÜLMEDİ |
-| 8 — replay/idempotency (örtüşen pencere duplicate üretmesin) | upsert nedeniyle güvenli GÖRÜNÜYOR, test YOK |
-| 10 — 429/Retry-After backoff | sınıflandırılmış backoff YOK |
-| 9 — manuel/arka plan çakışması | ZATEN KAPSANMIŞ (19/19) |
+| `P2_WINDOW_POLICY` | `orders-b3-sync-window-flow.test.mjs` |
+| `P2_CURSOR_WIRED` | `orders-b3-sync-wiring-flow.test.mjs` |
+| `P2_BOUNDED_PULL` | `orders-b3-bounded-pull-flow.test.mjs` |
+| `P2_SINGLE_FLIGHT` | `sync-single-flight-flow.test.mjs` |
+| `P2_PARTIAL_SAFETY` | `active-sync-reconciliation-flow.test.mjs` |
 
-## 5. Gate'i gerçek testlere bağla
-
-`scripts/cargoflow-roadmap/gates.mjs` içinde `P2_B3_INCREMENTAL_SYNC` hâlâ
-`notImplemented`. S1/P1'deki desenle komutlu gate'e çevrilmeli — bağlama
-bitmeden P2 **passed** işaretlenmemeli.
+Ardından ortak kalite kapıları (`P2_SURAT`, `P2_UI`, `P2_BUILD`, `P2_LINT`).

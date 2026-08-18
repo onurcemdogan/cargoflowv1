@@ -49,6 +49,38 @@ export function buildPhaseP1Gates(scripts = readScripts()) {
   ]
 }
 
+/** FAZ P2 — artimli senkron (denetim: docs/cargoflow-roadmap/P2_AUDIT.md). */
+export function buildPhaseP2Gates(scripts = readScripts()) {
+  return [
+    nodeTestGate(
+      'P2_WINDOW_POLICY', 'P2_B3_INCREMENTAL_SYNC',
+      'server/orders-b3-sync-window-flow.test.mjs',
+      'imlec + emniyet payi + periyodik genis tarama karari',
+    ),
+    nodeTestGate(
+      'P2_CURSOR_WIRED', 'P2_B3_INCREMENTAL_SYNC',
+      'server/orders-b3-sync-wiring-flow.test.mjs',
+      'imlec cekim penceresini GERCEKTEN daraltir · watermark yazilir',
+    ),
+    nodeTestGate(
+      'P2_BOUNDED_PULL', 'P2_B3_INCREMENTAL_SYNC',
+      'server/orders-b3-bounded-pull-flow.test.mjs',
+      'sinirli cekim · siniflandirilmis backoff · 429/Retry-After',
+    ),
+    nodeTestGate(
+      'P2_SINGLE_FLIGHT', 'P2_B3_INCREMENTAL_SYNC',
+      'server/sync-single-flight-flow.test.mjs',
+      'hesap kapsamli tek-ucus kilidi',
+    ),
+    nodeTestGate(
+      'P2_PARTIAL_SAFETY', 'P2_B3_INCREMENTAL_SYNC',
+      'server/active-sync-reconciliation-flow.test.mjs',
+      'complete=false HICBIR kaydi arsivlemez',
+    ),
+    ...qualityGates(scripts, 'P2_B3_INCREMENTAL_SYNC', 'P2'),
+  ]
+}
+
 export function buildGates(phase, scripts = readScripts()) {
   if (phase === 'S1_SURAT_HARDENING') {
     return [
@@ -91,11 +123,11 @@ export function buildGates(phase, scripts = readScripts()) {
     ]
   }
   if (phase === 'P1_B2_PERFORMANCE') return buildPhaseP1Gates(scripts)
+  if (phase === 'P2_B3_INCREMENTAL_SYNC') return buildPhaseP2Gates(scripts)
   const pending = {
     // DENETIM YAPILDI (docs/cargoflow-roadmap/P1_AUDIT.md): sayfalama, N+1
     // kaldirma, sayim ve aralik sorgusu ZATEN VAR. Kalan: 0008 migration +
     // arac zinciri (preflight/prova/backfill/golge parite/geri alma) + benchmark.
-    P2_B3_INCREMENTAL_SYNC: 'kiraci checkpointleri, artimli imlecler, resume',
     P3_B4_BARCODE_WORKER: 'uygun siparis secimi, kuyruk oncesi finansal on kontrol',
     P4_HEPSIBURADA_N11: 'saglayici-notr temel; dis sozlesme dogrulanmali',
     P5_ARAS: 'tasiyici-notr temel; dis sozlesme dogrulanmali',

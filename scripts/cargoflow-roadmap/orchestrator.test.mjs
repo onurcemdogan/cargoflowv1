@@ -63,8 +63,9 @@ test('RM-5: TUM fazlar bitse bile canli create KAPALI', () => {
 
 test('RM-6: uygulanmamis is SAHTE PASS uretmez', () => {
   // Belirli bir gate adina baglanmaz; DEGISMEZ test edilir: komutu olmayan
-  // her zorunlu gate BLOCKED + NOT_IMPLEMENTED tasimali.
-  const pending = GATES.buildGates('P2_B3_INCREMENTAL_SYNC')
+  // her zorunlu gate BLOCKED + NOT_IMPLEMENTED tasimali. Ornek faz, HENUZ
+  // uygulanmamis olan siradaki fazdir (P2 baglandi: bkz. RM-6c).
+  const pending = GATES.buildGates('P3_B4_BARCODE_WORKER')
     .filter((gate) => gate.command === null)
   assert.ok(pending.length > 0, 'uygulanmamis is BLOCKED kalmali')
   for (const gate of pending) {
@@ -82,13 +83,32 @@ test('RM-6b: uygulanan is GERCEK komut calistirir', () => {
   assert.ok(ui.requireOutput.length > 0)
 })
 
-test('RM-7: gate komutlari package.json ile dogrulanir', () => {
-  const gates = GATES.buildGates('P2_B3_INCREMENTAL_SYNC', { 'test:surat': 'x' })
-  const build = gates.find(
-    (gate) => gate.id === 'P2_B3_INCREMENTAL_SYNC_BUILD',
+test('RM-6c: P2 artik GERCEK testlere baglidir', () => {
+  // Artimli imlec BAGLANDI (docs/cargoflow-roadmap/P2_AUDIT.md): faz artik
+  // NOT_IMPLEMENTED ile degil, olculen testlerle kapanir.
+  const gates = GATES.buildGates('P2_B3_INCREMENTAL_SYNC')
+  const notImplemented = gates.filter(
+    (gate) => gate.command === null && /NOT_IMPLEMENTED/.test(gate.evidence ?? ''),
   )
-  assert.equal(build.status, 'BLOCKED')
-  assert.match(build.evidence, /SCRIPT_NOT_FOUND/)
+  assert.equal(notImplemented.length, 0, 'P2 hala sahte BLOCKED tasiyor')
+  // Imlecin GERCEKTEN baglandigini olcen gate zorunludur.
+  const wired = gates.find((gate) => gate.id === 'P2_CURSOR_WIRED')
+  assert.ok(wired?.command, 'imlec baglama gate komutu YOK')
+  assert.equal(wired.required, true)
+})
+
+test('RM-7: gate komutlari package.json ile dogrulanir', () => {
+  // Script yoksa komut UYDURULMAZ; hem baglanmis hem bekleyen fazda gecerli.
+  for (const [phase, id] of [
+    ['P2_B3_INCREMENTAL_SYNC', 'P2_BUILD'],
+    ['P3_B4_BARCODE_WORKER', 'P3_B4_BARCODE_WORKER_BUILD'],
+  ]) {
+    const build = GATES.buildGates(phase, { 'test:surat': 'x' })
+      .find((gate) => gate.id === id)
+    assert.ok(build, `${id} bulunamadi`)
+    assert.equal(build.status, 'BLOCKED', id)
+    assert.match(build.evidence, /SCRIPT_NOT_FOUND/, id)
+  }
 })
 
 test('RM-8: gate sonuclari kalici denetim kaydina yazilir', () => {
