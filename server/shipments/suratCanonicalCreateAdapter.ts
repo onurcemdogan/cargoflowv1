@@ -443,6 +443,58 @@ export async function createCanonicalSuratShipmentForRequest(
     credential.role,
   ) as SuratBillingParty
   const account = resolveCanonicalTenantSuratAccount(params.config, billingParty)
+
+  // ═══ AĞ ÖNCESİ KİMLİK PARİTE KAPISI ═════════════════════════════════
+  // Kimliği SEÇEN `resolveSuratCredentialContext`, telde GİDEN hesabı ise
+  // `resolveCanonicalTenantSuratAccount` çözüyor. İki bağımsız çözümleme
+  // ayrışabilir ve gönderi YANLIŞ CARİYE yazılabilir — geri alınamaz.
+  // Bu kapı YENİ bir yönlendirici DEĞİLDİR; yalnız telin hâlâ çözücünün
+  // seçtiği hesabı taşıdığını doğrular.
+  const wireAccountFingerprint = accountFingerprint(account?.kullaniciAdi)
+  const credentialFingerprintMatch =
+    wireAccountFingerprint === credential.accountFingerprint
+  const parity = {
+    credentialRole: credential.role,
+    credentialSource: credential.source,
+    resolverAccountFingerprint: credential.accountFingerprint,
+    wireAccountFingerprint,
+    credentialFingerprintMatch,
+  }
+  if (!credentialFingerprintMatch) {
+    return {
+      ok: false,
+      source: 'real',
+      errorSource: 'Frontend',
+      // İKİ AYRI DURUM: tele hiç hesap çıkmıyorsa bu "kimlik yapılandırılmamış"
+      // hâlidir ve DIŞ SÖZLEŞME korunur. `SURAT_CREDENTIAL_WIRE_MISMATCH`
+      // yalnız iki hesap da VAR ama FARKLI olduğunda kullanılır — sessizce
+      // başka cariye yazma riski tam olarak budur.
+      errorCode: account
+        ? 'SURAT_CREDENTIAL_WIRE_MISMATCH'
+        : 'SURAT_ACCOUNT_NOT_CONFIGURED',
+      message: buildUserFacingError({ traceId }),
+      canonicalCreate: {
+        adapter: 'SURAT_WEB_API',
+        carrierCreateStatus: 'NOT_STARTED',
+        carrierCreateAttempts: 0,
+        billingParty: credential.role,
+        accountFingerprint: credential.accountFingerprint,
+      },
+      suratCreateTrace: { ...attemptContext, ...parity },
+      // CARRIER_CALL aşaması YOK: taşıyıcıya hiç gidilmedi.
+      traceAttempt: appendTraceStage(traceAttempt, {
+        stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
+        data: {
+          outcome: account
+            ? 'SURAT_CREDENTIAL_WIRE_MISMATCH'
+            : 'SURAT_ACCOUNT_NOT_CONFIGURED',
+          carrierCreateStatus: 'NOT_STARTED',
+          carrierCalled: false,
+          ...parity,
+        },
+      }),
+    }
+  }
   const result = await createCanonicalSuratShipment({
     organizationId: params.organizationId,
     packageId: String(
@@ -458,7 +510,12 @@ export async function createCanonicalSuratShipmentForRequest(
   })
   traceAttempt = appendTraceStage(traceAttempt, {
     stage: 'REQUEST_READY', section: 'REQUEST', at: stamp(),
-    data: { ...wire, contractHasWhoPaysField: wire.wireWhoPaysPresent },
+    data: {
+      ...wire,
+      contractHasWhoPaysField: wire.wireWhoPaysPresent,
+      // Telin HÂLÂ çözücünün seçtiği hesabı taşıdığının kanıtı.
+      ...parity,
+    },
   })
   traceAttempt = appendTraceStage(traceAttempt, {
     stage: 'CARRIER_CALL', section: 'SERVICE_ROUTING', at: stamp(),
@@ -499,6 +556,7 @@ export async function createCanonicalSuratShipmentForRequest(
     ...response,
     suratCreateTrace: {
       ...attemptContext,
+      ...parity,
       carrierCreateStatus: result.carrierCreateStatus,
       carrierCreateAttempts: result.carrierCreateAttempts,
       trackingPresent: Boolean(result.trackingNo),
