@@ -110,6 +110,44 @@ export function blockExternalContract(state, phase, blockerDetail) {
   return { ok: true, reason: 'BLOCKED_EXTERNAL_CONTRACT' }
 }
 
+/**
+ * DIŞ SÖZLEŞME ENGELİNİ KANITLA GERİ AÇAR.
+ *
+ * `blockExternalContract`in tersi ve onun kadar dardır. Engel, sözleşme
+ * BULUNAMADIĞI için konur; sözleşme KANITLANDIĞINDA fazın kalıcı olarak kapalı
+ * kalması yanlış olur. Ama "keyfi geri açma" da faz atlamanın arka kapısıdır.
+ *
+ * Kapılar:
+ *   1. faz GERÇEKTEN `blocked_external_contract` olmalı — `passed` bir fazı
+ *      geri açmak ya da `locked` bir fazı öne çekmek YASAK,
+ *   2. kanıt kaynağı YAZILMAK ZORUNDA (hangi resmî kaynak, neyi kanıtlıyor),
+ *   3. önceki fazlar hâlâ çalıştırılabilir olmalı (sıra kilidi korunur).
+ *
+ * Dönen: `{ ok, reason }`. `ok=false` ise durum DEĞİŞMEZ.
+ */
+export function reopenExternalContract(state, phase, evidence) {
+  const detail = String(evidence ?? '').trim()
+  const entry = state.phases[phase]
+  if (!entry) return { ok: false, reason: 'UNKNOWN_PHASE' }
+  if (entry.status !== 'blocked_external_contract') {
+    return { ok: false, reason: 'PHASE_NOT_CONTRACT_BLOCKED' }
+  }
+  if (!detail) return { ok: false, reason: 'CONTRACT_EVIDENCE_REQUIRED' }
+  if (!isPhaseRunnable(state, phase)) {
+    return { ok: false, reason: 'EARLIER_PHASE_NOT_RUNNABLE' }
+  }
+  entry.status = 'in_progress'
+  entry.completedAt = null
+  // Engel gerekçesi SİLİNMEZ: neden bloklandığı ve neyle açıldığı BİRLİKTE
+  // denetlenebilir kalmalıdır.
+  entry.previousBlockerDetail = entry.blockerDetail ?? null
+  delete entry.blockerDetail
+  entry.contractEvidence = detail
+  state.currentPhase = phase
+  state.liveCreateAllowed = false
+  return { ok: true, reason: 'REOPENED_ON_CONTRACT_EVIDENCE' }
+}
+
 /** Gate sonucunu kalıcı denetim kaydına ekler (SIR YAZILMAZ). */
 export function recordGateResult(state, entry) {
   state.history = [

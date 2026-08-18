@@ -8,7 +8,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   PHASE_ORDER, REPO_ROOT, advancePhase, blockExternalContract, isPhaseRunnable,
-  loadState, recordGateResult, saveState,
+  loadState, recordGateResult, reopenExternalContract, saveState,
 } from './state.mjs'
 import { buildGates } from './gates.mjs'
 import { runGates } from './runner.mjs'
@@ -93,6 +93,20 @@ else if (command === 'block-external') {
   } else {
     saveState(state)
     console.log(`BLOCKED_EXTERNAL_CONTRACT=${phase}`)
+    printStatus(state)
+  }
+} else if (command === 'reopen-external') {
+  // Dış sözleşme KANITLANDI → engeli geri aç. Faz atlama komutu DEĞİLDİR:
+  // yalnız GERÇEKTEN bloklu faz, ve YAZILI kanıt kaynağı ile.
+  const phase = process.argv[3]
+  const evidence = process.argv.slice(4).join(' ')
+  const result = reopenExternalContract(state, phase, evidence)
+  if (!result.ok) {
+    console.error(`REOPEN_REDDEDILDI=${result.reason}`)
+    code = 1
+  } else {
+    saveState(state)
+    console.log(`REOPENED=${phase}`)
     printStatus(state)
   }
 } else if (command === 'report') {

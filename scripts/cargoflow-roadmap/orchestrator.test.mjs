@@ -241,3 +241,66 @@ test('RM-15: gecerli engel kaydi SIRADAKI fazi acar ve gerekceyi TUTAR', () => {
   // Canli create HER durumda kapali kalir.
   assert.equal(state.liveCreateAllowed, false)
 })
+
+/* ═══ KANITLA GERİ AÇMA — block-external kadar DAR ═══════════════════ */
+
+const blockedAt = (phase) => {
+  const state = fresh()
+  for (const earlier of STATE.PHASE_ORDER.slice(
+    0, STATE.PHASE_ORDER.indexOf(phase),
+  )) state.phases[earlier].status = 'passed'
+  state.currentPhase = phase
+  state.phases[phase].status = 'blocked_external_contract'
+  state.phases[phase].blockerDetail = 'sozlesme YOK'
+  return state
+}
+
+test('RM-16: PASSED faz kanit gerekcesiyle GERI ACILAMAZ', () => {
+  const state = fresh()
+  state.phases.P2_B3_INCREMENTAL_SYNC.status = 'passed'
+  const result = STATE.reopenExternalContract(
+    state, 'P2_B3_INCREMENTAL_SYNC', 'resmi dokuman',
+  )
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'PHASE_NOT_CONTRACT_BLOCKED')
+  assert.equal(state.phases.P2_B3_INCREMENTAL_SYNC.status, 'passed')
+})
+
+test('RM-17: LOCKED faz one CEKILEMEZ', () => {
+  const state = fresh()
+  const result = STATE.reopenExternalContract(state, 'P5_ARAS', 'resmi dokuman')
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'PHASE_NOT_CONTRACT_BLOCKED')
+  assert.equal(state.phases.P5_ARAS.status, 'locked')
+})
+
+test('RM-18: kanit kaynagi YAZILMADAN geri acilmaz', () => {
+  const state = blockedAt('P4_HEPSIBURADA_N11')
+  for (const evidence of ['', '   ', null, undefined]) {
+    const result = STATE.reopenExternalContract(
+      state, 'P4_HEPSIBURADA_N11', evidence,
+    )
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, 'CONTRACT_EVIDENCE_REQUIRED')
+  }
+  assert.equal(
+    state.phases.P4_HEPSIBURADA_N11.status, 'blocked_external_contract',
+  )
+})
+
+test('RM-19: gecerli kanit fazi acar ve ENGEL GECMISINI korur', () => {
+  const state = blockedAt('P4_HEPSIBURADA_N11')
+  const result = STATE.reopenExternalContract(
+    state, 'P4_HEPSIBURADA_N11', 'Hepsiburada Developer Portal + n11 destek',
+  )
+  assert.equal(result.ok, true)
+  const entry = state.phases.P4_HEPSIBURADA_N11
+  assert.equal(entry.status, 'in_progress')
+  assert.equal(state.currentPhase, 'P4_HEPSIBURADA_N11')
+  // Neden bloklandigi SILINMEZ; neyle acildigi da yazilir.
+  assert.equal(entry.previousBlockerDetail, 'sozlesme YOK')
+  assert.match(entry.contractEvidence, /Developer Portal/)
+  assert.equal(entry.blockerDetail, undefined)
+  // Canli create HER durumda kapali kalir.
+  assert.equal(state.liveCreateAllowed, false)
+})
