@@ -42,56 +42,73 @@ Rapor: `node scripts/cargoflow-roadmap/orchestrator.mjs report`
   bir fazı "sözleşme yok" diyerek atlamak yasaktır (RM-4 bunu kilitler).
 - Uygulanmamış iş `NOT_IMPLEMENTED` ile **BLOCKED** kalır — sahte PASS yok.
 
-## Guncel konum
+## Guncel konum — YOL HARITASI TAMAMLANDI
 
-**S1 · P1 · P2 · P3 = passed.** **P4_HEPSIBURADA_N11 = in_progress.**
+`CURRENT_PHASE=COMPLETE`. Uygulanabilir dort fazin HEPSI gecti; kalan uc faz
+DIS SOZLESME eksikligiyle bloklu. `liveCreateAllowed=false` (her durumda).
 
-Son dal: `feat/surat-barcode-worker-finalization`.
+| Faz | Durum | Dal |
+| --- | --- | --- |
+| S1_SURAT_HARDENING | passed | `fix/surat-canonical-kargobarkod-and-debug-ui` |
+| P1_B2_PERFORMANCE | passed | `perf/orders-b2-production-rollout` |
+| P2_B3_INCREMENTAL_SYNC | passed | `perf/orders-b3-incremental-sync` |
+| P3_B4_BARCODE_WORKER | passed | `feat/surat-barcode-worker-finalization` |
+| P4_HEPSIBURADA_N11 | blocked_external_contract | — |
+| P5_ARAS | blocked_external_contract | `feat/carrier-aras-foundation` |
+| P6_SURAT_NON_MARKETPLACE | blocked_external_contract | `feat/surat-non-marketplace-contract` |
 
-### P2 (bitti)
+### P2 · P3 (gecti)
 
-Artimli imlec BAGLANDI: cekim penceresi `integration_sync_state` imlecinden
-turetiliyor, imlec pencerenin UST SINIRINA yaziliyor (`now()` degil) ve YALNIZ
-tam basarili sync'te ilerliyor. Periyodik genis tarama imlecin ZAMAN
-KOVASINDAN turetildi → migration GEREKMEDI. Ayrinti: [P2_AUDIT.md](P2_AUDIT.md).
+- **P2**: imlec artik OKUNUYOR — cekim penceresi `integration_sync_state`ten
+  turetiliyor, imlec pencerenin UST SINIRINA yaziliyor ve YALNIZ tam basarili
+  sync'te ilerliyor. Periyodik genis tarama imlecin ZAMAN KOVASINDAN turetildi:
+  migration GEREKMEDI. [P2_AUDIT.md](P2_AUDIT.md)
+- **P3**: `requestFingerprint` ve `financialFingerprint` artik replay'den ONCE
+  kiyaslaniyor. Duzeltilmis desi ya da degismis odeyen taraf eski etiketi
+  "basarili" diye geri oynatamaz; fark varsa NE replay NE create.
+  [P3_AUDIT.md](P3_AUDIT.md)
 
-### P3 (bitti)
+### P4 · P5 · P6 (dis sozlesme bekliyor)
 
-Olculen kusur: `requestFingerprint` uretiliyor/yaziliyor ama HIC okunmuyordu;
-`financialFingerprint` kapinin disina hic cikmiyordu. Anahtar
-`SURAT:${tenant}:${order}:CREATE` oldugu icin duzeltilmis desi ya da degismis
-odeyen taraf ESKI etiketi "basarili" diye geri oynatiyordu.
+Ucunde de kural AYNI: **dis API alani TAHMIN EDILMEDI.** Her fazin denetimi,
+sozlesme geldiginde ne gerektigini madde madde yaziyor.
 
-Cozum FAIL-CLOSED: her iki parmak izi replay dallarindan ONCE kiyaslanir; fark
-varsa NE replay NE create. Anahtar DEGISMEDI (katilsaydi ayni siparis icin
-ikinci fiziksel gonderi dogardi). Eski kayitlar bloklanmaz: yalniz IKI tarafta
-da bulunan eksen kiyaslanir. Ayrinti: [P3_AUDIT.md](P3_AUDIT.md).
+- **P4** — Hepsiburada/N11 sozlesmesi repoda YOK (adapter/WSDL/fixture/credential
+  = sifir). Saglayici-notr temel OLCULDU: depolama, izolasyon ve mutabakat
+  ZATEN notr; kimlik allowlist'i, kapali `IntegrationProvider` birlesimi ve
+  index.mjs'e gomulu fetch/normalize notr DEGIL. Adaptor arayuzu BILEREK
+  yazilmadi. [P4_AUDIT.md](P4_AUDIT.md)
+- **P5** — Aras sozlesmesi YOK. Tasiyici-notr temelin sozlesmeden BAGIMSIZ
+  yarisi tamamlandi ve kilitlendi: Surat yolu yabanci gonderiyi ne create'te ne
+  render'da sahiplenir (`carrier-neutral-foundation-flow`, 7/7).
+  [P5_AUDIT.md](P5_AUDIT.md)
+- **P6** — Surat ENTEGRE; eksik olan sozlesmenin pazaryeri DISI dali. Model
+  pazaryeri disini zaten taniyor ve fail-closed dogruluyor, ama
+  `ownPlatformReference` icin URETIM CAGIRANI YOK ve bu BILEREK boyle. Eksik tek
+  gercek: `Pazaryerimi=0` gonderisinde `OzelKargoTakipNo` NE olmali.
+  [P6_AUDIT.md](P6_AUDIT.md)
 
-Ayrica plana kuyruk oncesi finansal predicate eklendi (kuyruk hijyeni; otoriter
-kapi SUNUCUDA ve fail-closed KALIR).
+### Yeni komut — `block-external`
 
-### Arac notu
+```bash
+node scripts/cargoflow-roadmap/orchestrator.mjs block-external <FAZ> "<gerekce>"
+```
 
-`boundOutput` dusen testin hata metnini artik ATMIYOR. Onceki davranis 1,2 MB
-suite ciktisini bas+son kirpiyordu ve dosya seviyesindeki hata tam ortada
-kaliyordu; bir P3 kosusunun sebebi bu yuzden raporda gorunmedi.
+Faz ATLAMA komutu DEGILDIR. Kapilari: yalniz P4/P5/P6, yalniz SIRADAKI faz,
+`passed` faz geri alinamaz, gerekce ZORUNLU. RM-11 S1/P1/P2/P3'un bu kapidan
+GECEMEDIGINI kilitler.
+
+### Faz ACILIRSA ne yapilir
+
+Sozlesme kaniti geldiginde: ilgili `P*_AUDIT.md`nin "Sozlesme geldiginde gereken
+KANIT" bolumunu karsila, sonra fazi `in_progress` yapip gate'i gercek testlere
+bagla. P6'da `NM-4`, P5'te `CN-6`/`CN-7` bilerek konmus BEKCILERDIR: o gun
+duserler ve karar BILINCLI verilir.
 
 ### DIKKAT — ayni anda IKI gate kosusu BASLATMA
 
 P3'te `P3_SURAT` bir kez dustu. Sebep repo DEGILDI: ayni `continue` iki kez
-baslatilmisti ve iki tam suite es zamanli kostu (ortak yerel config store'a
-yazan `surat-service-mode-roundtrip` carpisti). Tek kosuda 1875/1875 gecti.
-Gate kosusu SERI baslatilmalidir.
-
-### Sonraki faz — P4_HEPSIBURADA_N11
-
-Gate su an BLOCKED (`NOT_IMPLEMENTED`) ve bu DOGRU: saglayici-notr temel icin
-Hepsiburada/N11 DIS SOZLESMESI dogrulanmadan kod yazilmaz. CONTRACT'a gore
-P4/P5/P6 `blocked_external_contract` isaretlenebilir; bu bir INSAN kararidir ve
-orkestratorde bilerek komutu YOKTUR.
-
-Once yapilacak: dis sozlesme kanitini topla (API dokumani, kimlik, sandbox).
-Kanit yoksa fazi `blocked_external_contract` isaretleme karari alinmalidir.
+baslatilmisti ve iki tam suite es zamanli kostu. Tek kosuda 1875/1875 gecti.
 
 ## S1 gecmisi
 
