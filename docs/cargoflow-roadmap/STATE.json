@@ -38,7 +38,7 @@
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/marketplaces-hepsiburada-n11-foundation",
-      "branch": null
+      "branch": "feat/surat-barcode-worker-finalization"
     },
     "P5_ARAS": {
       "status": "locked",
@@ -422,6 +422,51 @@
       "status": "PASS",
       "timestamp": "2026-08-18T20:10:29.185Z",
       "commit": "1bad261",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_HEPSIBURADA_N11_AUDIT",
+      "status": "BLOCKED",
+      "timestamp": "2026-08-18T20:53:25.731Z",
+      "commit": "cf0189b",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": "NOT_IMPLEMENTED: saglayici-notr temel; dis sozlesme dogrulanmali"
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_HEPSIBURADA_N11_SURAT",
+      "status": "NOT_RUN",
+      "timestamp": "2026-08-18T20:53:25.731Z",
+      "commit": "cf0189b",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_HEPSIBURADA_N11_UI",
+      "status": "NOT_RUN",
+      "timestamp": "2026-08-18T20:53:25.731Z",
+      "commit": "cf0189b",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_HEPSIBURADA_N11_BUILD",
+      "status": "NOT_RUN",
+      "timestamp": "2026-08-18T20:53:25.731Z",
+      "commit": "cf0189b",
+      "branch": "feat/surat-barcode-worker-finalization",
+      "evidence": null
+    },
+    {
+      "phase": "P4_HEPSIBURADA_N11",
+      "gate": "P4_HEPSIBURADA_N11_LINT",
+      "status": "NOT_RUN",
+      "timestamp": "2026-08-18T20:53:25.731Z",
+      "commit": "cf0189b",
       "branch": "feat/surat-barcode-worker-finalization",
       "evidence": null
     }

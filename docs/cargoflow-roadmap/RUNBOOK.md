@@ -44,31 +44,54 @@ Rapor: `node scripts/cargoflow-roadmap/orchestrator.mjs report`
 
 ## Guncel konum
 
-**S1 = passed** (c904f29). **P1 = passed** (0e94a08).
-**P2 = in_progress**, dal `perf/orders-b3-incremental-sync`.
+**S1 · P1 · P2 · P3 = passed.** **P4_HEPSIBURADA_N11 = in_progress.**
 
-P2 denetimi TAMAMLANDI ve BAGLANDI: [P2_AUDIT.md](P2_AUDIT.md).
+Son dal: `feat/surat-barcode-worker-finalization`.
 
-Ozet — artimli imlec ARTIK GERCEKTEN calisiyor:
+### P2 (bitti)
 
-- cekim penceresi `integration_sync_state` imlecinden turetiliyor (eskiden
-  imlec yalniz yaziliyor, hic OKUNMUYORDU),
-- imlec pencerenin UST SINIRINA yaziliyor (`now()` degil) ve YALNIZ tam
-  basarili sync'te ilerliyor,
-- periyodik genis tarama imlecin ZAMAN KOVASINDAN turetiliyor → yeni kolon ve
-  uretim migration'i GEREKMEDI,
-- reconcile kapsami ile cekim penceresi AYNI kaynaktan geliyor.
+Artimli imlec BAGLANDI: cekim penceresi `integration_sync_state` imlecinden
+turetiliyor, imlec pencerenin UST SINIRINA yaziliyor (`now()` degil) ve YALNIZ
+tam basarili sync'te ilerliyor. Periyodik genis tarama imlecin ZAMAN
+KOVASINDAN turetildi → migration GEREKMEDI. Ayrinti: [P2_AUDIT.md](P2_AUDIT.md).
 
-Denetimin "yok" sandigi sinirli cekim / siniflandirilmis backoff /
-429-Retry-After maddeleri OLCULDU: ucu de ZATEN VARDI, testle kilitlendi.
+### P3 (bitti)
 
-Arka plan turu BILEREK sabit penceresinde birakildi (gerekce: P2_AUDIT §1.5).
+Olculen kusur: `requestFingerprint` uretiliyor/yaziliyor ama HIC okunmuyordu;
+`financialFingerprint` kapinin disina hic cikmiyordu. Anahtar
+`SURAT:${tenant}:${order}:CREATE` oldugu icin duzeltilmis desi ya da degismis
+odeyen taraf ESKI etiketi "basarili" diye geri oynatiyordu.
 
-`P2_B3_INCREMENTAL_SYNC` gate'i artik `notImplemented` DEGIL; bes gercek test
-paketi + ortak kalite kapilarindan olusuyor.
+Cozum FAIL-CLOSED: her iki parmak izi replay dallarindan ONCE kiyaslanir; fark
+varsa NE replay NE create. Anahtar DEGISMEDI (katilsaydi ayni siparis icin
+ikinci fiziksel gonderi dogardi). Eski kayitlar bloklanmaz: yalniz IKI tarafta
+da bulunan eksen kiyaslanir. Ayrinti: [P3_AUDIT.md](P3_AUDIT.md).
 
-Sonraki somut adim: `continue` yesillenince P3 (`feat/surat-barcode-worker-
-finalization`) — kuyruk oncesi finansal on kontrol ve idempotency.
+Ayrica plana kuyruk oncesi finansal predicate eklendi (kuyruk hijyeni; otoriter
+kapi SUNUCUDA ve fail-closed KALIR).
+
+### Arac notu
+
+`boundOutput` dusen testin hata metnini artik ATMIYOR. Onceki davranis 1,2 MB
+suite ciktisini bas+son kirpiyordu ve dosya seviyesindeki hata tam ortada
+kaliyordu; bir P3 kosusunun sebebi bu yuzden raporda gorunmedi.
+
+### DIKKAT — ayni anda IKI gate kosusu BASLATMA
+
+P3'te `P3_SURAT` bir kez dustu. Sebep repo DEGILDI: ayni `continue` iki kez
+baslatilmisti ve iki tam suite es zamanli kostu (ortak yerel config store'a
+yazan `surat-service-mode-roundtrip` carpisti). Tek kosuda 1875/1875 gecti.
+Gate kosusu SERI baslatilmalidir.
+
+### Sonraki faz — P4_HEPSIBURADA_N11
+
+Gate su an BLOCKED (`NOT_IMPLEMENTED`) ve bu DOGRU: saglayici-notr temel icin
+Hepsiburada/N11 DIS SOZLESMESI dogrulanmadan kod yazilmaz. CONTRACT'a gore
+P4/P5/P6 `blocked_external_contract` isaretlenebilir; bu bir INSAN kararidir ve
+orkestratorde bilerek komutu YOKTUR.
+
+Once yapilacak: dis sozlesme kanitini topla (API dokumani, kimlik, sandbox).
+Kanit yoksa fazi `blocked_external_contract` isaretleme karari alinmalidir.
 
 ## S1 gecmisi
 
