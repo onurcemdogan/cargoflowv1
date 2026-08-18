@@ -170,10 +170,30 @@ export function maskAccount(value: unknown): string {
   return `${raw.slice(0, 2)}******${raw.slice(-2)}`
 }
 
+/**
+ * TEK KARŞILAŞTIRILABİLİR HESAP PARMAK İZİ.
+ *
+ * Sorun: kod tabanında iki farklı maskeleme vardı — `maskAccount` ilk iki +
+ * son iki haneyi, `maskIdentifier` ise son dört haneyi gösteriyordu. Aynı
+ * hesap `15******27` ve `****0927` olarak görünüyor, farklı hesaplar ise
+ * yanlışlıkla aynı görünebiliyordu. Denetçi ile create yolunu KIYASLAMAK
+ * için ikisi de bu TEK fonksiyonu kullanmalıdır.
+ *
+ * Sır içermez: yalnız uzunluk + son dört hane taşır ve ham kodu AÇIĞA ÇIKARMAZ.
+ */
+export function accountFingerprint(value: unknown): string {
+  const raw = text(value)
+  if (!raw) return 'NONE'
+  if (raw.length <= 4) return `LEN${raw.length}:****`
+  return `LEN${raw.length}:****${raw.slice(-4)}`
+}
+
 export interface SuratCredentialContext {
   role: SuratCredentialRole
   source: string
   maskedAccount: string
+  /** Karşılaştırılabilir tek biçim — iki farklı maske kıyası YANILTIR. */
+  accountFingerprint: string
   reason: string
   resolved: boolean
   errorCode: string | null
@@ -291,6 +311,8 @@ export function resolveSuratCredentialContext(params: {
     role,
     source: fields.source,
     maskedAccount: maskAccount(account),
+    // Denetçi ile create yolunu kıyaslamak için TEK biçim.
+    accountFingerprint: accountFingerprint(account),
     reason,
     resolved,
     errorCode,

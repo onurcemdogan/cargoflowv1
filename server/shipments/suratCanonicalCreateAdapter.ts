@@ -19,6 +19,7 @@ import {
   resolveCodCredentialPolicy,
   resolveSuratCredentialContext,
 } from './suratRoutingModel.ts'
+import { accountFingerprint } from './suratRoutingModel.ts'
 import {
   appendTraceStage,
   buildTraceId,
@@ -61,12 +62,6 @@ export interface CanonicalAccountSelection {
   accountFingerprint: string
 }
 
-/** `****1234` — düz cari kodu ASLA taşımaz. */
-function fingerprintAccount(value: string): string {
-  const trimmed = value.trim()
-  if (!trimmed) return ''
-  return `****${trimmed.slice(-4)}`
-}
 
 /**
  * Ödeyen tarafı belirler. Gönderici-öder yalnız siparişte AÇIK bir sinyal
@@ -130,7 +125,10 @@ export function resolveCanonicalTenantSuratAccount(
     kullaniciAdi,
     sifre,
     billingParty,
-    accountFingerprint: fingerprintAccount(kullaniciAdi),
+    // TEK BİÇİM: canary, denetçi ve create yolu AYNI fonksiyonu kullanır.
+    // Önceden üç ayrı maske vardı ve aynı hesap farklı, farklı hesaplar aynı
+    // görünebiliyordu — kıyas anlamsızdı.
+    accountFingerprint: accountFingerprint(kullaniciAdi),
   }
 }
 
@@ -424,7 +422,7 @@ export async function createCanonicalSuratShipmentForRequest(
         carrierCreateStatus: 'NOT_STARTED',
         carrierCreateAttempts: 0,
         billingParty: credential.role,
-        accountFingerprint: credential.maskedAccount,
+        accountFingerprint: credential.accountFingerprint,
       },
       suratCreateTrace: attemptContext,
       // Bloklanan deneme de TUTARLI bir iz üretir: PRE_FLIGHT → FINAL,

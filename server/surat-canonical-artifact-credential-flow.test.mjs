@@ -231,7 +231,7 @@ test('3B-PROD-1: uretim seklindeki birincil hesap COZULUR', () => {
     { ...PRODUCTION_SHAPED_PAYLOAD, ...derived }, 'PRIMARY',
   )
   assert.notEqual(account, null, 'birincil hesap COZULMELI')
-  assert.equal(account.accountFingerprint, '****4321')
+  assert.equal(account.accountFingerprint, 'LEN18:****4321')
 })
 
 test('3B-PROD-2: uretim seklindeki normal gonderi BIRINCIL hesabi kullanir', async () => {
@@ -573,7 +573,7 @@ test('3B-20: canary telemetrisi sir icermez, icerik loglamaz', async () => {
     const result = await runCanonical()
     const context = result.canonicalCreate
     assert.equal(context.adapter, 'SURAT_WEB_API')
-    assert.equal(context.accountFingerprint, '****1111')
+    assert.equal(context.accountFingerprint, 'LEN17:****1111')
     assert.equal(context.artifactDetectedFormat, 'ZPL')
     assert.equal(context.barcodeCount, 1)
     assert.equal(context.barcodeNoCount, 1)

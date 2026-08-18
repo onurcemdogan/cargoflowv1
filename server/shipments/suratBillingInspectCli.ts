@@ -663,7 +663,11 @@ export async function runCreateContextDryRun(
   console.info(`  CREDENTIAL_SOURCE             ${runtimeCredential.source}`)
   console.info(`  CREDENTIAL_RESOLVED           ${yesNo(runtimeCredential.resolved)}`)
   console.info(
-    `  ACCOUNT_FINGERPRINT           ${runtimeCredential.maskedAccount ?? '-'}`,
+    `  ACCOUNT_MASKED                ${runtimeCredential.maskedAccount || '-'}`,
+  )
+  // KIYASLANABILIR TEK BICIM — canary ve create yolu ayni fonksiyonu kullanir.
+  console.info(
+    `  ACCOUNT_FINGERPRINT           ${runtimeCredential.accountFingerprint}`,
   )
   console.info(
     `  REAL_RUNTIME_BILLING_INPUT    ${wiring.presentInputs.join(', ') || 'NONE'}`,

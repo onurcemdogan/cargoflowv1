@@ -200,3 +200,44 @@ test('E-12: denetci kimlik sinifini fatura tarafi olarak BASMAZ', () => {
   )
   assert.ok(code.includes('domainBilling.billingParty'))
 })
+
+/* ═══ HESAP PARMAK İZİ — TEK BİÇİM ═══════════════════════════════════ */
+
+test('E-13: parmak izi TEK fonksiyondan uretilir', () => {
+  const config = runtimeView(STORED)
+  const credential = resolve(config)
+  // Denetci ve create yolu ayni alani okur; kiyas ANLAMLIDIR.
+  assert.equal(
+    credential.accountFingerprint,
+    ROUTING.accountFingerprint(config.canonicalPrimaryKullaniciAdi),
+  )
+  // Ham cari kodu SIZMAZ.
+  assert.equal(
+    credential.accountFingerprint.includes(config.canonicalPrimaryKullaniciAdi),
+    false,
+  )
+})
+
+test('E-14: farkli maske bicimleri SAHTE uyusmazlik URETEMEZ', () => {
+  // Ayni hesap iki eski bicimde FARKLI gorunuyordu:
+  //   maskAccount('1537690927')    -> 15******27
+  //   '****' + son4                -> ****0927
+  // Paylasilan fonksiyon her iki cagirandan AYNI degeri verir.
+  const account = '1537690927'
+  assert.equal(
+    ROUTING.accountFingerprint(account), ROUTING.accountFingerprint(account),
+  )
+  assert.notEqual(ROUTING.accountFingerprint(account), ROUTING.maskAccount(account))
+  // Uzunluk farki GIZLENMEZ — farkli hesaplar ayni gorunmez.
+  assert.notEqual(
+    ROUTING.accountFingerprint('1537690927'),
+    ROUTING.accountFingerprint('37690927'),
+  )
+})
+
+test('E-15: GERCEKTEN farkli hesaplar FARKLI parmak izi verir', () => {
+  assert.notEqual(
+    ROUTING.accountFingerprint('1537690927'),
+    ROUTING.accountFingerprint('1537692622'),
+  )
+})
