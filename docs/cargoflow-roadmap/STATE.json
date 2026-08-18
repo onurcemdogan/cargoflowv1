@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "cargoflow-roadmap",
-  "currentPhase": "P2_B3_INCREMENTAL_SYNC",
+  "currentPhase": "P3_B4_BARCODE_WORKER",
   "liveCreateAllowed": false,
   "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
   "phases": {
@@ -20,14 +20,14 @@
       "branch": "perf/orders-b2-production-rollout"
     },
     "P2_B3_INCREMENTAL_SYNC": {
-      "status": "in_progress",
-      "completedAt": null,
-      "commit": null,
+      "status": "passed",
+      "completedAt": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
       "plannedBranch": "perf/orders-b3-incremental-sync",
-      "branch": null
+      "branch": "perf/orders-b3-incremental-sync"
     },
     "P3_B4_BARCODE_WORKER": {
-      "status": "locked",
+      "status": "in_progress",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/surat-barcode-worker-finalization",
@@ -261,6 +261,87 @@
       "timestamp": "2026-08-18T15:54:55.315Z",
       "commit": "c880d5c",
       "branch": "perf/orders-b2-production-rollout",
+      "evidence": null
+    },
+    {
+      "phase": "P2_B3_INCREMENTAL_SYNC",
+      "gate": "P2_WINDOW_POLICY",
+      "status": "PASS",
+      "timestamp": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
+      "branch": "perf/orders-b3-incremental-sync",
+      "evidence": null
+    },
+    {
+      "phase": "P2_B3_INCREMENTAL_SYNC",
+      "gate": "P2_CURSOR_WIRED",
+      "status": "PASS",
+      "timestamp": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
+      "branch": "perf/orders-b3-incremental-sync",
+      "evidence": null
+    },
+    {
+      "phase": "P2_B3_INCREMENTAL_SYNC",
+      "gate": "P2_BOUNDED_PULL",
+      "status": "PASS",
+      "timestamp": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
+      "branch": "perf/orders-b3-incremental-sync",
+      "evidence": null
+    },
+    {
+      "phase": "P2_B3_INCREMENTAL_SYNC",
+      "gate": "P2_SINGLE_FLIGHT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
+      "branch": "perf/orders-b3-incremental-sync",
+      "evidence": null
+    },
+    {
+      "phase": "P2_B3_INCREMENTAL_SYNC",
+      "gate": "P2_PARTIAL_SAFETY",
+      "status": "PASS",
+      "timestamp": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
+      "branch": "perf/orders-b3-incremental-sync",
+      "evidence": null
+    },
+    {
+      "phase": "P2_B3_INCREMENTAL_SYNC",
+      "gate": "P2_SURAT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
+      "branch": "perf/orders-b3-incremental-sync",
+      "evidence": null
+    },
+    {
+      "phase": "P2_B3_INCREMENTAL_SYNC",
+      "gate": "P2_UI",
+      "status": "PASS",
+      "timestamp": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
+      "branch": "perf/orders-b3-incremental-sync",
+      "evidence": null
+    },
+    {
+      "phase": "P2_B3_INCREMENTAL_SYNC",
+      "gate": "P2_BUILD",
+      "status": "PASS",
+      "timestamp": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
+      "branch": "perf/orders-b3-incremental-sync",
+      "evidence": null
+    },
+    {
+      "phase": "P2_B3_INCREMENTAL_SYNC",
+      "gate": "P2_LINT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T19:37:57.263Z",
+      "commit": "7f1a8cd",
+      "branch": "perf/orders-b3-incremental-sync",
       "evidence": null
     }
   ],
