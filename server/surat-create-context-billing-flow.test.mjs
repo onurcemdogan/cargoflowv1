@@ -630,8 +630,15 @@ test('CLI-1: gercek siparis satirindan kuru calistirma DB YAZMADAN calisir', asy
   assert.ok(text.includes('CONFIG_AVAILABLE              NO'))
   assert.ok(text.includes('REAL_RUNTIME_REACHABLE        NO'))
   // Gerçek çalışma zamanı bağlantısı açıkça raporlanır.
+  // Legacy sinyal alanları (sellerPays/payer/shippingPayer) HÂLÂ yok — bu
+  // doğru ve anlamlıdır; fatura tarafı artık onlardan OKUNMUYOR.
   assert.ok(text.includes('REAL_RUNTIME_BILLING_INPUT    NONE'))
-  assert.ok(text.includes('EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE  NO'))
+  // Faz 5C'den beri kanonik adaptör `resolveBillingPartyV2` ile Trendyol
+  // semantiğini taşıyor; bu satır bir dönem sabit NO idi ve GÜNCELLENMEMİŞTİ.
+  assert.ok(text.includes('EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE  YES'))
+  // Fatura tarafı ALAN semantiğidir; kimlik sınıfı yerine geçmez.
+  assert.ok(text.includes('REAL_RUNTIME_BILLING_PARTY    TRENDYOL_PAYS'))
+  assert.ok(text.includes('EXPECTED_SURAT_WHO_PAYS       3'))
   assert.ok(text.includes('SELLER_PAYS_CREDENTIAL_REACHABLE_IN_REAL_CREATE  NO'))
   assert.ok(text.includes('CREDENTIAL_PRESENCE'))
   // Fidelite ARTIK SINIRLI DEĞİL: denetçi çalışma zamanı türevini uygular ve

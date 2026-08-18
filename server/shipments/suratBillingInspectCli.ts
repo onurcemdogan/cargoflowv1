@@ -14,6 +14,8 @@ import { and, eq } from 'drizzle-orm'
 import { closePool, getDb, isDatabaseConfigured } from '../db/client.ts'
 import { deriveCanonicalPrimaryAccount } from './suratCanonicalServiceMode.mjs'
 import {
+  expectedSuratWhoPays,
+  resolveBillingPartyV2,
   resolveCodContext,
   resolveCodCredentialPolicy,
   resolveSuratCredentialContext,
@@ -612,7 +614,13 @@ export async function runCreateContextDryRun(
   })
   const comparison = compareCreateContexts(caseA, caseB)
   const credentials = probeCredentialPresence(suratConfig)
-  const wiring = describeBillingWiring({ order, credentials })
+  // ALAN semantiği yetkili çözücüden gelir; kimlik sınıfı ONUN YERİNE GEÇMEZ.
+  const domainBilling = resolveBillingPartyV2(
+    (order.rawOrder ?? {}) as Record<string, unknown>,
+  )
+  const wiring = describeBillingWiring({
+    order, credentials, billingParty: domainBilling.billingParty,
+  })
 
   const yesNo = (value: boolean): string => (value ? 'YES' : 'NO')
 
@@ -660,7 +668,14 @@ export async function runCreateContextDryRun(
   console.info(
     `  REAL_RUNTIME_BILLING_INPUT    ${wiring.presentInputs.join(', ') || 'NONE'}`,
   )
-  console.info(`  REAL_RUNTIME_BILLING_PARTY    ${caseA.credentialClass}`)
+  // İKİ AYRI ALAN: fatura tarafı finansal semantiktir, kimlik sınıfı ise
+  // hangi cariyle bağlanıldığıdır. Biri diğerinin yerine BASILMAZ.
+  console.info(`  REAL_RUNTIME_BILLING_PARTY    ${domainBilling.billingParty}`)
+  console.info(
+    `  EXPECTED_SURAT_WHO_PAYS       ${
+      expectedSuratWhoPays(domainBilling.billingParty) ?? '-'
+    }`,
+  )
   console.info(`  REAL_RUNTIME_CREDENTIAL_CLASS ${caseA.credentialClass}`)
   console.info(
     `  REAL_RUNTIME_CREDENTIAL_CONFIG_PRESENT  ${yesNo(

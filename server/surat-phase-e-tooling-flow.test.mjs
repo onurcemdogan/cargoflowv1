@@ -63,6 +63,7 @@ test('E-3: denetim araclari YAZMA yapmaz', () => {
 
 const DERIVE = await import('./shipments/suratCanonicalServiceMode.mjs')
 const ROUTING = await import('./shipments/suratRoutingModel.ts')
+const TRACE_WIRE = await import('./shipments/suratCreateTrace.ts')
 
 /** Üretimdeki MonalisaToka biçimi: ham kayıtta `canonicalPrimary*` YOKTUR. */
 const STORED = {
@@ -126,4 +127,76 @@ test('E-7: eksik SELLER_PAYS / COD kimligi FAIL-CLOSED kalir', () => {
     codPolicy: 'DEDICATED_COD', serviceMode: config.serviceMode,
   })
   assert.equal(cod.resolved, false)
+})
+
+/* ═══ FATURA TARAFI ≠ KİMLİK SINIFI ══════════════════════════════════ */
+
+const DRYRUN = await import('./shipments/suratCreateContextDryRun.ts')
+
+test('E-8: BillingParty ile CredentialRole AYRI alanlardir', () => {
+  const config = runtimeView(STORED)
+  const credential = resolve(config)
+  const billing = ROUTING.resolveBillingPartyV2({})
+  // Normal Trendyol siparisi: fatura Trendyol'a, baglanti ANA cariyle.
+  assert.equal(billing.billingParty, 'TRENDYOL_PAYS')
+  assert.equal(ROUTING.expectedSuratWhoPays(billing.billingParty), '3')
+  assert.equal(credential.role, 'PRIMARY_MARKETPLACE')
+  // PRIMARY bir kimlik sinifidir; fatura tarafi DEGILDIR.
+  assert.notEqual(billing.billingParty, credential.role)
+  assert.equal(billing.billingParty.startsWith('PRIMARY'), false)
+})
+
+test('E-9: SELLER_PAYS siparisi kendi rolunu secer, semantik korunur', () => {
+  const billing = ROUTING.resolveBillingPartyV2({ whoPays: 1 })
+  assert.equal(billing.billingParty, 'SELLER_PAYS')
+  assert.equal(ROUTING.expectedSuratWhoPays(billing.billingParty), '1')
+  const configured = ROUTING.resolveSuratCredentialContext({
+    config: {
+      ...runtimeView(STORED),
+      sellerPaysKullaniciAdi: 'SELLER1', sellerPaysSifre: 'SELLER_SECRET',
+    },
+    billingParty: 'SELLER_PAYS',
+    cod: ROUTING.resolveCodContext({ enabled: false }),
+    serviceMode: 'SURAT_CANONICAL_API',
+  })
+  assert.equal(configured.resolved, true)
+  assert.equal(configured.role, 'SELLER_PAYS')
+})
+
+test('E-10: beklenen taraf SABIT false DEGIL, kanittan turetilir', () => {
+  const credentials = DRYRUN.probeCredentialPresence(runtimeView(STORED))
+  // Trendyol semantigi cozulduyse BAGLIDIR.
+  assert.equal(
+    DRYRUN.describeBillingWiring({
+      order: {}, credentials, billingParty: 'TRENDYOL_PAYS',
+    }).expectedPartyWiredToCreate,
+    true,
+  )
+  // UNKNOWN ise bagli SAYILMAZ — fail-closed.
+  assert.equal(
+    DRYRUN.describeBillingWiring({
+      order: {}, credentials, billingParty: 'UNKNOWN',
+    }).expectedPartyWiredToCreate,
+    false,
+  )
+})
+
+test('E-11: tel WhoPays tasimasa da semantik TRENDYOL_PAYS KORUNUR', () => {
+  const wire = TRACE_WIRE.describeWireWhoPays({
+    contractFields: ['KullaniciAdi', 'Sifre', 'Gonderi'],
+  })
+  assert.equal(wire.wireWhoPaysPresent, false)
+  assert.equal(wire.wireWhoPaysReason, 'CONTRACT_HAS_NO_WHO_PAYS_FIELD')
+  // Telde alan olmamasi fatura semantigini BOZMAZ.
+  assert.equal(ROUTING.resolveBillingPartyV2({}).billingParty, 'TRENDYOL_PAYS')
+})
+
+test('E-12: denetci kimlik sinifini fatura tarafi olarak BASMAZ', () => {
+  const code = readFileSync('server/shipments/suratBillingInspectCli.ts', 'utf8')
+  assert.equal(
+    /REAL_RUNTIME_BILLING_PARTY\s+\$\{caseA\.credentialClass\}/.test(code),
+    false,
+    'fatura tarafi kimlik sinifiyla DOLDURULMAMALI',
+  )
+  assert.ok(code.includes('domainBilling.billingParty'))
 })

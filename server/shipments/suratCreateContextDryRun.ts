@@ -129,6 +129,8 @@ export interface BillingWiring {
 export function describeBillingWiring(params: {
   order: Record<string, unknown>
   credentials: CredentialPresence
+  /** Yetkili çözücünün ürettiği ALAN semantiği (kimlik sınıfı DEĞİL). */
+  billingParty?: string | null
 }): BillingWiring {
   const presentInputs = REAL_RUNTIME_BILLING_INPUT_FIELDS.filter(
     (field) => text(params.order[field]) !== '',
@@ -136,9 +138,17 @@ export function describeBillingWiring(params: {
   const hasSignal = presentInputs.length > 0
   const hasCredential =
     params.credentials.sellerPaysUsername && params.credentials.sellerPaysPassword
+  // TARİHÇE: bu alan bir dönem SABİT `false` idi ve o zaman DOĞRUYDU —
+  // fatura tarafı yalnız legacy `order.sellerPays/payer/shippingPayer`
+  // alanlarından okunuyordu, Trendyol'dan türetilen beklenen taraf gerçek
+  // create'e BAĞLI DEĞİLDİ. Kanonik adaptör artık `resolveBillingPartyV2`
+  // ile bu semantiği taşıyor; sabit güncellenmediği için araç yanlış
+  // "bağlı değil" diyordu. Artık KANITA dayanır.
+  const billingParty = params.billingParty ?? null
   return {
     presentInputs: [...presentInputs],
-    expectedPartyWiredToCreate: false,
+    expectedPartyWiredToCreate:
+      billingParty !== null && billingParty !== 'UNKNOWN',
     sellerPaysReachable: hasSignal && hasCredential,
     sellerPaysUnreachableReason: hasSignal && hasCredential
       ? null
