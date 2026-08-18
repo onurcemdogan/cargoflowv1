@@ -1,19 +1,19 @@
 {
   "schemaVersion": 1,
   "workflow": "cargoflow-roadmap",
-  "currentPhase": "S1_SURAT_HARDENING",
+  "currentPhase": "P1_B2_PERFORMANCE",
   "liveCreateAllowed": false,
   "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
   "phases": {
     "S1_SURAT_HARDENING": {
-      "status": "in_progress",
-      "completedAt": null,
-      "commit": null,
+      "status": "passed",
+      "completedAt": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
       "plannedBranch": "fix/surat-canonical-kargobarkod-and-debug-ui",
       "branch": "fix/surat-canonical-kargobarkod-and-debug-ui"
     },
     "P1_B2_PERFORMANCE": {
-      "status": "locked",
+      "status": "in_progress",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "perf/orders-b2-production-rollout",
@@ -134,6 +134,87 @@
       "status": "NOT_RUN",
       "timestamp": "2026-08-18T14:21:32.517Z",
       "commit": "416f5ef",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "evidence": null
+    },
+    {
+      "phase": "S1_SURAT_HARDENING",
+      "gate": "S1_CREDENTIAL_PARITY",
+      "status": "PASS",
+      "timestamp": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "evidence": null
+    },
+    {
+      "phase": "S1_SURAT_HARDENING",
+      "gate": "S1_WIRE_CONTRACT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "evidence": null
+    },
+    {
+      "phase": "S1_SURAT_HARDENING",
+      "gate": "S1_TRACE_RUNTIME",
+      "status": "PASS",
+      "timestamp": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "evidence": null
+    },
+    {
+      "phase": "S1_SURAT_HARDENING",
+      "gate": "S1_LIVE_DEBUG_UI",
+      "status": "PASS",
+      "timestamp": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "evidence": null
+    },
+    {
+      "phase": "S1_SURAT_HARDENING",
+      "gate": "S1_FAILED_ORDER_STATE",
+      "status": "PASS",
+      "timestamp": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "evidence": null
+    },
+    {
+      "phase": "S1_SURAT_HARDENING",
+      "gate": "S1_SURAT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "evidence": null
+    },
+    {
+      "phase": "S1_SURAT_HARDENING",
+      "gate": "S1_UI",
+      "status": "PASS",
+      "timestamp": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "evidence": null
+    },
+    {
+      "phase": "S1_SURAT_HARDENING",
+      "gate": "S1_BUILD",
+      "status": "PASS",
+      "timestamp": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
+      "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
+      "evidence": null
+    },
+    {
+      "phase": "S1_SURAT_HARDENING",
+      "gate": "S1_LINT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T14:59:33.819Z",
+      "commit": "12227ac",
       "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
       "evidence": null
     }

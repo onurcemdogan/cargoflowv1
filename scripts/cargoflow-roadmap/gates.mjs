@@ -66,10 +66,15 @@ export function buildGates(phase, scripts = readScripts()) {
       requireOutput: ['Test Files[ ]+3 passed'],
       forbidOutput: ['FAIL[ ]'],
     },
-      notImplemented(
-        'S1_FAILED_ORDER_STATE', phase, 'CREATE_FAILED siparis durumu',
-        'basarisiz create basarili kayit gibi gorunmemeli',
-      ),
+    {
+      id: 'S1_FAILED_ORDER_STATE', phase,
+      description: 'CREATE_FAILED siparisi basarili kayit gibi GORUNMEZ',
+      command: ['npx', 'vitest', 'run',
+        'src/test/failedCreateOrderState.test.ts'],
+      required: true, safe: true, status: 'PENDING', evidence: null,
+      requireOutput: ['Test Files[ ]+1 passed'],
+      forbidOutput: ['FAIL[ ]'],
+    },
       ...qualityGates(scripts, phase, 'S1'),
     ]
   }
