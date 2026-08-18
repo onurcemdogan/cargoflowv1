@@ -42,7 +42,20 @@ Rapor: `node scripts/cargoflow-roadmap/orchestrator.mjs report`
   bir fazı "sözleşme yok" diyerek atlamak yasaktır (RM-4 bunu kilitler).
 - Uygulanmamış iş `NOT_IMPLEMENTED` ile **BLOCKED** kalır — sahte PASS yok.
 
-## S1'de kalanlar (guncel)
+## Guncel konum
+
+**S1 = passed** (c904f29). **P1 = in_progress**, dal
+`perf/orders-b2-production-rollout`.
+
+P1 denetimi TAMAMLANDI: [P1_AUDIT.md](P1_AUDIT.md). Ozet — sunucu sayfalama,
+N+1 kaldirma, sayim ve aralik sorgusu ZATEN VAR; eksik olan `0008` migration
+ve arac zinciri (preflight / prova / idempotent backfill / golge parite /
+geri alma) ile sentetik benchmark. Uretim p50/p95 bu ortamda olculemez.
+
+Sonraki somut adim: kanonik projeksiyon + `0008` migration uretimi ve hermetik
+PGlite testi. Uretim migration'i CALISTIRILMAZ.
+
+## S1 gecmisi
 
 `S1_LIVE_DEBUG_UI` **GECTI** (cbff077): Canli Debug varsayilan bolum, legacy
 satir sayisi acilista 0, genis silme dugmesi birincil ekrandan kalkti.

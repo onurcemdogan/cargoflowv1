@@ -79,7 +79,10 @@ export function buildGates(phase, scripts = readScripts()) {
     ]
   }
   const pending = {
-    P1_B2_PERFORMANCE: 'sunucu sayfalama, sayimlar, N+1, 0008 arac zinciri',
+    // DENETIM YAPILDI (docs/cargoflow-roadmap/P1_AUDIT.md): sayfalama, N+1
+    // kaldirma, sayim ve aralik sorgusu ZATEN VAR. Kalan: 0008 migration +
+    // arac zinciri (preflight/prova/backfill/golge parite/geri alma) + benchmark.
+    P1_B2_PERFORMANCE: '0008 migration + arac zinciri + benchmark (denetim: P1_AUDIT.md)',
     P2_B3_INCREMENTAL_SYNC: 'kiraci checkpointleri, artimli imlecler, resume',
     P3_B4_BARCODE_WORKER: 'uygun siparis secimi, kuyruk oncesi finansal on kontrol',
     P4_HEPSIBURADA_N11: 'saglayici-notr temel; dis sozlesme dogrulanmali',
