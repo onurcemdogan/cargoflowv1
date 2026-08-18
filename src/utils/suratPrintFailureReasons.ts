@@ -12,9 +12,16 @@
 export const PRINT_HOST_UNAVAILABLE_MESSAGE =
   'Yazdırma penceresi açılamadı. Bu site için açılır pencerelere izin verin.'
 
-/** Create çağrısı hata atmadı ama kayıtlı etiket doğrulanamadı. */
+/**
+ * Create çağrısı HATA ATMADI ama kayıtlı etiket doğrulanamadı.
+ *
+ * DİKKAT: bu durumda etiketin OLUŞTUĞU BİLİNMEZ. Eski metin "etiket
+ * oluşturuldu" diyordu; 2026-08-18 canlı denemesinde (paket 4085791254)
+ * taşıyıcı HTTP 200 döndürüp hiç barkod/takip/ZPL üretmediği hâlde operatöre
+ * etiket oluşmuş gibi görünüyordu. Metin artık OLUŞTUĞUNU İDDİA ETMEZ.
+ */
 export const LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE =
-  'Sürat etiketi oluşturuldu fakat kayıtlı etiket doğrulanamadı.'
+  'Sürat etiketi doğrulanamadı; etiketin oluştuğu teyit edilemedi.'
 
 /** Etiket henüz hazır değil (kayıtlı etiket uçtan da çözülemedi). */
 export const LABEL_NOT_READY_MESSAGE =

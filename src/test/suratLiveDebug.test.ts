@@ -151,3 +151,15 @@ describe('Canlı Debug — gorunum modeli', () => {
     expect(buildLiveDebugViewModel(null)).toBeNull()
   })
 })
+
+describe('create hatasi mesaji', () => {
+  it('etiketin OLUSTUGUNU iddia ETMEZ', async () => {
+    const { LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE } =
+      await import('../utils/suratPrintFailureReasons')
+    // 4085791254: HTTP 200, barkod/takip/ZPL YOK. "olusturuldu" demek yanlisti.
+    expect(LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE)
+      .not.toContain('oluşturuldu fakat')
+    expect(LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE).toContain('doğrulanamadı')
+    expect(LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE).not.toMatch(/etiket oluştur\w*u/)
+  })
+})
