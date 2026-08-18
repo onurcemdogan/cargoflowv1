@@ -1185,7 +1185,38 @@ app.post('/api/orders/sync', async (request, response) => {
 
   try {
     const credentials = request.body?.credentials ?? {}
-    const query = request.body?.query ?? {}
+    // ── ARTIMLI ÇEKİM PENCERESİ (P2/B3) ──────────────────────────────────
+    // Pencere ARTIK imleçten türetilir. `callTrendyolOrders`a DOKUNULMAZ:
+    // oradaki `?? son 7 gün` varsayılanı, 30 günlük üst sınır ve
+    // `endDate < startDate` doğrulaması yerinde kalır. Burada YALNIZ istemci
+    // tarih VERMEDİĞİNDE alanlar doldurulur → açık istemci tarihi (manuel
+    // geri-dolum yolu) kendiliğinden KAZANIR.
+    const clientQuery = request.body?.query ?? {}
+    const { resolveSyncWindow, advanceCheckpoint, deriveReconciliationAnchorMs } =
+      await import('./orders/syncWindowPolicy.ts')
+    const priorSyncState = await readOrgSyncState(
+      context.db,
+      context.organizationId,
+      'orders',
+      syncAccountId,
+    )
+    const priorCheckpointMs = epochMsOrNull(priorSyncState?.lastSuccessfulSyncAt)
+    const syncWindow = resolveSyncWindow({
+      checkpointMs: priorCheckpointMs,
+      nowMs: Date.now(),
+      // Geniş tarama zamanı imlecin ZAMAN KOVASINDAN türetilir; ek kolon ve
+      // üretim migration'ı GEREKMEZ (bkz. syncWindowPolicy).
+      lastReconciliationAtMs: deriveReconciliationAnchorMs({
+        checkpointMs: priorCheckpointMs,
+      }),
+    })
+    const clientStartMs = epochMsOrNull(clientQuery.startDate)
+    const clientEndMs = epochMsOrNull(clientQuery.endDate)
+    const query = {
+      ...clientQuery,
+      startDate: clientStartMs ?? syncWindow.startMs,
+      endDate: clientEndMs ?? syncWindow.endMs,
+    }
     let result
     try {
       result = await callTrendyolOrdersByStatuses(credentials, { size: 50, ...query })
@@ -1240,14 +1271,14 @@ app.post('/api/orders/sync', async (request, response) => {
       // varsayılanlar (startDate yoksa son 7 gün, endDate yoksa now). Yalnız bu
       // pencereye giren kayıtlar reconcile edilir; pencere DIŞI kayıtlar
       // (fetch onları kapsamadı) current-active set'te yok diye ARŞİVLENMEZ.
-      const syncNow = Date.now()
-      const windowStart = Number(query.startDate)
-      const windowEnd = Number(query.endDate)
+      // Reconciliation KAPSAMI = ÇEKİM PENCERESİ. İki taraf artık AYNI
+      // değerlerden türer (yukarıda `query` daima sayısal doldurulur), yani
+      // varsayılanların ayrışması MÜMKÜN DEĞİLDİR. Yalnız bu pencereye giren
+      // kayıtlar reconcile edilir; pencere DIŞI kayıtlar (fetch onları
+      // kapsamadı) current-active set'te yok diye ARŞİVLENMEZ.
       const reconcileWindow = {
-        startMs: Number.isFinite(windowStart)
-          ? windowStart
-          : syncNow - 1000 * 60 * 60 * 24 * 7,
-        endMs: Number.isFinite(windowEnd) ? windowEnd : syncNow,
+        startMs: Number(query.startDate),
+        endMs: Number(query.endDate),
       }
       const persistResult = await context.service.persistSyncResult(
         context.db,
@@ -1269,12 +1300,28 @@ app.post('/api/orders/sync', async (request, response) => {
       // Başarı/kısmi metadata'sını yaz (kilidi serbest bırakır + UI'ye "son
       // başarılı sync" zamanı sağlar). complete=true tam sync'i, aksi kısmî.
       const syncOutcome = persistResult.complete ? 'success' : 'partial'
+      // İMLEÇ YALNIZ TAM BAŞARIDA ilerler ve PENCERENİN ÜST SINIRINA yazılır
+      // (`now`a DEĞİL). Çekim sürerken oluşan siparişler `now` ile imleç
+      // arasındaki aralığa düşer; imleç `now` yapılsaydı o aralık bir daha
+      // sorulmaz ve kayıtlar KALICI olarak kaybolurdu.
+      const checkpoint = advanceCheckpoint({
+        currentCheckpointMs: priorCheckpointMs,
+        candidateCheckpointMs: syncWindow.candidateCheckpointMs,
+        complete: persistResult.complete,
+        rateLimited: Number(result.statusCode) === 429,
+        errorCode: null,
+      })
+      const checkpointAt = Number.isFinite(Number(checkpoint.checkpointMs))
+        ? new Date(Number(checkpoint.checkpointMs))
+        : null
       await recordOnboardingSyncState(context.db, context.organizationId, {
         provider: 'trendyol',
         resource: 'orders',
         status: syncOutcome,
         fetchedCount: persistResult.fetchedCount,
         marketplaceAccountId: syncAccountId,
+        // İlerlemediyse MEVCUT imleç korunur; `null` ise eski davranış (now).
+        successfulSyncAt: checkpointAt,
       })
       // Aktif hesabın kendi sync metadata'sı (yalnız success son başarılı zamanı
       // ilerletir; partial/failed BOZMAZ).
@@ -1285,6 +1332,8 @@ app.post('/api/orders/sync', async (request, response) => {
           )
           await updateAccountSyncMeta(context.db, context.organizationId, syncAccountId, {
             status: syncOutcome,
+            // Hesap satırı da AYNI imleci gösterir; iki yüzey ayrışmaz.
+            successfulSyncAt: checkpointAt,
           })
         } catch {
           // hesap metadata best-effort; sync sonucunu etkilemez
@@ -1831,6 +1880,24 @@ async function releaseOrgSyncLock(db, organizationId, resource, errorCode, marke
   } catch {
     // best-effort; bayat kilit staleMs sonrası kendiliğinden devralınır
   }
+}
+
+// Date | ISO metni | epoch sayısı → epoch ms; YOKSA null.
+//
+// `Number(null)` 0 verdiği için "yok" ile "1970" ayrımı ELDE ZORUNLUDUR:
+// imleci olmayan bir kiracı 0'a düşerse pencere 1970'ten başlar ve 30 günlük
+// üst sınır çekimi tamamen REDDEDER.
+function epochMsOrNull(value) {
+  if (value === null || value === undefined || value === '') return null
+  if (value instanceof Date) {
+    const time = value.getTime()
+    return Number.isFinite(time) ? time : null
+  }
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  const parsed = Number(value)
+  if (Number.isFinite(parsed)) return parsed
+  const parsedDate = Date.parse(String(value))
+  return Number.isFinite(parsedDate) ? parsedDate : null
 }
 
 // UI'nin sync durumunu (son başarılı zaman, son statü, çekilen adet, hata kodu)

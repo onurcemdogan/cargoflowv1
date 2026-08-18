@@ -85,16 +85,31 @@ export async function recordSyncState(
     fetchedCount?: number
     errorCode?: string | null
     marketplaceAccountId?: string | null
+    /**
+     * ARTIMLI SENKRON IMLECI (watermark). Verilirse `lastSuccessfulSyncAt`
+     * BUNUNLA yazilir; verilmezse eski davranis (`now`) korunur.
+     *
+     * Neden `now` DEGIL: imlec, CEKILEN PENCERENIN UST SINIRI olmalidir.
+     * Cekim sirasinda oluşan siparisler `now`a kadar olan araliga duser;
+     * imlec `now` yapilirsa o aralik bir daha HIC sorulmaz — kalici eksik
+     * gonderi. Ust sinir yazilinca ayni aralik sonraki kosuda yeniden gelir.
+     */
+    successfulSyncAt?: Date | null
   },
 ): Promise<void> {
   const now = new Date()
+  const successfulSyncAt =
+    entry.successfulSyncAt instanceof Date &&
+    Number.isFinite(entry.successfulSyncAt.getTime())
+      ? entry.successfulSyncAt
+      : now
   const marketplaceAccountId = entry.marketplaceAccountId ?? null
   const values = {
     organizationId,
     marketplaceAccountId,
     provider: entry.provider,
     resource: entry.resource,
-    lastSuccessfulSyncAt: entry.status === 'success' ? now : null,
+    lastSuccessfulSyncAt: entry.status === 'success' ? successfulSyncAt : null,
     lastSyncStatus: entry.status,
     lastFetchedCount: Number.isFinite(Number(entry.fetchedCount))
       ? Math.trunc(Number(entry.fetchedCount))
@@ -114,7 +129,7 @@ export async function recordSyncState(
       set: {
         // Başarısız sync son BAŞARILI zamanı EZMEZ (yalnız başarıda güncellenir).
         ...(entry.status === 'success'
-          ? { lastSuccessfulSyncAt: now }
+          ? { lastSuccessfulSyncAt: successfulSyncAt }
           : {}),
         lastSyncStatus: values.lastSyncStatus,
         lastFetchedCount: values.lastFetchedCount,

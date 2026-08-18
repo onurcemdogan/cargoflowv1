@@ -222,14 +222,23 @@ export async function updateAccountSyncMeta(
   db: Db,
   organizationId: string,
   accountId: string,
-  entry: { status: 'success' | 'partial' | 'failed' },
+  entry: {
+    status: 'success' | 'partial' | 'failed'
+    /** Artımlı senkron imleci; verilmezse eski davranış (`now`) korunur. */
+    successfulSyncAt?: Date | null
+  },
 ): Promise<void> {
   const now = new Date()
+  const successfulSyncAt =
+    entry.successfulSyncAt instanceof Date &&
+    Number.isFinite(entry.successfulSyncAt.getTime())
+      ? entry.successfulSyncAt
+      : now
   await db
     .update(marketplaceAccounts)
     .set({
       lastSyncStatus: entry.status,
-      ...(entry.status === 'success' ? { lastSuccessfulSyncAt: now } : {}),
+      ...(entry.status === 'success' ? { lastSuccessfulSyncAt: successfulSyncAt } : {}),
       updatedAt: now,
     })
     .where(
