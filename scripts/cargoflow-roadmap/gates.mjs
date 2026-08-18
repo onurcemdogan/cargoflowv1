@@ -82,7 +82,13 @@ export function buildGates(phase, scripts = readScripts()) {
     // DENETIM YAPILDI (docs/cargoflow-roadmap/P1_AUDIT.md): sayfalama, N+1
     // kaldirma, sayim ve aralik sorgusu ZATEN VAR. Kalan: 0008 migration +
     // arac zinciri (preflight/prova/backfill/golge parite/geri alma) + benchmark.
-    P1_B2_PERFORMANCE: '0008 migration + arac zinciri + benchmark (denetim: P1_AUDIT.md)',
+    // OKUMA YOLLARI BITTI (bb47cef, ab5ea8f): liste N+1 kaldirildi, analitik
+    // okumasi sinirli ve N+1'siz dogrulandi, kiyaslama paketi eklendi.
+    // KALAN IKI MADDE DE INSAN KARARI GEREKTIRIR:
+    //   1) 0008 "kanonik projeksiyon" kapsami repoda TANIMLI DEGIL.
+    //   2) Uretim p50/p95 bu ortamda olculemez.
+    P1_B2_PERFORMANCE: '0008 kapsami TANIMSIZ (insan karari) + uretim p50/p95 '
+      + 'BLOCKED_EXTERNAL_ENVIRONMENT — ayrinti: docs/cargoflow-roadmap/P1_AUDIT.md',
     P2_B3_INCREMENTAL_SYNC: 'kiraci checkpointleri, artimli imlecler, resume',
     P3_B4_BARCODE_WORKER: 'uygun siparis secimi, kuyruk oncesi finansal on kontrol',
     P4_HEPSIBURADA_N11: 'saglayici-notr temel; dis sozlesme dogrulanmali',
