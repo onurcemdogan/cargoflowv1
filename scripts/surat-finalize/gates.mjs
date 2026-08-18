@@ -119,6 +119,14 @@ export function buildPhaseCGates(scripts = readScripts()) {
       'C1_TRACE_V2', 'C', 'server/surat-trace-v2-flow.test.mjs',
       'sema v2 · dongu · degismezlik · yalitim · maskeleme · saklama',
     ),
+    // ZORUNLU: modulun VAR olmasi yetmez. Bu gate, gercek create yolunun
+    // Trace V2'yi CAGIRDIGINI kanitlar. Ilk Faz C gecisi tam da bu gate
+    // eksik oldugu icin YANLIS POZITIFTI.
+    nodeTestGate(
+      'C1B_REAL_RUNTIME_WIRING', 'C',
+      'server/surat-trace-runtime-flow.test.mjs',
+      'gercek create yolunda tam yasam dongusu · tek traceId · yalitim',
+    ),
     nodeTestGate(
       'C2_ROUTING_MODEL', 'C', 'server/surat-routing-model-flow.test.mjs',
       'beklenen vs tel ayrimi bozulmadi',

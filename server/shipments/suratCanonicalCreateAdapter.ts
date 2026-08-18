@@ -20,8 +20,10 @@ import {
   resolveSuratCredentialContext,
 } from './suratRoutingModel.ts'
 import {
+  appendTraceStage,
   buildTraceId,
   buildUserFacingError,
+  createTraceAttempt,
   describeWireWhoPays,
 } from './suratCreateTrace.ts'
 import {
@@ -346,6 +348,11 @@ export async function createCanonicalSuratShipmentForRequest(
     `${params.organizationId}:${params.order.packageId ?? params.reference}`,
   )
   const wire = describeWireWhoPays({ contractFields: CANONICAL_GONDERI_FIELDS })
+  const stamp = () => new Date().toISOString()
+  // TEK correlation kimliği. Her aşama AYNI traceId altında ve KARAR ANINDAKİ
+  // değerlerle kaydedilir; config sonradan değişse bile geçmiş deneme kendini
+  // yeniden yorumlamaz.
+  let traceAttempt = createTraceAttempt({ traceId, createdAt: stamp() })
   const attemptContext = {
     traceId,
     billingParty: billing.billingParty,
@@ -372,6 +379,33 @@ export async function createCanonicalSuratShipmentForRequest(
     preflightFailures: preflight.failures,
   }
 
+  traceAttempt = appendTraceStage(traceAttempt, {
+    stage: 'PRE_FLIGHT', section: 'BILLING', at: stamp(),
+    data: {
+      billingParty: billing.billingParty,
+      expectedSuratWhoPays: attemptContext.expectedSuratWhoPays,
+      odemeTipi: attemptContext.odemeTipi,
+      codEnabled: cod.codEnabled,
+      pazaryerimi: input.context.pazaryerimi,
+      entegrasyonFirmasi: input.context.entegrasyonFirmasi,
+      ozelKargoTakipNoSource: input.context.trackingSource,
+      preflightValid: preflight.valid,
+      preflightFailures: preflight.failures,
+    },
+  })
+  traceAttempt = appendTraceStage(traceAttempt, {
+    stage: 'ROUTING', section: 'CREDENTIAL_ROUTING', at: stamp(),
+    data: {
+      credentialRole: credential.role,
+      credentialSource: credential.source,
+      maskedAccount: credential.maskedAccount,
+      credentialResolved: credential.resolved,
+      serviceMode: SURAT_CANONICAL_SERVICE_MODE,
+      serviceType: SURAT_CANONICAL_SERVICE_TYPE,
+      operation: SURAT_CANONICAL_OPERATION_NAME,
+    },
+  })
+
   // FAIL-CLOSED: bağlam bozuksa TAŞIYICIYA GİDİLMEZ. Yanlış bağlamda
   // oluşan gönderi yanlış cariye yazılır ve geri alınamaz.
   if (!preflight.valid) {
@@ -393,6 +427,17 @@ export async function createCanonicalSuratShipmentForRequest(
         accountFingerprint: credential.maskedAccount,
       },
       suratCreateTrace: attemptContext,
+      // Bloklanan deneme de TUTARLI bir iz üretir: PRE_FLIGHT → FINAL,
+      // arada CARRIER_CALL YOKTUR — çünkü taşıyıcıya hiç gidilmedi.
+      traceAttempt: appendTraceStage(traceAttempt, {
+        stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
+        data: {
+          outcome: 'BLOCKED_BY_PREFLIGHT',
+          carrierCreateStatus: 'NOT_STARTED',
+          carrierCalled: false,
+          failures: preflight.failures,
+        },
+      }),
     }
   }
 
@@ -413,6 +458,42 @@ export async function createCanonicalSuratShipmentForRequest(
     idempotency: createHeldIdempotencyPort(),
     fetchImpl: params.fetchImpl,
   })
+  traceAttempt = appendTraceStage(traceAttempt, {
+    stage: 'REQUEST_READY', section: 'REQUEST', at: stamp(),
+    data: { ...wire, contractHasWhoPaysField: wire.wireWhoPaysPresent },
+  })
+  traceAttempt = appendTraceStage(traceAttempt, {
+    stage: 'CARRIER_CALL', section: 'SERVICE_ROUTING', at: stamp(),
+    data: {
+      serviceMode: SURAT_CANONICAL_SERVICE_MODE,
+      operation: SURAT_CANONICAL_OPERATION_NAME,
+      attempts: result.carrierCreateAttempts,
+    },
+  })
+  traceAttempt = appendTraceStage(traceAttempt, {
+    stage: 'CARRIER_RESPONSE', section: 'RESPONSE', at: stamp(),
+    data: {
+      carrierCreateStatus: result.carrierCreateStatus,
+      outcome: result.outcome,
+      businessCode: result.errorCode ?? null,
+      businessMessage: result.vendorMessage,
+    },
+  })
+  traceAttempt = appendTraceStage(traceAttempt, {
+    stage: 'VERIFICATION', section: 'VERIFICATION', at: stamp(),
+    data: {
+      trackingPresent: Boolean(result.trackingNo),
+      barcodePresent: result.barcode.length > 0,
+      printArtifactStatus: result.printArtifactStatus,
+    },
+  })
+  traceAttempt = appendTraceStage(traceAttempt, {
+    stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
+    data: {
+      carrierCreateStatus: result.carrierCreateStatus,
+      carrierCalled: true,
+    },
+  })
   const response = mapCanonicalResultToCreateResponse({ result, input, account })
   // AYNI traceId tüm aşamalarda taşınır: PRE_FLIGHT → ROUTING →
   // REQUEST_READY → CARRIER_CALL → CARRIER_RESPONSE → FINAL.
@@ -425,6 +506,7 @@ export async function createCanonicalSuratShipmentForRequest(
       trackingPresent: Boolean(result.trackingNo),
       barcodePresent: result.barcode.length > 0,
     },
+    traceAttempt,
   }
 }
 

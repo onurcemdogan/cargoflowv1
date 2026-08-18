@@ -24,7 +24,7 @@
     },
     "C": {
       "status": "passed",
-      "completedAt": "2026-08-18T06:09:20.651Z",
+      "completedAt": "2026-08-18T06:50:54.309Z",
       "commit": null
     },
     "D": {
@@ -37,5 +37,7 @@
       "completedAt": null,
       "commit": null
     }
-  }
+  },
+  "gateDefinitionVersion": 2,
+  "phaseCReopenedReason": "REAL_RUNTIME_WIRING_GATE_WAS_MISSING"
 }
