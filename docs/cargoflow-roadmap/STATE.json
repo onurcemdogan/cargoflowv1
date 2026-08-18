@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "cargoflow-roadmap",
-  "currentPhase": "P5_ARAS",
+  "currentPhase": "P6_SURAT_NON_MARKETPLACE",
   "liveCreateAllowed": false,
   "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
   "phases": {
@@ -42,14 +42,15 @@
       "blockerDetail": "Hepsiburada/N11 dis sozlesmesi repoda YOK: adapter/client/endpoint kodu, WSDL/OpenAPI/Postman, fixture ve credential girdisi arandi, sifir bulundu. Kodda gecen adlar yalnizca enabled:false gorunum kaydi ve Surat entegrasyonFirmasi string alani. Detay: docs/cargoflow-roadmap/P4_AUDIT.md"
     },
     "P5_ARAS": {
-      "status": "in_progress",
+      "status": "blocked_external_contract",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/carrier-aras-foundation",
-      "branch": null
+      "branch": null,
+      "blockerDetail": "Aras dis sozlesmesi repoda YOK: WSDL/OpenAPI/Postman, fixture, credential girdisi ve adapter/endpoint kodu arandi, sifir bulundu. Gercek iki gecis yalnizca enabled:false gorunum kaydi ve yabanci-tasiyici test ornegi. Tasiyici-notr temelin sozlesmeden bagimsiz yarisi TAMAMLANDI ve testle kilitlendi (carrier-neutral-foundation-flow, 7/7). Detay: docs/cargoflow-roadmap/P5_AUDIT.md"
     },
     "P6_SURAT_NON_MARKETPLACE": {
-      "status": "locked",
+      "status": "in_progress",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/surat-non-marketplace-contract",
