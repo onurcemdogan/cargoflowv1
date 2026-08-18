@@ -44,16 +44,31 @@ Rapor: `node scripts/cargoflow-roadmap/orchestrator.mjs report`
 
 ## Guncel konum
 
-**S1 = passed** (c904f29). **P1 = in_progress**, dal
-`perf/orders-b2-production-rollout`.
+**S1 = passed** (c904f29). **P1 = passed** (0e94a08).
+**P2 = in_progress**, dal `perf/orders-b3-incremental-sync`.
 
-P1 denetimi TAMAMLANDI: [P1_AUDIT.md](P1_AUDIT.md). Ozet — sunucu sayfalama,
-N+1 kaldirma, sayim ve aralik sorgusu ZATEN VAR; eksik olan `0008` migration
-ve arac zinciri (preflight / prova / idempotent backfill / golge parite /
-geri alma) ile sentetik benchmark. Uretim p50/p95 bu ortamda olculemez.
+P2 denetimi TAMAMLANDI ve BAGLANDI: [P2_AUDIT.md](P2_AUDIT.md).
 
-Sonraki somut adim: kanonik projeksiyon + `0008` migration uretimi ve hermetik
-PGlite testi. Uretim migration'i CALISTIRILMAZ.
+Ozet — artimli imlec ARTIK GERCEKTEN calisiyor:
+
+- cekim penceresi `integration_sync_state` imlecinden turetiliyor (eskiden
+  imlec yalniz yaziliyor, hic OKUNMUYORDU),
+- imlec pencerenin UST SINIRINA yaziliyor (`now()` degil) ve YALNIZ tam
+  basarili sync'te ilerliyor,
+- periyodik genis tarama imlecin ZAMAN KOVASINDAN turetiliyor → yeni kolon ve
+  uretim migration'i GEREKMEDI,
+- reconcile kapsami ile cekim penceresi AYNI kaynaktan geliyor.
+
+Denetimin "yok" sandigi sinirli cekim / siniflandirilmis backoff /
+429-Retry-After maddeleri OLCULDU: ucu de ZATEN VARDI, testle kilitlendi.
+
+Arka plan turu BILEREK sabit penceresinde birakildi (gerekce: P2_AUDIT §1.5).
+
+`P2_B3_INCREMENTAL_SYNC` gate'i artik `notImplemented` DEGIL; bes gercek test
+paketi + ortak kalite kapilarindan olusuyor.
+
+Sonraki somut adim: `continue` yesillenince P3 (`feat/surat-barcode-worker-
+finalization`) — kuyruk oncesi finansal on kontrol ve idempotency.
 
 ## S1 gecmisi
 
