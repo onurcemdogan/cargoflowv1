@@ -634,10 +634,18 @@ test('CLI-1: gercek siparis satirindan kuru calistirma DB YAZMADAN calisir', asy
   assert.ok(text.includes('EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE  NO'))
   assert.ok(text.includes('SELLER_PAYS_CREDENTIAL_REACHABLE_IN_REAL_CREATE  NO'))
   assert.ok(text.includes('CREDENTIAL_PRESENCE'))
-  // Fidelite sınırı gizlenmez: kayıtlı config ≠ üretimin aldığı gövde.
+  // Fidelite ARTIK SINIRLI DEĞİL: denetçi çalışma zamanı türevini uygular ve
+  // ağ sınırındaki YETKİLİ çözücünün kendisini çağırır. (Eskiden ham kayıt
+  // okunduğu için kanonik kimlik görünmez ve YANLIŞ "çözülemedi" raporlanırdı.)
   assert.ok(text.includes('CONFIG_SOURCE                 STORED_TENANT_CONFIG'))
-  assert.ok(text.includes('PRODUCTION_CONFIG_SOURCE      CLIENT_REQUEST_BODY'))
-  assert.ok(text.includes('CREDENTIAL_RESOLUTION_FIDELITY  BOUNDED'))
+  assert.ok(text.includes('RUNTIME_DERIVATION_APPLIED    YES'))
+  assert.ok(
+    text.includes('CREDENTIAL_RESOLUTION_FIDELITY  AUTHORITATIVE_RESOLVER'),
+  )
+  // Yetkili çözücünün kararı raporlanır.
+  assert.ok(text.includes('CREDENTIAL_ROLE'))
+  assert.ok(text.includes('CREDENTIAL_RESOLVED'))
+  assert.ok(text.includes('ACCOUNT_FINGERPRINT'))
   // PII BASILMAZ.
   for (const pii of ['Gizli Mahalle 5', 'Kadıköy']) {
     assert.equal(text.includes(pii), false, `${pii} BASILMAMALI`)

@@ -12,6 +12,12 @@
 // şifresi, ham şifreli yük ASLA basılmaz. Yalnız operasyonel payer metadatası.
 import { and, eq } from 'drizzle-orm'
 import { closePool, getDb, isDatabaseConfigured } from '../db/client.ts'
+import { deriveCanonicalPrimaryAccount } from './suratCanonicalServiceMode.mjs'
+import {
+  resolveCodContext,
+  resolveCodCredentialPolicy,
+  resolveSuratCredentialContext,
+} from './suratRoutingModel.ts'
 import { loadOrganizationIntegrationConfig } from '../integrations/credentialService.ts'
 import { organizationSettings, shipments } from '../db/schema.ts'
 import { decryptShipmentPayload } from './shipmentEncryption.ts'
@@ -573,7 +579,13 @@ export async function runCreateContextDryRun(
       db as never,
       organizationId,
     )) as Record<string, unknown> | null
-    suratConfig = (config?.surat ?? {}) as Record<string, unknown>
+    const stored = (config?.surat ?? {}) as Record<string, unknown>
+    // ÇALIŞMA ZAMANI GÖRÜNÜMÜ: `loadOrganizationIntegrationConfig` HAM kaydı
+    // döner; `canonicalPrimary*` alanları çalışma zamanında
+    // `normalizeSuratConfig` türevinde DOĞAR. Bu türev atlanırsa kanonik
+    // hesap görünmez ve araç YANLIŞ "çözülemedi" raporlar — kanary bunu
+    // zaten uyguluyordu, denetçi uygulamıyordu.
+    suratConfig = { ...stored, ...deriveCanonicalPrimaryAccount(stored) }
   } catch {
     suratConfig = {}
   }
@@ -626,9 +638,25 @@ export async function runCreateContextDryRun(
   // geçirir (index.mjs kanonik dal). İkisi farklı anahtar kümesi taşıyabilir,
   // bu yüzden kredensiyal ÇÖZÜMÜ birebir üretim sonucu SAYILMAZ. Alan
   // kümesi/faturalama değerleri ise yapılandırmadan bağımsızdır ve birebirdir.
+  // AĞ SINIRINDAN HEMEN ÖNCE ÇALIŞAN YETKİLİ ÇÖZÜCÜNÜN TA KENDİSİ.
+  // Paralel/benzetilmiş kimlik mantığı YOKTUR; gerçek create ile aynı
+  // credentialRole/source/fingerprint kararına ulaşılır.
+  const runtimeCredential = resolveSuratCredentialContext({
+    config: suratConfig,
+    billingParty: 'TRENDYOL_PAYS',
+    cod: resolveCodContext({ enabled: false }),
+    codPolicy: resolveCodCredentialPolicy(suratConfig.codCredentialPolicy),
+    serviceMode: suratConfig.serviceMode,
+  })
   console.info('  CONFIG_SOURCE                 STORED_TENANT_CONFIG')
-  console.info('  PRODUCTION_CONFIG_SOURCE      CLIENT_REQUEST_BODY')
-  console.info('  CREDENTIAL_RESOLUTION_FIDELITY  BOUNDED')
+  console.info('  RUNTIME_DERIVATION_APPLIED    YES (normalizeSuratConfig turevi)')
+  console.info('  CREDENTIAL_RESOLUTION_FIDELITY  AUTHORITATIVE_RESOLVER')
+  console.info(`  CREDENTIAL_ROLE               ${runtimeCredential.role}`)
+  console.info(`  CREDENTIAL_SOURCE             ${runtimeCredential.source}`)
+  console.info(`  CREDENTIAL_RESOLVED           ${yesNo(runtimeCredential.resolved)}`)
+  console.info(
+    `  ACCOUNT_FINGERPRINT           ${runtimeCredential.maskedAccount ?? '-'}`,
+  )
   console.info(
     `  REAL_RUNTIME_BILLING_INPUT    ${wiring.presentInputs.join(', ') || 'NONE'}`,
   )

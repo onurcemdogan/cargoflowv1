@@ -58,3 +58,72 @@ test('E-3: denetim araclari YAZMA yapmaz', () => {
     assert.equal(/\bfetch\(/.test(code), false, `${file} → ag cagrisi`)
   }
 })
+
+/* ═══ ÇALIŞMA ZAMANI PARİTESİ ═════════════════════════════════════════ */
+
+const DERIVE = await import('./shipments/suratCanonicalServiceMode.mjs')
+const ROUTING = await import('./shipments/suratRoutingModel.ts')
+
+/** Üretimdeki MonalisaToka biçimi: ham kayıtta `canonicalPrimary*` YOKTUR. */
+const STORED = {
+  serviceMode: 'SURAT_CANONICAL_API',
+  kullaniciAdi: 'CARI2622',
+  sifre: 'STORED_SECRET',
+  webPassword: 'STORED_WEB',
+}
+
+const runtimeView = (stored) => ({
+  ...stored, ...DERIVE.deriveCanonicalPrimaryAccount(stored),
+})
+
+const resolve = (config) => ROUTING.resolveSuratCredentialContext({
+  config,
+  billingParty: 'TRENDYOL_PAYS',
+  cod: ROUTING.resolveCodContext({ enabled: false }),
+  serviceMode: config.serviceMode,
+})
+
+test('E-4: HAM kayit tek basina kanonik kimligi COZEMEZ', () => {
+  // Denetcinin eski hatasi tam olarak buydu: turetim atlanip YANLIS
+  // "cozulemedi" raporlaniyordu.
+  assert.equal(resolve(STORED).resolved, false)
+})
+
+test('E-5: calisma zamani turevi uygulaninca kimlik COZULUR', () => {
+  const credential = resolve(runtimeView(STORED))
+  assert.equal(credential.resolved, true, 'kanonik birincil COZULMELI')
+  assert.equal(credential.role, 'PRIMARY_MARKETPLACE')
+  assert.ok(credential.maskedAccount, 'maskeli hesap URETILMELI')
+  // Sir SIZMAZ.
+  assert.equal(
+    JSON.stringify(credential).includes('STORED_SECRET'), false,
+  )
+})
+
+test('E-6: denetci HAM degil TUREV gorunumu okur', () => {
+  const code = readFileSync('server/shipments/suratBillingInspectCli.ts', 'utf8')
+  assert.ok(
+    code.includes('deriveCanonicalPrimaryAccount(stored)'),
+    'denetci calisma zamani turevini UYGULAMALI',
+  )
+  // Paralel kimlik mantigi DEGIL, YETKILI cozucu kullanilmali.
+  assert.ok(code.includes('resolveSuratCredentialContext('))
+  assert.ok(code.includes('AUTHORITATIVE_RESOLVER'))
+})
+
+test('E-7: eksik SELLER_PAYS / COD kimligi FAIL-CLOSED kalir', () => {
+  const config = runtimeView(STORED)
+  // Uretimde bu ikisi yapilandirilmamis; sahte kimlik URETILMEZ.
+  const seller = ROUTING.resolveSuratCredentialContext({
+    config, billingParty: 'SELLER_PAYS',
+    cod: ROUTING.resolveCodContext({ enabled: false }),
+    serviceMode: config.serviceMode,
+  })
+  assert.equal(seller.resolved, false)
+  const cod = ROUTING.resolveSuratCredentialContext({
+    config, billingParty: 'TRENDYOL_PAYS',
+    cod: ROUTING.resolveCodContext({ enabled: true }),
+    codPolicy: 'DEDICATED_COD', serviceMode: config.serviceMode,
+  })
+  assert.equal(cod.resolved, false)
+})
