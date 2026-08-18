@@ -38,9 +38,27 @@ Dosyalar: [sync-single-flight-flow.test.mjs](../../server/sync-single-flight-flo
 
 ## GERÇEKTEN AÇIK KALAN (P2 kapsamı)
 
-1. **Artımlı imleç daraltması**: `lastSuccessfulSyncAt` YAZILIYOR; sonraki
-   çekimin bu değerden İTİBAREN daraltılıp daraltılmadığı ÖLÇÜLMEDİ. P2'nin
-   asıl konusu budur.
+1. **Artımlı imleç daraltması — ÖLÇÜLDÜ: KULLANILMIYOR.**
+
+   `lastSuccessfulSyncAt` yalnız YAZILIYOR ve durum yanıtlarında gösteriliyor
+   (`index.mjs:434`, `:1845`). Çekim penceresini DARALTMAK için hiçbir yerde
+   OKUNMUYOR. Pencere istemci parametrelerinden geliyor; yoksa varsayılan
+   **son 7 gün** (`index.mjs:1240-1248`).
+
+   Yani bugünkü davranış artımlı değil, **kayan sabit pencere**.
+
+   **BU BİR HATA OLMAYABİLİR.** Kayan pencere kendini onarır: bir sync
+   "başarılı" deyip kayıt düşürdüyse sonraki çekim onu yine yakalar. Saf imleç
+   ise o kaydı KALICI olarak atlar — eksik gönderi, eksik ciro. Bu yüzden
+   imlece geçiş TEK BAŞINA bir iyileştirme sayılamaz; kanıtsız yapılmadı.
+
+   Karar gerekiyor:
+   - **A)** Kayan pencere KORUNSUN (güvenli, biraz fazla okuma yapar) —
+     `lastSuccessfulSyncAt` yalnız gözlemlenebilirlik alanı olarak kalır.
+   - **B)** İmleç + GÜVENLİK PAYI (ör. `lastSuccessfulSyncAt - 24s`) ve
+     periyodik tam-pencere mutabakatı; boşluk riski telafi edilir.
+   - **C)** Üretimde ölç: 7 günlük pencere gerçekten maliyetli mi? Değilse
+     değiştirmeye gerek yok.
 2. **Sınırlı çekim (bounded pull)**: sayfa/limit üst sınırı ölçülmedi.
 3. **Backoff politikası**: retry'in KENDİSİ var (SINGLEFLIGHT-7); üstel/
    sınıflandırılmış backoff görülmedi.
