@@ -132,3 +132,58 @@ Bunlar olmadan yazılan her satır, P1/P2/P3'te ısrarla kaçınılan şeydir:
 - Gerçek pazaryeri çağrısı YOK, mutasyon YOK.
 - `integration_credentials` allowlist migration'ı YAPILMADI: sağlayıcı
   eklenmeden migration üretmek, kullanılmayacak bir şemayı üretime taşımaktır.
+
+---
+
+# YENİDEN AÇILDI — SÖZLEŞME DOĞRULANDI (2026-08-19)
+
+`external_contract_status = VERIFIED_PUBLIC_OFFICIAL`
+
+Kaynak ailesi: **Hepsiburada Developer Portal** · **n11 Mağaza Destek Merkezi**.
+Doğrulanan olguların tam listesi `STATE.json → phases.P4_HEPSIBURADA_N11.externalContract`
+içindedir (sır YAZILMAZ).
+
+Denetimin 1. bölümündeki "kanıt yok" tespiti O TARİHTE doğruydu; kanıt REPO
+DIŞINDAN geldi. Faz `reopen-external` ile, yazılı kaynakla açıldı.
+
+## Uygulanan (dal: `feat/marketplaces-hepsiburada-n11-foundation`)
+
+| Modül | Kapsam |
+| --- | --- |
+| `marketplaces/hepsiburada/hepsiburadaContract.ts` | Basic auth · `-sit` host kuralı · aile bazlı oran sınırı · URL kurucu |
+| `marketplaces/hepsiburada/hepsiburadaOrderSource.ts` | offset/limit · sınırlı pencere (paket 24s) · normalizasyon · taşıyıcı eşleme |
+| `marketplaces/hepsiburada/hepsiburadaLabelCapability.ts` | ortak barkod yeteneği · 101/102/400/500 · strateji ayrımı |
+| `marketplaces/n11/n11Contract.ts` | appkey/appsecret · 15 günlük pencere · 0-tabanlı sayfa · statü planı |
+| `marketplaces/n11/n11OrderSource.ts` | normalizasyon · statü eşleme · imleç adayı |
+| `marketplaces/marketplaceOrderSource.ts` | üç gerçek modelden türetilen seam |
+
+Testler: `marketplaces-hepsiburada-n11-flow.test.mjs` (47/47).
+
+## Denetimde açık bırakılan üçünün durumu
+
+1. **Kimlik allowlist'i** — `0008_marketplace_provider_allowlist.sql` ile
+   genişletildi (`hepsiburada`, `n11`). Üretimde ÇALIŞTIRILMADI.
+2. **`IntegrationProvider` kapalı birleşimi** — genişletildi.
+3. **fetch/normalize gömülü** — sağlayıcı modülleri AYRI dosyalarda; `index.mjs`
+   DEĞİŞMEDİ, yani Trendyol davranışı aynen korundu.
+
+## Seam neden ŞİMDİ yazıldı
+
+Denetimde "tek uygulaması olan soyutlama tahmindir" denmişti. Üç doğrulanmış
+model elde olunca soyutlama TAHMİNLE değil FARKLARLA çizildi — ve ölçülen
+farklar ortak bir istek nesnesinin YANLIŞ olacağını gösterdi: sayfalama
+(page/offset/0-tabanlı), pencere (30 gün/24 saat/15 gün), statü sözlüğü ve
+kimlik alanları üçünde de AYRI. Bu yüzden seam yalnız ÇIKTI şeklini ve
+yeteneklerin VARLIĞINI paylaşır.
+
+## KANITLANMAYAN — uydurulmadı
+
+**Hepsiburada uç nokta YOLLARI.** Resmî yol kanıtı bu denetimde elde
+edilemedi; `buildHepsiburadaUrl` yolu YAPILANDIRMADAN alır ve yol yoksa istek
+KURULMAZ (`HB_ENDPOINT_PATH_UNVERIFIED`). Yanlış yola istek atmak sessizce 404
+alıp "sipariş yok" sanmaya yol açardı.
+
+## Hazırlık maddesi (kod fazını BLOKLAMAZ)
+
+`HB_N11_LIVE_CREDENTIAL_VERIFICATION = BLOCKED_EXTERNAL_ENVIRONMENT` —
+canlı kimlikle doğrulama ayrı bir ortam meselesidir.

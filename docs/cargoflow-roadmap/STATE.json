@@ -40,7 +40,40 @@
       "plannedBranch": "feat/marketplaces-hepsiburada-n11-foundation",
       "branch": "feat/surat-barcode-worker-finalization",
       "previousBlockerDetail": "Hepsiburada/N11 dis sozlesmesi repoda YOK: adapter/client/endpoint kodu, WSDL/OpenAPI/Postman, fixture ve credential girdisi arandi, sifir bulundu. Kodda gecen adlar yalnizca enabled:false gorunum kaydi ve Surat entegrasyonFirmasi string alani. Detay: docs/cargoflow-roadmap/P4_AUDIT.md",
-      "contractEvidence": "VERIFIED_PUBLIC_OFFICIAL (2026-08-19): Hepsiburada Developer Portal (Basic auth, -sit SIT/prod kurali, merchantId, offset/limit + begindate/enddate, 429 + X-RateLimit-* basliklari, paket modeli packageNumber/barcode/cargoCompany/trackingInfoCode, ortak barkod HepsiJet+Aras ve 101/102/400/500 is kodlari) ve n11 Magaza Destek Merkezi (REST GET /rest/delivery/v1/shipmentPackages, appkey/appsecret basliklari, 1000 istek/dk, page 0-tabanli size<=100, 15 gunluk pencere kurallari, statu alan adlari, cargoSenderNumber vs cargoTrackingNumber ayrimi)."
+      "contractEvidence": "VERIFIED_PUBLIC_OFFICIAL (2026-08-19): Hepsiburada Developer Portal (Basic auth, -sit SIT/prod kurali, merchantId, offset/limit + begindate/enddate, 429 + X-RateLimit-* basliklari, paket modeli packageNumber/barcode/cargoCompany/trackingInfoCode, ortak barkod HepsiJet+Aras ve 101/102/400/500 is kodlari) ve n11 Magaza Destek Merkezi (REST GET /rest/delivery/v1/shipmentPackages, appkey/appsecret basliklari, 1000 istek/dk, page 0-tabanli size<=100, 15 gunluk pencere kurallari, statu alan adlari, cargoSenderNumber vs cargoTrackingNumber ayrimi).",
+      "externalContract": {
+        "status": "VERIFIED_PUBLIC_OFFICIAL",
+        "retrievedAt": "2026-08-19",
+        "sourceFamily": [
+          "Hepsiburada Developer Portal",
+          "n11 Magaza Destek Merkezi"
+        ],
+        "verifiedFacts": [
+          "HB: HTTP Basic auth; merchantId satici kimligi",
+          "HB: dokumante URLde -sit SIT/test; uretim = -sit kaldirilmis + uretim kimligi",
+          "HB: odemesi alinmis siparis listesi offset/limit + begindate/enddate",
+          "HB: 429 ve X-RateLimit-Remaining/Limit/Reset; limitler API ailesine gore DEGISIR",
+          "HB: paket modeli packageNumber/barcode/cargoCompany/trackingInfoCode/trackingInfoUrl/status; paket penceresi uca gore 24 saatle kisitli olabilir",
+          "HB: ortak barkod HepsiJet+Aras; bicimler zpl/base64zpl/pdf/png/jpg; is kodlari 101/102/400/500",
+          "n11: GET https://api.n11.com/rest/delivery/v1/shipmentPackages",
+          "n11: Authorization semasi YOK; appkey/appsecret BASLIKLARI",
+          "n11: 1000 istek/dakika; page 0-tabanli; size<=100; totalPages",
+          "n11: startDate tek basina sonraki 15 gun; endDate tek basina onceki 15 gun; asiri aralik son 15 gune indirgenir",
+          "n11: statu kumesi Created/Picking/Shipped/Cancelled/Delivered/Unpacked/UnSupplied; statu TEK deger alir",
+          "n11: cargoSenderNumber=takip, cargoTrackingNumber=barkod/kampanya kodu (AYRI anlamlar)",
+          "n11: PUT /rest/order/v1/update TANIMLI ama KULLANILMIYOR (marketplaceWritesEnabled=false)"
+        ],
+        "notProven": [
+          "HB uc nokta YOLLARI (path) — yapilandirmadan gelir, uydurulmaz"
+        ],
+        "readiness": [
+          {
+            "item": "HB_N11_LIVE_CREDENTIAL_VERIFICATION",
+            "status": "BLOCKED_EXTERNAL_ENVIRONMENT",
+            "note": "Canli kimlik dogrulamasi ayri hazirlik maddesidir; kod fazini BLOKLAMAZ."
+          }
+        ]
+      }
     },
     "P5_ARAS": {
       "status": "blocked_external_contract",
@@ -48,7 +81,43 @@
       "commit": null,
       "plannedBranch": "feat/carrier-aras-foundation",
       "branch": null,
-      "blockerDetail": "Aras dis sozlesmesi repoda YOK: WSDL/OpenAPI/Postman, fixture, credential girdisi ve adapter/endpoint kodu arandi, sifir bulundu. Gercek iki gecis yalnizca enabled:false gorunum kaydi ve yabanci-tasiyici test ornegi. Tasiyici-notr temelin sozlesmeden bagimsiz yarisi TAMAMLANDI ve testle kilitlendi (carrier-neutral-foundation-flow, 7/7). Detay: docs/cargoflow-roadmap/P5_AUDIT.md"
+      "blockerDetail": "Aras dis sozlesmesi repoda YOK: WSDL/OpenAPI/Postman, fixture, credential girdisi ve adapter/endpoint kodu arandi, sifir bulundu. Gercek iki gecis yalnizca enabled:false gorunum kaydi ve yabanci-tasiyici test ornegi. Tasiyici-notr temelin sozlesmeden bagimsiz yarisi TAMAMLANDI ve testle kilitlendi (carrier-neutral-foundation-flow, 7/7). Detay: docs/cargoflow-roadmap/P5_AUDIT.md",
+      "externalContract": {
+        "status": "VERIFIED_PUBLIC_OFFICIAL_TEST_CONTRACT",
+        "retrievedAt": "2026-08-19",
+        "productionEndpointStatus": "UNVERIFIED",
+        "sourceFamily": [
+          "Aras Kargo resmi genel TEST web servisi (customerservicestest)"
+        ],
+        "verifiedFacts": [
+          "SetOrder alan kumesi (UserName..SenderAccountAddressId) sozlesmede GORULDU",
+          "SetOrder sonucu: ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId",
+          "GetBarcode girdisi Username/Password/integrationCode; cikti Images(base64)/ZebraZpl/ZebraEpl/BarcodeModelLst",
+          "Okuma uclari: GetCargoInfo/GetCargoTransaction/GetCargoSearch/GetCargoSearchByCode/GetCargoTransactionByWaybillId/GetOrderWithIntegrationCode"
+        ],
+        "notProven": [
+          "URETIM host adresi — test host undan TURETILMEZ",
+          "CodCollectionType/CodBillingType/PayorTypeCode DEGER TABLOSU",
+          "ResultCode anlam tablosu (0 disi kodlarin is anlami)"
+        ],
+        "readiness": [
+          {
+            "item": "ARAS_PRODUCTION_ENDPOINT",
+            "status": "BLOCKED_EXTERNAL_ENVIRONMENT",
+            "note": "Disaridan yapilandirilir; tahmin edilmez."
+          },
+          {
+            "item": "ARAS_PRODUCTION_CREDENTIAL",
+            "status": "BLOCKED_EXTERNAL_ENVIRONMENT",
+            "note": "Canli kimlik yok; kod fazini BLOKLAMAZ."
+          },
+          {
+            "item": "ARAS_COD_VALUE_TABLE",
+            "status": "BLOCKED_EXTERNAL_CONTRACT",
+            "note": "COD gonderi fail-closed kalir."
+          }
+        ]
+      }
     },
     "P6_SURAT_NON_MARKETPLACE": {
       "status": "blocked_external_contract",
@@ -56,7 +125,17 @@
       "commit": null,
       "plannedBranch": "feat/surat-non-marketplace-contract",
       "branch": null,
-      "blockerDetail": "Surat pazaryeri DISI sozlesmesinin is kurali dogrulanmadi: WSDL alan adlarini (Pazaryerimi/OzelKargoTakipNo/EntegrasyonFirmasi) verir ama Pazaryerimi=0 icin OzelKargoTakipNo format/tekillik kuralini VERMEZ; surat-finalization CONTRACT yalniz pazaryeri dalini belgeler. Referans ureticisi yazmak yanlis cariye borc yazma riskidir. Sinir testle acik ve fail-closed kilitlendi (surat-non-marketplace-boundary-flow, 4/4). Detay: docs/cargoflow-roadmap/P6_AUDIT.md"
+      "blockerDetail": "Surat pazaryeri DISI sozlesmesinin is kurali dogrulanmadi: WSDL alan adlarini (Pazaryerimi/OzelKargoTakipNo/EntegrasyonFirmasi) verir ama Pazaryerimi=0 icin OzelKargoTakipNo format/tekillik kuralini VERMEZ; surat-finalization CONTRACT yalniz pazaryeri dalini belgeler. Referans ureticisi yazmak yanlis cariye borc yazma riskidir. Sinir testle acik ve fail-closed kilitlendi (surat-non-marketplace-boundary-flow, 4/4). Detay: docs/cargoflow-roadmap/P6_AUDIT.md",
+      "externalContract": {
+        "status": "INSUFFICIENT",
+        "retrievedAt": "2026-08-19",
+        "notProven": [
+          "Pazaryerimi=0 icin OzelKargoTakipNo format/tekillik kurali",
+          "Pazaryeri disi EntegrasyonFirmasi semantigi",
+          "Pazaryeri disi gonderide borclandirma/cari sorumlulugu"
+        ],
+        "note": "Surat genel takip arayuzu takip no/siparis kodu taniyor olabilir; bu CREATE istegi is semantigini KANITLAMAZ."
+      }
     }
   },
   "history": [

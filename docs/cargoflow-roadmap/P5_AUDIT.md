@@ -117,3 +117,57 @@ girmemelidir.
 - `2.2`'deki varsayılan DEĞİŞTİRİLMEDİ — ikinci taşıyıcı olmadan değiştirmek
   kanıtsız davranış değişikliğidir.
 - `integration_credentials` migration'ı YAPILMADI.
+
+---
+
+# YENİDEN AÇILDI — TEST SÖZLEŞMESİ DOĞRULANDI (2026-08-19)
+
+`external_contract_status = VERIFIED_PUBLIC_OFFICIAL_TEST_CONTRACT`
+`production_endpoint_status = UNVERIFIED`
+
+Kaynak: **Aras Kargo resmî genel TEST web servisi**
+(`customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx`).
+
+## Uygulanan (dal: `feat/carrier-aras-foundation`)
+
+| Modül | Kapsam |
+| --- | --- |
+| `carriers/aras/arasContract.ts` | uç nokta çözümü · SetOrder alan kümesi · COD bilinen/bilinmeyen · sonuç sınıflandırma |
+| `carriers/aras/arasSetOrder.ts` | alan BEYAZ LİSTESİ · SOAP 1.1 zarfı · IntegrationCode |
+| `carriers/aras/arasLabelArtifact.ts` | ZPL/EPL/IMAGE bağımsız · değişmez artefakt · reprint |
+| `carriers/aras/arasVerification.ts` | tek korelasyon anahtarlı doğrulama makinesi |
+
+Testler: `carrier-aras-contract-flow.test.mjs` (25/25), `REAL_CARRIER_NETWORK=1`
+ile çalıştırılırsa dosya BAŞTA durur.
+
+## ÜRETİM ADRESİ TÜRETİLMEDİ — neden
+
+Hepsiburada'da `-sit` → üretim dönüşümü RESMÎ olarak belgelenmiştir ve orada
+uygulandı. Aras'ta böyle bir kural YOKTUR; test host'undan üretim host'u
+türetmek TAHMİN olurdu. `resolveArasEndpoint` üretim adresi yapılandırılmadıysa
+fail-closed döner.
+
+## COD — alan VAR, DEĞER TABLOSU YOK
+
+Sözleşme `CodAmount`, `CodCollectionType`, `CodBillingType`, `PayorTypeCode`,
+`IsCod` alanlarının VARLIĞINI kanıtlar. **Alanın varlığı, alabileceği sayısal
+değerleri kanıtlamaz.** Bu yüzden:
+
+- COD OLMAYAN gönderi TAM desteklenir (gerekli her şey ispatlanabilir),
+- COD gönderi, doğrulanmış değerler açıkça enjekte edilmedikçe FAIL-CLOSED
+  (`ARAS_COD_VALUE_TABLE_UNVERIFIED`).
+
+Yanlış COD kodu, tahsilatın yanlış tarafa yazılması demektir.
+
+## `ResultCode` anlam tablosu da YOK
+
+`0` dışındaki kodların iş anlamı dokümante değildir; bu yüzden "hangi kod ne
+demek" UYDURULMAZ. `0` dışı başarı VARSAYILMAZ ve ham kod/mesaj korunur.
+
+## Hazırlık maddeleri (kod fazını BLOKLAMAZ)
+
+| Madde | Durum |
+| --- | --- |
+| `ARAS_PRODUCTION_ENDPOINT` | BLOCKED_EXTERNAL_ENVIRONMENT |
+| `ARAS_PRODUCTION_CREDENTIAL` | BLOCKED_EXTERNAL_ENVIRONMENT |
+| `ARAS_COD_VALUE_TABLE` | BLOCKED_EXTERNAL_CONTRACT (COD fail-closed kalır) |
