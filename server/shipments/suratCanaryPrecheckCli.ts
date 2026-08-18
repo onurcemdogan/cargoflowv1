@@ -6,7 +6,7 @@
 // Kullanım:
 //   npm run surat:canary-precheck -- --org <organizationId>
 import { sql } from 'drizzle-orm'
-import { getDb } from '../db/client.ts'
+import { getDb, isDatabaseConfigured } from '../db/client.ts'
 import {
   isCredentialEncryptionConfigured,
   loadOrganizationIntegrationConfig,
@@ -58,6 +58,23 @@ async function findOrganizationByName(
 }
 
 export async function runSuratCanaryPrecheck(): Promise<number> {
+  // Yetkili veri kaynağını AÇIKÇA bildir. Bu betik `.env` yüklemediği için
+  // aynı hostta `surat:billing:inspect` çalışırken burada DATABASE_URL
+  // görünmüyordu; kök neden Postgres'in kapalı olması DEĞİLDİ.
+  if (!isDatabaseConfigured()) {
+    console.log('DATA_SOURCE                  : ÇÖZÜLEMEDİ')
+    console.log('AUTHORITATIVE_SOURCE_RESOLVED: NO')
+    console.log('')
+    console.log('BLOCKED_EXTERNAL / CONFIG_NOT_FOUND')
+    console.log(
+      'DATABASE_URL bu süreçte görünmüyor. Aynı hostta '
+      + '`npm run surat:billing:inspect` calisiyorsa neden Postgres degil, '
+      + '.env yuklenmemesidir.',
+    )
+    return 1
+  }
+  console.log('DATA_SOURCE                  : POSTGRES')
+  console.log('AUTHORITATIVE_SOURCE_RESOLVED: YES')
   let organizationId = readArg('org')
   const nameQuery = readArg('name')
   if (!organizationId && !nameQuery) {

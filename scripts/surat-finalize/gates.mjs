@@ -171,12 +171,13 @@ export function buildGates(phase, scripts = readScripts()) {
       safe: true,
       // Bu ortamda production erisimi yoksa FAIL degil BLOCKED_EXTERNAL.
       status: 'BLOCKED',
-      // Bu ortamda DATABASE_URL yok. Komutlar UYDURULMADI; package.json'daki
-      // gercek read-only araclardir ve URETIMDE calistirilmalidir.
-      evidence: 'BLOCKED_EXTERNAL: production DB/config erisimi yok. '
-        + 'Uretimde calistirin: npm run surat:canary:precheck '
-        + '(maskeli config ozeti) ve npm run surat:billing:inspect '
-        + '(NETWORK=0 siparis kuru kosusu).',
+      // Bu ortamda uretim verisi yok; ARAC artik DATABASE_URL'i sart kosmak
+      // yerine cozulen veri kaynagini raporluyor. Komutlar UYDURULMADI.
+      evidence: 'BLOCKED_EXTERNAL: bu ortamda uretim verisi yok. '
+        + 'Uretimde calistirin: npm run surat:canary:precheck -- '
+        + '--name MonalisaToka  ve  npm run surat:billing:inspect -- '
+        + '--name MonalisaToka --package <paket> --create-context '
+        + '(NETWORK=0 kuru kosu).',
     }]
   }
   return []
