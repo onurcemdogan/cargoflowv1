@@ -54,10 +54,18 @@ export function buildGates(phase, scripts = readScripts()) {
         'S1_TRACE_RUNTIME', phase, 'server/surat-trace-runtime-flow.test.mjs',
         'Trace V2 gercek create yoluna bagli',
       ),
-      notImplemented(
-        'S1_LIVE_DEBUG_UI', phase, 'Trace V2 tabanli Canli Debug (5 sekme)',
-        'legacy varsayilan kayitlar 0 olmali; capraz deneme karisimi giderilmeli',
-      ),
+    {
+      id: 'S1_LIVE_DEBUG_UI', phase,
+      description: 'Trace V2 tabanli Canli Debug varsayilan; legacy satir 0',
+      command: ['npx', 'vitest', 'run',
+        'src/test/integrationDebugDefault.dom.test.tsx',
+        'src/test/suratLiveDebugPanel.dom.test.tsx',
+        'src/test/suratLiveDebug.test.ts'],
+      required: true, safe: true, status: 'PENDING', evidence: null,
+      // Cikis kodu yetmez: testlerin GERCEKTEN kostugu gorulmeli.
+      requireOutput: ['Test Files[ ]+3 passed'],
+      forbidOutput: ['FAIL[ ]'],
+    },
       notImplemented(
         'S1_FAILED_ORDER_STATE', phase, 'CREATE_FAILED siparis durumu',
         'basarisiz create basarili kayit gibi gorunmemeli',

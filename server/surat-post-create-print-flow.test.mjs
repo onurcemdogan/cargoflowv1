@@ -182,7 +182,7 @@ test('PCP-7: create sonrası etiket görünmüyor → print YOK, AÇIK sebep', a
   assert.equal(printedWith.length, 0, 'print çağrılmadı')
   assert.equal(outcome.printed, 0)
   assert.equal(outcome.failed.length, 1)
-  assert.match(outcome.failed[0].reason, /kayıtlı etiket doğrulanamadı/)
+  assert.match(outcome.failed[0].reason, /etiketin oluştuğu teyit edilemedi/)
   assert.equal(/doğrulanmadı; durum/.test(outcome.failed[0].reason), false)
 })
 

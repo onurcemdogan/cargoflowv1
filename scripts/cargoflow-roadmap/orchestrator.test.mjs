@@ -62,11 +62,24 @@ test('RM-5: TUM fazlar bitse bile canli create KAPALI', () => {
 })
 
 test('RM-6: uygulanmamis is SAHTE PASS uretmez', () => {
-  const gates = GATES.buildGates('S1_SURAT_HARDENING')
-  const ui = gates.find((gate) => gate.id === 'S1_LIVE_DEBUG_UI')
-  assert.equal(ui.status, 'BLOCKED')
-  assert.equal(ui.command, null)
-  assert.match(ui.evidence, /NOT_IMPLEMENTED/)
+  // Belirli bir gate adina baglanmaz; DEGISMEZ test edilir: komutu olmayan
+  // her zorunlu gate BLOCKED + NOT_IMPLEMENTED tasimali.
+  const pending = GATES.buildGates('P1_B2_PERFORMANCE')
+    .filter((gate) => gate.command === null)
+  assert.ok(pending.length > 0, 'uygulanmamis is BLOCKED kalmali')
+  for (const gate of pending) {
+    assert.equal(gate.status, 'BLOCKED', gate.id)
+    assert.match(gate.evidence, /NOT_IMPLEMENTED|SCRIPT_NOT_FOUND/, gate.id)
+  }
+})
+
+test('RM-6b: uygulanan is GERCEK komut calistirir', () => {
+  const ui = GATES.buildGates('S1_SURAT_HARDENING')
+    .find((gate) => gate.id === 'S1_LIVE_DEBUG_UI')
+  assert.ok(ui.command, 'Canli Debug artik gercek testle dogrulanir')
+  assert.equal(ui.status, 'PENDING')
+  // Cikis kodu tek basina yetmez.
+  assert.ok(ui.requireOutput.length > 0)
 })
 
 test('RM-7: gate komutlari package.json ile dogrulanir', () => {

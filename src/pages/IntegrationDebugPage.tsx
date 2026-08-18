@@ -1,22 +1,27 @@
-import { Bug, Download, Trash2 } from 'lucide-react'
+import { Bug, Download } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { PageHeader } from '../components/PageHeader'
 import type { ApiDebugLog, ApiDebugProvider, CargoOrder } from '../types/cargoflow'
 import { formatDebugDateTime } from '../utils/formatters'
 import { verifySuratShipment } from '../utils/suratVerification'
+import { SuratLiveDebugPanel } from '../components/SuratLiveDebugPanel'
 
 interface IntegrationDebugPageProps {
   logs: ApiDebugLog[]
   orders: CargoOrder[]
+  /** Geniş silme artık BİRİNCİL ekranda sunulmuyor; sözleşme korunuyor. */
   onClear: () => void
 }
 
 export function IntegrationDebugPage({
   logs,
   orders,
-  onClear,
 }: IntegrationDebugPageProps) {
   const [provider, setProvider] = useState<'all' | ApiDebugProvider>('all')
+  // ESKİ TANI VARSAYILAN OLARAK KAPALI. Yüzlerce geçmiş gönderi satırı
+  // (DELIVERED / TEKNİK ZPL / BARKOD BEKLİYOR) canlı create hata ayıklamasını
+  // boğuyordu. Satırlar açılana kadar DOM'a HİÇ girmez — gizlenmez, üretilmez.
+  const [showLegacyDiagnostics, setShowLegacyDiagnostics] = useState(false)
   const filteredLogs =
     provider === 'all' ? logs : logs.filter((log) => log.provider === provider)
   const latestTrendyol = logs.find(
@@ -55,18 +60,13 @@ export function IntegrationDebugPage({
       <PageHeader
         title="Entegrasyon Debug Merkezi"
         description="Trendyol ve Sürat API çağrılarını, alan eşleşmelerini ve baskı engellerini incele."
-        actions={
-          <button
-            type="button"
-            className="secondary-button danger"
-            onClick={onClear}
-            disabled={logs.length === 0}
-          >
-            <Trash2 size={18} />
-            Debug Kayıtlarını Temizle
-          </button>
-        }
       />
+
+      {/* VARSAYILAN DENEYİM: güncel create denemesi Trace V2'den okunur.
+          Eski tanı kayıtları bu bölümü BESLEMEZ. */}
+      <section className="panel">
+        <SuratLiveDebugPanel />
+      </section>
 
       <section className="debug-summary-grid">
         <article className="panel">
@@ -109,11 +109,24 @@ export function IntegrationDebugPage({
 
       <section className="panel">
         <div className="panel-heading">
-          <h2>Sürat Ortak Barkod Tanı</h2>
+          <h2>Eski Teknik Tanı</h2>
           <span>{shipmentResults.length} gönderi</span>
         </div>
+        <p className="integration-hint">
+          Geçmiş gönderi tanısı. Güncel create denemesi için yukarıdaki
+          <strong> Canlı Debug</strong> bölümünü kullanın.
+        </p>
+        <button
+          type="button"
+          className="secondary-button"
+          onClick={() => setShowLegacyDiagnostics((value) => !value)}
+        >
+          {showLegacyDiagnostics
+            ? 'Eski teknik tanıyı gizle'
+            : `Eski teknik tanıyı göster (${shipmentResults.length})`}
+        </button>
         <div className="debug-call-list">
-          {shipmentResults.map(({ order, verification }) => {
+          {!showLegacyDiagnostics ? null : shipmentResults.map(({ order, verification }) => {
             const createLog = order.shipment?.suratCreateLog
             const trackingLog = order.shipment?.suratTrackingLog
             const marketplaceIntegrationCode =
@@ -603,7 +616,7 @@ export function IntegrationDebugPage({
               </details>
             )
           })}
-          {shipmentResults.length === 0 ? (
+          {showLegacyDiagnostics && shipmentResults.length === 0 ? (
             <p className="empty-state">Henüz Sürat gönderi tanısı yok.</p>
           ) : null}
         </div>
