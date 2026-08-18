@@ -75,3 +75,55 @@ Dosyalar: [sync-single-flight-flow.test.mjs](../../server/sync-single-flight-flo
 Hermetik test: iki kiracı + iki hesap için `integration_sync_state` kilidinin
 ve `complete=false` korumasının davranışını kanıtla; ardından artımlı imlecin
 sonraki çekimi gerçekten daralttığını ölç.
+
+---
+
+# P2 KALAN İŞ — KESİN BAĞLAMA PLANI
+
+Karar: **B seçeneği** (imleç + emniyet payı + periyodik geniş tarama).
+Politika katmanı HAZIR ve testli: [syncWindowPolicy.ts](../../server/orders/syncWindowPolicy.ts)
+· [orders-b3-sync-window-flow.test.mjs](../../server/orders-b3-sync-window-flow.test.mjs) (14/14).
+
+**Henüz BAĞLANMADI.** Aşağıdaki adımlar sıradaki oturumun işidir.
+
+## 1. Çekim penceresini imleçten türet
+
+Bugün pencere `query.startDate`/`query.endDate`ten geliyor; yoksa son 7 gün
+(`index.mjs:1242-1249`). Yapılacak:
+
+- Sync başında `integration_sync_state` satırından `lastSuccessfulSyncAt` oku
+  (org + provider + resource + marketplaceAccountId kapsamında).
+- `resolveSyncWindow({ checkpointMs, nowMs, lastReconciliationAtMs })` çağır.
+- Dönen `startMs`/`endMs` değerlerini **fetch**'e ver (yalnız reconcile'a değil).
+- İstemci açıkça `startDate`/`endDate` gönderdiyse ONLAR kazanır (manuel
+  geri-dolum yolu bozulmamalı) — bu davranış test edilmeli.
+
+## 2. Checkpoint'i yalnız tam başarıda ilerlet
+
+Sync sonunda `advanceCheckpoint({ currentCheckpointMs, candidateCheckpointMs:
+window.candidateCheckpointMs, complete, rateLimited, errorCode })` çağır ve
+`advanced === true` ise `lastSuccessfulSyncAt`'i **watermark** değeriyle yaz.
+Bugün bu alan `now()` ile yazılıyor
+(`marketplaceAccountRepository.ts:232`) — watermark'a çevrilmeli.
+
+## 3. Periyodik tarama zaman damgası
+
+`RECONCILIATION` modunun tetiklenmesi için `lastReconciliationAt` benzeri bir
+alan gerekiyor. Şu an `integration_sync_state` içinde YOK; eklenmesi küçük bir
+migration gerektirir. Alternatif: mevcut bir alandan türet ve migration'dan
+kaçın — hangisi seçilirse KANITLA.
+
+## 4. Kalan davranışsal testler
+
+| Kural | Durum |
+| --- | --- |
+| 7 — bounded pagination | ÖLÇÜLMEDİ |
+| 8 — replay/idempotency (örtüşen pencere duplicate üretmesin) | upsert nedeniyle güvenli GÖRÜNÜYOR, test YOK |
+| 10 — 429/Retry-After backoff | sınıflandırılmış backoff YOK |
+| 9 — manuel/arka plan çakışması | ZATEN KAPSANMIŞ (19/19) |
+
+## 5. Gate'i gerçek testlere bağla
+
+`scripts/cargoflow-roadmap/gates.mjs` içinde `P2_B3_INCREMENTAL_SYNC` hâlâ
+`notImplemented`. S1/P1'deki desenle komutlu gate'e çevrilmeli — bağlama
+bitmeden P2 **passed** işaretlenmemeli.
