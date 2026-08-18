@@ -1,7 +1,7 @@
 // Organization bazlı Sürat create idempotency kayıtları. Atomik create
 // koruması unique(organization_id, idempotency_key) + INSERT ON CONFLICT
 // üzerinden: eşzamanlı iki create'te yalnız biri rezervasyonu kazanır.
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { shipmentOperations } from '../db/schema.ts'
 import {
   decryptShipmentPayload,
@@ -67,6 +67,42 @@ export async function findLatestOperationByPackage(
   // Başarılı olanı tercih et; yoksa herhangi biri.
   const succeeded = rows.find((row) => String(row.status) === 'succeeded')
   return toRow(succeeded ?? rows[0] ?? null)
+}
+
+/**
+ * TOPLU okuma: `findLatestOperationByPackage` ile AYNI seçim kuralı
+ * (başarılı olanı öncele, yoksa ilk kayıt) — paket başına tek sorgu yerine
+ * sayfa başına tek sorgu.
+ */
+export async function findLatestOperationsForPackages(
+  db: OperationDb,
+  organizationId: string,
+  packageIds: string[],
+): Promise<Map<string, Record<string, unknown>>> {
+  const unique = [...new Set(packageIds.filter(Boolean))]
+  if (unique.length === 0) return new Map()
+  const rows = await db
+    .select()
+    .from(shipmentOperations)
+    .where(
+      and(
+        eq(shipmentOperations.organizationId, organizationId),
+        inArray(shipmentOperations.packageId, unique),
+      ),
+    )
+  const grouped = new Map<string, Record<string, unknown>[]>()
+  for (const row of rows) {
+    const key = String(row.packageId)
+    if (!grouped.has(key)) grouped.set(key, [])
+    grouped.get(key)!.push(row as Record<string, unknown>)
+  }
+  const latest = new Map<string, Record<string, unknown>>()
+  for (const [key, group] of grouped) {
+    const succeeded = group.find((row) => String(row.status) === 'succeeded')
+    const chosen = toRow(succeeded ?? group[0] ?? null)
+    if (chosen) latest.set(key, chosen)
+  }
+  return latest
 }
 
 // Kayıtlı (persisted) yazdırılabilir ham ZPL'i pakete ait TÜM operasyonları

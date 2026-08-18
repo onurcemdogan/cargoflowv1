@@ -16,12 +16,15 @@ import {
   type OrderFilters,
 } from './orderRepository.ts'
 import { rowToOrder } from './orderMapper.ts'
-import { findShipment } from '../shipments/shipmentRepository.ts'
+import {
+  findShipment, findShipmentsForPackages,
+} from '../shipments/shipmentRepository.ts'
 import { SURAT_PERSISTENCE_PROVIDER } from '../shipments/suratProvider.ts'
 import { buildPrintableJob } from '../../src/utils/printableLabelJob.ts'
 import { sha256Hex } from '../../src/utils/augmentedSuratZpl.ts'
 import {
   findLatestOperationByPackage,
+  findLatestOperationsForPackages,
   findPrintableZplByPackage,
 } from '../shipments/shipmentOperationRepository.ts'
 
@@ -239,13 +242,23 @@ async function attachShipment(
   db: Db,
   organizationId: string,
   order: Record<string, unknown>,
+  // TOPLU yol: sayfa için önceden çözülmüş kayıtlar. Verilmezse tekil
+  // sorguya düşer (tek sipariş okuyan çağrılar için davranış AYNI kalır).
+  preloaded?: {
+    shipments: Map<string, Record<string, unknown>>
+    operations: Map<string, Record<string, unknown>>
+  },
 ): Promise<Record<string, unknown>> {
   const packageId = String(order.packageId ?? '')
   if (!packageId) return order
-  const shipment = await findShipment(db, organizationId, String(order.marketplace), packageId, SURAT_PERSISTENCE_PROVIDER)
+  const shipment = preloaded
+    ? (preloaded.shipments.get(packageId) ?? null)
+    : await findShipment(db, organizationId, String(order.marketplace), packageId, SURAT_PERSISTENCE_PROVIDER)
   if (!shipment) return order
   if (shipment.source === 'local_create') {
-    const operation = await findLatestOperationByPackage(db, organizationId, packageId)
+    const operation = preloaded
+      ? (preloaded.operations.get(packageId) ?? null)
+      : await findLatestOperationByPackage(db, organizationId, packageId)
     const payload =
       (operation?.payload as Record<string, unknown> | undefined) ??
       (shipment.carrierPayload as Record<string, unknown> | undefined) ??
@@ -309,10 +322,25 @@ export async function listOrders(
     if (!linesByOrder.has(key)) linesByOrder.set(key, [])
     linesByOrder.get(key)!.push(line)
   }
+  // N+1 KALDIRILDI: gönderi ve operasyonlar sipariş BAŞINA değil, SAYFA
+  // başına tek sorguyla çözülür. Önceden 200 satırlık sayfa ~100 ek sorgu
+  // üretiyordu; artık sorgu sayısı sayfa boyutundan BAĞIMSIZDIR.
+  const bases = orderRows.map((row) =>
+    rowToOrder(row, linesByOrder.get(String(row.id)) ?? []),
+  )
+  const packageIds = bases.map((base) => String(base.packageId ?? ''))
+  const marketplace = String(bases[0]?.marketplace ?? 'Trendyol')
+  const preloaded = {
+    shipments: await findShipmentsForPackages(
+      db, organizationId, marketplace, packageIds, SURAT_PERSISTENCE_PROVIDER,
+    ),
+    operations: await findLatestOperationsForPackages(
+      db, organizationId, packageIds,
+    ),
+  }
   const viewModels = []
-  for (const row of orderRows) {
-    const base = rowToOrder(row, linesByOrder.get(String(row.id)) ?? [])
-    viewModels.push(await attachShipment(db, organizationId, base))
+  for (const base of bases) {
+    viewModels.push(await attachShipment(db, organizationId, base, preloaded))
   }
   return { orders: viewModels, total, page, pageSize }
 }

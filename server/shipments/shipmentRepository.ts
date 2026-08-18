@@ -1,6 +1,6 @@
 // Organization bazlı shipment kayıtları. Tracking/sender/barcode açık
 // kolonlarda (sorgu/UI); hassas carrier payload şifreli. db DI ile gelir.
-import { and, eq } from 'drizzle-orm'
+import { and, eq, inArray } from 'drizzle-orm'
 import { shipments } from '../db/schema.ts'
 import {
   decryptShipmentPayload,
@@ -67,6 +67,46 @@ export async function findShipment(
       row.carrierPayloadEncrypted as string | null,
     ),
   }
+}
+
+/**
+ * TOPLU okuma: bir sipariş sayfasındaki TÜM paketlerin gönderileri TEK
+ * sorguda gelir. `findShipment` ile aynı semantik — yalnız çağrı sayısı
+ * satır sayısıyla ölçeklenmez (liste yolundaki N+1'i kaldırır).
+ */
+export async function findShipmentsForPackages(
+  db: RepositoryDb,
+  organizationId: string,
+  marketplace: string,
+  packageIds: string[],
+  provider: string,
+): Promise<Map<string, Record<string, unknown>>> {
+  const unique = [...new Set(packageIds.filter(Boolean))]
+  if (unique.length === 0) return new Map()
+  const rows = await db
+    .select()
+    .from(shipments)
+    .where(
+      and(
+        eq(shipments.organizationId, organizationId),
+        eq(shipments.marketplace, marketplace),
+        inArray(shipments.packageId, unique),
+        eq(shipments.provider, provider),
+      ),
+    )
+  const byPackage = new Map<string, Record<string, unknown>>()
+  for (const row of rows) {
+    const key = String(row.packageId)
+    // Tekil okuyucu ilk satırı alır; toplu okuyucu da İLKİNİ korur.
+    if (byPackage.has(key)) continue
+    byPackage.set(key, {
+      ...row,
+      carrierPayload: decryptShipmentPayload(
+        row.carrierPayloadEncrypted as string | null,
+      ),
+    })
+  }
+  return byPackage
 }
 
 export async function upsertShipment(
