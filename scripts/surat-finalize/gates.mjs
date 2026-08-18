@@ -171,7 +171,12 @@ export function buildGates(phase, scripts = readScripts()) {
       safe: true,
       // Bu ortamda production erisimi yoksa FAIL degil BLOCKED_EXTERNAL.
       status: 'BLOCKED',
-      evidence: 'BLOCKED_EXTERNAL: production DB/config erisimi dogrulanmadi',
+      // Bu ortamda DATABASE_URL yok. Komutlar UYDURULMADI; package.json'daki
+      // gercek read-only araclardir ve URETIMDE calistirilmalidir.
+      evidence: 'BLOCKED_EXTERNAL: production DB/config erisimi yok. '
+        + 'Uretimde calistirin: npm run surat:canary:precheck '
+        + '(maskeli config ozeti) ve npm run surat:billing:inspect '
+        + '(NETWORK=0 siparis kuru kosusu).',
     }]
   }
   return []
