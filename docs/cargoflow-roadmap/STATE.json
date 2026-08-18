@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "cargoflow-roadmap",
-  "currentPhase": "COMPLETE",
+  "currentPhase": "P4_HEPSIBURADA_N11",
   "liveCreateAllowed": false,
   "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
   "phases": {
@@ -34,12 +34,13 @@
       "branch": "feat/surat-barcode-worker-finalization"
     },
     "P4_HEPSIBURADA_N11": {
-      "status": "blocked_external_contract",
+      "status": "in_progress",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/marketplaces-hepsiburada-n11-foundation",
       "branch": "feat/surat-barcode-worker-finalization",
-      "blockerDetail": "Hepsiburada/N11 dis sozlesmesi repoda YOK: adapter/client/endpoint kodu, WSDL/OpenAPI/Postman, fixture ve credential girdisi arandi, sifir bulundu. Kodda gecen adlar yalnizca enabled:false gorunum kaydi ve Surat entegrasyonFirmasi string alani. Detay: docs/cargoflow-roadmap/P4_AUDIT.md"
+      "previousBlockerDetail": "Hepsiburada/N11 dis sozlesmesi repoda YOK: adapter/client/endpoint kodu, WSDL/OpenAPI/Postman, fixture ve credential girdisi arandi, sifir bulundu. Kodda gecen adlar yalnizca enabled:false gorunum kaydi ve Surat entegrasyonFirmasi string alani. Detay: docs/cargoflow-roadmap/P4_AUDIT.md",
+      "contractEvidence": "VERIFIED_PUBLIC_OFFICIAL (2026-08-19): Hepsiburada Developer Portal (Basic auth, -sit SIT/prod kurali, merchantId, offset/limit + begindate/enddate, 429 + X-RateLimit-* basliklari, paket modeli packageNumber/barcode/cargoCompany/trackingInfoCode, ortak barkod HepsiJet+Aras ve 101/102/400/500 is kodlari) ve n11 Magaza Destek Merkezi (REST GET /rest/delivery/v1/shipmentPackages, appkey/appsecret basliklari, 1000 istek/dk, page 0-tabanli size<=100, 15 gunluk pencere kurallari, statu alan adlari, cargoSenderNumber vs cargoTrackingNumber ayrimi)."
     },
     "P5_ARAS": {
       "status": "blocked_external_contract",

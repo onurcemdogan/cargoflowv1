@@ -100,7 +100,7 @@ export const integrationCredentials = pgTable(
     ),
     check(
       'integration_credentials_provider_check',
-      sql`${table.provider} in ('trendyol', 'surat')`,
+      sql`${table.provider} in ('trendyol', 'surat', 'hepsiburada', 'n11')`,
     ),
   ],
 )

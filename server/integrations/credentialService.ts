@@ -6,8 +6,14 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import { integrationCredentials } from '../db/schema.ts'
 
-export type IntegrationProvider = 'trendyol' | 'surat'
-export const INTEGRATION_PROVIDERS: IntegrationProvider[] = ['trendyol', 'surat']
+// P4: Hepsiburada ve n11 sozlesmeleri dogrulandi (2026-08-19) → saglayici
+// kumesi genisledi. `getOrganizationIntegrationConfig` gibi Trendyol/Surat'a
+// OZEL yardimcilar DEGISMEDI: yeni saglayicilar kendi adaptorlerinden okunur
+// ve normallestirilmis siparis alanina SIZMAZ.
+export type IntegrationProvider = 'trendyol' | 'surat' | 'hepsiburada' | 'n11'
+export const INTEGRATION_PROVIDERS: IntegrationProvider[] = [
+  'trendyol', 'surat', 'hepsiburada', 'n11',
+]
 
 const CURRENT_KEY_VERSION = 1
 
