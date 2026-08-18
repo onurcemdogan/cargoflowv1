@@ -42,7 +42,27 @@ Rapor: `node scripts/cargoflow-roadmap/orchestrator.mjs report`
   bir fazı "sözleşme yok" diyerek atlamak yasaktır (RM-4 bunu kilitler).
 - Uygulanmamış iş `NOT_IMPLEMENTED` ile **BLOCKED** kalır — sahte PASS yok.
 
-## S1'de kalanlar
+## S1'de kalanlar (guncel)
+
+`S1_LIVE_DEBUG_UI` **GECTI** (cbff077): Canli Debug varsayilan bolum, legacy
+satir sayisi acilista 0, genis silme dugmesi birincil ekrandan kalkti.
+
+Kalan TEK gate: **`S1_FAILED_ORDER_STATE`**.
+
+`CREATE_FAILED` + `carrierAcceptanceConfirmed=false` + tracking/barcode/zpl yok
+olan bir deneme, siparis listesinde basarili kayit ya da "barkod bekliyor" gibi
+gorunmemeli. Ilgili yerler:
+
+- [orderClassification.ts](../../src/utils/orderClassification.ts) — `operationStatus`
+  ve `verifySuratShipment` kanitindan sekme/durum turetir.
+- Faz B siniflandirmasi hazir: `finalClassification` = `CREATE_FAILED`
+  ([suratResponseClassification.ts](../../server/shipments/suratResponseClassification.ts)).
+
+Gate'i gercek bir testle baglamak icin `scripts/cargoflow-roadmap/gates.mjs`
+icindeki `S1_FAILED_ORDER_STATE` girdisini `notImplemented` yerine komutlu
+gate'e cevir (ornek: `S1_LIVE_DEBUG_UI`).
+
+## Eski notlar
 
 `S1_LIVE_DEBUG_UI` ve `S1_FAILED_ORDER_STATE` bilerek BLOCKED. Yapılacaklar:
 
