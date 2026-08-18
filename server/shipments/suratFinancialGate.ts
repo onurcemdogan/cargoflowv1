@@ -135,3 +135,19 @@ export function evaluateSuratFinancialGate(params: {
     financialFingerprint,
   }
 }
+
+/**
+ * YALNIZ PARMAK İZİ — kapı kararı UYGULAMAZ.
+ *
+ * Idempotency replay'i, kayıtlı gönderinin BUGÜNKÜ istekle aynı finansal
+ * semantiği taşıyıp taşımadığını sormak zorundadır; bunun için karara değil
+ * yalnız parmak izine ihtiyaç vardır. Ayrı isim BİLEREK verilmiştir: otoriter
+ * kapı `evaluateSuratFinancialGate` olarak TEK yerde çağrılır ve mimari
+ * değişmez ("kapı tüm serviceMode dallarının üstünde") bu çağrıyla ölçülür.
+ * Buradan enforcement YAPILMAZ.
+ */
+export function resolveSuratFinancialFingerprint(
+  params: Parameters<typeof evaluateSuratFinancialGate>[0],
+): Record<string, unknown> {
+  return evaluateSuratFinancialGate(params).financialFingerprint
+}

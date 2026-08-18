@@ -3082,11 +3082,29 @@ async function createSuratShipment(request, response) {
     return
   }
 
-  const selectedConfig = resolveSuratCredentialSet(
+  const credentialSelection = resolveSuratCredentialSet(
     normalizedConfig,
     order,
-  ).config
-  const operation = buildSuratCreateOperationContext(request, selectedConfig)
+  )
+  const selectedConfig = credentialSelection.config
+  // FİNANSAL PARMAK İZİ REPLAY KARARINDAN ÖNCE üretilir. Kapı SAF bir karar
+  // katmanıdır (ağa çıkmaz, DB'ye yazmaz), bu yüzden idempotency kararından
+  // önce güvenle çalıştırılabilir. Burada YALNIZ parmak izi alınır; kapının
+  // ok/blok kararı mevcut yerinde (create çekirdeği) uygulanmaya devam eder.
+  const { resolveSuratFinancialFingerprint } = await import(
+    './shipments/suratFinancialGate.ts'
+  )
+  const financialFingerprint = resolveSuratFinancialFingerprint({
+    config: selectedConfig,
+    order,
+    cashOnDelivery: credentialSelection.cashOnDelivery === true,
+    serviceMode: selectedConfig.serviceMode,
+  })
+  const operation = buildSuratCreateOperationContext(
+    request,
+    selectedConfig,
+    financialFingerprint,
+  )
   const inFlight = suratCreateLocks.get(operation.idempotencyKey)
   if (inFlight) {
     const result = await inFlight
@@ -3532,7 +3550,11 @@ async function executeRegisteredSuratLabel({
   }
 }
 
-function buildSuratCreateOperationContext(request, config) {
+function buildSuratCreateOperationContext(
+  request,
+  config,
+  financialFingerprint = null,
+) {
   const order = request.body?.order ?? {}
   const fullConfig = request.body?.config ?? {}
   const desi = Number(order.desi ?? 0)
@@ -3585,6 +3607,10 @@ function buildSuratCreateOperationContext(request, config) {
       .update(JSON.stringify(fingerprintPayload))
       .digest('hex'),
     correlationId: randomUUID(),
+    // Kayda YAZILIR ve replay'de KIYASLANIR. Anahtara KATILMAZ: katılsaydı
+    // semantik değişince yeni anahtar → aynı sipariş için İKİNCİ fiziksel
+    // gönderi doğardı.
+    financialFingerprint: financialFingerprint ?? null,
     environment: config.ortam,
     operation: resolveSuratCreateOperationName(config),
     maskedAccount: maskCarrierAccount(config.kullaniciAdi),
@@ -3633,6 +3659,46 @@ async function executeIdempotentSuratCreate(request, operation) {
     request.body?.retryAfterConfirmedNoRecord === true &&
       request.body?.confirmedNoCarrierRecord === true,
   )
+
+  // ═══ REPLAY ÖNCESİ SEMANTİK KIYASI (FAIL-CLOSED) ═════════════════════
+  // Idempotency anahtarı desi/finansal semantiği TAŞIMAZ. Kayıtlı sonuç
+  // FARKLI koşullarda üretildiyse geri oynatmak, uygulanmamış bir düzeltmeyi
+  // uygulanmış göstermek demektir (yanlış desi/cari → yanlış fatura). İkinci
+  // create de çözüm değildir: aynı sipariş için ikinci fiziksel gönderi geri
+  // alınamaz. Bu yüzden DURULUR.
+  const replayable =
+    existing?.status === 'SUCCESS' || isSuratRecordPreassignedReplayReady(existing)
+  if (replayable) {
+    const { compareCreateSemantics, SURAT_IDEMPOTENCY_MISMATCH_CODE } =
+      await import('./shipments/suratIdempotencySemantics.ts')
+    const comparison = compareCreateSemantics({
+      stored: {
+        requestFingerprint: existing?.requestFingerprint ?? null,
+        financialFingerprint: existing?.financialFingerprint ?? null,
+      },
+      current: {
+        requestFingerprint: operation.requestFingerprint,
+        financialFingerprint: operation.financialFingerprint,
+      },
+    })
+    if (!comparison.match) {
+      return withSuratIdempotencyDebug(
+        {
+          ok: false,
+          source: 'real',
+          errorSource: 'Frontend',
+          errorCode: SURAT_IDEMPOTENCY_MISMATCH_CODE,
+          message: comparison.message,
+        },
+        operation,
+        {
+          carrierCreateCalled: false,
+          semanticMismatch: true,
+          changedAxes: comparison.changedAxes,
+        },
+      )
+    }
+  }
 
   if (existing?.status === 'SUCCESS') {
     return buildPersistedSuratCreateResponse(existing, operation)
