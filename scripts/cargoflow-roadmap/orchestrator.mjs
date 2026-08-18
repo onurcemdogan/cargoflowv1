@@ -7,8 +7,8 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
-  PHASE_ORDER, REPO_ROOT, advancePhase, isPhaseRunnable, loadState,
-  recordGateResult, saveState,
+  PHASE_ORDER, REPO_ROOT, advancePhase, blockExternalContract, isPhaseRunnable,
+  loadState, recordGateResult, saveState,
 } from './state.mjs'
 import { buildGates } from './gates.mjs'
 import { runGates } from './runner.mjs'
@@ -81,7 +81,21 @@ const state = loadState()
 let code = 0
 if (command === 'status') printStatus(state)
 else if (command === 'continue') code = await commandContinue(state)
-else if (command === 'report') {
+else if (command === 'block-external') {
+  // Dış sözleşme engeli KAYDI. Faz atlama komutu DEĞİLDİR: yalnız P4/P5/P6,
+  // yalnız SIRADAKİ faz, ve YAZILI gerekçe ile kabul edilir.
+  const phase = process.argv[3]
+  const detail = process.argv.slice(4).join(' ')
+  const result = blockExternalContract(state, phase, detail)
+  if (!result.ok) {
+    console.error(`BLOCK_REDDEDILDI=${result.reason}`)
+    code = 1
+  } else {
+    saveState(state)
+    console.log(`BLOCKED_EXTERNAL_CONTRACT=${phase}`)
+    printStatus(state)
+  }
+} else if (command === 'report') {
   const report = readLatest()
   if (!report) { console.error('RAPOR_YOK'); code = 1 }
   else console.log(JSON.stringify(report, null, 2))

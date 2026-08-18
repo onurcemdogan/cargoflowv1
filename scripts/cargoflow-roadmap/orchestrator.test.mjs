@@ -162,3 +162,82 @@ test('RM-10c: gurultu atildiktan sonra hala uzunsa kirpma YAPILIR', () => {
   assert.ok(bounded.length <= RUNNER.OUTPUT_TAIL_BYTES + 200)
   assert.match(bounded, /bayt atlandi/)
 })
+
+/* ═══ DIŞ SÖZLEŞME ENGELİ — DAR ve KORUMALI ═════════════════════════ */
+
+test('RM-11: uygulanabilir faz "sozlesme yok" diyerek ATLANAMAZ', () => {
+  // RM-4'un kilidi komut seviyesinde de gecerli olmali: S1/P1/P2/P3 dis
+  // sozlesmeye bagli DEGILDIR ve bu kapidan gecemez.
+  for (const phase of [
+    'S1_SURAT_HARDENING', 'P1_B2_PERFORMANCE',
+    'P2_B3_INCREMENTAL_SYNC', 'P3_B4_BARCODE_WORKER',
+  ]) {
+    const state = fresh()
+    state.currentPhase = phase
+    state.phases[phase].status = 'in_progress'
+    const result = STATE.blockExternalContract(state, phase, 'gerekce')
+    assert.equal(result.ok, false, phase)
+    assert.equal(result.reason, 'PHASE_NOT_CONTRACT_BLOCKABLE', phase)
+    assert.equal(state.phases[phase].status, 'in_progress', `${phase} DEGISTI`)
+  }
+})
+
+test('RM-12: gerekcesiz engel kaydi REDDEDILIR', () => {
+  const state = fresh()
+  for (const phase of STATE.PHASE_ORDER.slice(0, 4)) {
+    state.phases[phase].status = 'passed'
+  }
+  state.currentPhase = 'P4_HEPSIBURADA_N11'
+  state.phases.P4_HEPSIBURADA_N11.status = 'in_progress'
+  for (const detail of ['', '   ', null, undefined]) {
+    const result = STATE.blockExternalContract(state, 'P4_HEPSIBURADA_N11', detail)
+    assert.equal(result.ok, false)
+    assert.equal(result.reason, 'BLOCKER_DETAIL_REQUIRED')
+  }
+  assert.equal(state.phases.P4_HEPSIBURADA_N11.status, 'in_progress')
+})
+
+test('RM-13: ILERI uzanma yok — yalniz SIRADAKI faz bloklanir', () => {
+  const state = fresh()
+  for (const phase of STATE.PHASE_ORDER.slice(0, 4)) {
+    state.phases[phase].status = 'passed'
+  }
+  state.currentPhase = 'P4_HEPSIBURADA_N11'
+  // P5 sirada DEGIL; simdiden bloklanamaz.
+  const result = STATE.blockExternalContract(state, 'P5_ARAS', 'gerekce')
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'PHASE_NOT_CURRENT')
+  assert.equal(state.phases.P5_ARAS.status, 'locked')
+})
+
+test('RM-14: gecmis faz GERI ALINAMAZ', () => {
+  const state = fresh()
+  for (const phase of STATE.PHASE_ORDER.slice(0, 5)) {
+    state.phases[phase].status = 'passed'
+  }
+  state.currentPhase = 'P4_HEPSIBURADA_N11'
+  const result = STATE.blockExternalContract(state, 'P4_HEPSIBURADA_N11', 'x')
+  assert.equal(result.ok, false)
+  assert.equal(result.reason, 'PHASE_ALREADY_PASSED')
+  assert.equal(state.phases.P4_HEPSIBURADA_N11.status, 'passed')
+})
+
+test('RM-15: gecerli engel kaydi SIRADAKI fazi acar ve gerekceyi TUTAR', () => {
+  const state = fresh()
+  for (const phase of STATE.PHASE_ORDER.slice(0, 4)) {
+    state.phases[phase].status = 'passed'
+  }
+  state.currentPhase = 'P4_HEPSIBURADA_N11'
+  state.phases.P4_HEPSIBURADA_N11.status = 'in_progress'
+  const result = STATE.blockExternalContract(
+    state, 'P4_HEPSIBURADA_N11', 'Hepsiburada/N11 sozlesmesi repoda YOK',
+  )
+  assert.equal(result.ok, true)
+  assert.equal(state.phases.P4_HEPSIBURADA_N11.status, 'blocked_external_contract')
+  assert.match(state.phases.P4_HEPSIBURADA_N11.blockerDetail, /sozlesmesi repoda YOK/)
+  // CONTRACT: dis sozlesme engeli SONRAKI fazi acar.
+  assert.equal(state.currentPhase, 'P5_ARAS')
+  assert.equal(state.phases.P5_ARAS.status, 'in_progress')
+  // Canli create HER durumda kapali kalir.
+  assert.equal(state.liveCreateAllowed, false)
+})

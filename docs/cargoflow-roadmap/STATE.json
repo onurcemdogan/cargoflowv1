@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "cargoflow-roadmap",
-  "currentPhase": "P4_HEPSIBURADA_N11",
+  "currentPhase": "P5_ARAS",
   "liveCreateAllowed": false,
   "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
   "phases": {
@@ -34,14 +34,15 @@
       "branch": "feat/surat-barcode-worker-finalization"
     },
     "P4_HEPSIBURADA_N11": {
-      "status": "in_progress",
+      "status": "blocked_external_contract",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/marketplaces-hepsiburada-n11-foundation",
-      "branch": "feat/surat-barcode-worker-finalization"
+      "branch": "feat/surat-barcode-worker-finalization",
+      "blockerDetail": "Hepsiburada/N11 dis sozlesmesi repoda YOK: adapter/client/endpoint kodu, WSDL/OpenAPI/Postman, fixture ve credential girdisi arandi, sifir bulundu. Kodda gecen adlar yalnizca enabled:false gorunum kaydi ve Surat entegrasyonFirmasi string alani. Detay: docs/cargoflow-roadmap/P4_AUDIT.md"
     },
     "P5_ARAS": {
-      "status": "locked",
+      "status": "in_progress",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/carrier-aras-foundation",

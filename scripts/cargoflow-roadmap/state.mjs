@@ -76,6 +76,40 @@ export function advancePhase(state, phase, options = {}) {
   return state
 }
 
+/**
+ * DIŞ SÖZLEŞME ENGELİ — DAR ve KORUMALI.
+ *
+ * Bu bir "skip"/"force" DEĞİLDİR ve öyle kullanılamaz. CONTRACT yalnız
+ * P4/P5/P6'nın dış sözleşmeye bağlı olduğunu kabul eder; uygulanabilir bir
+ * fazı "sözleşme yok" diyerek atlamak YASAKTIR (RM-4 bunu kilitler).
+ *
+ * Kapılar:
+ *   1. faz CONTRACT_BLOCK_MAY_UNLOCK içinde olmalı,
+ *   2. faz SIRADAKİ faz olmalı (ileri uzanma yok),
+ *   3. zaten `passed` bir faz geri alınamaz,
+ *   4. gerekçe YAZILMAK ZORUNDA — kanıtsız engel kaydı yok.
+ *
+ * Dönen: `{ ok, reason }`. `ok=false` ise durum DEĞİŞMEZ.
+ */
+export function blockExternalContract(state, phase, blockerDetail) {
+  const detail = String(blockerDetail ?? '').trim()
+  if (!CONTRACT_BLOCK_MAY_UNLOCK.has(phase)) {
+    return { ok: false, reason: 'PHASE_NOT_CONTRACT_BLOCKABLE' }
+  }
+  if (state.currentPhase !== phase) {
+    return { ok: false, reason: 'PHASE_NOT_CURRENT' }
+  }
+  if (state.phases[phase]?.status === 'passed') {
+    return { ok: false, reason: 'PHASE_ALREADY_PASSED' }
+  }
+  if (!detail) return { ok: false, reason: 'BLOCKER_DETAIL_REQUIRED' }
+  advancePhase(state, phase, {
+    status: 'blocked_external_contract',
+    blockerDetail: detail,
+  })
+  return { ok: true, reason: 'BLOCKED_EXTERNAL_CONTRACT' }
+}
+
 /** Gate sonucunu kalıcı denetim kaydına ekler (SIR YAZILMAZ). */
 export function recordGateResult(state, entry) {
   state.history = [
