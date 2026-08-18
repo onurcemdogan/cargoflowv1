@@ -40,13 +40,31 @@ export async function runGate(gate, { cwd = REPO_ROOT, now = () => 0 } = {}) {
     child.on('error', (error) => resolve({ code: null, out: String(error) }))
     child.on('close', (code) => resolve({ code, out }))
   })
+  // ÇIKIŞ KODU TEK BAŞINA KANIT DEĞİLDİR. Bir gate kanıt deseni bildirmişse
+  // çıktı da doğrulanır; aksi hâlde "exit 0" sahte PASS üretebilir.
+  const text = String(result.out ?? '')
+  const missing = (gate.requireOutput ?? []).filter(
+    (pattern) => !new RegExp(pattern).test(text),
+  )
+  const forbidden = (gate.forbidOutput ?? []).filter(
+    (pattern) => new RegExp(pattern).test(text),
+  )
+  const evidenceOk = missing.length === 0 && forbidden.length === 0
   return {
     ...gate,
-    status: result.code === 0 ? 'PASS' : 'FAIL',
+    status: result.code === 0 && evidenceOk ? 'PASS' : 'FAIL',
+    missingEvidence: missing,
+    forbiddenEvidence: forbidden,
     durationMs: now() - startedAt,
     exitCode: result.code,
     safeCommand: gate.command.join(' '),
-    boundedOutput: boundOutput(redactText(result.out)),
+    boundedOutput: boundOutput(redactText(
+      evidenceOk ? result.out
+        : `KANIT EKSIK: ${missing.join(' | ') || '-'}
+`
+          + `YASAKLI KANIT: ${forbidden.join(' | ') || '-'}
+${result.out}`,
+    )),
   }
 }
 

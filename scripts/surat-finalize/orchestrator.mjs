@@ -70,7 +70,7 @@ async function commandContinue(state) {
     console.error(`PHASE_LOCKED=${phase} — onceki fazlar PASS degil.`)
     return 1
   }
-  const gates = buildGates(phase)
+  const gates = buildGates(phase, undefined, state)
   const started = Date.now()
   const results = await runGates(gates, { now: () => Date.now() })
   const repo = describeRepo()

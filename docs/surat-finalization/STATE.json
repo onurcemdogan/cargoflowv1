@@ -39,5 +39,10 @@
     }
   },
   "gateDefinitionVersion": 2,
-  "phaseCReopenedReason": "REAL_RUNTIME_WIRING_GATE_WAS_MISSING"
+  "phaseCReopenedReason": "REAL_RUNTIME_WIRING_GATE_WAS_MISSING",
+  "productionTarget": {
+    "note": "Faz E dogrulama hedefi — is akisi metadatasi, calisma zamani ayari DEGIL. SIR ICERMEZ.",
+    "tenantName": "MonalisaToka",
+    "packageId": "7270035942963454"
+  }
 }

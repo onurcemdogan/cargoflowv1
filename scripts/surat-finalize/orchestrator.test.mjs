@@ -102,10 +102,13 @@ test('ORCH-7: komutsuz gate uydurma komut URETMEZ', async () => {
   assert.equal(result.exitCode, null)
 })
 
-test('ORCH-8: E fazi production erisimi yoksa FAIL degil BLOCKED_EXTERNAL', () => {
-  const [gate] = GATES.buildGates('E')
+test('ORCH-8: E fazi hedefsiz FAIL degil BLOCKED birakir', () => {
+  // Faz E artik GERCEK komutlari calistirir; hedef yoksa uydurma komut
+  // uretmek yerine guvenli sekilde bloklanir.
+  const [gate] = GATES.buildGates('E', undefined, freshState())
   assert.equal(gate.status, 'BLOCKED')
-  assert.match(gate.evidence, /BLOCKED_EXTERNAL/)
+  assert.equal(gate.command, null)
+  assert.match(gate.evidence, /PRODUCTION_TARGET_MISSING/)
 })
 
 test('ORCH-9: gate komutlari package.json ile dogrulanir, TAHMIN EDILMEZ', () => {
@@ -172,4 +175,150 @@ test('ORCH-14: markdown rapor uretilir', () => {
   })
   assert.match(markdown, /Sürat finalization raporu/)
   assert.match(markdown, /A1 \| PASS/)
+})
+
+/* ═══ FAZ E — GERÇEK ÜRETİM KONTROLLERİ ═══════════════════════════════ */
+
+const STATE_WITH_TARGET = {
+  ...freshState(),
+  productionTarget: { tenantName: 'MonalisaToka', packageId: '7270035942963454' },
+}
+
+const gateById = (gates, id) => gates.find((gate) => gate.id === id)
+
+test('ORCH-15: E hedefi yoksa faz GUVENLI sekilde BLOKLANIR', () => {
+  const [gate] = GATES.buildGates('E', undefined, freshState())
+  assert.equal(gate.id, 'E0_PRODUCTION_TARGET')
+  assert.equal(gate.status, 'BLOCKED')
+  assert.match(gate.evidence, /PRODUCTION_TARGET_MISSING/)
+})
+
+test('ORCH-16: E1 GERCEK canary komutunu hedefle calistirir', () => {
+  const gates = GATES.buildGates('E', undefined, STATE_WITH_TARGET)
+  const e1 = gateById(gates, 'E1_PRODUCTION_CONFIG_READ_ONLY')
+  assert.deepEqual(e1.command, [
+    'npm', 'run', 'surat:canary:precheck', '--', '--name', 'MonalisaToka',
+  ])
+  // Artik sabit BLOCKED DEGIL.
+  assert.equal(e1.status, 'PENDING')
+})
+
+test('ORCH-17: E2 GERCEK NETWORK=0 kuru kosusunu calistirir', () => {
+  const e2 = gateById(
+    GATES.buildGates('E', undefined, STATE_WITH_TARGET), 'E2_REAL_ORDER_DRY_RUN',
+  )
+  assert.deepEqual(e2.command, [
+    'npm', 'run', 'surat:billing:inspect', '--', '--name', 'MonalisaToka',
+    '--package', '7270035942963454', '--create-context',
+  ])
+})
+
+/* Gerçek üretim çıktılarının biçimiyle kanıt doğrulaması. */
+const CANARY_READY = [
+  'DATA_SOURCE                  : POSTGRES',
+  'AUTHORITATIVE_SOURCE_RESOLVED: YES',
+  'ORGANIZATION FOUND : YES',
+  'ACTIVE SURAT INTEGRATION      : YES',
+  'CANONICAL MODE SELECTED       : YES',
+  'CANARY PRECHECK: READY (config tarafı)',
+].join('\n')
+
+const DRY_RUN_OK = [
+  '  REAL_RUNTIME_BILLING_PARTY    TRENDYOL_PAYS',
+  '  EXPECTED_SURAT_WHO_PAYS       3',
+  '  CREDENTIAL_ROLE               PRIMARY_MARKETPLACE',
+  '  CREDENTIAL_RESOLVED           YES',
+  '  REAL_RUNTIME_CREDENTIAL_CONFIG_PRESENT  YES',
+  '  EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE  YES',
+  'NETWORK_CALLS 0 · DB_WRITES 0 · CREATE_CALLS 0 · PRINT_CALLS 0',
+].join('\n')
+
+/** Kanıt doğrulamasını komut çalıştırmadan sınar. */
+const checkEvidence = (gate, text) => {
+  const missing = (gate.requireOutput ?? []).filter(
+    (pattern) => !new RegExp(pattern).test(text),
+  )
+  const forbidden = (gate.forbidOutput ?? []).filter(
+    (pattern) => new RegExp(pattern).test(text),
+  )
+  return missing.length === 0 && forbidden.length === 0
+}
+
+test('ORCH-18: E1 gercek READY ciktisiyla GECER', () => {
+  const e1 = gateById(
+    GATES.buildGates('E', undefined, STATE_WITH_TARGET),
+    'E1_PRODUCTION_CONFIG_READ_ONLY',
+  )
+  assert.equal(checkEvidence(e1, CANARY_READY), true)
+})
+
+test('ORCH-19: E1 kaynak cozulemezse GECMEZ', () => {
+  const e1 = gateById(
+    GATES.buildGates('E', undefined, STATE_WITH_TARGET),
+    'E1_PRODUCTION_CONFIG_READ_ONLY',
+  )
+  const unresolved = CANARY_READY
+    .replace('AUTHORITATIVE_SOURCE_RESOLVED: YES', 'AUTHORITATIVE_SOURCE_RESOLVED: NO')
+    .replace('CANARY PRECHECK: READY (config tarafı)', 'CANARY PRECHECK: BLOCKED → x')
+  assert.equal(checkEvidence(e1, unresolved), false)
+})
+
+test('ORCH-20: E2 gercek kuru kosu ciktisiyla GECER', () => {
+  const e2 = gateById(
+    GATES.buildGates('E', undefined, STATE_WITH_TARGET), 'E2_REAL_ORDER_DRY_RUN',
+  )
+  assert.equal(checkEvidence(e2, DRY_RUN_OK), true)
+})
+
+test('ORCH-21: E2 kimlik cozulmediyse GECMEZ', () => {
+  const e2 = gateById(
+    GATES.buildGates('E', undefined, STATE_WITH_TARGET), 'E2_REAL_ORDER_DRY_RUN',
+  )
+  assert.equal(
+    checkEvidence(e2, DRY_RUN_OK.replace(
+      'CREDENTIAL_RESOLVED           YES', 'CREDENTIAL_RESOLVED           NO',
+    )),
+    false,
+  )
+})
+
+test('ORCH-22: E2 fatura tarafi yanlissa GECMEZ', () => {
+  const e2 = gateById(
+    GATES.buildGates('E', undefined, STATE_WITH_TARGET), 'E2_REAL_ORDER_DRY_RUN',
+  )
+  // Kimlik sinifi fatura tarafi yerine gecemez.
+  assert.equal(
+    checkEvidence(e2, DRY_RUN_OK.replace('TRENDYOL_PAYS', 'PRIMARY')), false,
+  )
+  assert.equal(
+    checkEvidence(e2, DRY_RUN_OK.replace(
+      'EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE  YES',
+      'EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE  NO',
+    )),
+    false,
+  )
+})
+
+test('ORCH-23: E2 ag/create/yazma sayaci 0 DEGILSE GECMEZ', () => {
+  const e2 = gateById(
+    GATES.buildGates('E', undefined, STATE_WITH_TARGET), 'E2_REAL_ORDER_DRY_RUN',
+  )
+  assert.equal(
+    checkEvidence(e2, DRY_RUN_OK.replace(
+      'NETWORK_CALLS 0 · DB_WRITES 0 · CREATE_CALLS 0 · PRINT_CALLS 0',
+      'NETWORK_CALLS 1 · DB_WRITES 0 · CREATE_CALLS 1 · PRINT_CALLS 0',
+    )),
+    false,
+  )
+})
+
+test('ORCH-24: cikis kodu 0 TEK BASINA PASS URETMEZ', async () => {
+  const result = await RUNNER.runGate({
+    id: 'EVIDENCE', required: true, safe: true, status: 'PENDING',
+    command: ['node', '-e', 'process.exit(0)'],
+    requireOutput: ['BEKLENEN_KANIT'],
+  })
+  assert.equal(result.exitCode, 0)
+  assert.equal(result.status, 'FAIL', 'kanit yoksa PASS OLMAMALI')
+  assert.deepEqual(result.missingEvidence, ['BEKLENEN_KANIT'])
 })

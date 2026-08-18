@@ -156,29 +156,92 @@ export function buildPhaseDGates(scripts = readScripts()) {
   ]
 }
 
-export function buildGates(phase, scripts = readScripts()) {
+
+/**
+ * FAZ E — ÜRETİM HAZIRLIĞI. Gate'ler GERÇEK read-only komutları çalıştırır;
+ * çıkış kodu yetmez, çıktıdaki kanıt da doğrulanır. Hedef tenant/paket
+ * STATE.json'daki `productionTarget`tan gelir — uygulama koduna GÖMÜLMEZ.
+ */
+export function buildPhaseEGates(scripts = readScripts(), state = null) {
+  const target = state?.productionTarget
+  if (!target?.tenantName || !target?.packageId) {
+    return [{
+      id: 'E0_PRODUCTION_TARGET',
+      phase: 'E',
+      description: 'STATE.json productionTarget (tenantName + packageId)',
+      command: null,
+      required: true,
+      safe: true,
+      status: 'BLOCKED',
+      evidence: 'PRODUCTION_TARGET_MISSING: STATE.json → productionTarget',
+    }]
+  }
+  const canary = Object.prototype.hasOwnProperty.call(
+    scripts, 'surat:canary:precheck',
+  )
+  const inspect = Object.prototype.hasOwnProperty.call(
+    scripts, 'surat:billing:inspect',
+  )
+  return [
+    {
+      id: 'E1_PRODUCTION_CONFIG_READ_ONLY',
+      phase: 'E',
+      description: 'uretim config read-only dogrulamasi (canary precheck)',
+      command: canary
+        ? ['npm', 'run', 'surat:canary:precheck', '--',
+           '--name', target.tenantName]
+        : null,
+      required: true,
+      safe: true,
+      status: canary ? 'PENDING' : 'BLOCKED',
+      evidence: canary ? null : 'SCRIPT_NOT_FOUND: surat:canary:precheck',
+      // Yalnız aracın GERÇEKTEN bastığı etiketler; uydurma yok.
+      requireOutput: [
+        'DATA_SOURCE[ ]*:[ ]*POSTGRES',
+        'AUTHORITATIVE_SOURCE_RESOLVED[ ]*:[ ]*YES',
+        'ORGANIZATION FOUND[ ]*:[ ]*YES',
+        'ACTIVE SURAT INTEGRATION[ ]*:[ ]*YES',
+        'CANONICAL MODE SELECTED[ ]*:[ ]*YES',
+        'CANARY PRECHECK[ ]*:[ ]*READY',
+      ],
+      forbidOutput: ['CANARY PRECHECK[ ]*:[ ]*BLOCKED'],
+    },
+    {
+      id: 'E2_REAL_ORDER_DRY_RUN',
+      phase: 'E',
+      description: 'gercek siparis NETWORK=0 kuru kosusu',
+      command: inspect
+        ? ['npm', 'run', 'surat:billing:inspect', '--',
+           '--name', target.tenantName,
+           '--package', target.packageId, '--create-context']
+        : null,
+      required: true,
+      safe: true,
+      status: inspect ? 'PENDING' : 'BLOCKED',
+      evidence: inspect ? null : 'SCRIPT_NOT_FOUND: surat:billing:inspect',
+      requireOutput: [
+        'REAL_RUNTIME_BILLING_PARTY[ ]+TRENDYOL_PAYS',
+        'EXPECTED_SURAT_WHO_PAYS[ ]+3',
+        'CREDENTIAL_ROLE[ ]+PRIMARY_MARKETPLACE',
+        'CREDENTIAL_RESOLVED[ ]+YES',
+        'REAL_RUNTIME_CREDENTIAL_CONFIG_PRESENT[ ]+YES',
+        'EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE[ ]+YES',
+        'NETWORK_CALLS 0 . DB_WRITES 0 . CREATE_CALLS 0 . PRINT_CALLS 0',
+      ],
+      // Kimlik cozulemediyse veya taraf yanlissa PASS OLAMAZ.
+      forbidOutput: [
+        'CREDENTIAL_RESOLVED[ ]+NO',
+        'EXPECTED_BILLING_PARTY_WIRED_TO_REAL_CREATE[ ]+NO',
+      ],
+    },
+  ]
+}
+
+export function buildGates(phase, scripts = readScripts(), state = null) {
   if (phase === 'A') return buildPhaseAGates(scripts)
   if (phase === 'B') return buildPhaseBGates(scripts)
   if (phase === 'C') return buildPhaseCGates(scripts)
   if (phase === 'D') return buildPhaseDGates(scripts)
-  if (phase === 'E') {
-    return [{
-      id: 'E1_PRODUCTION_CONFIG_READ_ONLY',
-      phase: 'E',
-      description: 'production config read-only ozeti',
-      command: null,
-      required: true,
-      safe: true,
-      // Bu ortamda production erisimi yoksa FAIL degil BLOCKED_EXTERNAL.
-      status: 'BLOCKED',
-      // Bu ortamda uretim verisi yok; ARAC artik DATABASE_URL'i sart kosmak
-      // yerine cozulen veri kaynagini raporluyor. Komutlar UYDURULMADI.
-      evidence: 'BLOCKED_EXTERNAL: bu ortamda uretim verisi yok. '
-        + 'Uretimde calistirin: npm run surat:canary:precheck -- '
-        + '--name MonalisaToka  ve  npm run surat:billing:inspect -- '
-        + '--name MonalisaToka --package <paket> --create-context '
-        + '(NETWORK=0 kuru kosu).',
-    }]
-  }
+  if (phase === 'E') return buildPhaseEGates(scripts, state)
   return []
 }
