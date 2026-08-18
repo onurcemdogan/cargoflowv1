@@ -131,3 +131,31 @@ test('B2-4: ardisik sayfalar AYNI kaydi tekrarlamaz', async () => {
   assert.equal(overlap.length, 0, `sayfalar ortusuyor: ${overlap.length}`)
   assert.equal(first.total, second.total, 'toplam sayfaya gore DEGISMEZ')
 })
+
+/* ═══ DASHBOARD/ANALİTİK OKUMASI ═════════════════════════════════════ */
+
+test('B2-5: analitik okumasi satir sayisindan BAGIMSIZ sorgu kullanir', async () => {
+  const { db, counter, organizationId } = await seeded()
+  const range = {
+    startMs: Date.parse('2026-07-01T00:00:00Z'),
+    endMs: Date.parse('2026-08-01T00:00:00Z'),
+  }
+  const rows = await orderService.listOrdersForAnalytics(db, organizationId, range)
+  assert.equal(rows.length, SEED_COUNT, 'aralik icindeki TUM kayitlar gelir')
+  // Satis toplami CAP'SIZ olmali (eksik sayim yanlis ciro demektir), ama
+  // sorgu sayisi sabit kalmali: siparisler + satirlar.
+  assert.ok(
+    counter.queries <= 4,
+    `analitik yolunda N+1: ${counter.queries} sorgu / ${rows.length} satir`,
+  )
+})
+
+test('B2-6: analitik okumasi tarih araligiyla SINIRLIDIR', async () => {
+  const { db, organizationId } = await seeded()
+  const empty = await orderService.listOrdersForAnalytics(db, organizationId, {
+    startMs: Date.parse('2020-01-01T00:00:00Z'),
+    endMs: Date.parse('2020-02-01T00:00:00Z'),
+  })
+  // Aralik disi kayitlar OKUNMAZ — sinir gercektir, dekoratif degil.
+  assert.equal(empty.length, 0)
+})

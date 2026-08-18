@@ -30,6 +30,31 @@ Amaç: **var olanı yeniden yazmamak.** Aşağıdakiler ölçülerek bulundu.
 4. **Sınırlı dashboard okumaları** doğrulanmadı; `findOrdersInRange` kullanımı
    dashboard yolunda ayrıca ölçülmeli.
 
+## DENETIM DUZELTMESI (bb47cef)
+
+Yukaridaki "N+1 kaldirilmis" satiri EKSIKTI. Kiyaslama yazilinca olculdu:
+liste yolunda sorgu sayisi sayfa boyutuyla buyuyordu (10 satir → 13 sorgu,
+200 satir → 103). Sebep: siparis SATIRLARI toplu cekiliyordu ama
+`attachShipment` dongu ICINDE her siparis icin ayri gonderi/operasyon
+sorgusu yapiyordu.
+
+Duzeltildi: `findShipmentsForPackages` + `findLatestOperationsForPackages`
+ile sayfa basina tek okuma. Sorgu sayisi artik sayfa boyutundan bagimsiz.
+
+Ders: "toplu cekiliyor" varsayimi OLCULMEDEN denetime yazilmamali.
+
+## Kalan is (guncel)
+
+- **Dashboard/analitik okumasi**: DOGRULANDI (B2-5, B2-6). Tarih araligiyla
+  sinirli, `attachShipment` kullanmiyor, sorgu sayisi satir sayisindan
+  bagimsiz. Kasitli olarak CAP'SIZ — eksik sayim yanlis ciro demek olurdu.
+- **0008 migration**: KAPSAM BELIRSIZ. "Kanonik siparis projeksiyonu" ifadesi
+  repoda YALNIZ bu belgede geciyor; onceden tanimli bir sema/spec YOK.
+  Siparis tablosunda zaten alti hedefli indeks var. Uretilmeden once
+  projeksiyonun HANGI sorguyu hizlandiracagi netlesmeli — kanitsiz migration
+  uretilmedi.
+- **Uretim p50/p95**: `BLOCKED_EXTERNAL_ENVIRONMENT` (yalniz bu olcum).
+
 ## Kurallar
 
 - Üretim migration'ı **çalıştırılmaz**. 0008 yalnız üretilir + hermetik test edilir.
