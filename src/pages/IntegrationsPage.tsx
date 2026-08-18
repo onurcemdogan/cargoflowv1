@@ -786,6 +786,25 @@ function SuratSettingsPanel({
   onSave,
   onTest,
 }: SuratSettingsPanelProps) {
+  // Seçilen politikanın gerektirdiği kimlik eksikse AÇIKÇA uyarılır.
+  // Sessizce başka bir role düşmek finansal olarak yanlış cariye yazmaktır.
+  const codCredentialWarning = ((): string | null => {
+    const surat = form.surat
+    const policy = surat.codCredentialPolicy ?? 'DEDICATED_COD'
+    const has = (value?: string) => Boolean(value && value.trim())
+    if (policy === 'DEDICATED_COD' && !(has(surat.codKullaniciAdi) && has(surat.codSifre))) {
+      return 'Ayrı Kapıda Ödeme Kimliği seçili ancak cari kodu/şifre eksik. '
+        + 'Kapıda ödemeli gönderiler oluşturulamaz.'
+    }
+    if (policy === 'SELLER_PAYS' && !(has(surat.sellerPaysKullaniciAdi) && has(surat.sellerPaysSifre))) {
+      return 'Satıcı Öder Kimliği seçili ancak Satıcı Öder cari kodu/şifre eksik.'
+    }
+    if (policy === 'PRIMARY' && !has(surat.kullaniciAdi)) {
+      return 'Ana Kimlik seçili ancak Sürat cari kodu eksik.'
+    }
+    return null
+  })()
+
   function updateSurat(patch: Partial<IntegrationConfig['surat']>) {
     setForm((current) => ({
       ...current,
@@ -986,6 +1005,41 @@ function SuratSettingsPanel({
                 />
               </label>
             </div>
+
+            <div className="integration-field-grid">
+              <label>
+                <span>Kapıda Ödeme Kimlik Politikası</span>
+                <select
+                  value={form.surat.codCredentialPolicy ?? 'DEDICATED_COD'}
+                  onChange={(event) =>
+                    updateSurat({
+                      codCredentialPolicy: event.target
+                        .value as IntegrationConfig['surat']['codCredentialPolicy'],
+                    })
+                  }
+                >
+                  <option value="DEDICATED_COD">
+                    Ayrı Kapıda Ödeme Kimliği
+                  </option>
+                  <option value="SELLER_PAYS">Satıcı Öder Kimliği</option>
+                  <option value="PRIMARY">Ana Kimlik</option>
+                </select>
+              </label>
+            </div>
+            {/* SESSİZ FALLBACK YOK: hangi kimliğin kullanılacağı AÇIKÇA
+                seçilir. Eksik kimlik sessizce başka role kaymaz; gönderi
+                oluşturma finansal kapıda bloklanır. */}
+            {codCredentialWarning ? (
+              <p className="integration-hint integration-hint--warning">
+                {codCredentialWarning}
+              </p>
+            ) : (
+              <p className="integration-hint">
+                Seçilen politika hangi Sürat kimliğinin kapıda ödeme
+                gönderilerinde kullanılacağını belirler. Gerekli kimlik eksikse
+                gönderi oluşturulmaz.
+              </p>
+            )}
           </>
         ) : null}
 

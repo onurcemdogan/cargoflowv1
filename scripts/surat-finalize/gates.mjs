@@ -142,11 +142,36 @@ export function buildPhaseCGates(scripts = readScripts()) {
   ]
 }
 
+/** FAZ D — COD kimlik/politika + Canlı Debug arayüzü. */
+export function buildPhaseDGates(scripts = readScripts()) {
+  return [
+    nodeTestGate(
+      'D1_COD_POLICY', 'D', 'server/surat-cod-policy-flow.test.mjs',
+      'COD/BillingParty bagimsiz · sessiz fallback YOK · politika enum',
+    ),
+    npmGate(scripts, 'D2_UI', 'D', 'test:ui', 'UI paketi (COD politika alani)'),
+    npmGate(scripts, 'D3_BUILD', 'D', 'build', 'production build'),
+    npmGate(scripts, 'D4_LINT', 'D', 'lint', 'lint'),
+    // Canlı Debug arayüzü HENÜZ YOK. Gate bilerek BLOCKED: eksik iş
+    // "tamamlandı" görünmesin diye faz burada AÇIK kalır.
+    {
+      id: 'D5_LIVE_DEBUG_UI',
+      phase: 'D',
+      description: 'Canlı Debug arayuzu Trace V2 uzerinden (5 sekme)',
+      command: null,
+      required: true,
+      safe: true,
+      status: 'BLOCKED',
+      evidence: 'NOT_IMPLEMENTED: Canlı Debug arayuzu + legacy debug denetimi',
+    },
+  ]
+}
+
 export function buildGates(phase, scripts = readScripts()) {
   if (phase === 'A') return buildPhaseAGates(scripts)
   if (phase === 'B') return buildPhaseBGates(scripts)
   if (phase === 'C') return buildPhaseCGates(scripts)
-  if (phase === 'D') return buildPlaceholderGates('D', 'COD/Debug arayuzu')
+  if (phase === 'D') return buildPhaseDGates(scripts)
   if (phase === 'E') {
     return [{
       id: 'E1_PRODUCTION_CONFIG_READ_ONLY',

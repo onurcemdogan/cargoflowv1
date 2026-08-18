@@ -77,6 +77,7 @@ export const defaultIntegrationConfig: IntegrationConfig = {
     codKullaniciAdi: '',
     codSifre: '',
     codWebPassword: '',
+    codCredentialPolicy: 'DEDICATED_COD',
     firmaId: '',
     restBasicUsername: '',
     restBasicPassword: '',

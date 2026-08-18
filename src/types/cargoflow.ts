@@ -917,6 +917,9 @@ export interface SuratIntegrationConfig {
   codKullaniciAdi?: string
   codSifre?: string
   codWebPassword?: string
+  /** Kapıda ödeme gönderilerinde HANGİ Sürat kimliğinin kullanılacağı.
+   *  Sessiz fallback yoktur; eksik kimlik finansal kapıda bloklanır. */
+  codCredentialPolicy?: 'DEDICATED_COD' | 'SELLER_PAYS' | 'PRIMARY'
   firmaId: string
   restBasicUsername?: string
   restBasicPassword?: string
