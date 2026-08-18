@@ -37,6 +37,18 @@ const qualityGates = (scripts, phase, prefix) => [
   npmGate(scripts, `${prefix}_LINT`, phase, 'lint', 'lint'),
 ]
 
+/** FAZ P1 — sipariş okuma yolları (0008 kapsam dışı; karar: 2026-08-18). */
+export function buildPhaseP1Gates(scripts = readScripts()) {
+  return [
+    nodeTestGate(
+      'P1_QUERY_SHAPE', 'P1_B2_PERFORMANCE',
+      'server/orders-b2-query-shape-flow.test.mjs',
+      'sorgu sayisi sayfa/satir sayisindan BAGIMSIZ · sayfalama sinirli',
+    ),
+    ...qualityGates(scripts, 'P1_B2_PERFORMANCE', 'P1'),
+  ]
+}
+
 export function buildGates(phase, scripts = readScripts()) {
   if (phase === 'S1_SURAT_HARDENING') {
     return [
@@ -78,17 +90,11 @@ export function buildGates(phase, scripts = readScripts()) {
       ...qualityGates(scripts, phase, 'S1'),
     ]
   }
+  if (phase === 'P1_B2_PERFORMANCE') return buildPhaseP1Gates(scripts)
   const pending = {
     // DENETIM YAPILDI (docs/cargoflow-roadmap/P1_AUDIT.md): sayfalama, N+1
     // kaldirma, sayim ve aralik sorgusu ZATEN VAR. Kalan: 0008 migration +
     // arac zinciri (preflight/prova/backfill/golge parite/geri alma) + benchmark.
-    // OKUMA YOLLARI BITTI (bb47cef, ab5ea8f): liste N+1 kaldirildi, analitik
-    // okumasi sinirli ve N+1'siz dogrulandi, kiyaslama paketi eklendi.
-    // KALAN IKI MADDE DE INSAN KARARI GEREKTIRIR:
-    //   1) 0008 "kanonik projeksiyon" kapsami repoda TANIMLI DEGIL.
-    //   2) Uretim p50/p95 bu ortamda olculemez.
-    P1_B2_PERFORMANCE: '0008 kapsami TANIMSIZ (insan karari) + uretim p50/p95 '
-      + 'BLOCKED_EXTERNAL_ENVIRONMENT — ayrinti: docs/cargoflow-roadmap/P1_AUDIT.md',
     P2_B3_INCREMENTAL_SYNC: 'kiraci checkpointleri, artimli imlecler, resume',
     P3_B4_BARCODE_WORKER: 'uygun siparis secimi, kuyruk oncesi finansal on kontrol',
     P4_HEPSIBURADA_N11: 'saglayici-notr temel; dis sozlesme dogrulanmali',

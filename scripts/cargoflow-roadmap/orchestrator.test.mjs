@@ -64,7 +64,7 @@ test('RM-5: TUM fazlar bitse bile canli create KAPALI', () => {
 test('RM-6: uygulanmamis is SAHTE PASS uretmez', () => {
   // Belirli bir gate adina baglanmaz; DEGISMEZ test edilir: komutu olmayan
   // her zorunlu gate BLOCKED + NOT_IMPLEMENTED tasimali.
-  const pending = GATES.buildGates('P1_B2_PERFORMANCE')
+  const pending = GATES.buildGates('P2_B3_INCREMENTAL_SYNC')
     .filter((gate) => gate.command === null)
   assert.ok(pending.length > 0, 'uygulanmamis is BLOCKED kalmali')
   for (const gate of pending) {
@@ -83,8 +83,10 @@ test('RM-6b: uygulanan is GERCEK komut calistirir', () => {
 })
 
 test('RM-7: gate komutlari package.json ile dogrulanir', () => {
-  const gates = GATES.buildGates('P1_B2_PERFORMANCE', { 'test:surat': 'x' })
-  const build = gates.find((gate) => gate.id === 'P1_B2_PERFORMANCE_BUILD')
+  const gates = GATES.buildGates('P2_B3_INCREMENTAL_SYNC', { 'test:surat': 'x' })
+  const build = gates.find(
+    (gate) => gate.id === 'P2_B3_INCREMENTAL_SYNC_BUILD',
+  )
   assert.equal(build.status, 'BLOCKED')
   assert.match(build.evidence, /SCRIPT_NOT_FOUND/)
 })

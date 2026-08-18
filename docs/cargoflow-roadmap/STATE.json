@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "workflow": "cargoflow-roadmap",
-  "currentPhase": "P1_B2_PERFORMANCE",
+  "currentPhase": "P2_B3_INCREMENTAL_SYNC",
   "liveCreateAllowed": false,
   "note": "Gate sonuclari CACHE DEGILDIR; her `continue` yeniden dogrular.",
   "phases": {
@@ -13,14 +13,14 @@
       "branch": "fix/surat-canonical-kargobarkod-and-debug-ui"
     },
     "P1_B2_PERFORMANCE": {
-      "status": "in_progress",
-      "completedAt": null,
-      "commit": null,
+      "status": "passed",
+      "completedAt": "2026-08-18T15:54:55.315Z",
+      "commit": "c880d5c",
       "plannedBranch": "perf/orders-b2-production-rollout",
-      "branch": null
+      "branch": "perf/orders-b2-production-rollout"
     },
     "P2_B3_INCREMENTAL_SYNC": {
-      "status": "locked",
+      "status": "in_progress",
       "completedAt": null,
       "commit": null,
       "plannedBranch": "perf/orders-b3-incremental-sync",
@@ -217,6 +217,64 @@
       "commit": "12227ac",
       "branch": "fix/surat-canonical-kargobarkod-and-debug-ui",
       "evidence": null
+    },
+    {
+      "phase": "P1_B2_PERFORMANCE",
+      "gate": "P1_QUERY_SHAPE",
+      "status": "PASS",
+      "timestamp": "2026-08-18T15:54:55.315Z",
+      "commit": "c880d5c",
+      "branch": "perf/orders-b2-production-rollout",
+      "evidence": null
+    },
+    {
+      "phase": "P1_B2_PERFORMANCE",
+      "gate": "P1_SURAT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T15:54:55.315Z",
+      "commit": "c880d5c",
+      "branch": "perf/orders-b2-production-rollout",
+      "evidence": null
+    },
+    {
+      "phase": "P1_B2_PERFORMANCE",
+      "gate": "P1_UI",
+      "status": "PASS",
+      "timestamp": "2026-08-18T15:54:55.315Z",
+      "commit": "c880d5c",
+      "branch": "perf/orders-b2-production-rollout",
+      "evidence": null
+    },
+    {
+      "phase": "P1_B2_PERFORMANCE",
+      "gate": "P1_BUILD",
+      "status": "PASS",
+      "timestamp": "2026-08-18T15:54:55.315Z",
+      "commit": "c880d5c",
+      "branch": "perf/orders-b2-production-rollout",
+      "evidence": null
+    },
+    {
+      "phase": "P1_B2_PERFORMANCE",
+      "gate": "P1_LINT",
+      "status": "PASS",
+      "timestamp": "2026-08-18T15:54:55.315Z",
+      "commit": "c880d5c",
+      "branch": "perf/orders-b2-production-rollout",
+      "evidence": null
     }
-  ]
+  ],
+  "decisions": {
+    "MIGRATION_0008": {
+      "status": "NOT_REQUIRED_BY_CURRENT_EVIDENCE",
+      "decidedAt": "2026-08-18",
+      "reason": "Kanonik projeksiyon repoda tanimli degil; orders zaten alti hedefli indeks tasiyor; olculen darbogaz (liste N+1) kod duzeyinde giderildi.",
+      "reopenIf": "Uretimde kanitlanmis yavas sorgu olcumu ortaya cikarsa."
+    },
+    "PRODUCTION_P50_P95": {
+      "status": "BLOCKED_EXTERNAL_ENVIRONMENT",
+      "scope": "YALNIZ bu olcum. P1 implementation fazini BLOKLAMAZ.",
+      "command": "uretimde olculmeli — bu ortamda uretim verisi yok"
+    }
+  }
 }
