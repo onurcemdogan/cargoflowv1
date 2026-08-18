@@ -154,3 +154,70 @@ test('SW-13: ardisik pencereler ORTUSUR (kayit dusmesin)', () => {
   // Ikinci pencere birincinin ustune BINER — bosluk YOK.
   assert.ok(second.startMs < first.endMs, 'pencereler arasinda BOSLUK var')
 })
+
+/* ═══ PERİYODİK TARAMA ANKRAJI — MIGRATION'SIZ ═══════════════════════ */
+
+test('SW-14: imlec yoksa ankraj YOK (bootstrap zaten genis pencere ceker)', () => {
+  assert.equal(P.deriveReconciliationAnchorMs({ checkpointMs: null }), null)
+  assert.equal(P.deriveReconciliationAnchorMs({ checkpointMs: undefined }), null)
+})
+
+test('SW-15: ankraj imlecin ZAMAN KOVASI baslangicidir', () => {
+  const interval = P.RECONCILIATION_INTERVAL_MS
+  const anchor = P.deriveReconciliationAnchorMs({ checkpointMs: NOW })
+  assert.equal(anchor, Math.floor(NOW / interval) * interval)
+  assert.ok(anchor <= NOW, 'ankraj imlecten SONRA olamaz')
+  assert.ok(NOW - anchor < interval, 'ankraj bir kovadan UZAK olamaz')
+})
+
+test('SW-16: ayni kovada genis tarama TEKRARLANMAZ', () => {
+  const interval = P.RECONCILIATION_INTERVAL_MS
+  // Kova basina hizali imlec: kova icinde kalan her an INCREMENTAL olmali.
+  const checkpointMs = Math.floor(NOW / interval) * interval
+  for (const offset of [1, interval / 4, interval / 2, interval - 1]) {
+    const w = P.resolveSyncWindow({
+      checkpointMs,
+      nowMs: checkpointMs + offset,
+      lastReconciliationAtMs: P.deriveReconciliationAnchorMs({ checkpointMs }),
+    })
+    assert.equal(w.mode, 'INCREMENTAL', `offset=${offset} genis taramaya kacti`)
+  }
+})
+
+test('SW-17: kova DEGISINCE genis tarama tetiklenir', () => {
+  const interval = P.RECONCILIATION_INTERVAL_MS
+  const checkpointMs = Math.floor(NOW / interval) * interval + 60_000
+  const nowMs = Math.floor(NOW / interval) * interval + interval + 1
+  const w = P.resolveSyncWindow({
+    checkpointMs,
+    nowMs,
+    lastReconciliationAtMs: P.deriveReconciliationAnchorMs({ checkpointMs }),
+  })
+  assert.equal(w.mode, 'RECONCILIATION')
+})
+
+test('SW-18: genis taramadan SONRA bir sonraki kosu artimli olur', () => {
+  const interval = P.RECONCILIATION_INTERVAL_MS
+  const checkpointMs = Math.floor(NOW / interval) * interval + 60_000
+  const nowMs = Math.floor(NOW / interval) * interval + interval + 1
+  const wide = P.resolveSyncWindow({
+    checkpointMs, nowMs,
+    lastReconciliationAtMs: P.deriveReconciliationAnchorMs({ checkpointMs }),
+  })
+  assert.equal(wide.mode, 'RECONCILIATION')
+  // Genis tarama basariyla bitti → imlec pencerenin ust sinirina ilerler.
+  const advanced = P.advanceCheckpoint({
+    currentCheckpointMs: checkpointMs,
+    candidateCheckpointMs: wide.candidateCheckpointMs,
+    complete: true,
+  })
+  assert.equal(advanced.advanced, true)
+  const next = P.resolveSyncWindow({
+    checkpointMs: advanced.checkpointMs,
+    nowMs: nowMs + 60_000,
+    lastReconciliationAtMs: P.deriveReconciliationAnchorMs({
+      checkpointMs: advanced.checkpointMs,
+    }),
+  })
+  assert.equal(next.mode, 'INCREMENTAL', 'genis tarama FIRTINASI olustu')
+})

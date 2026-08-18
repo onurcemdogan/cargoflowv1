@@ -147,3 +147,38 @@ export function advanceCheckpoint(params: {
     reason: 'COMPLETE_SYNC',
   }
 }
+
+/**
+ * PERİYODİK TARAMA ZAMANI — MIGRATION'SIZ TÜRETME.
+ *
+ * `RECONCILIATION` modunun tetiklenmesi için "son geniş tarama ne zamandı"
+ * bilgisi gerekir. `integration_sync_state` içinde böyle bir kolon YOKTUR ve
+ * eklemek üretim migration'ı demektir. Bunun yerine ÖLÇÜLEBİLİR bir
+ * değişmezden türetilir: imlecin düştüğü ZAMAN KOVASI.
+ *
+ * Kova başlangıcı `floor(checkpoint / interval) * interval` verilirse
+ * `resolveSyncWindow` içindeki `now - anchor >= interval` koşulu TAM OLARAK
+ * "şimdi, imlecin kovasından SONRAKİ bir kovada" anlamına gelir. Sonuç:
+ *
+ *   - her kovada EN ÇOK bir geniş tarama (art arda tarama fırtınası yok),
+ *   - sync'ler sürdükçe her kovada EN AZ bir geniş tarama (boşluk onarılır),
+ *   - kolon yok, migration yok, ekstra yazma yok.
+ *
+ * Geniş tarama sonrası imleç `now`a ilerler ve aynı kovaya düşer; bir sonraki
+ * koşu yeniden `INCREMENTAL` olur.
+ */
+export function deriveReconciliationAnchorMs(params: {
+  checkpointMs?: number | null
+  reconciliationIntervalMs?: number
+}): number | null {
+  // `Number(null)` 0 verir — null/undefined AYRI ele alinir, aksi halde
+  // imlecsiz kiraci 1970 kovasina duser ve her kosuda genis tarama tetiklenir.
+  if (typeof params.checkpointMs !== 'number') return null
+  const checkpointMs = params.checkpointMs
+  if (!Number.isFinite(checkpointMs)) return null
+  const intervalMs = positive(
+    params.reconciliationIntervalMs, RECONCILIATION_INTERVAL_MS,
+  )
+  if (intervalMs <= 0) return null
+  return Math.floor(checkpointMs / intervalMs) * intervalMs
+}
