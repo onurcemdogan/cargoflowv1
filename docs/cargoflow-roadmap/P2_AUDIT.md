@@ -18,18 +18,33 @@ Dal: `perf/orders-b3-incremental-sync` · taban: `0e94a08`
 | Kısmi sync koruması | `persistSyncResult(..., { complete })` — `complete=false` HİÇBİR kaydı arşivlemez |
 | Pencere kapsamlı mutabakat | `staleOpenReconciler` yalnız sync penceresindeki kayıtları reconcile eder |
 
-## EKSİK / DOĞRULANMAMIŞ (P2 kapsamı)
+## DENETİM DÜZELTMESİ — davranış testleri ZATEN VAR
 
-1. **Artımlı imleç kullanımı**: `lastSuccessfulSyncAt` YAZILIYOR; sonraki
-   çekimin bu değerden İTİBAREN daraltılıp daraltılmadığı doğrulanmadı.
+İlk listede "doğrulanmamış" dediğim maddelerin bir kısmı aslında test edilmiş.
+Testler çalıştırıldı: **19/19 PASS**.
+
+| Konu | Kapsayan test |
+| --- | --- |
+| Manuel + arka plan çakışması | `SYNC-SINGLEFLIGHT-3`, `-4` |
+| Farklı hesaplar birbirini bloklamaz | `SYNC-SINGLEFLIGHT-5` |
+| Aynı hesapta ikinci uçuş başlamaz | `SYNC-SINGLEFLIGHT-1`, `-2` |
+| Hata sonrası kilit serbest kalır | `SYNC-SINGLEFLIGHT-6` |
+| Bekleme sınırlı (sonsuz blok yok) | `SYNC-SINGLEFLIGHT-4b` |
+| Retry + PARTIAL veri güvencesi | `SYNC-SINGLEFLIGHT-7` |
+| `complete=false` arşivlemez | `RCN-5` |
+
+Dosyalar: [sync-single-flight-flow.test.mjs](../../server/sync-single-flight-flow.test.mjs),
+[active-sync-reconciliation-flow.test.mjs](../../server/active-sync-reconciliation-flow.test.mjs)
+
+## GERÇEKTEN AÇIK KALAN (P2 kapsamı)
+
+1. **Artımlı imleç daraltması**: `lastSuccessfulSyncAt` YAZILIYOR; sonraki
+   çekimin bu değerden İTİBAREN daraltılıp daraltılmadığı ÖLÇÜLMEDİ. P2'nin
+   asıl konusu budur.
 2. **Sınırlı çekim (bounded pull)**: sayfa/limit üst sınırı ölçülmedi.
-3. **Yeniden deneme + backoff**: sınıflandırılmış retry politikası görülmedi.
-4. **Rate-limit işleme**: 429/Retry-After yolu görülmedi.
-5. **Resume/replay idempotency**: yarıda kesilen sync'in tekrarında mükerrer
-   kayıt üretmediği test edilmedi (`upsertMarketplaceOrders` upsert olduğu için
-   büyük olasılıkla güvenli — ÖLÇÜLMELİ).
-6. **Manuel/arka plan çakışması**: kilidin gerçekten çakışmayı engellediği
-   davranış testiyle kanıtlanmadı.
+3. **Backoff politikası**: retry'in KENDİSİ var (SINGLEFLIGHT-7); üstel/
+   sınıflandırılmış backoff görülmedi.
+4. **Rate-limit (429/Retry-After)** işleme yolu görülmedi.
 
 ## Kurallar
 
