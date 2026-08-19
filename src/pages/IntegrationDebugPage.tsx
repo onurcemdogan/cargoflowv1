@@ -22,6 +22,20 @@ export function IntegrationDebugPage({
   // (DELIVERED / TEKNİK ZPL / BARKOD BEKLİYOR) canlı create hata ayıklamasını
   // boğuyordu. Satırlar açılana kadar DOM'a HİÇ girmez — gizlenmez, üretilmez.
   const [showLegacyDiagnostics, setShowLegacyDiagnostics] = useState(false)
+  // GELİŞTİRİCİYE ÖZEL TANI KAPISI — VARSAYILAN KAPALI.
+  //
+  // Eski Teknik Tanı ve Hata Merkezi OPERASYONEL kayıtlardan türetilir; debug
+  // kalıcılığı değildir ve bu yüzden normal Debug ekranına AİT DEĞİLDİR.
+  // Yalnızca açık istekle (`?dev=diagnostics`) mount edilirler. Veri hiçbir
+  // koşulda SİLİNMEZ; yalnız SORGULANMAZ.
+  const developerDiagnostics = useMemo(() => {
+    try {
+      const search = globalThis.location?.search ?? ''
+      return new URLSearchParams(search).get('dev') === 'diagnostics'
+    } catch {
+      return false
+    }
+  }, [])
   const filteredLogs =
     provider === 'all' ? logs : logs.filter((log) => log.provider === provider)
   const latestTrendyol = logs.find(
@@ -107,6 +121,17 @@ export function IntegrationDebugPage({
         </article>
       </section>
 
+      {/* ═══ GELİŞTİRİCİYE ÖZEL TANI — VARSAYILAN OLARAK MOUNT EDİLMEZ ═══
+        ÖLÇÜLEN KUSUR: bu iki bölüm yalnız KATLANMIŞTI; başlıkları ve
+        sayaçları ("Eski Teknik Tanı ~241", "Hata Merkezi ~241") normal
+        Debug ekranında GÖRÜNMEYE devam ediyordu ve operatörün gerçek
+        denemeyi bulmasını engelliyordu.
+
+        Bunlar OPERASYONEL kayıtlardan türetilir; debug kalıcılığı DEĞİLDİR.
+        Artık normal ekranda HİÇ mount edilmezler. Geliştirici açıkça
+        `?dev=diagnostics` ile isterse görünürler. Veri SİLİNMEZ. */}
+      {developerDiagnostics ? (
+        <>
       <section className="panel">
         <div className="panel-heading">
           <h2>Eski Teknik Tanı</h2>
@@ -644,6 +669,8 @@ export function IntegrationDebugPage({
           ) : null}
         </div>
       </section>
+        </>
+      ) : null}
 
       <section className="panel">
         <div className="debug-log-toolbar">

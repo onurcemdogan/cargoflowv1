@@ -495,19 +495,71 @@ export async function createCanonicalSuratShipmentForRequest(
       }),
     }
   }
-  const result = await createCanonicalSuratShipment({
-    organizationId: params.organizationId,
-    packageId: String(
-      params.order.packageId ?? params.order.shipmentPackageId ?? params.reference,
-    ),
-    account: account
-      ? { kullaniciAdi: account.kullaniciAdi, sifre: account.sifre, isActive: true }
-      : null,
-    context: input.context,
-    shipment: input,
-    idempotency: createHeldIdempotencyPort(),
-    fetchImpl: params.fetchImpl,
-  })
+  // ═══ TAŞIYICI ÇAĞRISI — FIRLATSA BİLE İZ KAYBOLMAZ ════════════════════
+  //
+  // ÖLÇÜLEN KUSUR (üretim, 2 kez): Sürat kanonik ucu HTTP 200 döndürüp
+  // gövdede .NET istisnası veriyor
+  // (`OrtakBarkodOlusturSonuc` içinde String → KargoBarkod cast'i).
+  // İstemci bunu ayrıştırırken FIRLATIYOR; `traceAttempt` bu fonksiyonun
+  // YEREL değişkeniydi ve yığınla birlikte KAYBOLUYORDU. Route'un `catch`
+  // dalı izsiz bir gövde döndürdüğü için hiçbir şey kaydedilmiyor, Canlı
+  // Debug gerçek denemeden sonra bile "kayıt yok" diyordu.
+  //
+  // Bu yüzden çağrı BURADA yakalanır: iz zaten burada, aşamaları eksiksiz.
+  // Fırlatma bir SONUÇ olarak döner ve iz KAYDEDİLİR.
+  let result
+  try {
+    result = await createCanonicalSuratShipment({
+      organizationId: params.organizationId,
+      packageId: String(
+        params.order.packageId ?? params.order.shipmentPackageId ?? params.reference,
+      ),
+      account: account
+        ? { kullaniciAdi: account.kullaniciAdi, sifre: account.sifre, isActive: true }
+        : null,
+      context: input.context,
+      shipment: input,
+      idempotency: createHeldIdempotencyPort(),
+      fetchImpl: params.fetchImpl,
+    })
+  } catch (carrierError) {
+    const summary =
+      carrierError instanceof Error ? carrierError.message : String(carrierError)
+    return {
+      ok: false,
+      source: 'real',
+      errorSource: 'Surat',
+      errorCode: 'SURAT_CANONICAL_RESULT_UNPARSEABLE',
+      message: buildUserFacingError({ traceId }),
+      canonicalCreate: {
+        adapter: 'SURAT_WEB_API',
+        // KRİTİK: taşıyıcıya GİDİLDİ. Gönderinin oluşup oluşmadığı
+        // BİLİNMİYOR — `NOT_STARTED` demek yanlış olur ve ikinci bir
+        // fiziksel create'e zemin hazırlardı.
+        carrierCreateStatus: 'UNKNOWN',
+        carrierCreateAttempts: 1,
+        billingParty: credential.role,
+        accountFingerprint: credential.accountFingerprint,
+      },
+      suratCreateTrace: {
+        ...attemptContext,
+        ...parity,
+        carrierCreateStatus: 'UNKNOWN',
+        carrierCreateAttempts: 1,
+        carrierExceptionSummary: summary,
+      },
+      traceAttempt: appendTraceStage(traceAttempt, {
+        stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
+        data: {
+          outcome: 'SURAT_CANONICAL_RESULT_UNPARSEABLE',
+          carrierCreateStatus: 'UNKNOWN',
+          carrierCalled: true,
+          carrierExceptionSummary: summary,
+          ...parity,
+        },
+      }),
+    }
+  }
   traceAttempt = appendTraceStage(traceAttempt, {
     stage: 'REQUEST_READY', section: 'REQUEST', at: stamp(),
     data: {

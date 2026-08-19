@@ -2395,8 +2395,39 @@ app.post('/api/integrations/surat/test', async (request, response) => {
   })
 })
 
-app.post('/api/shipments/surat', createSuratShipment)
-app.post('/api/shipments/surat/create', createSuratShipment)
+// ═══ HER CREATE ÇIKIŞ YOLU İZ BIRAKIR ════════════════════════════════════
+//
+// ÖLÇÜLEN KUSUR (üretimde İKİNCİ kez görüldü): iz YALNIZ kanonik BAŞARI
+// dalında yazılıyordu. `createSuratShipment` beş ayrı noktadan dönebilir —
+// sipariş numarası yok · uçuş paylaşımı · idempotency replay/blocked ·
+// kanonik başarı · kanonik `catch` — ve bunların YALNIZ BİRİ iz yazıyordu.
+// Tam da tanı gereken durum (taşıyıcı istisnası) `catch` dalından dönüyor,
+// dolayısıyla hiç kaydedilmiyordu: Canlı Debug gerçek denemeden sonra da
+// "kayıt yok" diyordu.
+//
+// Çözüm dalları tek tek yamalamak DEĞİL: yanıt sınırını SARMAK. Hangi dal
+// dönerse dönsün, gövde bir iz taşıyorsa YAZILIR. Yazma awaited'dır; yanıt
+// gönderildikten sonra süreç izi kaybetmez.
+const withSuratTracePersistence = (handler) => async (request, response) => {
+  const originalJson = response.json.bind(response)
+  let pending = null
+  response.json = (body) => {
+    if (!pending) pending = persistSuratTraceAttempt(request, body)
+    return originalJson(body)
+  }
+  try {
+    await handler(request, response)
+  } finally {
+    response.json = originalJson
+    if (pending) await pending
+  }
+}
+
+app.post('/api/shipments/surat', withSuratTracePersistence(createSuratShipment))
+app.post(
+  '/api/shipments/surat/create',
+  withSuratTracePersistence(createSuratShipment),
+)
 app.post('/api/shipments/surat/label', createSuratLabelForRegisteredShipment)
 
 app.post('/api/diagnostics/surat/common-barcode-loop', (request, response) => {
@@ -3359,9 +3390,9 @@ async function createSuratShipmentCore(request, response) {
         cashOnDelivery: credentialSelection.cashOnDelivery === true,
         resolveAddress: resolveSingleShipmentAddress,
       })
-      // BAŞARILI ya da BAŞARISIZ — her gerçek deneme kaydedilir. Yalnız
-      // başarıda yazmak, tam da tanı gereken durumu (hata) kayıtsız bırakırdı.
-      await persistSuratTraceAttempt(request, canonicalResult)
+      // İz yazımı YANIT SINIRINDA (withSuratTracePersistence) yapılır; burada
+      // ikinci bir çağrı ÇİFT YAZIM olurdu. Yazıcı idempotenttir ama tek
+      // sorumluluk sınırda tutulur.
       response.json(canonicalResult)
     } catch (error) {
       // Girdi kusuru (ör. desi eksik): taşıyıcıya GİDİLMEDİ.

@@ -1,5 +1,4 @@
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { expect, test } from 'vitest'
 import { IntegrationDebugPage } from '../pages/IntegrationDebugPage'
 
@@ -44,15 +43,32 @@ test('DEBUG-2: varsayilan bolum Canli Debug (Trace V2)', () => {
   expect(screen.getAllByText('Canlı Debug').length).toBeGreaterThan(0)
   // Eski bolum ARTIK birincil baslik degil.
   expect(screen.queryByText('Sürat Ortak Barkod Tanı')).toBeNull()
-  expect(screen.getByText('Eski Teknik Tanı')).toBeTruthy()
 })
 
-test('DEBUG-3: eski tani ancak ACIKCA istenince gelir', async () => {
+// D5/D6/D7 — ESKI BOLUMLER VARSAYILAN EKRANDA HIC MOUNT EDILMEZ.
+//
+// OLCULEN KUSUR: bu bolumler yalniz KATLANMISTI; basliklari ve sayaclari
+// ("Eski Teknik Tani ~241", "Hata Merkezi ~241") normal ekranda GORUNMEYE
+// devam ediyor ve operatorun gercek denemeyi bulmasini engelliyordu.
+// Artik mount EDILMEZLER. Veri SILINMEZ, yalniz SORGULANMAZ.
+test('D5/D7: Eski Teknik Tani varsayilan DOMda YOK', () => {
   renderPage()
-  const toggle = screen.getByRole('button', { name: /Eski teknik tanıyı göster/ })
-  expect(toggle.textContent).toContain('42')
-  await userEvent.click(toggle)
-  expect(screen.queryAllByText('BARKOD BEKLİYOR').length).toBeGreaterThan(0)
+  expect(screen.queryByText('Eski Teknik Tanı')).toBeNull()
+  // Katlama dugmesi de YOK — bolum hic mount edilmiyor.
+  expect(screen.queryByRole('button', { name: /Eski teknik tanıyı göster/ }))
+    .toBeNull()
+})
+
+test('D6: Hata Merkezi varsayilan DOMda YOK', () => {
+  renderPage()
+  expect(screen.queryByText('Hata Merkezi')).toBeNull()
+})
+
+test('D5b: LEGACY_DEFAULT_ENTRIES_RENDERED=0', () => {
+  renderPage()
+  // Eski kayitlardan turetilen satirlar hic cizilmez.
+  expect(screen.queryAllByText('BARKOD BEKLİYOR').length).toBe(0)
+  expect(screen.queryAllByText(/Canlı baskı engellendi/).length).toBe(0)
 })
 
 test('DEBUG-4: genis silme dugmesi BIRINCIL ekranda YOK', () => {
