@@ -152,6 +152,78 @@ describe('Canlı Debug — gorunum modeli', () => {
   })
 })
 
+describe('Canlı Debug — tekrarlanan asama (append-only)', () => {
+  // Trace V2 asamalari EKLEMELIDIR: bir yeniden deneme ya da yeniden eklenen
+  // asama, AYNI adla ikinci kez yazilabilir. Sunucu izdusumu boyle bir izde
+  // SONUNCU girisi okur. Arayuz ILK girisi okursa operatore BAYAT veri
+  // gosterilir, ayni izi okuyan CLI denetcisi ise guncelini gosterir —
+  // "ayni iz, iki okuyucu, iki cevap" kusuru (CF-4088628726 ailesi).
+  const duplicated = () => {
+    const base = trace('CF-DUP')
+    return {
+      ...base,
+      stages: [
+        ...base.stages,
+        { stage: 'PRE_FLIGHT', at: 'y', section: 'BILLING', data: {
+          billingParty: 'SELLER_PAYS', expectedSuratWhoPays: '1',
+          odemeTipi: '2', codEnabled: true,
+          preflightValid: false, preflightFailures: ['COD_LIMIT'] } },
+        { stage: 'REQUEST_READY', at: 'y', section: 'REQUEST', data: {
+          wireWhoPaysPresent: true, wireWhoPaysValue: '1' } },
+        { stage: 'CARRIER_RESPONSE', at: 'y', section: 'RESPONSE', data: {
+          businessCode: '000', businessMessage: 'ikinci-deneme' } },
+        { stage: 'VERIFICATION', at: 'y', section: 'VERIFICATION', data: {
+          trackingPresent: false, barcodePresent: false } },
+        { stage: 'FINAL', at: 'y', section: 'FINAL_RESULT', data: {
+          carrierCreateStatus: 'FAILED', carrierCalled: true } },
+      ],
+    }
+  }
+
+  it('SONRAKI girisin verisi gosterilir, ilkininki DEGIL', () => {
+    const model = buildLiveDebugViewModel(duplicated())!
+    expect(model.expected.billingParty).toBe('SELLER_PAYS')
+    expect(model.expected.expectedSuratWhoPays).toBe('1')
+    expect(model.decision.billing.billingParty).toBe('SELLER_PAYS')
+    expect(model.decision.payment.odemeTipi).toBe('2')
+    expect(model.decision.cod.codEnabled).toBe(true)
+    expect(model.request.wireWhoPaysPresent).toBe(true)
+    expect(model.response.businessMessage).toBe('ikinci-deneme')
+    expect(model.verification.trackingPresent).toBe(false)
+    expect(model.finalResult.carrierCreateStatus).toBe('FAILED')
+  })
+
+  it('bayat ILK giris hicbir alandan SIZMAZ', () => {
+    const model = buildLiveDebugViewModel(duplicated())!
+    expect(model.preflight.passed).toBe(false)
+    expect(model.preflight.failures).toEqual(['COD_LIMIT'])
+    // Ilk PRE_FLIGHT gecerliydi, ilk FINAL basariliydi, ilk yanit 016'ydi.
+    expect(model.expected.billingParty).not.toBe('TRENDYOL_PAYS')
+    expect(JSON.stringify(model)).not.toContain('yanit-CF-DUP')
+    expect(buildTraceableUserError(model)).toContain('CF-DUP')
+  })
+
+  it('tekrar YOKSA davranis DEGISMEZ', () => {
+    const model = buildLiveDebugViewModel(trace('CF-A'))!
+    expect(model.expected.billingParty).toBe('TRENDYOL_PAYS')
+    expect(model.response.businessMessage).toBe('yanit-CF-A')
+  })
+
+  it('arayuz ile sunucu izdusumu AYNI girisi secer', async () => {
+    // Iki okuyucu ayni kurala baglidir; biri degisirse bu test duser.
+    const { stageData } = await import(
+      '../../server/shipments/suratTraceProjection')
+    const withDuplicates = duplicated()
+    const model = buildLiveDebugViewModel(withDuplicates)!
+    expect(stageData(withDuplicates.stages, 'PRE_FLIGHT')?.billingParty)
+      .toBe(model.expected.billingParty)
+    expect(stageData(withDuplicates.stages, 'CARRIER_RESPONSE')?.businessMessage)
+      .toBe(model.response.businessMessage)
+    expect(stageData(withDuplicates.stages, 'FINAL')?.carrierCreateStatus)
+      .toBe(model.finalResult.carrierCreateStatus)
+  })
+})
+
 describe('create hatasi mesaji', () => {
   it('etiketin OLUSTUGUNU iddia ETMEZ', async () => {
     const { LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE } =
