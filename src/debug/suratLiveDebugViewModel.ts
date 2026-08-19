@@ -32,11 +32,24 @@ export function redactForDisplay(value: unknown): unknown {
   return value
 }
 
+/**
+ * Aynı aşama birden çok kez varsa SONUNCUSU geçerlidir (append-only) —
+ * sunucu izdüşümündeki `stageData` ile AYNI kural.
+ *
+ * İLK eşleşmeyi okumak, yeniden denenen ya da yeniden eklenen bir aşamada
+ * operatöre BAYAT veriyi gösterirdi; aynı izi okuyan CLI denetçisi ise
+ * güncelini gösterirdi. "Aynı iz, iki okuyucu, iki cevap" kusuru budur
+ * (CF-4088628726 ailesi).
+ */
 const stageData = (
   trace: StoredTrace, stage: string,
 ): Record<string, unknown> => {
-  const entry = trace.stages.find((item) => item.stage === stage)
-  return (entry?.data as Record<string, unknown>) ?? {}
+  for (let i = trace.stages.length - 1; i >= 0; i -= 1) {
+    if (trace.stages[i]?.stage === stage) {
+      return (trace.stages[i]?.data as Record<string, unknown>) ?? {}
+    }
+  }
+  return {}
 }
 
 export interface LiveDebugViewModel {
