@@ -11,6 +11,33 @@ import test from 'node:test'
 const ART = await import('./shipments/suratPrintableArtifact.ts')
 const ADAPTER = await import('./shipments/suratCanonicalCreateAdapter.ts')
 
+// KIMLIK ARTIK OTORITER ANLIK GORUNTUDEN gelir. Bu testler `config` ile KIRACI
+// hesabini temsil ediyordu; ayni degerler artik KIRACI DEPOSU olarak anlik
+// goruntuye verilir. Guard GEVSETILMEDI — yalniz kaynak duzeltildi.
+const __SNAP = await import('./shipments/suratCredentialSnapshot.ts')
+const __ROUTING = await import('./shipments/suratRoutingModel.ts')
+const callCanonicalCreate = (p) =>
+  ADAPTER.createCanonicalSuratShipmentForRequest({
+    ...p,
+    credentialSnapshot: __SNAP.buildSuratCredentialSnapshot({
+      storedSuratConfig: p.config ?? {},
+      role: __ROUTING.resolveSuratCredentialContext({
+        config: p.config ?? {},
+        billingParty: __ROUTING.resolveBillingPartyV2(
+          p.order?.rawOrder ?? {},
+        ).billingParty,
+        cod: __ROUTING.resolveCodContext({
+          enabled: p.cashOnDelivery === true,
+          collectionType: p.config?.kapidanOdemeTahsilatTipi,
+          amount: p.order?.cashOnDeliveryAmount,
+        }),
+        codPolicy: __ROUTING.resolveCodCredentialPolicy(
+          p.config?.codCredentialPolicy,
+        ),
+      }).role,
+    }),
+  })
+
 const INDEX_SOURCE = await (async () => {
   const { readFile } = await import('node:fs/promises')
   return readFile(new URL('./index.mjs', import.meta.url), 'utf8')
@@ -66,7 +93,7 @@ const baseOrder = {
 }
 
 async function runCanonical(overrides = {}) {
-  return ADAPTER.createCanonicalSuratShipmentForRequest({
+  return callCanonicalCreate({
     organizationId: overrides.organizationId ?? 'org-A',
     config: overrides.config ?? fullConfig,
     order: { ...baseOrder, ...(overrides.order ?? {}) },
@@ -238,7 +265,7 @@ test('3B-PROD-2: uretim seklindeki normal gonderi BIRINCIL hesabi kullanir', asy
   const spy = installFetchSpy(() => jsonResponse(okBody()))
   try {
     const derived = MODE.deriveCanonicalPrimaryAccount(PRODUCTION_SHAPED_PAYLOAD)
-    await ADAPTER.createCanonicalSuratShipmentForRequest({
+    await callCanonicalCreate({
       organizationId: 'org-monalisa',
       config: { ...PRODUCTION_SHAPED_PAYLOAD, ...derived },
       order: baseOrder,
@@ -303,7 +330,7 @@ test('3B-PROD-6: uretim seklinde sellerPays/COD normal gonderiyi ELE GECIRMEZ', 
   const config = { ...withAll, ...MODE.deriveCanonicalPrimaryAccount(withAll) }
   const spy = installFetchSpy(() => jsonResponse(okBody()))
   try {
-    await ADAPTER.createCanonicalSuratShipmentForRequest({
+    await callCanonicalCreate({
       organizationId: 'org-monalisa', config, order: baseOrder, reference: 'PKG-1',
     })
     const body = spy.calls[0].init.body
@@ -328,7 +355,7 @@ test('3B-PROD-7: uretim seklinde tenant izolasyonu korunur', async () => {
   const spy = installFetchSpy(() => jsonResponse(okBody()))
   try {
     for (const [org, raw] of [['org-A', a], ['org-B', b]]) {
-      await ADAPTER.createCanonicalSuratShipmentForRequest({
+      await callCanonicalCreate({
         organizationId: org,
         config: { ...raw, ...MODE.deriveCanonicalPrimaryAccount(raw) },
         order: baseOrder, reference: 'PKG-1',
@@ -348,7 +375,7 @@ test('3B-UI-1: UI Musteri Kodu alani kanonik birincil hesaba ULASIR', async () =
   // canonicalPrimary* alanlarini turetir ve kanonik yol onu okur.
   const spy = installFetchSpy(() => jsonResponse(okBody()))
   try {
-    await ADAPTER.createCanonicalSuratShipmentForRequest({
+    await callCanonicalCreate({
       organizationId: 'org-A',
       config: {
         serviceMode: 'SURAT_CANONICAL_API',

@@ -355,9 +355,15 @@ export async function createCanonicalSuratShipmentForRequest(
     source: snapshotUsable ? snapshot.source : 'MISSING_SNAPSHOT',
     resolved: snapshotUsable ? snapshot.resolved : false,
     accountFingerprint: snapshotUsable ? snapshot.accountFingerprint : '',
+    // GRANÜLER SEBEP ROLDEN türetilir — config'ten DEĞİL. Böylece hangi rolün
+    // kimliği eksik olduğu görünür kalır ve etiket istemci girdisine bağlı olmaz.
     errorCode: snapshotUsable && snapshot.resolved
       ? null
-      : 'SURAT_ACCOUNT_NOT_CONFIGURED',
+      : roleContext.role === 'SELLER_PAYS'
+        ? 'SELLER_PAYS_CREDENTIAL_NOT_CONFIGURED'
+        : roleContext.role === 'COD'
+          ? 'COD_CREDENTIAL_NOT_CONFIGURED'
+          : 'PRIMARY_CREDENTIAL_NOT_CONFIGURED',
   }
   const preflight = evaluateSuratCreatePreflight({
     marketplace: params.order.marketplace,

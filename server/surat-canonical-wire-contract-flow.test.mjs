@@ -10,6 +10,33 @@ import test from 'node:test'
 
 const ADAPTER = await import('./shipments/suratCanonicalCreateAdapter.ts')
 
+// KIMLIK ARTIK OTORITER ANLIK GORUNTUDEN gelir. Bu testler `config` ile KIRACI
+// hesabini temsil ediyordu; ayni degerler artik KIRACI DEPOSU olarak anlik
+// goruntuye verilir. Guard GEVSETILMEDI — yalniz kaynak duzeltildi.
+const __SNAP = await import('./shipments/suratCredentialSnapshot.ts')
+const __ROUTING = await import('./shipments/suratRoutingModel.ts')
+const callCanonicalCreate = (p) =>
+  ADAPTER.createCanonicalSuratShipmentForRequest({
+    ...p,
+    credentialSnapshot: __SNAP.buildSuratCredentialSnapshot({
+      storedSuratConfig: p.config ?? {},
+      role: __ROUTING.resolveSuratCredentialContext({
+        config: p.config ?? {},
+        billingParty: __ROUTING.resolveBillingPartyV2(
+          p.order?.rawOrder ?? {},
+        ).billingParty,
+        cod: __ROUTING.resolveCodContext({
+          enabled: p.cashOnDelivery === true,
+          collectionType: p.config?.kapidanOdemeTahsilatTipi,
+          amount: p.order?.cashOnDeliveryAmount,
+        }),
+        codPolicy: __ROUTING.resolveCodCredentialPolicy(
+          p.config?.codCredentialPolicy,
+        ),
+      }).role,
+    }),
+  })
+
 const ORDER = {
   marketplace: 'Trendyol',
   orderNumber: '11516641186',
@@ -29,7 +56,7 @@ async function captureWireBody(overrides = {}) {
     return { ok: true, status: 200, json: async () => ({}), text: async () => '{}' }
   }
   try {
-    await ADAPTER.createCanonicalSuratShipmentForRequest({
+    await callCanonicalCreate({
       organizationId: 'org-A',
       config: {
         serviceMode: 'SURAT_CANONICAL_API',

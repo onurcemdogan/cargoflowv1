@@ -31,7 +31,15 @@
 
 import { accountFingerprint } from './suratRoutingModel.ts'
 
-export const CREDENTIAL_SNAPSHOT_SOURCE = 'tenant.surat.store' as const
+/**
+ * Kaynak etiketi ROLE ÖZELDİR — mevcut iz sözleşmesi böyle (`tenant.surat.primary`).
+ * Etiket düzleştirilmedi: hangi rolün deposundan geldiği görünür kalmalı.
+ */
+export const CREDENTIAL_SNAPSHOT_SOURCE_BY_ROLE = {
+  PRIMARY_MARKETPLACE: 'tenant.surat.primary',
+  SELLER_PAYS: 'tenant.surat.sellerPays',
+  COD: 'tenant.surat.cod',
+} as const
 
 export type SuratCredentialRoleKey =
   | 'PRIMARY_MARKETPLACE'
@@ -41,7 +49,7 @@ export type SuratCredentialRoleKey =
 export interface SuratCredentialSnapshot {
   /** DEĞİŞMEZ: bir deneme boyunca yeniden çözümlenmez. */
   readonly role: SuratCredentialRoleKey
-  readonly source: typeof CREDENTIAL_SNAPSHOT_SOURCE
+  readonly source: string
   readonly kullaniciAdi: string
   readonly sifre: string
   readonly accountFingerprint: string
@@ -98,7 +106,8 @@ export function buildSuratCredentialSnapshot(params: {
   const resolved = Boolean(kullaniciAdi && sifre)
   return Object.freeze({
     role: params.role,
-    source: CREDENTIAL_SNAPSHOT_SOURCE,
+    source: CREDENTIAL_SNAPSHOT_SOURCE_BY_ROLE[params.role]
+      ?? CREDENTIAL_SNAPSHOT_SOURCE_BY_ROLE.PRIMARY_MARKETPLACE,
     kullaniciAdi,
     sifre,
     accountFingerprint: accountFingerprint(kullaniciAdi),

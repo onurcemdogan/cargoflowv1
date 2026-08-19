@@ -74,7 +74,7 @@ test('CRED-2: istek govdesindeki kimlik YOK SAYILIR, tel A olur', () => {
     storedSuratConfig: TENANT_STORE, role: 'PRIMARY_MARKETPLACE',
   })
   assert.equal(snapshot.kullaniciAdi, TENANT_STORE.canonicalPrimaryKullaniciAdi)
-  assert.equal(snapshot.source, 'tenant.surat.store')
+  assert.equal(snapshot.source, 'tenant.surat.primary')
   // Govde ile ayni fonksiyona girse bile sonuc DEGISMEZ (govde parametre degil).
   const again = SNAP.buildSuratCredentialSnapshot({
     storedSuratConfig: TENANT_STORE, role: 'PRIMARY_MARKETPLACE',
