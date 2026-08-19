@@ -428,11 +428,18 @@ test('DEBUG-14: create yolu izi GERCEKTEN kalicilastirir', () => {
   const source = readFileSync(join(here, 'index.mjs'), 'utf8')
   assert.match(source, /async function persistSuratTraceAttempt\(/)
   assert.match(source, /repository\.persistTraceAttempt\(/)
-  // Kanonik dalda, yanit yazilmadan ONCE cagrilir.
-  const callAt = source.indexOf('await persistSuratTraceAttempt(request, canonicalResult)')
-  const respondAt = source.indexOf('response.json(canonicalResult)')
-  assert.ok(callAt > 0, 'iz kalicilastirma create yoluna BAGLANMAMIS')
-  assert.ok(callAt < respondAt, 'iz yanittan SONRA yazilmaya calisiliyor')
+  // ARTIK YANIT SINIRINDA: tek dal degil, TUM cikis yollari kapsanir.
+  // (Onceki surum yalniz kanonik BASARI dalini kapsiyordu; uretimde basarisiz
+  // deneme `catch` dalindan donuyor ve hic kaydedilmiyordu.)
+  assert.match(source, /const withSuratTracePersistence = \(handler\) =>/)
+  assert.match(
+    source,
+    /app\.post\('\/api\/shipments\/surat', withSuratTracePersistence\(createSuratShipment\)\)/,
+  )
+  const wrapAt = source.indexOf('const withSuratTracePersistence')
+  const region = source.slice(wrapAt, wrapAt + 900)
+  // Yazma AWAITED; yanit gonderildikten sonra iz kaybolmaz.
+  assert.match(region, /if \(pending\) await pending/)
   // Saklama siniri da uygulanir.
   assert.match(source, /applyTraceRetentionForTenant\(/)
 })
