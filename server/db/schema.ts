@@ -558,6 +558,51 @@ export const organizationSettings = pgTable('organization_settings', {
     .defaultNow(),
 })
 
+// SÜRAT CREATE DEBUG İZLERİ (Trace V2) — YALNIZ DEBUG.
+//
+// NEDEN AYRI TABLO: `shipment_operations` OPERASYONEL kayıttır (idempotency,
+// para, tesellüm kanıtı). Debug geçmişi silinebilir olmalıdır; operasyonel
+// kayıt ASLA. İkisini aynı tabloda tutmak, "debug'ı temizle" işleminin
+// operasyonel veriyi silme riskini doğururdu. Bu yüzden AYRI tablodur ve
+// `shipment_operations` debug geçmişi olarak KULLANILMAZ.
+//
+// SIR YAZILMAZ: aşamalar zaten REDACTED anlık görüntülerdir.
+export const suratTraceAttempts = pgTable(
+  'surat_trace_attempts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    // Bir deneme = bir traceId. Kiracı kapsamında TEKİLDİR.
+    traceId: text('trace_id').notNull(),
+    schemaVersion: integer('schema_version').notNull().default(2),
+    orderNumber: text('order_number'),
+    packageId: text('package_id'),
+    marketplace: text('marketplace'),
+    serviceMode: text('service_mode'),
+    operation: text('operation'),
+    finalState: text('final_state'),
+    // Append-only aşamalar + redacted özet. Deneme DEĞİŞMEZDİR: aynı traceId
+    // ikinci kez yazılmaz (unique), yalnız aşama eklenir.
+    stages: jsonb('stages').notNull(),
+    summary: jsonb('summary'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('surat_trace_attempts_org_trace_unique').on(
+      table.organizationId,
+      table.traceId,
+    ),
+    index('surat_trace_attempts_org_created_idx').on(
+      table.organizationId,
+      table.createdAt,
+    ),
+  ],
+)
+
 // Sağlayıcı/kaynak bazlı son başarılı senkron durumu (organization bazlı).
 // Onboarding tamamlanma kriteri "kayıt sayısı > 0"a değil, başarılı sync
 // metadata'sına dayanır (ilk sync boş sonuç dönebilir). Dashboard analytics

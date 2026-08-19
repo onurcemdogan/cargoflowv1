@@ -3127,6 +3127,46 @@ async function createSuratShipment(request, response) {
   }
 }
 
+// TRACE V2 KALICILAŞTIRMA — DEBUG-ONLY, BEST-EFFORT.
+//
+// ÖLÇÜLEN KUSUR: iz ÜRETİLİYOR ama HİÇBİR YERE YAZILMIYORDU. Sunucu
+// `traceAttempt` döndürüyor, istemci onu HİÇ okumuyor ve istemci deposunun
+// yazıcısı HİÇ çağrılmıyordu. Sonuç: gerçek bir denemeden sonra bile Canlı
+// Debug boştu. Artık iz SUNUCUDA saklanır; sayfa yenilense de durur.
+//
+// BEST-EFFORT: debug yazımı create sonucunu ASLA etkilemez.
+async function persistSuratTraceAttempt(request, result) {
+  try {
+    const organizationId = request?.auth?.organizationId
+    if (!organizationId || !isTenantAuthMode()) return
+    const attempt = result?.traceAttempt
+    const traceId = String(attempt?.traceId ?? result?.suratCreateTrace?.traceId ?? '')
+    if (!traceId) return
+    const [{ getDb }, repository] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/suratTraceRepository.ts'),
+    ])
+    const db = getDb()
+    const trace = result?.suratCreateTrace ?? {}
+    await repository.persistTraceAttempt(db, organizationId, {
+      traceId,
+      createdAt: attempt?.createdAt,
+      stages: attempt?.stages ?? [],
+      summary: trace,
+      orderNumber: request?.body?.order?.orderNumber,
+      packageId: request?.body?.order?.packageId
+        ?? request?.body?.order?.shipmentPackageId,
+      marketplace: request?.body?.order?.marketplace,
+      serviceMode: trace.serviceMode,
+      operation: trace.operation,
+      finalState: trace.carrierCreateStatus ?? trace.finalClassification ?? null,
+    })
+    await repository.applyTraceRetentionForTenant(db, organizationId)
+  } catch {
+    // Debug kaydı create sonucunu BOZMAZ.
+  }
+}
+
 async function createSuratShipmentCore(request, response) {
   const order = request.body?.order
   const fullConfig = request.body?.config ?? {}
@@ -3262,16 +3302,18 @@ async function createSuratShipmentCore(request, response) {
       './shipments/suratCanonicalCreateAdapter.ts'
     )
     try {
-      response.json(
-        await createCanonicalSuratShipmentForRequest({
-          organizationId: String(request.auth?.organizationId ?? ''),
-          config: request.body?.config?.surat ?? request.body?.config ?? {},
-          order: orderForSurat,
-          reference,
-          cashOnDelivery: credentialSelection.cashOnDelivery === true,
-          resolveAddress: resolveSingleShipmentAddress,
-        }),
-      )
+      const canonicalResult = await createCanonicalSuratShipmentForRequest({
+        organizationId: String(request.auth?.organizationId ?? ''),
+        config: request.body?.config?.surat ?? request.body?.config ?? {},
+        order: orderForSurat,
+        reference,
+        cashOnDelivery: credentialSelection.cashOnDelivery === true,
+        resolveAddress: resolveSingleShipmentAddress,
+      })
+      // BAŞARILI ya da BAŞARISIZ — her gerçek deneme kaydedilir. Yalnız
+      // başarıda yazmak, tam da tanı gereken durumu (hata) kayıtsız bırakırdı.
+      await persistSuratTraceAttempt(request, canonicalResult)
+      response.json(canonicalResult)
     } catch (error) {
       // Girdi kusuru (ör. desi eksik): taşıyıcıya GİDİLMEDİ.
       response.json({
