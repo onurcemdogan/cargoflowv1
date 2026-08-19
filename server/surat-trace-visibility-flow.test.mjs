@@ -235,3 +235,87 @@ test('VIS-4: iz yazimi create yanitini BOZMAZ', () => {
   assert.match(body, /try \{/)
   assert.match(body, /\} catch \{/)
 })
+
+/* ═══ R1..R5 — OKUMA YOLU (üretim kusuru: DBde 2 iz, arayüz "kayıt yok") ═══ */
+
+test('R1: REJECTED iz de API tarafindan DONDURULUR', async () => {
+  const { db, organizationId } = await freshDb()
+  // Uretimdeki iki gercek iz: IKISI DE REJECTED.
+  await repo.persistTraceAttempt(db, organizationId, {
+    traceId: 'CF-4088060589', createdAt: '2026-08-19T08:23:21.737Z',
+    stages: [], orderNumber: '11519247408', packageId: '4088060589',
+    serviceMode: 'SURAT_CANONICAL_API', operation: 'OrtakBarkodOlustur',
+    finalState: 'REJECTED',
+  })
+  await repo.persistTraceAttempt(db, organizationId, {
+    traceId: 'CF-4088105329', createdAt: '2026-08-19T09:05:37.912Z',
+    stages: [], orderNumber: '11519297641', packageId: '4088105329',
+    serviceMode: 'SURAT_CANONICAL_API', operation: 'OrtakBarkodOlustur',
+    finalState: 'REJECTED',
+  })
+  const rows = await repo.listTraceAttempts(db, organizationId, 50)
+  assert.equal(rows.length, 2, 'REJECTED izler SUZULDU')
+  for (const row of rows) assert.equal(row.finalState, 'REJECTED')
+})
+
+test('R2: EN YENI REJECTED iz "Son Deneme" olur', async () => {
+  const { db, organizationId } = await freshDb()
+  await repo.persistTraceAttempt(db, organizationId, {
+    traceId: 'CF-4088060589', createdAt: '2026-08-19T08:23:21.737Z',
+    stages: [], finalState: 'REJECTED', orderNumber: '11519247408',
+  })
+  await repo.persistTraceAttempt(db, organizationId, {
+    traceId: 'CF-4088105329', createdAt: '2026-08-19T09:05:37.912Z',
+    stages: [], finalState: 'REJECTED', orderNumber: '11519297641',
+  })
+  const latest = await repo.readLatestTraceAttempt(db, organizationId)
+  // BASARI filtresi YOK: basarisiz deneme de Son Deneme olabilir.
+  assert.equal(latest.traceId, 'CF-4088105329')
+  assert.equal(latest.finalState, 'REJECTED')
+  assert.equal(latest.orderNumber, '11519297641')
+})
+
+test('R3: KIRACI izolasyonu — B kiracisi A izlerini GORMEZ', async () => {
+  const { db, organizationId } = await freshDb()
+  const [other] = await db.insert(schema.organizations)
+    .values({ name: 'b', slug: `b-${randomBytes(4).toString('hex')}` })
+    .returning()
+  await repo.persistTraceAttempt(db, organizationId, {
+    traceId: 'CF-A', createdAt: '2026-08-19T09:00:00Z', stages: [],
+  })
+  assert.equal((await repo.listTraceAttempts(db, other.id)).length, 0)
+  assert.equal(await repo.readLatestTraceAttempt(db, other.id), null)
+})
+
+test('R4: yeniden okuma AYNI izi dondurur', async () => {
+  const { db, organizationId } = await freshDb()
+  await repo.persistTraceAttempt(db, organizationId, {
+    traceId: 'CF-4088105329', createdAt: '2026-08-19T09:05:37.912Z', stages: [],
+  })
+  const a = await repo.readLatestTraceAttempt(db, organizationId)
+  const b = await repo.readLatestTraceAttempt(db, organizationId)
+  assert.equal(a.traceId, b.traceId)
+})
+
+/* ═══ KÖK NEDEN — İKİ AYRI SIRA/KAPI KUSURU ═════════════════════════ */
+
+test('R-API-1: debug ucu /api 404 CATCH-ALLDAN ONCE kayitli', () => {
+  // OLCULEN KUSUR: uc, bilinmeyen /api/* isteklerini yutan 404 catch-all'dan
+  // SONRA kayit edilmisti. Express kayit SIRASINA gore eslestirir, dolayisiyla
+  // istek uca HIC ULASMIYOR ve 404 donuyordu — DBde iki iz varken.
+  const getAt = SOURCE.indexOf("app.get('/api/debug/surat-traces'")
+  const deleteAt = SOURCE.indexOf("app.delete('/api/debug/surat-traces'")
+  const catchAllAt = SOURCE.indexOf("app.use('/api', (_request, response) => {")
+  assert.ok(getAt > 0 && deleteAt > 0 && catchAllAt > 0, 'rotalar/catch-all yok')
+  assert.ok(getAt < catchAllAt, 'GET ucu catch-alldan SONRA kayitli')
+  assert.ok(deleteAt < catchAllAt, 'DELETE ucu catch-alldan SONRA kayitli')
+})
+
+test('R-API-2: /api/debug tenantAuth kapisinda', () => {
+  // Ayni kok neden ikinci kez: yol TENANT_AUTH_PATHS icinde olmazsa
+  // `tenantAuth` calismaz, `request.auth` bos kalir ve guard 404 doner.
+  const at = SOURCE.indexOf('const TENANT_AUTH_PATHS = [')
+  const end = SOURCE.indexOf(']', at)
+  const list = SOURCE.slice(at, end)
+  assert.match(list, /'\/api\/debug'/, '/api/debug auth kapisinda DEGIL')
+})

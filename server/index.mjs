@@ -348,6 +348,11 @@ const TENANT_AUTH_PATHS = [
   // uç, diğer org-kapsamlı uçlarla AYNI auth kapısının arkasına alındı.
   '/api/labels/render',
   '/api/printing/zebra',
+  // AYNI KÖK NEDEN, İKİNCİ KEZ: Trace V2 okuma ucu bu listede YOKTU, bu yüzden
+  // `tenantAuth` hiç çalışmıyor, `request.auth` boş kalıyor ve uç 404 dönüyordu
+  // — üretimde `surat_trace_attempts` İKİ satır taşırken Canlı Debug "kayıt
+  // yok" diyordu.
+  '/api/debug',
 ]
 const TENANT_INJECT_PATHS = [
   '/api/trendyol',
@@ -2618,6 +2623,61 @@ app.post('/api/printing/zebra/raw', async (request, response) => {
   })
 })
 
+// ═══ SIRA KRİTİK ═════════════════════════════════════════════════════════
+// Aşağıdaki debug uçları, bilinmeyen `/api/*` isteklerini yutan 404
+// catch-all'dan ÖNCE kayıt edilmek ZORUNDA. Express kayıt SIRASINA göre
+// eşleştirir: catch-all'dan sonra kayıt edilen bir /api rotasına istek HİÇ
+// ULAŞMAZ. Ölçülen sonuç tam olarak buydu — DB'de iki iz varken uç 404
+// döndürüyor, arayüz "kayıt yok" diyordu.
+// ═══ DEBUG-ONLY TRACE V2 UÇLARI ═══════════════════════════════════════════
+//
+// YALNIZ debug verisi. Operasyonel tablolara DOKUNMAZ.
+//
+// Neden sunucuda: iz eskiden yalnız yanıtla dönüyordu ve hiçbir yere
+// yazılmıyordu; sayfa yenilenince kayboluyordu. Artık kiracı kapsamında
+// saklanır ve buradan okunur.
+app.get('/api/debug/surat-traces', async (request, response) => {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) {
+    response.status(404).json({ ok: false, traces: [] })
+    return
+  }
+  try {
+    const [{ getDb }, repository] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/suratTraceRepository.ts'),
+    ])
+    const traces = await repository.listTraceAttempts(
+      getDb(), request.auth.organizationId, 50,
+    )
+    response.json({ ok: true, traces })
+  } catch {
+    response.status(503).json({ ok: false, traces: [] })
+  }
+})
+
+// TÜM DEBUG GEÇMİŞİNİ SİLER. Sipariş, gönderi, operasyon, idempotency ve
+// etiket kayıtlarına DOKUNMAZ — silme yalnız debug tablosunu adlandırır.
+app.delete('/api/debug/surat-traces', async (request, response) => {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) {
+    response.status(404).json({ ok: false })
+    return
+  }
+  try {
+    const [{ getDb }, repository] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/suratTraceRepository.ts'),
+    ])
+    await repository.clearTraceAttempts(getDb(), request.auth.organizationId)
+    response.json({
+      ok: true,
+      cleared: 'SURAT_TRACE_ATTEMPTS',
+      operationalDataDeleted: 0,
+    })
+  } catch {
+    response.status(503).json({ ok: false })
+  }
+})
+
 // Bilinmeyen /api/* istekleri SPA fallback'e DÜŞMEZ; 404 JSON döner. Tüm
 // gerçek /api route'ları yukarıda tanımlıdır; buraya yalnız eşleşmeyen API
 // yolları düşer.
@@ -3074,55 +3134,6 @@ async function startSuratTrackingReconcileOnBoot() {
     // BEST-EFFORT: kurulamazsa uygulama normal çalışır, mutabakat yapılmaz.
   }
 }
-
-// ═══ DEBUG-ONLY TRACE V2 UÇLARI ═══════════════════════════════════════════
-//
-// YALNIZ debug verisi. Operasyonel tablolara DOKUNMAZ.
-//
-// Neden sunucuda: iz eskiden yalnız yanıtla dönüyordu ve hiçbir yere
-// yazılmıyordu; sayfa yenilenince kayboluyordu. Artık kiracı kapsamında
-// saklanır ve buradan okunur.
-app.get('/api/debug/surat-traces', async (request, response) => {
-  if (!isTenantAuthMode() || !request.auth?.organizationId) {
-    response.status(404).json({ ok: false, traces: [] })
-    return
-  }
-  try {
-    const [{ getDb }, repository] = await Promise.all([
-      import('./db/client.ts'),
-      import('./shipments/suratTraceRepository.ts'),
-    ])
-    const traces = await repository.listTraceAttempts(
-      getDb(), request.auth.organizationId, 50,
-    )
-    response.json({ ok: true, traces })
-  } catch {
-    response.status(503).json({ ok: false, traces: [] })
-  }
-})
-
-// TÜM DEBUG GEÇMİŞİNİ SİLER. Sipariş, gönderi, operasyon, idempotency ve
-// etiket kayıtlarına DOKUNMAZ — silme yalnız debug tablosunu adlandırır.
-app.delete('/api/debug/surat-traces', async (request, response) => {
-  if (!isTenantAuthMode() || !request.auth?.organizationId) {
-    response.status(404).json({ ok: false })
-    return
-  }
-  try {
-    const [{ getDb }, repository] = await Promise.all([
-      import('./db/client.ts'),
-      import('./shipments/suratTraceRepository.ts'),
-    ])
-    await repository.clearTraceAttempts(getDb(), request.auth.organizationId)
-    response.json({
-      ok: true,
-      cleared: 'SURAT_TRACE_ATTEMPTS',
-      operationalDataDeleted: 0,
-    })
-  } catch {
-    response.status(503).json({ ok: false })
-  }
-})
 
 app.listen(port, host, () => {
   console.log(`CargoFlow API listening on http://${host}:${port}`)
