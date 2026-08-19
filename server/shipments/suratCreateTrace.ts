@@ -291,7 +291,13 @@ const TRACE_SECRET_HINTS = [
 
 // `credentialRole` / `credentialSource` gibi alanlar SIR DEĞİLDİR; teşhis
 // için gereken yönlendirme kararıdır. Yalnız ham kimlik değerleri maskelenir.
-const TRACE_SAFE_SUFFIXES = ['role', 'source', 'policy', 'reason', 'resolved']
+// `sifrePresent` bir BOOLEAN'dir ve sir TASIMAZ; `...Fingerprint` zaten
+// turetilmis maskedir. Genis sonek eslemesi bunlari «REDACTED» yapiyor ve
+// izi teshis edilemez birakiyordu.
+const TRACE_SAFE_SUFFIXES = [
+  'role', 'source', 'policy', 'reason', 'resolved',
+  'present', 'fingerprint', 'length', 'type',
+]
 
 /**
  * Sırları ayıklar. `maskedAccount`/`maskedCari` gibi zaten maskeli alanlar
@@ -359,7 +365,9 @@ export function createTraceAttempt(params: {
 export function appendTraceStage(
   attempt: SuratTraceAttempt,
   entry: {
-    stage: (typeof TRACE_LIFECYCLE_STAGES)[number]
+    // ALTERNATIF asamalar da GECERLIDIR: aga cikilmadiginda `WIRE_BLOCKED`
+    // yazilir ve o da kabul edilen bir asama adidir.
+    stage: (typeof TRACE_ALL_STAGES)[number]
     at: string
     section?: (typeof TRACE_SECTIONS)[number] | null
     data?: unknown

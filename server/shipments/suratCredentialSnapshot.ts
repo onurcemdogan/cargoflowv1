@@ -129,6 +129,14 @@ const pick = (store: Record<string, unknown>, keys: string[]): string => {
 export function buildSuratCredentialSnapshot(params: {
   storedSuratConfig?: Record<string, unknown> | null
   role: SuratCredentialRoleKey
+  /**
+   * KAYNAK ETİKETİ — yalnız depo GERÇEKTEN kiracı deposu DEĞİLSE verilir.
+   *
+   * Tek kullanıcılı yerel kurulumda kiracı deposu YOKTUR; kimlik yerel
+   * yapılandırmadan gelir. O durumda etiketin `tenant.surat.*` demesi
+   * okuyucuya YANLIŞ bilgi verirdi.
+   */
+  sourceLabel?: string
 }): SuratCredentialSnapshot {
   const store = params.storedSuratConfig ?? {}
   const fields = ROLE_FIELDS[params.role] ?? ROLE_FIELDS.PRIMARY_MARKETPLACE
@@ -137,7 +145,8 @@ export function buildSuratCredentialSnapshot(params: {
   const resolved = Boolean(kullaniciAdi && sifre)
   return Object.freeze({
     role: params.role,
-    source: CREDENTIAL_SNAPSHOT_SOURCE_BY_ROLE[params.role]
+    source: params.sourceLabel
+      ?? CREDENTIAL_SNAPSHOT_SOURCE_BY_ROLE[params.role]
       ?? CREDENTIAL_SNAPSHOT_SOURCE_BY_ROLE.PRIMARY_MARKETPLACE,
     kullaniciAdi,
     sifre,
