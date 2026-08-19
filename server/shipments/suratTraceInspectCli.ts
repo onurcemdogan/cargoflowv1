@@ -16,6 +16,10 @@ import { and, desc, eq } from 'drizzle-orm'
 import { getDb, isDatabaseConfigured, closePool } from '../db/client.ts'
 import { suratTraceAttempts } from '../db/schema.ts'
 import { redactTraceValue } from './suratCreateTrace.ts'
+import {
+  projectActualWire,
+  projectCarrierTruth,
+} from './suratTraceProjection.ts'
 
 const readArg = (name: string): string => {
   const index = process.argv.indexOf(`--${name}`)
@@ -117,18 +121,37 @@ function report(row: Record<string, unknown>): void {
     console.info(`${key.padEnd(28)} ${describeField(key, value)}`)
   }
 
-  console.info('\n═══ ACTUAL_WIRE — alan/TİP raporu ═══════════════════════')
-  console.info(`root type                    ${runtimeType(request)}`)
-  const gonderi = (request as Record<string, unknown>).Gonderi
-    ?? (request as Record<string, unknown>).gonderi
-  console.info(`Gonderi runtime type         ${runtimeType(gonderi)}`)
-  const wireSource = (gonderi && typeof gonderi === 'object')
-    ? (gonderi as Record<string, unknown>)
-    : request
-  for (const field of AUDITED_WIRE_FIELDS) {
-    const value = (wireSource as Record<string, unknown>)[field]
-      ?? (request as Record<string, unknown>)[field]
-    console.info(`${field.padEnd(28)} ${describeField(field, value)}`)
+  console.info(String.fromCharCode(10) + '═══ ACTUAL_WIRE — NIHAI GOVDEDEN ═══════════════════════')
+  // ÖLÇÜLEN KUSUR (CF-4088628726): burada `REQUEST_READY` okunuyor ve ham
+  // `Gonderi`/`OdemeTipi` anahtarları aranıyordu; yakalama ise
+  // `ACTUAL_WIRE_READY` aşamasına `gonderiFieldTypes`/`safeValues` yazıyor.
+  // Sonuç: iz DOLUYKEN denetçi her alanı ABSENT gösteriyordu.
+  const wire = projectActualWire(stages)
+  if (wire.status === 'STAGE_MISSING') {
+    // "Aşama yok" ile "alan yok" AYNI ŞEY DEĞİLDİR.
+    console.info('ACTUAL_WIRE                  STAGE_MISSING (aga cikilmadi)')
+  } else {
+    console.info(`rootRuntimeType              ${wire.rootRuntimeType}`)
+    console.info(`gonderiRuntimeType           ${wire.gonderiRuntimeType}`)
+    console.info(`serializedLength             ${String(wire.serializedLength)}`)
+    for (const [field, view] of Object.entries(wire.fields)) {
+      console.info(
+        `${field.padEnd(28)} ${view.runtimeType} · ${String(view.value)}`,
+      )
+    }
+  console.info(String.fromCharCode(10) + '--- alan calisma zamani tipleri ---')
+    for (const [field, type] of Object.entries(wire.fieldRuntimeTypes)) {
+      console.info(`${field.padEnd(28)} ${type}`)
+    }
+  console.info(String.fromCharCode(10) + '--- kimlik parmak izleri ---')
+    for (const [key, value] of Object.entries(wire.credential)) {
+      console.info(`${key.padEnd(34)} ${String(value)}`)
+    }
+  }
+
+  console.info(String.fromCharCode(10) + '═══ TASIYICI GERCEGI (izden) ════════════════════════════')
+  for (const [key, value] of Object.entries(projectCarrierTruth(stages))) {
+    console.info(`${key.padEnd(28)} ${String(value)}`)
   }
 
   console.info('\n═══ CARRIER RESPONSE ════════════════════════════════════')
@@ -144,7 +167,15 @@ function report(row: Record<string, unknown>): void {
 
   console.info('\n═══ FINAL ═══════════════════════════════════════════════')
   console.info(JSON.stringify(redactTraceValue(final), null, 2))
-  console.info('\nNETWORK_CALLS 0 · DB_WRITES 0 · CREATE_CALLS 0')
+  // ═══ SAYAÇLAR DENETÇİYE AİTTİR ═══════════════════════════════════════
+  // ÖLÇÜLEN KUSUR: geçmiş bir deneme için `NETWORK_CALLS 0` basılıyordu ve
+  // AYNI iz `carrierCalled=true` diyordu. Okuyan kişi bunu DENEMENİN özelliği
+  // sanıyordu. Sayaçlar bu CLI'ın KENDİ yan etkileridir; taşıyıcı gerçeği
+  // yukarıdaki "TASIYICI GERCEGI" bölümündedir.
+  console.info(
+    String.fromCharCode(10) + 'INSPECTOR_NETWORK_CALLS=0 · INSPECTOR_DB_WRITES=0'
+    + ' · INSPECTOR_CREATE_CALLS=0',
+  )
 }
 
 async function main(): Promise<number> {

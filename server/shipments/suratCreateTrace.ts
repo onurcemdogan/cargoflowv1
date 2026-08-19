@@ -291,7 +291,22 @@ const TRACE_SECRET_HINTS = [
 
 // `credentialRole` / `credentialSource` gibi alanlar SIR DEĞİLDİR; teşhis
 // için gereken yönlendirme kararıdır. Yalnız ham kimlik değerleri maskelenir.
-const TRACE_SAFE_SUFFIXES = ['role', 'source', 'policy', 'reason', 'resolved']
+//
+// ═══ ÖLÇÜLEN KUSUR ═══════════════════════════════════════════════════════
+// `sifrePresent` bir BOOLEAN'dır ve parolayı TAŞIMAZ; ama adı `sifre`
+// içerdiği için `«REDACTED»` yazılıyordu. Sonuç: gerçek tel anlık
+// görüntüsünde parolanın VAR olup olmadığı okunamıyordu — yani gizlilik
+// kazancı SIFIR, teşhis kaybı GERÇEK.
+//
+// Aşağıdaki son ekler YAPISAL OLARAK sır taşıyamaz:
+//   *Present     → boolean (yalnız varlık)
+//   *Fingerprint → tek yönlü/maskeli kimlik
+//   *Length      → sayı
+//   *Type        → tip adı
+const TRACE_SAFE_SUFFIXES = [
+  'role', 'source', 'policy', 'reason', 'resolved',
+  'present', 'fingerprint', 'length', 'type',
+]
 
 /**
  * Sırları ayıklar. `maskedAccount`/`maskedCari` gibi zaten maskeli alanlar

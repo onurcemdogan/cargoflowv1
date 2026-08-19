@@ -141,7 +141,8 @@ export function captureActualWire(
       : { present: false, runtimeType: 'absent' }
   }
 
-  let serializedLength = 0
+  // Döngüsel gövde serileştirilemeyebilir; uzunluk 0 kalır (içerik ASLA yazılmaz).
+  let serializedLength: number
   try {
     serializedLength = JSON.stringify(body)?.length ?? 0
   } catch {
