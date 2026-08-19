@@ -68,6 +68,9 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
       'sessions',
       'shipment_operations',
       'shipments',
+      // DEBUG-ONLY iz gecmisi (0009). Operasyonel DEGILDIR: kullanici
+      // tarafindan silinebilir ve shipment_operations yerine GECMEZ.
+      'surat_trace_attempts',
       'users',
     ],
   )
