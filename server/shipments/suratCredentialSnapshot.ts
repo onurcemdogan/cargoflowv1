@@ -30,6 +30,37 @@
 // YOKTUR.
 
 import { accountFingerprint } from './suratRoutingModel.ts'
+import { deriveCanonicalPrimaryAccount } from './suratCanonicalServiceMode.mjs'
+
+/**
+ * OTORİTER KİRACI DEPOSU — TEK NORMALİZASYON YOLU.
+ *
+ * ═══ ÖLÇÜLEN İKİNCİ KUSUR (CF-4088678590) ═══════════════════════════════
+ *
+ * `loadOrganizationIntegrationConfig` ŞİFRESİ ÇÖZÜLMÜŞ **HAM** kaydı döner.
+ * `canonicalPrimary*` alanları o kayıtta YOKTUR — onlar türetmede DOĞAR
+ * (`deriveCanonicalPrimaryAccount`: canonicalPrimary → live → kullaniciAdi
+ * → cariKodu).
+ *
+ * Canlı create yolu ham kaydı doğrudan anlık görüntüye veriyordu, bu yüzden
+ * `canonicalPrimaryKullaniciAdi` bulunamıyor ve kimlik ÇÖZÜLEMEDİ sayılıyordu:
+ *   credentialResolved=false · PRIMARY_CREDENTIAL_NOT_CONFIGURED
+ *   carrierCalled=false · NETWORK_CALLS=0
+ * Oysa canary AYNI kiracıda `LEN10:****2622` çözüyordu — çünkü canary
+ * türetmeyi UYGULUYORDU.
+ *
+ * Canary'nin kendi yorumu bunu zaten öngörmüştü: "Ön kontrol normalizasyonu
+ * atlarsa kanonik hesabı ASLA göremez ve YANLIŞ BLOCKED üretir."
+ *
+ * Bu fonksiyon TEK normalizasyon yoludur: canary, dry-run ve canlı create
+ * AYNI türevi kullanır, böylece üçü YAPISAL OLARAK ayrışamaz.
+ */
+export function normalizeAuthoritativeSuratStore(
+  stored?: Record<string, unknown> | null,
+): Record<string, unknown> {
+  const base = stored ?? {}
+  return { ...base, ...deriveCanonicalPrimaryAccount(base) }
+}
 
 /**
  * Kaynak etiketi ROLE ÖZELDİR — mevcut iz sözleşmesi böyle (`tenant.surat.primary`).

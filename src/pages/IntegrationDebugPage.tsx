@@ -669,9 +669,19 @@ export function IntegrationDebugPage({
           ) : null}
         </div>
       </section>
-        </>
-      ) : null}
 
+
+      {/* API ÇAĞRILARI — İSTEMCİ ENSTRÜMANTASYONU, TRACE V2 DEĞİL.
+
+        ÖLÇÜLEN KUSUR: bu yüzey AYNI kullanıcı eylemi için
+        `carrierCreateCalled=true`, `CariKod`/`FirmaId` gösteriyordu; oysa
+        Trace V2 aynı denemede `carrierCalled=false`, NETWORK_CALLS=0
+        kanıtlıyordu. Yani operatöre UYDURULMUŞ bir create gerçeği
+        sunuluyordu.
+
+        Operatör ekranında create denemesinin TEK doğruluk kaynağı Trace
+        V2'dir. Bu bölüm geliştiriciye özel kapının arkasına alındı; veri
+        SİLİNMEZ, yalnız operatör ekranında GÖSTERİLMEZ. */}
       <section className="panel">
         <div className="debug-log-toolbar">
           <div>
@@ -733,6 +743,8 @@ export function IntegrationDebugPage({
           ) : null}
         </div>
       </section>
+        </>
+      ) : null}
     </>
   )
 }

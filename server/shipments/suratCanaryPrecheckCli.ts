@@ -21,7 +21,7 @@ import {
   SURAT_CANONICAL_CREATE_PATH,
 } from './suratWebApiClient.ts'
 import { SURAT_MARKETPLACE_REGISTRY } from './suratCanonicalGonderiModel.ts'
-import { deriveCanonicalPrimaryAccount } from './suratCanonicalServiceMode.mjs'
+import { normalizeAuthoritativeSuratStore } from './suratCredentialSnapshot.ts'
 
 const present = (value: unknown): string =>
   String(value ?? '').trim() ? 'YES' : 'NO'
@@ -121,10 +121,9 @@ export async function runSuratCanaryPrecheck(): Promise<number> {
   // üzerinden geçirir ve `canonicalPrimary*` alanları orada doğar. Ön kontrol
   // normalizasyonu atlarsa kanonik hesabı ASLA göremez ve YANLIŞ BLOCKED
   // üretir. Bu yüzden aynı paylaşılan türev burada da uygulanır.
-  const surat: Record<string, unknown> = {
-    ...stored,
-    ...deriveCanonicalPrimaryAccount(stored),
-  }
+  // TEK NORMALIZASYON YOLU — canli create ile AYNI fonksiyon.
+  const surat: Record<string, unknown> =
+    normalizeAuthoritativeSuratStore(stored)
 
   // Kanonik yolun okuduğu hesap kümeleri — DEĞERLER BASILMAZ.
   const primary = resolveCanonicalTenantSuratAccount(surat, 'PRIMARY')

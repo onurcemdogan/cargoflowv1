@@ -3414,8 +3414,12 @@ async function createSuratShipmentCore(request, response) {
       const tenantIntegration = await loadOrganizationIntegrationConfig(
         getDb(), String(request.auth?.organizationId ?? ''),
       )
+      // HAM kayit DOGRUDAN kullanilamaz: `canonicalPrimary*` alanlari
+      // TURETMEDE dogar. Canary ile AYNI fonksiyon kullanilir.
+      const authoritativeSuratStore =
+        snapshotModule.normalizeAuthoritativeSuratStore(tenantIntegration?.surat)
       const credentialSnapshot = snapshotModule.buildSuratCredentialSnapshot({
-        storedSuratConfig: tenantIntegration?.surat ?? {},
+        storedSuratConfig: authoritativeSuratStore,
         // ROL: reponun KENDİ politika çözücüsü. Kopya mantık YOK; buradan
         // YALNIZ `role` alınır, kimlik DEĞERİ ALINMAZ.
         role: routing.resolveSuratCredentialContext({

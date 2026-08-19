@@ -12,7 +12,7 @@
 // şifresi, ham şifreli yük ASLA basılmaz. Yalnız operasyonel payer metadatası.
 import { and, eq } from 'drizzle-orm'
 import { closePool, getDb, isDatabaseConfigured } from '../db/client.ts'
-import { deriveCanonicalPrimaryAccount } from './suratCanonicalServiceMode.mjs'
+import { normalizeAuthoritativeSuratStore } from './suratCredentialSnapshot.ts'
 import {
   expectedSuratWhoPays,
   resolveBillingPartyV2,
@@ -587,7 +587,8 @@ export async function runCreateContextDryRun(
     // `normalizeSuratConfig` türevinde DOĞAR. Bu türev atlanırsa kanonik
     // hesap görünmez ve araç YANLIŞ "çözülemedi" raporlar — kanary bunu
     // zaten uyguluyordu, denetçi uygulamıyordu.
-    suratConfig = { ...stored, ...deriveCanonicalPrimaryAccount(stored) }
+    // TEK NORMALIZASYON YOLU — canary ve canli create ile AYNI fonksiyon.
+    suratConfig = normalizeAuthoritativeSuratStore(stored)
   } catch {
     suratConfig = {}
   }

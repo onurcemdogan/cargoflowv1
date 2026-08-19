@@ -19,7 +19,7 @@ import {
   credentialRoleToAccountKey,
   resolveSuratCredentialContext,
 } from './suratRoutingModel.ts'
-import { accountFingerprint } from './suratRoutingModel.ts'
+import { accountFingerprint, maskAccount } from './suratRoutingModel.ts'
 import {
   assertSuratWireCredentialParity,
   type SuratCredentialSnapshot,
@@ -336,7 +336,7 @@ export async function createCanonicalSuratShipmentForRequest(
     amount: params.order.cashOnDeliveryAmount,
   })
   // ROL SEÇİMİ politika kararıdır (sipariş + COD); KİMLİK DEĞERİ DEĞİLDİR.
-  // Bu çağrıdan YALNIZ `role`/`reason`/`maskedAccount` kullanılır.
+  // Bu çağrıdan YALNIZ `role`/`reason` kullanılır; maske OTORİTER kaynaktan.
   const roleContext = resolveSuratCredentialContext({
     config: params.config,
     billingParty: billing.billingParty,
@@ -351,7 +351,16 @@ export async function createCanonicalSuratShipmentForRequest(
   const credential = {
     role: roleContext.role,
     reason: roleContext.reason,
-    maskedAccount: roleContext.maskedAccount,
+    // ═══ MASKE OTORİTER KAYNAKTAN ═══════════════════════════════════════
+    // ÖLÇÜLEN KUSUR (CF-4088678590): `roleContext` İSTEK GÖVDESİNDEN türüyor
+    // ve kimlik ÇÖZÜLEMEDİĞİ hâlde `maskedAccount: "15******44"` basıyordu.
+    // İz, çözülmemiş bir kimliği çözülmüş gibi GÖSTERİYORDU.
+    //
+    // Maske ARTIK yalnız otoriter anlık görüntüden gelir; çözülemediyse
+    // BOŞTUR. "Bilinmiyor" ile "şu hesap" aynı şey DEĞİLDİR.
+    maskedAccount: snapshotUsable && snapshot.resolved
+      ? maskAccount(snapshot.kullaniciAdi)
+      : '',
     source: snapshotUsable ? snapshot.source : 'MISSING_SNAPSHOT',
     resolved: snapshotUsable ? snapshot.resolved : false,
     accountFingerprint: snapshotUsable ? snapshot.accountFingerprint : '',
