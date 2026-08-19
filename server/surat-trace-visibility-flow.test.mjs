@@ -319,3 +319,102 @@ test('R-API-2: /api/debug tenantAuth kapisinda', () => {
   const list = SOURCE.slice(at, end)
   assert.match(list, /'\/api\/debug'/, '/api/debug auth kapisinda DEGIL')
 })
+
+/* ═══ B1 — DENETÇİ: alan/TİP raporu ve SIR/PII maskesi ══════════════ */
+
+test('B1: denetci TIP raporlar ve SIR/PII basmaz', async () => {
+  const cli = await import('./shipments/suratTraceInspectCli.ts')
+  // Tip ayrimi sozlesme karsilastirmasinin cekirdegi.
+  assert.equal(cli.runtimeType(undefined), 'absent')
+  assert.equal(cli.runtimeType(null), 'null')
+  assert.equal(cli.runtimeType({}), 'object')
+  assert.equal(cli.runtimeType([]), 'array')
+  assert.equal(cli.runtimeType('x'), 'string')
+  assert.equal(cli.runtimeType(1), 'number')
+  assert.equal(cli.runtimeType(true), 'boolean')
+
+  // Kimlik DEGERI asla basilmaz.
+  const secret = cli.describeField('Sifre', 'p@ssw0rd')
+  assert.equal(secret.includes('p@ssw0rd'), false, 'parola sizdi')
+  assert.match(secret, /PRESENT \(masked\)/)
+  assert.match(cli.describeField('KullaniciAdi', 'user1'), /masked/)
+  // PII maskelenir.
+  assert.match(cli.describeField('AliciAdresi', 'Bir adres'), /pii-masked/)
+  // Is alanlari TIP + DEGER ile gorunur.
+  assert.match(cli.describeField('Pazaryerimi', 1), /number · 1/)
+  assert.match(cli.describeField('OdemeTipi', 1), /number · 1/)
+  assert.equal(cli.describeField('WhoPays', undefined), 'absent · ABSENT')
+})
+
+test('B1b: denetlenen tel alanlari gorev listesini KAPSAR', async () => {
+  const cli = await import('./shipments/suratTraceInspectCli.ts')
+  for (const field of [
+    'KullaniciAdi', 'Sifre', 'Gonderi', 'Pazaryerimi', 'EntegrasyonFirmasi',
+    'OdemeTipi', 'ReferansNo', 'OzelKargoTakipNo',
+    'KapidanOdemeTahsilatTipi', 'KapidanOdemeTutari',
+    'WhoPays', 'KimOder', 'FirmaId', 'Iademi',
+  ]) {
+    assert.ok(
+      cli.AUDITED_WIRE_FIELDS.includes(field),
+      `denetlenen alan listesinde YOK: ${field}`,
+    )
+  }
+})
+
+test('B1c: denetci SALT OKUNUR — yazma/create cagrisi YOK', () => {
+  const cli = readFileSync(
+    join(here, 'shipments', 'suratTraceInspectCli.ts'), 'utf8',
+  )
+  for (const forbidden of ['insert(', 'update(', 'delete(', 'fetch(']) {
+    assert.equal(
+      cli.includes(forbidden), false,
+      `denetci mutasyon/ag cagrisi iceriyor: ${forbidden}`,
+    )
+  }
+  assert.match(cli, /NETWORK_CALLS 0 · DB_WRITES 0 · CREATE_CALLS 0/)
+})
+
+/* ═══ B3/B4 — KİMLİK ALANLARI KARIŞMAZ ═════════════════════════════ */
+
+test('B3/B4: ReferansNo ile OzelKargoTakipNo ayri kaynaklardir', () => {
+  const model = readFileSync(
+    join(here, 'shipments', 'suratCanonicalGonderiModel.ts'), 'utf8',
+  )
+  // OzelKargoTakipNo YALNIZ saglayici kargo numarasindan; fallback YASAK.
+  assert.match(model, /fallback YOKTUR/)
+  // ReferansNo BAGIMSIZ opsiyonel alan olarak atanir.
+  assert.match(model, /assignOptional\(model, 'ReferansNo', str\(input\.referansNo\)\)/)
+  // Model, OzelKargoTakipNo'yu ReferansNo'dan TUREMEZ.
+  assert.equal(
+    /ozelKargoTakipNo[^\n]*referansNo/i.test(model), false,
+    'OzelKargoTakipNo ReferansNodan turetiliyor',
+  )
+})
+
+/* ═══ B10/B11 — OTOMATİK FALLBACK YOK ══════════════════════════════ */
+
+test('B10/B11: kanonik hatadan SONRA otomatik SOAP create YOK', () => {
+  const CAST = readFileSync(
+    join(here, 'shipments', 'suratCanonicalCastRecovery.ts'), 'utf8',
+  )
+  assert.match(CAST, /LEGACY_FALLBACK_DEFAULT_ENABLED = false/)
+  // Kanonik dalda hata sonrasi ikinci bir create cagrisi OLMAMALI.
+  // BOLGE YALNIZ KANONIK DALDIR. Sonraki `if (config.serviceMode === ...)`
+  // ayri bir servis modudur ve SOAP cagirmasi MESRUDUR; onu bu bolgeye almak
+  // testi yanlis yere baglar.
+  const canonicalAt = SOURCE.indexOf('if (config.serviceMode === SURAT_CANONICAL_SERVICE_MODE)')
+  const nextBranchAt = SOURCE.indexOf(
+    "if (config.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP')", canonicalAt,
+  )
+  assert.ok(nextBranchAt > canonicalAt, 'kanonik dal sinirlanamadi')
+  const region = SOURCE.slice(canonicalAt, nextBranchAt)
+  for (const soap of [
+    'createSuratCommonBarcodeSoap', 'createSuratRegisteredCommonBarcode',
+    'createSuratBarcodeOrderSoap',
+  ]) {
+    assert.equal(
+      region.includes(soap), false,
+      `kanonik dal hata sonrasi SOAP create cagiriyor: ${soap}`,
+    )
+  }
+})
