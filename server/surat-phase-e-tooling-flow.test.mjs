@@ -103,8 +103,10 @@ test('E-5: calisma zamani turevi uygulaninca kimlik COZULUR', () => {
 
 test('E-6: denetci HAM degil TUREV gorunumu okur', () => {
   const code = readFileSync('server/shipments/suratBillingInspectCli.ts', 'utf8')
+  // Turev ARTIK paylasilan sarmalayicidan gelir; denetci onu cagirir.
+  // (Kopya turev kaldirildi: uc yol ayrisamasin diye tek fonksiyon var.)
   assert.ok(
-    code.includes('deriveCanonicalPrimaryAccount(stored)'),
+    code.includes('normalizeAuthoritativeSuratStore(stored)'),
     'denetci calisma zamani turevini UYGULAMALI',
   )
   // Paralel kimlik mantigi DEGIL, YETKILI cozucu kullanilmali.

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
 
 // UNITE 3B — ARTIFACT SEMANTIGI + CREDENTIAL PRECEDENCE SOZLESMESI.
@@ -304,12 +305,28 @@ test('3B-PROD-4: index.mjs ve on kontrol AYNI turevi kullanir', async () => {
   const cli = await readFile(
     new URL('./shipments/suratCanaryPrecheckCli.ts', import.meta.url), 'utf8',
   )
-  // Tek kaynak: paylasilan .mjs turevi. Kopya mantik YOK.
+  // TEK KAYNAK — artik PAYLASILAN SARMALAYICI uzerinden.
+  //
+  // Onceden her cagiran `deriveCanonicalPrimaryAccount`i KENDI cagiriyordu;
+  // canli create yolu ise turevi HIC uygulamiyordu ve bu yuzden gercek bir
+  // kimligi "yapilandirilmamis" sayiyordu (CF-4088678590). Artik tek
+  // normalizasyon fonksiyonu var ve uc yol da onu cagiriyor.
+  const snapshot = readFileSync(
+    'server/shipments/suratCredentialSnapshot.ts', 'utf8',
+  )
+  // Sarmalayici paylasilan .mjs turevini kullanir.
+  assert.match(snapshot, /deriveCanonicalPrimaryAccount\(base\)/)
+  assert.match(snapshot, /suratCanonicalServiceMode\.mjs/)
+  // normalizeSuratConfig turevi index.mjs'te DURUYOR (mevcut sozlesme).
   assert.match(INDEX_SOURCE, /\.\.\.deriveCanonicalPrimaryAccount\(value\)/)
-  assert.match(cli, /deriveCanonicalPrimaryAccount\(stored\)/)
-  for (const source of [INDEX_SOURCE, cli]) {
-    assert.match(source, /suratCanonicalServiceMode\.mjs/)
-  }
+  // Canli create ve on kontrol AYNI sarmalayiciyi cagirir.
+  assert.match(INDEX_SOURCE, /normalizeAuthoritativeSuratStore\(/)
+  assert.match(cli, /normalizeAuthoritativeSuratStore\(stored\)/)
+  // On kontrol KENDI kopya turevini ARTIK uygulamaz.
+  assert.equal(
+    /\.\.\.deriveCanonicalPrimaryAccount\(/.test(cli), false,
+    'on kontrol hala kopya turev uyguluyor',
+  )
 })
 
 test('3B-PROD-5: kayit gercekten bossa hâlâ FAIL-CLOSED', () => {
