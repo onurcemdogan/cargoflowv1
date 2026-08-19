@@ -570,9 +570,16 @@ test('WIRE-5: kanonik dal HAM body configi YALNIZ tasima secenegi olarak alir', 
     block.includes('credentialSnapshot,'),
     'kanonik dal otoriter kimlik anlik goruntusu gecirmiyor',
   )
+  // Kimlik kiraci deposundan; artik TEK PAYLASILAN YUKLEYICI uzerinden.
+  // Yukleyici okudugu KAYDIN kimligini de dondurur ki kanarya ile canli
+  // POST ayni satiri okuyup okumadigini raporlayabilsin.
   assert.ok(
-    block.includes('loadOrganizationIntegrationConfig('),
+    block.includes('loadActiveSuratIntegrationForOrganization('),
     'kimlik kiraci deposundan yuklenmiyor',
+  )
+  assert.ok(
+    block.includes('credentialRecordIdentity:'),
+    'okunan kayit kimligi ize gecirilmiyor',
   )
 })
 
