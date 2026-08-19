@@ -15,6 +15,10 @@
 //   · canonical API başarısız → legacy SOAP'a DÜŞÜLMEZ
 //   · tenant credential yok → env/global/paylaşılan hesap KULLANILMAZ
 // Yanlış cariye borçlandırmaktansa görünür şekilde hata verilir.
+import {
+  captureActualWire,
+  type ActualWireCapture,
+} from './suratActualWireCapture.ts'
 import type {
   SuratGonderiModel,
   SuratOrtakBarkodRequest,
@@ -240,6 +244,14 @@ export interface CreateOrtakBarkodParams {
   timeoutMs?: number
   /** Yalnız izin listesindeki host'lar kabul edilir. */
   baseUrl?: string
+  /**
+   * GERÇEK TEL ANLIK GÖRÜNTÜSÜ — ağ çağrısından HEMEN ÖNCE, NİHAİ gövdeden.
+   *
+   * Bu geri çağrı, "telde ne gitti?" sorusunun kurgusuz yanıtıdır. Girdi,
+   * `JSON.stringify` ile serileştirilecek OLAN nesnenin ta kendisidir.
+   * Sır/PII yakalayıcının içinde elenir.
+   */
+  onWireReady?: (capture: ActualWireCapture) => void
 }
 
 /**
@@ -259,6 +271,18 @@ export async function createOrtakBarkodShipment(
     KullaniciAdi: params.credentials.kullaniciAdi,
     Sifre: params.credentials.sifre,
     Gonderi: params.gonderi,
+  }
+  // ═══ ACTUAL_WIRE — NİHAİ GÖVDEDEN, AĞDAN HEMEN ÖNCE ═══════════════════
+  // `request` yukarıda kuruldu ve aşağıda AYNEN serileştirilecek. Anlık
+  // görüntü ondan alınır; sipariş/gönderi/eski kayıt KURGULANMAZ.
+  if (params.onWireReady) {
+    try {
+      params.onWireReady(
+        captureActualWire(request as unknown as Record<string, unknown>),
+      )
+    } catch {
+      // Gözlemlenebilirlik create sonucunu ASLA etkilemez.
+    }
   }
   const doFetch = params.fetchImpl ?? (globalThis.fetch as unknown as FetchLike)
   const controller = new AbortController()

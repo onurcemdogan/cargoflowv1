@@ -24,11 +24,70 @@ import {
   assertSuratWireCredentialParity,
   type SuratCredentialSnapshot,
 } from './suratCredentialSnapshot.ts'
+import { verifyWireFingerprints } from './suratActualWireCapture.ts'
+
+/**
+ * `barcode` dizisindeki ZPL benzeri artefaktın UZUNLUĞU.
+ *
+ * İçerik ASLA taşınmaz: etiket verisi alıcı bilgisi içerebilir. `^XA` ile
+ * başlayan dize ZPL sayılır; başka bir varsayım YAPILMAZ.
+ */
+function canonicalZplLength(barcode: unknown): number {
+  const entries = Array.isArray(barcode) ? barcode : []
+  let total = 0
+  for (const entry of entries) {
+    const text = typeof entry === 'string'
+      ? entry
+      : String((entry as Record<string, unknown>)?.zpl ?? '')
+    if (text.trimStart().startsWith('^XA')) total += text.length
+  }
+  return total
+}
+
+/** Üretimde görülen satıcı hatası — yanıt kurucusunda cast. */
+function isCanonicalVendorError(summary: unknown): boolean {
+  const text = String(summary ?? '')
+  return text.includes('KargoBarkod')
+    && text.includes('OrtakBarkodOlusturSonuc')
+}
+
+/**
+ * GERÇEK TEL AŞAMASI.
+ *
+ * Anlık görüntü YOKSA aşama EKLENMEZ — gönderilmemiş bir isteği "gönderildi"
+ * gibi göstermek, bu projede tam da kaçınılan sahte kanıttır.
+ */
+function appendActualWireStage(
+  attempt: SuratTraceAttempt,
+  capture: Record<string, unknown> | null,
+  fingerprints: Record<string, string>,
+  stamp: () => string,
+): SuratTraceAttempt {
+  if (!capture) return attempt
+  // AĞ SINIRI parmak izi anlık görüntünün İÇİNDEN gelir; dördü birlikte
+  // doğrulanır ve ayrışan sınır adıyla kaydedilir.
+  const boundary = (capture.credential as Record<string, unknown> | undefined)
+  const verdict = verifyWireFingerprints({
+    resolverAccountFingerprint: String(fingerprints.resolverAccountFingerprint ?? ''),
+    snapshotAccountFingerprint: String(fingerprints.snapshotAccountFingerprint ?? ''),
+    requestBuilderAccountFingerprint: String(
+      fingerprints.requestBuilderAccountFingerprint ?? '',
+    ),
+    networkBoundaryAccountFingerprint: String(
+      boundary?.networkBoundaryAccountFingerprint ?? '',
+    ),
+  })
+  return appendTraceStage(attempt, {
+    stage: 'ACTUAL_WIRE_READY', section: 'REQUEST', at: stamp(),
+    data: { ...capture, ...verdict },
+  })
+}
 import {
   appendTraceStage,
   buildTraceId,
   buildUserFacingError,
   createTraceAttempt,
+  type SuratTraceAttempt,
   describeWireWhoPays,
 } from './suratCreateTrace.ts'
 import {
@@ -530,6 +589,12 @@ export async function createCanonicalSuratShipmentForRequest(
   const credentialFingerprintMatch = assertSuratWireCredentialParity({
     snapshot, wireKullaniciAdi: account?.kullaniciAdi,
   }).ok
+  // DÖRT SINIR — hepsi ayrı kaynaktan; ağ sınırı anlık görüntüden gelir.
+  const wireFingerprints = {
+    resolverAccountFingerprint: credential.accountFingerprint,
+    snapshotAccountFingerprint: snapshot.accountFingerprint,
+    requestBuilderAccountFingerprint: wireAccountFingerprint,
+  }
   const parity = {
     credentialRole: credential.role,
     credentialSource: credential.source,
@@ -584,6 +649,10 @@ export async function createCanonicalSuratShipmentForRequest(
   //
   // Bu yüzden çağrı BURADA yakalanır: iz zaten burada, aşamaları eksiksiz.
   // Fırlatma bir SONUÇ olarak döner ve iz KAYDEDİLİR.
+  // ═══ GERÇEK TEL YAKALAMA ═══════════════════════════════════════════════
+  // Geri çağrı, NİHAİ gövde serileştirilmeden HEMEN ÖNCE tetiklenir. Buradan
+  // gelen anlık görüntü KURGU DEĞİLDİR; telin kendisidir.
+  let actualWire = null
   let result
   try {
     result = await createCanonicalSuratShipment({
@@ -599,6 +668,7 @@ export async function createCanonicalSuratShipmentForRequest(
       shipment: input,
       idempotency: createHeldIdempotencyPort(),
       fetchImpl: params.fetchImpl,
+      onWireReady: (capture) => { actualWire = capture },
     })
   } catch (carrierError) {
     const summary =
@@ -626,16 +696,24 @@ export async function createCanonicalSuratShipmentForRequest(
         carrierCreateAttempts: 1,
         carrierExceptionSummary: summary,
       },
-      traceAttempt: appendTraceStage(traceAttempt, {
-        stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
-        data: {
-          outcome: 'SURAT_CANONICAL_RESULT_UNPARSEABLE',
-          carrierCreateStatus: 'UNKNOWN',
-          carrierCalled: true,
-          carrierExceptionSummary: summary,
-          ...parity,
+      traceAttempt: appendTraceStage(
+        // İstek TELE GİTTİ: anlık görüntü varsa aşama KORUNUR. Yanıt
+        // ayrıştırması patlasa bile "ne gönderdik" sorusu yanıtlı kalır.
+        appendActualWireStage(traceAttempt, actualWire, wireFingerprints, stamp),
+        {
+          stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
+          data: {
+            outcome: 'SURAT_CANONICAL_RESULT_UNPARSEABLE',
+            classification: isCanonicalVendorError(summary)
+              ? 'SURAT_CANONICAL_VENDOR_ERROR'
+              : 'SURAT_CANONICAL_RESULT_UNPARSEABLE',
+            carrierCreateStatus: 'UNKNOWN',
+            carrierCalled: true,
+            carrierExceptionSummary: summary,
+            ...parity,
+          },
         },
-      }),
+      ),
     }
   }
   traceAttempt = appendTraceStage(traceAttempt, {
@@ -645,6 +723,20 @@ export async function createCanonicalSuratShipmentForRequest(
       contractHasWhoPaysField: wire.wireWhoPaysPresent,
       // Telin HÂLÂ çözücünün seçtiği hesabı taşıdığının kanıtı.
       ...parity,
+    },
+  })
+  // ═══ ACTUAL_WIRE_READY — telin KENDİSİ ═════════════════════════════════
+  // Anlık görüntü YOKSA aşama EKLENMEZ: gönderilmemiş bir isteği gönderilmiş
+  // göstermek, bu projede ısrarla reddedilen sahte kanıttır.
+  traceAttempt = appendActualWireStage(
+    traceAttempt, actualWire, wireFingerprints, stamp,
+  )
+  traceAttempt = appendTraceStage(traceAttempt, {
+    stage: 'CARRIER_CALL_STARTED', section: 'SERVICE_ROUTING', at: stamp(),
+    data: {
+      serviceMode: SURAT_CANONICAL_SERVICE_MODE,
+      operation: SURAT_CANONICAL_OPERATION_NAME,
+      wireCaptured: Boolean(actualWire),
     },
   })
   traceAttempt = appendTraceStage(traceAttempt, {
@@ -662,6 +754,21 @@ export async function createCanonicalSuratShipmentForRequest(
       outcome: result.outcome,
       businessCode: result.errorCode ?? null,
       businessMessage: result.vendorMessage,
+      // ═══ YANIT KANITI — "ne aldık" sorusu da kurgusuz yanıtlanır ═══════
+      carrierCalled: true,
+      createCallCount: result.carrierCreateAttempts ?? 1,
+      businessResult: result.outcome ?? null,
+      carrierCode: result.errorCode ?? null,
+      carrierMessage: result.vendorMessage ?? null,
+      trackingPresent: Boolean(result.trackingNo),
+      barcodePresent: (result.barcode ?? '').length > 0,
+      // ZPL AYRI bir alan DEĞİLDİR: artefakt `barcode` dizisinde taşınır.
+      // Uydurma alan okumak yerine gerçekten var olandan türetilir.
+      zplPresent: canonicalZplLength(result.barcode) > 0,
+      // İçerik DEĞİL, yalnız uzunluk: etiket verisi PII taşıyabilir.
+      zplLength: canonicalZplLength(result.barcode),
+      responseBodyType: typeof result,
+      verificationStage: result.printArtifactStatus ?? null,
     },
   })
   traceAttempt = appendTraceStage(traceAttempt, {

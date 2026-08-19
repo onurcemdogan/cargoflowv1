@@ -84,6 +84,8 @@ export interface CanonicalShipmentParams {
   account: { kullaniciAdi?: unknown; sifre?: unknown; isActive?: boolean } | null
   /** OTORİTER kimlik — ağ sınırı paritesi bununla ölçülür. */
   credentialSnapshot?: SuratCredentialSnapshot | null
+  /** NİHAİ gövdeden alınan gerçek tel anlık görüntüsü (gözlemlenebilirlik). */
+  onWireReady?: (capture: unknown) => void
   context: SuratMarketplaceContext
   shipment: CanonicalShipmentInput
   idempotency: CanonicalIdempotencyPort
@@ -219,6 +221,8 @@ export async function createCanonicalSuratShipment(
     const vendor = await createOrtakBarkodShipment({
       credentials,
       gonderi,
+      // Anlık görüntü AĞDAN HEMEN ÖNCE, NİHAİ gövdeden alınır.
+      onWireReady: params.onWireReady as never,
       fetchImpl: params.fetchImpl,
       timeoutMs: params.timeoutMs,
     })

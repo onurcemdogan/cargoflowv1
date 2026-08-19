@@ -245,6 +245,13 @@ export const TRACE_LIFECYCLE_STAGES = [
   'PRE_FLIGHT',
   'ROUTING',
   'REQUEST_READY',
+  // NİHAİ gövdeden alınan GERÇEK tel anlık görüntüsü. `REQUEST_READY` karar
+  // anındaki niyettir; bu ise SERİLEŞTİRİLECEK olanın kendisidir.
+  'ACTUAL_WIRE_READY',
+  // Parite/kimlik nedeniyle ağa ÇIKILMADIĞINDA kullanılır. Gönderilmemiş bir
+  // isteği "gönderildi" gibi göstermemek için ayrı aşamadır.
+  'WIRE_BLOCKED',
+  'CARRIER_CALL_STARTED',
   'CARRIER_CALL',
   'CARRIER_RESPONSE',
   'VERIFICATION',
