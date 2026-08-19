@@ -445,3 +445,41 @@ test('DEBUG-15: iz yazimi create sonucunu BOZMAZ', () => {
   assert.match(body, /try \{/)
   assert.match(body, /\} catch \{/)
 })
+
+/* ═══════════════ UI/ROUTE BAĞLAMA ═════════════════════════════════ */
+
+test('DEBUG-16: panel SUNUCUDAN okur, tek dogru kaynak localStorage DEGIL', () => {
+  const panel = readFileSync(
+    join(here, '..', 'src', 'components', 'SuratLiveDebugPanel.tsx'), 'utf8',
+  )
+  assert.match(panel, /const TRACES_ENDPOINT = '\/api\/debug\/surat-traces'/)
+  assert.match(panel, /fetchServerTraces/)
+  // Sunucu okumasi, yerel depodan ONCE gelir.
+  assert.match(panel, /traces \?\? serverTraces \?\? readStoredTraces\(\)/)
+})
+
+test('DEBUG-17: temizleme dugmesi ve ONAY metni vardir', () => {
+  const panel = readFileSync(
+    join(here, '..', 'src', 'components', 'SuratLiveDebugPanel.tsx'), 'utf8',
+  )
+  assert.match(panel, /Tüm Debug Geçmişini Sil/)
+  assert.match(panel, /Yalnızca debug kayıtları silinecek/)
+  assert.match(panel, /Sipariş, gönderi, barkod ve operasyon kayıtları etkilenmeyecek/)
+  // Hem legacy hem v2 yerel anahtar temizlenir.
+  assert.match(panel, /removeItem\(TRACE_STORAGE_KEY\)/)
+  assert.match(panel, /removeItem\(LEGACY_DEBUG_STORAGE_KEY\)/)
+  // Sunucu tarafi da silinir.
+  assert.match(panel, /method: 'DELETE'/)
+})
+
+test('DEBUG-18: silme ucu OPERASYONEL tabloya dokunmaz', () => {
+  const source = readFileSync(join(here, 'index.mjs'), 'utf8')
+  const at = source.indexOf("app.delete('/api/debug/surat-traces'")
+  assert.ok(at > 0, 'silme ucu YOK')
+  const body = source.slice(at, at + 1200)
+  assert.match(body, /clearTraceAttempts/)
+  assert.match(body, /operationalDataDeleted: 0/)
+  for (const forbidden of ['deleteOrder', 'orders)', 'shipmentOperations']) {
+    assert.equal(body.includes(forbidden), false, forbidden)
+  }
+})

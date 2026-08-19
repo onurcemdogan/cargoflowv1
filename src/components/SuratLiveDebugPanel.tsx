@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
+  LEGACY_DEBUG_STORAGE_KEY,
   TRACE_STORAGE_KEY, type StoredTrace, selectCurrentTrace,
   selectValidTraces, sortTracesNewestFirst,
 } from '../services/suratTraceDebugStore'
@@ -8,10 +9,29 @@ import {
   describeWireWhoPaysForDisplay,
 } from '../debug/suratLiveDebugViewModel'
 
-// FAZ D — Canlı Debug.
+// CANLI DEBUG V3.
 //
 // Tek kaynak Trace V2'dir. Bu bileşen ilgisiz shipment_operations satırlarını,
 // eski JSON loglarını veya localStorage v1 kayıtlarını BİRLEŞTİRMEZ.
+//
+// ÖLÇÜLEN KUSUR: iz eskiden YALNIZ localStorage'da aranıyordu ama oraya HİÇ
+// yazılmıyordu (yazıcının çağıranı yoktu). Gerçek bir denemeden sonra bile
+// ekran boştu. Artık kaynak SUNUCUDUR; sayfa yenilense de deneme durur.
+// localStorage yalnız GERİYE DÖNÜK okuma için kalır, tek doğru kaynak DEĞİL.
+
+const TRACES_ENDPOINT = '/api/debug/surat-traces'
+
+/** Sunucudaki kiracı kapsamlı iz geçmişi. */
+async function fetchServerTraces(): Promise<unknown> {
+  try {
+    const response = await fetch(TRACES_ENDPOINT, { credentials: 'include' })
+    if (!response.ok) return []
+    const body = await response.json()
+    return Array.isArray(body?.traces) ? body.traces : []
+  } catch {
+    return []
+  }
+}
 
 function Rows({ data }: { data: Record<string, unknown> }) {
   const entries = Object.entries(data)
@@ -44,9 +64,53 @@ function readStoredTraces(): unknown {
 }
 
 export function SuratLiveDebugPanel({ traces }: { traces?: unknown }) {
-  const source = traces ?? readStoredTraces()
+  const [serverTraces, setServerTraces] = useState<unknown | null>(null)
+  const [clearing, setClearing] = useState(false)
+  // Testler/kontrollü kullanım `traces` verebilir; aksi hâlde SUNUCU okunur ve
+  // sunucu boşsa geriye dönük olarak yerel depo denenir.
+  const source = traces ?? serverTraces ?? readStoredTraces()
   const [tab, setTab] = useState<(typeof LIVE_DEBUG_TABS)[number]>('Son Deneme')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (traces !== undefined) return
+    let cancelled = false
+    void fetchServerTraces().then((loaded) => {
+      if (!cancelled) setServerTraces(loaded)
+    })
+    return () => { cancelled = true }
+  }, [traces])
+
+  // TÜM DEBUG GEÇMİŞİNİ SİL — yalnız debug verisi.
+  const clearAll = useCallback(async () => {
+    const confirmed = globalThis.confirm?.(
+      'Yalnızca debug kayıtları silinecek. '
+      + 'Sipariş, gönderi, barkod ve operasyon kayıtları etkilenmeyecek.',
+    )
+    if (!confirmed) return
+    setClearing(true)
+    try {
+      await fetch(TRACES_ENDPOINT, { method: 'DELETE', credentials: 'include' })
+      // Doğrulanmış debug-only yerel anahtarlar da temizlenir.
+      globalThis.localStorage?.removeItem(TRACE_STORAGE_KEY)
+      globalThis.localStorage?.removeItem(LEGACY_DEBUG_STORAGE_KEY)
+      setServerTraces([])
+      setSelectedId(null)
+    } finally {
+      setClearing(false)
+    }
+  }, [])
+
+  const clearButton = (
+    <button
+      type="button"
+      className="surat-debug-clear"
+      onClick={() => { void clearAll() }}
+      disabled={clearing}
+    >
+      Tüm Debug Geçmişini Sil
+    </button>
+  )
 
   const history = useMemo(
     () => sortTracesNewestFirst(selectValidTraces(source)), [source],
@@ -69,6 +133,7 @@ export function SuratLiveDebugPanel({ traces }: { traces?: unknown }) {
         <p className="integration-hint">
           Henüz bir Sürat gönderi denemesi kaydedilmedi.
         </p>
+        {clearButton}
       </section>
     )
   }
@@ -82,6 +147,7 @@ export function SuratLiveDebugPanel({ traces }: { traces?: unknown }) {
       <p className="integration-hint">
         Trace ID: <strong>{model.traceId}</strong> · {model.createdAt}
       </p>
+      {clearButton}
       {userError ? (
         <p className="integration-hint integration-hint--warning">{userError}</p>
       ) : null}

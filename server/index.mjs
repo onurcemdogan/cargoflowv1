@@ -3044,6 +3044,55 @@ async function startSuratTrackingReconcileOnBoot() {
   }
 }
 
+// ═══ DEBUG-ONLY TRACE V2 UÇLARI ═══════════════════════════════════════════
+//
+// YALNIZ debug verisi. Operasyonel tablolara DOKUNMAZ.
+//
+// Neden sunucuda: iz eskiden yalnız yanıtla dönüyordu ve hiçbir yere
+// yazılmıyordu; sayfa yenilenince kayboluyordu. Artık kiracı kapsamında
+// saklanır ve buradan okunur.
+app.get('/api/debug/surat-traces', async (request, response) => {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) {
+    response.status(404).json({ ok: false, traces: [] })
+    return
+  }
+  try {
+    const [{ getDb }, repository] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/suratTraceRepository.ts'),
+    ])
+    const traces = await repository.listTraceAttempts(
+      getDb(), request.auth.organizationId, 50,
+    )
+    response.json({ ok: true, traces })
+  } catch {
+    response.status(503).json({ ok: false, traces: [] })
+  }
+})
+
+// TÜM DEBUG GEÇMİŞİNİ SİLER. Sipariş, gönderi, operasyon, idempotency ve
+// etiket kayıtlarına DOKUNMAZ — silme yalnız debug tablosunu adlandırır.
+app.delete('/api/debug/surat-traces', async (request, response) => {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) {
+    response.status(404).json({ ok: false })
+    return
+  }
+  try {
+    const [{ getDb }, repository] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/suratTraceRepository.ts'),
+    ])
+    await repository.clearTraceAttempts(getDb(), request.auth.organizationId)
+    response.json({
+      ok: true,
+      cleared: 'SURAT_TRACE_ATTEMPTS',
+      operationalDataDeleted: 0,
+    })
+  } catch {
+    response.status(503).json({ ok: false })
+  }
+})
+
 app.listen(port, host, () => {
   console.log(`CargoFlow API listening on http://${host}:${port}`)
   void reconcileLabelBundlesOnBoot()
