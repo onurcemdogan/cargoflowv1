@@ -10,16 +10,20 @@ import {
   type CanonicalShipmentInput,
 } from './suratCanonicalGonderiModel.ts'
 import {
-  credentialRoleToAccountKey,
   describeOdemeTipi,
   evaluateSuratCreatePreflight,
   expectedSuratWhoPays,
   resolveBillingPartyV2,
   resolveCodContext,
   resolveCodCredentialPolicy,
+  credentialRoleToAccountKey,
   resolveSuratCredentialContext,
 } from './suratRoutingModel.ts'
 import { accountFingerprint } from './suratRoutingModel.ts'
+import {
+  assertSuratWireCredentialParity,
+  type SuratCredentialSnapshot,
+} from './suratCredentialSnapshot.ts'
 import {
   appendTraceStage,
   buildTraceId,
@@ -294,6 +298,12 @@ export function mapCanonicalResultToCreateResponse(params: {
 
 export interface CanonicalCreateRequestParams {
   organizationId: string
+  /**
+   * OTORİTER KİMLİK — ZORUNLU, DONDURULMUŞ.
+   * Kimlik ARTIK `config`ten (istek gövdesi) OKUNMAZ.
+   */
+  credentialSnapshot: SuratCredentialSnapshot
+  /** TAŞIMA SEÇENEKLERİ — KİMLİK DEĞİL. */
   config: Record<string, unknown>
   order: Record<string, unknown>
   reference: string
@@ -325,12 +335,30 @@ export async function createCanonicalSuratShipmentForRequest(
     collectionType: params.config.kapidanOdemeTahsilatTipi,
     amount: params.order.cashOnDeliveryAmount,
   })
-  const credential = resolveSuratCredentialContext({
+  // ROL SEÇİMİ politika kararıdır (sipariş + COD); KİMLİK DEĞERİ DEĞİLDİR.
+  // Bu çağrıdan YALNIZ `role`/`reason`/`maskedAccount` kullanılır.
+  const roleContext = resolveSuratCredentialContext({
     config: params.config,
     billingParty: billing.billingParty,
     cod,
     codPolicy: resolveCodCredentialPolicy(params.config.codCredentialPolicy),
   })
+  const snapshot = params.credentialSnapshot
+  const snapshotUsable = Boolean(
+    snapshot && typeof snapshot.accountFingerprint === 'string',
+  )
+  // KİMLİK ALANLARI YALNIZ ANLIK GÖRÜNTÜDEN.
+  const credential = {
+    role: roleContext.role,
+    reason: roleContext.reason,
+    maskedAccount: roleContext.maskedAccount,
+    source: snapshotUsable ? snapshot.source : 'MISSING_SNAPSHOT',
+    resolved: snapshotUsable ? snapshot.resolved : false,
+    accountFingerprint: snapshotUsable ? snapshot.accountFingerprint : '',
+    errorCode: snapshotUsable && snapshot.resolved
+      ? null
+      : 'SURAT_ACCOUNT_NOT_CONFIGURED',
+  }
   const preflight = evaluateSuratCreatePreflight({
     marketplace: params.order.marketplace,
     pazaryerimi: input.context.pazaryerimi,
@@ -351,6 +379,32 @@ export async function createCanonicalSuratShipmentForRequest(
   // değerlerle kaydedilir; config sonradan değişse bile geçmiş deneme kendini
   // yeniden yorumlamaz.
   let traceAttempt = createTraceAttempt({ traceId, createdAt: stamp() })
+
+  // FAIL-CLOSED: otoriter anlık görüntü yoksa AĞA ÇIKILMAZ.
+  if (!snapshotUsable) {
+    return {
+      ok: false,
+      source: 'real',
+      errorSource: 'Frontend',
+      errorCode: 'SURAT_CREDENTIAL_SNAPSHOT_MISSING',
+      message: buildUserFacingError({ traceId }),
+      canonicalCreate: {
+        adapter: 'SURAT_WEB_API',
+        carrierCreateStatus: 'NOT_STARTED',
+        carrierCreateAttempts: 0,
+        networkCallCount: 0,
+      },
+      traceAttempt: appendTraceStage(traceAttempt, {
+        stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
+        data: {
+          outcome: 'SURAT_CREDENTIAL_SNAPSHOT_MISSING',
+          carrierCreateStatus: 'NOT_STARTED',
+          carrierCalled: false,
+          networkCallCount: 0,
+        },
+      }),
+    }
+  }
   const attemptContext = {
     traceId,
     billingParty: billing.billingParty,
@@ -439,10 +493,17 @@ export async function createCanonicalSuratShipmentForRequest(
     }
   }
 
-  const billingParty = credentialRoleToAccountKey(
-    credential.role,
-  ) as SuratBillingParty
-  const account = resolveCanonicalTenantSuratAccount(params.config, billingParty)
+  // İKİNCİ ÇÖZÜMLEME KALDIRILDI: eskiden burada
+  // `resolveCanonicalTenantSuratAccount(params.config, ...)` vardı ve
+  // `params.config` İSTEK GÖVDESİYDİ.
+  const account = {
+    kullaniciAdi: snapshot.kullaniciAdi,
+    sifre: snapshot.sifre,
+    accountFingerprint: snapshot.accountFingerprint,
+    billingParty: credentialRoleToAccountKey(
+      credential.role,
+    ) as SuratBillingParty,
+  }
 
   // ═══ AĞ ÖNCESİ KİMLİK PARİTE KAPISI ═════════════════════════════════
   // Kimliği SEÇEN `resolveSuratCredentialContext`, telde GİDEN hesabı ise
@@ -451,8 +512,9 @@ export async function createCanonicalSuratShipmentForRequest(
   // Bu kapı YENİ bir yönlendirici DEĞİLDİR; yalnız telin hâlâ çözücünün
   // seçtiği hesabı taşıdığını doğrular.
   const wireAccountFingerprint = accountFingerprint(account?.kullaniciAdi)
-  const credentialFingerprintMatch =
-    wireAccountFingerprint === credential.accountFingerprint
+  const credentialFingerprintMatch = assertSuratWireCredentialParity({
+    snapshot, wireKullaniciAdi: account?.kullaniciAdi,
+  }).ok
   const parity = {
     credentialRole: credential.role,
     credentialSource: credential.source,
@@ -517,6 +579,7 @@ export async function createCanonicalSuratShipmentForRequest(
       account: account
         ? { kullaniciAdi: account.kullaniciAdi, sifre: account.sifre, isActive: true }
         : null,
+      credentialSnapshot: snapshot,
       context: input.context,
       shipment: input,
       idempotency: createHeldIdempotencyPort(),

@@ -6,6 +6,8 @@ import test from 'node:test'
 // Gercek api02 cagrisi YOK: globalThis.fetch stub'lanir ve HER cagri sayilir.
 
 const ADAPTER = await import('./shipments/suratCanonicalCreateAdapter.ts')
+const SNAPSHOT = await import('./shipments/suratCredentialSnapshot.ts')
+const ROUTING = await import('./shipments/suratRoutingModel.ts')
 const MODE = await import('./shipments/suratCanonicalServiceMode.mjs')
 
 const INDEX_SOURCE = await (async () => {
@@ -65,9 +67,34 @@ const baseOrder = {
 }
 
 async function runCanonical(overrides = {}) {
+  // KIMLIK ARTIK OTORITER ANLIK GORUNTUDEN gelir. Bu testler `config` ile
+  // KIRACI hesabini temsil ediyordu; artik ayni degerler KIRACI DEPOSU olarak
+  // anlik goruntuye verilir. Guard GEVSETILMEDI — kaynak duzeltildi.
+  const storeConfig = overrides.config ?? tenantAConfig
+  // ROL, reponun KENDI politika cozucusunden gelir; burada kopya mantik YOK.
+  const order = { ...baseOrder, ...(overrides.order ?? {}) }
+  const role = ROUTING.resolveSuratCredentialContext({
+    config: storeConfig,
+    billingParty: ROUTING.resolveBillingPartyV2(
+      order.rawOrder ?? {},
+    ).billingParty,
+    cod: ROUTING.resolveCodContext({
+      enabled: overrides.cashOnDelivery === true,
+      collectionType: storeConfig?.kapidanOdemeTahsilatTipi,
+      amount: order.cashOnDeliveryAmount,
+    }),
+    codPolicy: ROUTING.resolveCodCredentialPolicy(
+      storeConfig?.codCredentialPolicy,
+    ),
+  }).role
+  const credentialSnapshot = SNAPSHOT.buildSuratCredentialSnapshot({
+    storedSuratConfig: storeConfig,
+    role,
+  })
   return ADAPTER.createCanonicalSuratShipmentForRequest({
     organizationId: overrides.organizationId ?? 'org-A',
-    config: overrides.config ?? tenantAConfig,
+    credentialSnapshot,
+    config: storeConfig,
     order: { ...baseOrder, ...(overrides.order ?? {}) },
     reference: 'PKG-1',
     cashOnDelivery: overrides.cashOnDelivery === true,

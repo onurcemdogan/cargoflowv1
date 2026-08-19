@@ -35,6 +35,14 @@ const TENANT_STORE = {
   canonicalPrimaryKullaniciAdi: '1234562622',
   canonicalPrimarySifre: 'tenant-secret',
 }
+/** Aciklama satirlarini atar: kusuru ANLATAN yorumlar yanlis pozitif verir. */
+function stripComments(source) {
+  return source
+    .split(String.fromCharCode(10))
+    .filter((line) => !line.trim().startsWith('//'))
+    .join(String.fromCharCode(10))
+}
+
 const CLIENT_BODY = {
   kullaniciAdi: '1537690944',
   sifre: 'client-secret',
@@ -178,47 +186,99 @@ test('CRED-8: roller BAGIMSIZ ve eksik kimlik fail-closed', () => {
   assert.notEqual(codSnapshot.accountFingerprint, sellerPays.accountFingerprint)
 })
 
-/* ═══ KÖK NEDEN — ADAPTÖRÜN KAYNAĞI ÖLÇÜLÜR ════════════════════════ */
+/* ═══ KÖK NEDEN — ARTIK KAPALI (testler TERSİNE ÇEVRİLDİ) ══════════ */
 
-test('CRED-ROOT: adaptor kimligi ISTEK GOVDESINDEN cozuyordu', () => {
-  // Bu test kusuru BELGELER ve donusu ENGELLER: iki cozumleme de
-  // `params.config`ten besleniyordu ve `params.config` istek govdesiydi.
-  assert.match(ADAPTER, /resolveSuratCredentialContext\(\{\s*\n\s*config: params\.config,/)
-  assert.match(
-    ADAPTER,
-    /resolveCanonicalTenantSuratAccount\(params\.config, billingParty\)/,
-  )
-  // Adaptor kiraci deposunu HIC okumuyordu.
+test('CRED-ROOT: adaptor kimligi ARTIK istek govdesinden COZMEZ', () => {
+  // Aciklama satirlari kusuru ANLATTIGI icin YALNIZ KOD olculur.
+  const live = stripComments(ADAPTER)
+  // IKINCI cozumleme SILINDI.
   assert.equal(
-    /loadOrganizationIntegrationConfig|getIntegrationCredential/.test(ADAPTER),
+    live.includes('resolveCanonicalTenantSuratAccount(params.config'),
     false,
-    'adaptor artik kiraci deposunu okuyorsa bu testi guncelle',
+    'IKINCI kimlik cozumlemesi hala var',
   )
+  // Hesap alanlari ANLIK GORUNTUDEN okunur.
+  assert.match(live, /kullaniciAdi: snapshot\.kullaniciAdi/)
+  assert.match(live, /sifre: snapshot\.sifre/)
+  // `config` artik kimlik kaynagi DEGIL: yalniz rol politikasi icin okunur.
+  assert.match(live, /const roleContext = resolveSuratCredentialContext\(/)
+  assert.match(live, /accountFingerprint: snapshotUsable/)
 })
 
-test('CRED-ROOT-2: eski parite kapisi bu ayrismayi GOREMEZ', () => {
-  // Iki taraf da ayni `params.config`ten turedigi icin fingerprintler DAIMA
-  // esitti; kapi gecerken otoriter hesap bambaska olabiliyordu.
-  const clientResolved = SNAP.buildSuratCredentialSnapshot({
-    storedSuratConfig: CLIENT_BODY, role: 'PRIMARY_MARKETPLACE',
-  })
-  const clientWire = SNAP.buildSuratCredentialSnapshot({
-    storedSuratConfig: CLIENT_BODY, role: 'PRIMARY_MARKETPLACE',
-  })
-  // Eski kapinin gordugu: esit → GECER.
-  assert.equal(clientResolved.accountFingerprint, clientWire.accountFingerprint)
-  // Ama OTORITER hesap FARKLI.
+test('CRED-ROOT-2: parite ARTIK otoriter anlik goruntuye karsi olculur', () => {
+  const live = stripComments(ADAPTER)
+  // Eski kapi iki config cozumlemesini karsilastiriyordu; yenisi anlik
+  // goruntuyu telde gidecek degerle karsilastirir.
+  assert.match(live, /assertSuratWireCredentialParity\(\{/)
+  assert.match(live, /snapshot, wireKullaniciAdi: account\?\.kullaniciAdi/)
+})
+
+test('CRED-ROOT-3: anlik goruntu YOKSA fail-closed, AG YOK', () => {
+  const live = stripComments(ADAPTER)
+  assert.match(live, /SURAT_CREDENTIAL_SNAPSHOT_MISSING/)
+  assert.match(live, /networkCallCount: 0/)
+  assert.match(live, /carrierCalled: false/)
+})
+
+/* ═══ CRED-9/10 — İSTEMCİ SEÇEMEZ · KİRACI İZOLASYONU ══════════════ */
+
+test('CRED-9: istek govdesi faturalama hesabini SECEMEZ', () => {
+  // Otoriter A, istemci B gonderiyor.
   const authoritative = SNAP.buildSuratCredentialSnapshot({
     storedSuratConfig: TENANT_STORE, role: 'PRIMARY_MARKETPLACE',
   })
-  assert.notEqual(
-    authoritative.accountFingerprint, clientWire.accountFingerprint,
-    'senaryo iki farkli hesabi temsil etmeli',
-  )
-  // YENI kapi bunu YAKALAR.
   const parity = SNAP.assertSuratWireCredentialParity({
     snapshot: authoritative, wireKullaniciAdi: CLIENT_BODY.kullaniciAdi,
   })
   assert.equal(parity.ok, false)
   assert.equal(parity.errorCode, 'SURAT_CREDENTIAL_WIRE_MISMATCH')
+  assert.equal(parity.networkCallCount, 0)
+  // index.mjs kimligi KIRACI DEPOSUNDAN yukler ve istemci alanlarini tarar.
+  const server = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.match(server, /loadOrganizationIntegrationConfig\(/)
+  assert.match(server, /storedSuratConfig: tenantIntegration\?\.surat/)
+  assert.match(server, /scanClientCredentialFields\(/)
+})
+
+test('CRED-10: kiraci izolasyonu — A kimligi B icin uretilmez', () => {
+  const orgA = SNAP.buildSuratCredentialSnapshot({
+    storedSuratConfig: TENANT_STORE, role: 'PRIMARY_MARKETPLACE',
+  })
+  const orgB = SNAP.buildSuratCredentialSnapshot({
+    storedSuratConfig: {
+      canonicalPrimaryKullaniciAdi: '7777770000',
+      canonicalPrimarySifre: 'b-secret',
+    },
+    role: 'PRIMARY_MARKETPLACE',
+  })
+  assert.notEqual(orgA.accountFingerprint, orgB.accountFingerprint)
+  // B'nin anlik goruntusuyle A'nin hesabi telde gidemez.
+  const cross = SNAP.assertSuratWireCredentialParity({
+    snapshot: orgB, wireKullaniciAdi: orgA.kullaniciAdi,
+  })
+  assert.equal(cross.ok, false)
+  assert.equal(cross.networkCallCount, 0)
+})
+
+/* ═══ KAPIDAN SONRA ÜZERİNE YAZMA YOK ══════════════════════════════ */
+
+test('CRED-POSTGUARD: parite kapisindan SONRA kimlik degistirilemez', () => {
+  const service = readFileSync(
+    join(here, 'shipments', 'suratCanonicalShipmentService.ts'), 'utf8',
+  )
+  const guardAt = service.indexOf('assertSuratWireCredentialParity({')
+  const fetchAt = service.indexOf('await createOrtakBarkodShipment({')
+  assert.ok(guardAt > 0, 'ag sinirinda parite kapisi YOK')
+  assert.ok(guardAt < fetchAt, 'kapi fetchten SONRA calisiyor')
+  // Kapi ile ag cagrisi ARASINDA kimlik atamasi/aramasi OLMAMALI.
+  const between = service.slice(guardAt, fetchAt)
+  for (const forbidden of [
+    'credentials =', 'kullaniciAdi =', 'sifre =',
+    'resolveTenantSuratProductionCredentials', 'resolveCanonicalTenantSuratAccount',
+  ]) {
+    assert.equal(
+      between.includes(forbidden), false,
+      `kapidan SONRA kimlik degistiriliyor: ${forbidden}`,
+    )
+  }
 })

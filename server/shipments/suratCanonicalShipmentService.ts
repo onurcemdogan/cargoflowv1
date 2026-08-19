@@ -15,6 +15,10 @@
 // EN KRİTİK DEĞİŞMEZ: taşıyıcı gönderisi oluştuysa, etiket artifact'i
 // çözülemese bile İKİNCİ create çağrısı YAPILMAZ.
 import {
+  assertSuratWireCredentialParity,
+  type SuratCredentialSnapshot,
+} from './suratCredentialSnapshot.ts'
+import {
   buildSuratCanonicalGonderiModel,
   validateSuratBillingContext,
   type CanonicalShipmentInput,
@@ -78,6 +82,8 @@ export interface CanonicalShipmentParams {
   packageId: string
   /** Tenant'ın KENDİ Sürat hesabı — global/env hesap KABUL EDİLMEZ. */
   account: { kullaniciAdi?: unknown; sifre?: unknown; isActive?: boolean } | null
+  /** OTORİTER kimlik — ağ sınırı paritesi bununla ölçülür. */
+  credentialSnapshot?: SuratCredentialSnapshot | null
   context: SuratMarketplaceContext
   shipment: CanonicalShipmentInput
   idempotency: CanonicalIdempotencyPort
@@ -186,6 +192,27 @@ export async function createCanonicalSuratShipment(
 
   // 4) İSTEK GÖVDESİ — TEK kaynak Ünite 1 builder'ıdır.
   const gonderi = buildSuratCanonicalGonderiModel(params.shipment)
+
+  // ═══ AĞ SINIRI KİMLİK PARİTESİ — FETCH'İ DOMİNE EDER ═══════════════════
+  //
+  // Bu, ağ çağrısından ÖNCEKİ SON karardır. Karşılaştırma OTORİTER anlık
+  // görüntü ile GERÇEKTEN serileştirilecek kullanıcı adı arasındadır.
+  // Bundan SONRA hiçbir kimlik dönüşümü/aramasi YOKTUR: `credentials`
+  // aşağıda olduğu gibi kullanılır.
+  if (params.credentialSnapshot) {
+    const parity = assertSuratWireCredentialParity({
+      snapshot: params.credentialSnapshot,
+      wireKullaniciAdi: (credentials as { kullaniciAdi?: unknown })?.kullaniciAdi,
+    })
+    if (!parity.ok) {
+      const result = blocked(
+        parity.errorCode ?? 'SURAT_CREDENTIAL_WIRE_MISMATCH',
+        parity.reason ?? 'Kimlik paritesi başarısız; ağ çağrısı yapılmadı.',
+      )
+      await params.idempotency.complete(key, result)
+      return result
+    }
+  }
 
   // 5) TEK taşıyıcı çağrısı.
   try {

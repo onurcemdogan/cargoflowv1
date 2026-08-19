@@ -3393,8 +3393,60 @@ async function createSuratShipmentCore(request, response) {
       './shipments/suratCanonicalCreateAdapter.ts'
     )
     try {
+      // ═══ OTORİTER KİMLİK — KİRACI DEPOSUNDAN ════════════════════════
+      //
+      // ÖLÇÜLEN KUSUR: kanonik adaptör kimliği `params.config`ten çözüyordu ve
+      // o da `request.body.config.surat`tı — yani İSTEMCİ, gönderinin hangi
+      // cariye yazılacağını seçebiliyordu. Canary kiracı deposunu okuduğu için
+      // ****2622 diyor, canlı create istek gövdesini okuduğu için ****0944
+      // diyordu.
+      //
+      // Artık kimlik YALNIZ kiracının SAKLANMIŞ Sürat config'inden üretilir;
+      // istek gövdesi kimlik için OKUNMAZ.
+      const [
+        { getDb }, { loadOrganizationIntegrationConfig }, snapshotModule, routing,
+      ] = await Promise.all([
+        import('./db/client.ts'),
+        import('./integrations/credentialService.ts'),
+        import('./shipments/suratCredentialSnapshot.ts'),
+        import('./shipments/suratRoutingModel.ts'),
+      ])
+      const tenantIntegration = await loadOrganizationIntegrationConfig(
+        getDb(), String(request.auth?.organizationId ?? ''),
+      )
+      const credentialSnapshot = snapshotModule.buildSuratCredentialSnapshot({
+        storedSuratConfig: tenantIntegration?.surat ?? {},
+        // ROL: reponun KENDİ politika çözücüsü. Kopya mantık YOK; buradan
+        // YALNIZ `role` alınır, kimlik DEĞERİ ALINMAZ.
+        role: routing.resolveSuratCredentialContext({
+          config,
+          billingParty: routing.resolveBillingPartyV2(
+            orderForSurat?.rawOrder ?? {},
+          ).billingParty,
+          cod: routing.resolveCodContext({
+            enabled: credentialSelection.cashOnDelivery === true,
+            collectionType: config?.kapidanOdemeTahsilatTipi,
+            amount: orderForSurat?.cashOnDeliveryAmount,
+          }),
+          codPolicy: routing.resolveCodCredentialPolicy(
+            config?.codCredentialPolicy,
+          ),
+        }).role,
+      })
+      // İstemci kimlik alanı gönderdiyse KAYDA GEÇER (değer TAŞINMAZ) —
+      // kabul edilmez, yalnız görünür olur.
+      const clientCredentialScan = snapshotModule.scanClientCredentialFields(
+        request.body?.config?.surat ?? request.body?.config ?? {},
+      )
+      if (clientCredentialScan.present) {
+        console.warn(
+          '[surat-credential] istemci kimlik alani YOK SAYILDI: '
+          + clientCredentialScan.fields.join(','),
+        )
+      }
       const canonicalResult = await createCanonicalSuratShipmentForRequest({
         organizationId: String(request.auth?.organizationId ?? ''),
+        credentialSnapshot,
         config: request.body?.config?.surat ?? request.body?.config ?? {},
         order: orderForSurat,
         reference,

@@ -52,10 +52,15 @@ const str = (value: unknown): string =>
   value === null || value === undefined ? '' : String(value).trim()
 
 /** Rol → kiracı deposundaki hesap alan adları. */
+// ═══ TABAN `kullaniciAdi`/`sifre` ALANLARI BİLEREK YOK ══════════════════
+//
+// Bu iki alan ORTAM DEĞİŞKENİYLE EZİLEBİLİR ve kanonik yol onları OKUMAMALIDIR
+// (mevcut sözleşme: `WIRE-6B` bunu kilitler). Buraya fallback olarak
+// eklenirlerse ENV zehirli hesap sessizce tele çıkardı.
 const ROLE_FIELDS: Record<SuratCredentialRoleKey, { user: string[]; pass: string[] }> = {
   PRIMARY_MARKETPLACE: {
-    user: ['canonicalPrimaryKullaniciAdi', 'kullaniciAdi'],
-    pass: ['canonicalPrimarySifre', 'sifre'],
+    user: ['canonicalPrimaryKullaniciAdi', 'liveKullaniciAdi'],
+    pass: ['canonicalPrimarySifre', 'liveSifre'],
   },
   SELLER_PAYS: {
     user: ['canonicalSellerPaysKullaniciAdi', 'sellerPaysKullaniciAdi'],
