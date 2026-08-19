@@ -14,7 +14,12 @@ const full = (id, payload) => {
   let attempt = open(id)
   const stages = [
     ['PRE_FLIGHT', 'BILLING'], ['ROUTING', 'CREDENTIAL_ROUTING'],
-    ['REQUEST_READY', 'REQUEST'], ['CARRIER_CALL', 'SERVICE_ROUTING'],
+    ['REQUEST_READY', 'REQUEST'],
+    // GERCEK TEL: nihai govdeden, agdan hemen once. `REQUEST_READY` karar
+    // anindaki niyet; bu ise SERILESTIRILEN'in kendisi.
+    ['ACTUAL_WIRE_READY', 'REQUEST'],
+    ['CARRIER_CALL_STARTED', 'SERVICE_ROUTING'],
+    ['CARRIER_CALL', 'SERVICE_ROUTING'],
     ['CARRIER_RESPONSE', 'RESPONSE'], ['VERIFICATION', 'VERIFICATION'],
     ['FINAL', 'FINAL_RESULT'],
   ]
@@ -65,8 +70,11 @@ test('TRC-5: asama eklemek ONCEKI denemeyi DEGISTIRMEZ', () => {
   const after = T.appendTraceStage(before, {
     stage: 'FINAL', at: 'y', section: 'FINAL_RESULT', data: { payload: 'Z' },
   })
-  assert.equal(before.stages.length, 7, 'gecmis deneme BUYUMEMELI')
-  assert.equal(after.stages.length, 8)
+  // Sayi SABIT KODLANMAZ: asama sozlugu buyudugunde bu test degismezligi
+  // olcmeyi birakip sayi saymaya baslardi.
+  const full_ = T.TRACE_LIFECYCLE_STAGES.length
+  assert.equal(before.stages.length, full_, 'gecmis deneme BUYUMEMELI')
+  assert.equal(after.stages.length, full_ + 1)
   // Config sonradan degisse bile gecmis karar AYNI kalir.
   assert.deepEqual(before.stages[0].data, { payload: 'A' })
 })

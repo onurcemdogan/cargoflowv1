@@ -248,14 +248,27 @@ export const TRACE_LIFECYCLE_STAGES = [
   // NİHAİ gövdeden alınan GERÇEK tel anlık görüntüsü. `REQUEST_READY` karar
   // anındaki niyettir; bu ise SERİLEŞTİRİLECEK olanın kendisidir.
   'ACTUAL_WIRE_READY',
-  // Parite/kimlik nedeniyle ağa ÇIKILMADIĞINDA kullanılır. Gönderilmemiş bir
-  // isteği "gönderildi" gibi göstermemek için ayrı aşamadır.
-  'WIRE_BLOCKED',
   'CARRIER_CALL_STARTED',
   'CARRIER_CALL',
   'CARRIER_RESPONSE',
   'VERIFICATION',
   'FINAL',
+] as const
+
+/**
+ * ALTERNATİF (DIŞLAYICI) AŞAMALAR — mutlu yol dizisine AİT DEĞİLDİR.
+ *
+ * `WIRE_BLOCKED` ağa ÇIKILMADIĞINDA yazılır ve `CARRIER_CALL*` ile aynı
+ * denemede BULUNAMAZ. Mutlu yol listesine konulsaydı "sağlıklı create tüm
+ * aşamaları üretir" değişmezi ANLAMSIZLAŞIRDI: hiçbir başarılı çağrı
+ * bloklanmış olamaz.
+ */
+export const TRACE_ALTERNATE_STAGES = ['WIRE_BLOCKED'] as const
+
+/** Kabul edilen TÜM aşama adları (doğrulama için). */
+export const TRACE_ALL_STAGES = [
+  ...TRACE_LIFECYCLE_STAGES,
+  ...TRACE_ALTERNATE_STAGES,
 ] as const
 
 export const TRACE_SECTIONS = [
@@ -316,7 +329,7 @@ export interface SuratTraceAttempt {
   schemaVersion: number
   createdAt: string
   stages: ReadonlyArray<{
-    stage: (typeof TRACE_LIFECYCLE_STAGES)[number]
+    stage: (typeof TRACE_ALL_STAGES)[number]
     at: string
     section: (typeof TRACE_SECTIONS)[number] | null
     data: unknown
