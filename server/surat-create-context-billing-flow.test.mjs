@@ -543,21 +543,37 @@ test('WIRE-4: kredensiyal probu DEGER BASMAZ, varlik hasOwnProperty ile', () => 
   )
 })
 
-test('WIRE-5: kanonik dal HAM body config alir, normalize edilmis config DEGIL', () => {
-  // ÜRETİM GERÇEĞİ: `normalizeSuratConfig` `deriveCanonicalPrimaryAccount`
-  // türevini üretir, fakat kanonik dal adaptöre HAM gövdeyi geçirir. Bu
-  // yüzden `canonicalPrimarySifre` yalnız istemcinin gönderdiği yükte varsa
-  // çözülür — türev burada devreye GİRMEZ.
+test('WIRE-5: kanonik dal HAM body configi YALNIZ tasima secenegi olarak alir', () => {
+  // ESKI GERCEK (ARTIK GECERSIZ): kanonik dal adaptore HAM govdeyi geciriyordu
+  // ve KIMLIK de oradan cozuluyordu — yani `canonicalPrimarySifre` yalniz
+  // ISTEMCI gonderdiyse cozuluyordu. Bu, istemcinin faturalama hesabini
+  // secebilmesi demekti.
+  //
+  // YENI SOZLESME: ham govde HALA geciriliyor ama YALNIZ tasima secenekleri
+  // icin. KIMLIK otoriter anlik goruntuden gelir.
   const server = codeOf('server/index.mjs')
   const branch = server.indexOf('if (config.serviceMode === SURAT_CANONICAL_SERVICE_MODE)')
   assert.ok(branch > 0)
-  const block = server.slice(branch, branch + 1200)
+  const nextBranch = server.indexOf(
+    "if (config.serviceMode === 'KARGO_BARKODU_SIPARIS_SOAP')", branch,
+  )
+  const block = server.slice(branch, nextBranch > branch ? nextBranch : branch + 4000)
+  // Ham govde hala geciriliyor (tasima secenekleri).
   assert.ok(
     block.includes('config: request.body?.config?.surat ?? request.body?.config ?? {}'),
-    'kanonik dal HAM gövde config geciriyor',
+    'kanonik dal ham govde configi gecirmiyor',
   )
-  // Normalize edilmiş `config` degiskeni bu cagriya GECIRILMIYOR.
+  // Normalize edilmis `config` degiskeni bu cagriya GECIRILMIYOR.
   assert.equal(block.includes('config: config,'), false)
+  // KIMLIK ARTIK OTORITER ANLIK GORUNTUDEN gelir.
+  assert.ok(
+    block.includes('credentialSnapshot,'),
+    'kanonik dal otoriter kimlik anlik goruntusu gecirmiyor',
+  )
+  assert.ok(
+    block.includes('loadOrganizationIntegrationConfig('),
+    'kimlik kiraci deposundan yuklenmiyor',
+  )
 })
 
 async function makeDb() {
