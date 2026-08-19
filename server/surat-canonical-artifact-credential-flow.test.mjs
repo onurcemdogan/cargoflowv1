@@ -319,9 +319,17 @@ test('3B-PROD-4: index.mjs ve on kontrol AYNI turevi kullanir', async () => {
   assert.match(snapshot, /suratCanonicalServiceMode\.mjs/)
   // normalizeSuratConfig turevi index.mjs'te DURUYOR (mevcut sozlesme).
   assert.match(INDEX_SOURCE, /\.\.\.deriveCanonicalPrimaryAccount\(value\)/)
-  // Canli create ve on kontrol AYNI sarmalayiciyi cagirir.
-  assert.match(INDEX_SOURCE, /normalizeAuthoritativeSuratStore\(/)
-  assert.match(cli, /normalizeAuthoritativeSuratStore\(stored\)/)
+  // Canli create ve on kontrol AYNI YUKLEYICIYI cagirir; sarmalayici o
+  // yukleyicinin ICINDE bir kez uygulanir. Boylece iki yol yalnizca ayni
+  // fonksiyonu degil, ayni KAYDI okudugunu da raporlar.
+  const loaderSource = readFileSync(
+    'server/integrations/activeSuratIntegration.ts', 'utf8',
+  )
+  assert.match(loaderSource, /normalizeAuthoritativeSuratStore\(/)
+  assert.match(INDEX_SOURCE, /loadActiveSuratIntegrationForOrganization\(/)
+  assert.match(cli, /loadActiveSuratIntegrationForOrganization\(/)
+  // Kopya normalizasyon CAGIRANLARDA kalmadi.
+  assert.equal(cli.includes('normalizeAuthoritativeSuratStore'), false)
   // On kontrol KENDI kopya turevini ARTIK uygulamaz.
   assert.equal(
     /\.\.\.deriveCanonicalPrimaryAccount\(/.test(cli), false,

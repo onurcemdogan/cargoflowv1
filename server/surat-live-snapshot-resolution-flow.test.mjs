@@ -73,8 +73,14 @@ test('LIVE-CRED-1: kiraci primary VARSA canli anlik goruntu COZULUR', () => {
 
 test('LIVE-CRED-2: canary · dry-run · canli AYNI fonksiyonu kullanir', () => {
   // Yapisal kanit: uc yol da TEK normalizasyon fonksiyonunu cagirir.
-  assert.match(SERVER, /normalizeAuthoritativeSuratStore\(tenantIntegration\?\.surat\)/)
-  assert.match(CANARY, /normalizeAuthoritativeSuratStore\(stored\)/)
+  // Canli POST ve kanarya artik TEK YUKLEYICIDEN gecer; turev o
+  // yukleyicinin icinde bir kez uygulanir.
+  const LOADER = readFileSync(
+    'server/integrations/activeSuratIntegration.ts', 'utf8',
+  )
+  assert.match(LOADER, /normalizeAuthoritativeSuratStore\(/)
+  assert.match(SERVER, /loadActiveSuratIntegrationForOrganization\(/)
+  assert.match(CANARY, /loadActiveSuratIntegrationForOrganization\(/)
   assert.match(INSPECT, /normalizeAuthoritativeSuratStore\(stored\)/)
   // Kopya turev KALMADI.
   for (const [name, src] of [['canary', CANARY], ['inspect', INSPECT]]) {

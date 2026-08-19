@@ -362,6 +362,18 @@ export interface CanonicalCreateRequestParams {
    * Kimlik ARTIK `config`ten (istek gövdesi) OKUNMAZ.
    */
   credentialSnapshot: SuratCredentialSnapshot
+  /**
+   * OKUNAN KAYDIN KİMLİĞİ — maskeli, sır DEĞİL.
+   *
+   * Kanarya ile canlı POST'un aynı organizasyonun aynı satırını okuyup
+   * okumadığı YALNIZ bu alanlar ize düştüğünde ampirik olarak
+   * karşılaştırılabilir. Yoksa `UNKNOWN` görünür; UYDURULMAZ.
+   */
+  credentialRecordIdentity?: {
+    organizationIdMasked?: unknown
+    integrationIdMasked?: unknown
+    integrationConfigured?: unknown
+  } | null
   /** TAŞIMA SEÇENEKLERİ — KİMLİK DEĞİL. */
   config: Record<string, unknown>
   order: Record<string, unknown>
@@ -420,7 +432,14 @@ export async function createCanonicalSuratShipmentForRequest(
     maskedAccount: snapshotUsable && snapshot.resolved
       ? maskAccount(snapshot.kullaniciAdi)
       : '',
-    source: snapshotUsable ? snapshot.source : 'MISSING_SNAPSHOT',
+    // ═══ KAYNAK ETİKETİ YALNIZ GERÇEKTEN ÇÖZÜLDÜYSE ════════════════════
+    // `tenant.surat.primary` etiketi "parmak izi donmuş kiracı anlık
+    // görüntüsünden geldi" demektir. Anlık görüntü VAR ama alanları BOŞSA
+    // parmak izi de boştur; o durumda bu etiket okuyucuya çözülmüş bir
+    // kimlik olduğunu SÖYLER — söylememeli.
+    source: !snapshotUsable
+      ? 'MISSING_SNAPSHOT'
+      : snapshot.resolved ? snapshot.source : 'UNRESOLVED_SNAPSHOT',
     resolved: snapshotUsable ? snapshot.resolved : false,
     accountFingerprint: snapshotUsable ? snapshot.accountFingerprint : '',
     // GRANÜLER SEBEP ROLDEN türetilir — config'ten DEĞİL. Böylece hangi rolün
@@ -433,6 +452,19 @@ export async function createCanonicalSuratShipmentForRequest(
           ? 'COD_CREDENTIAL_NOT_CONFIGURED'
           : 'PRIMARY_CREDENTIAL_NOT_CONFIGURED',
   }
+  // Çağıran kimlik kanıtı vermediyse `UNKNOWN` — boş dize DEĞİL. Boş dize
+  // "aynı" gibi karşılaştırılır ve iki farklı bilinmeyeni eşitler.
+  const recordIdentity = {
+    tenantOrganizationIdMasked:
+      String(params.credentialRecordIdentity?.organizationIdMasked ?? '')
+      || 'UNKNOWN',
+    tenantIntegrationIdMasked:
+      String(params.credentialRecordIdentity?.integrationIdMasked ?? '')
+      || 'UNKNOWN',
+    tenantIntegrationConfigured:
+      params.credentialRecordIdentity?.integrationConfigured ?? 'UNKNOWN',
+  }
+
   const preflight = evaluateSuratCreatePreflight({
     marketplace: params.order.marketplace,
     pazaryerimi: input.context.pazaryerimi,
@@ -494,6 +526,7 @@ export async function createCanonicalSuratShipmentForRequest(
     credentialReason: credential.reason,
     credentialResolved: credential.resolved,
     credentialErrorCode: credential.errorCode,
+    ...recordIdentity,
     pazaryerimi: input.context.pazaryerimi,
     entegrasyonFirmasi: input.context.entegrasyonFirmasi,
     ozelKargoTakipNoPresent: Boolean(input.context.ozelKargoTakipNo),
@@ -526,6 +559,7 @@ export async function createCanonicalSuratShipmentForRequest(
       credentialSource: credential.source,
       maskedAccount: credential.maskedAccount,
       credentialResolved: credential.resolved,
+      ...recordIdentity,
       serviceMode: SURAT_CANONICAL_SERVICE_MODE,
       serviceType: SURAT_CANONICAL_SERVICE_TYPE,
       operation: SURAT_CANONICAL_OPERATION_NAME,

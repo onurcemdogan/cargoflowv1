@@ -235,9 +235,14 @@ test('CRED-9: istek govdesi faturalama hesabini SECEMEZ', () => {
   assert.equal(parity.networkCallCount, 0)
   // index.mjs kimligi KIRACI DEPOSUNDAN yukler ve istemci alanlarini tarar.
   const server = readFileSync(join(here, 'index.mjs'), 'utf8')
-  assert.match(server, /loadOrganizationIntegrationConfig\(/)
-  // Ham kayit DOGRUDAN kullanilmaz: once paylasilan normalizasyon.
-  assert.match(server, /normalizeAuthoritativeSuratStore\(tenantIntegration\?\.surat\)/)
+  assert.match(server, /loadActiveSuratIntegrationForOrganization\(/)
+  // Ham kayit DOGRUDAN kullanilmaz: normalizasyon paylasilan yukleyicinin
+  // ICINDE yapilir; index.mjs yalnizca turetilmis depoyu alir.
+  assert.match(server, /authoritativeSuratStore = activeSuratIntegration\.store/)
+  assert.match(
+    readFileSync(join(here, 'integrations', 'activeSuratIntegration.ts'), 'utf8'),
+    /normalizeAuthoritativeSuratStore\(/,
+  )
   assert.match(server, /storedSuratConfig: authoritativeSuratStore/)
   assert.match(server, /scanClientCredentialFields\(/)
 })

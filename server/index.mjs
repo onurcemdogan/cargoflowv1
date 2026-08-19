@@ -3403,21 +3403,28 @@ async function createSuratShipmentCore(request, response) {
       //
       // Artık kimlik YALNIZ kiracının SAKLANMIŞ Sürat config'inden üretilir;
       // istek gövdesi kimlik için OKUNMAZ.
+      //
+      // ═══ HANGİ KAYIT OKUNDU? ════════════════════════════════════════
+      // Kanarya ****2622, canlı POST ****0944 diyordu ve ikisi de "kiracı
+      // deposu" iddiasındaydı. Okunan SATIRIN kimliği hiçbir yerde
+      // görünmediği için ayrışmanın yeri kanıtlanamıyordu. Artık kanarya
+      // ile TEK ve AYNI yükleyici kullanılır ve kayıt kimliği ize yazılır.
       const [
-        { getDb }, { loadOrganizationIntegrationConfig }, snapshotModule, routing,
+        { getDb }, { loadActiveSuratIntegrationForOrganization }, snapshotModule,
+        routing,
       ] = await Promise.all([
         import('./db/client.ts'),
-        import('./integrations/credentialService.ts'),
+        import('./integrations/activeSuratIntegration.ts'),
         import('./shipments/suratCredentialSnapshot.ts'),
         import('./shipments/suratRoutingModel.ts'),
       ])
-      const tenantIntegration = await loadOrganizationIntegrationConfig(
-        getDb(), String(request.auth?.organizationId ?? ''),
-      )
-      // HAM kayit DOGRUDAN kullanilamaz: `canonicalPrimary*` alanlari
-      // TURETMEDE dogar. Canary ile AYNI fonksiyon kullanilir.
-      const authoritativeSuratStore =
-        snapshotModule.normalizeAuthoritativeSuratStore(tenantIntegration?.surat)
+      const activeSuratIntegration =
+        await loadActiveSuratIntegrationForOrganization(
+          getDb(), String(request.auth?.organizationId ?? ''),
+        )
+      // Türetme yükleyicinin İÇİNDE yapılır (canary ile aynı fonksiyon);
+      // burada ikinci bir normalizasyon YOK.
+      const authoritativeSuratStore = activeSuratIntegration.store
       const credentialSnapshot = snapshotModule.buildSuratCredentialSnapshot({
         storedSuratConfig: authoritativeSuratStore,
         // ROL: reponun KENDİ politika çözücüsü. Kopya mantık YOK; buradan
@@ -3451,6 +3458,12 @@ async function createSuratShipmentCore(request, response) {
       const canonicalResult = await createCanonicalSuratShipmentForRequest({
         organizationId: String(request.auth?.organizationId ?? ''),
         credentialSnapshot,
+        // KİMLİK KANITI — iz üzerinden kanarya çıktısıyla karşılaştırılır.
+        credentialRecordIdentity: {
+          organizationIdMasked: activeSuratIntegration.organizationIdMasked,
+          integrationIdMasked: activeSuratIntegration.integrationIdMasked,
+          integrationConfigured: activeSuratIntegration.configured,
+        },
         config: request.body?.config?.surat ?? request.body?.config ?? {},
         order: orderForSurat,
         reference,

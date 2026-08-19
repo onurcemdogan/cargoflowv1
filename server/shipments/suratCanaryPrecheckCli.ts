@@ -7,10 +7,10 @@
 //   npm run surat:canary-precheck -- --org <organizationId>
 import { sql } from 'drizzle-orm'
 import { getDb, isDatabaseConfigured } from '../db/client.ts'
+import { isCredentialEncryptionConfigured } from '../integrations/credentialService.ts'
 import {
-  isCredentialEncryptionConfigured,
-  loadOrganizationIntegrationConfig,
-} from '../integrations/credentialService.ts'
+  loadActiveSuratIntegrationForOrganization,
+} from '../integrations/activeSuratIntegration.ts'
 import {
   resolveCanonicalTenantSuratAccount,
   resolveSuratBillingParty,
@@ -21,7 +21,6 @@ import {
   SURAT_CANONICAL_CREATE_PATH,
 } from './suratWebApiClient.ts'
 import { SURAT_MARKETPLACE_REGISTRY } from './suratCanonicalGonderiModel.ts'
-import { normalizeAuthoritativeSuratStore } from './suratCredentialSnapshot.ts'
 
 const present = (value: unknown): string =>
   String(value ?? '').trim() ? 'YES' : 'NO'
@@ -110,20 +109,24 @@ export async function runSuratCanaryPrecheck(): Promise<number> {
   }
   // Repo deseni: drizzle istemcisi credential okuyucusunun dar sözleşmesine
   // aynı şekilde köprülenir (bkz. trendyolPackageIdentityTraceCli).
-  const config = await loadOrganizationIntegrationConfig(
-    getDb() as unknown as Parameters<typeof loadOrganizationIntegrationConfig>[0],
+  // TEK OTORİTER YÜKLEYİCİ — canlı POST ile AYNI fonksiyon. Ayrıca okunan
+  // SATIRIN kimliğini döner; `CANARY_INTEGRATION_ID` ile izdeki
+  // `LIVE_INTEGRATION_ID` böylece doğrudan karşılaştırılabilir.
+  const active = await loadActiveSuratIntegrationForOrganization(
+    getDb() as unknown as Parameters<
+      typeof loadActiveSuratIntegrationForOrganization
+    >[0],
     organizationId,
   )
-  const stored = (config?.surat ?? {}) as Record<string, unknown>
   // KAYITLI PAYLOAD ÇALIŞMA ZAMANI GİBİ TÜRETİLİR.
   // `loadOrganizationIntegrationConfig` şifresi çözülmüş HAM kaydı döner;
   // çalışma zamanında ise `tenantInjectCredentials` bunu normalizeSuratConfig
   // üzerinden geçirir ve `canonicalPrimary*` alanları orada doğar. Ön kontrol
   // normalizasyonu atlarsa kanonik hesabı ASLA göremez ve YANLIŞ BLOCKED
   // üretir. Bu yüzden aynı paylaşılan türev burada da uygulanır.
-  // TEK NORMALIZASYON YOLU — canli create ile AYNI fonksiyon.
-  const surat: Record<string, unknown> =
-    normalizeAuthoritativeSuratStore(stored)
+  // TEK NORMALIZASYON YOLU — canli create ile AYNI fonksiyon (yukleyicinin
+  // ICINDE uygulanir; burada ikinci bir turetme YOK).
+  const surat: Record<string, unknown> = active.store
 
   // Kanonik yolun okuduğu hesap kümeleri — DEĞERLER BASILMAZ.
   const primary = resolveCanonicalTenantSuratAccount(surat, 'PRIMARY')
@@ -155,6 +158,9 @@ export async function runSuratCanaryPrecheck(): Promise<number> {
   const lines = [
     '=== SÜRAT KANARYA ÖN KONTROLÜ (SALT OKUNUR) ===',
     `TENANT                        : ${maskIdentifier(organizationId)}`,
+    `CANARY_ORGANIZATION_ID        : ${active.organizationIdMasked}`,
+    `CANARY_INTEGRATION_ID         : ${active.integrationIdMasked}`,
+    `INTEGRATION RECORD FOUND      : ${active.configured ? 'YES' : 'NO'}`,
     `ACTIVE SURAT INTEGRATION      : ${present(surat.kullaniciAdi) === 'YES' || primary ? 'YES' : 'NO'}`,
     `CURRENT SERVICE MODE          : ${serviceMode || '(tanımsız)'}`,
     `CANONICAL MODE SELECTED       : ${canonicalSelected ? 'YES' : 'NO'}`,

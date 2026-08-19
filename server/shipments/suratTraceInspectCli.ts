@@ -21,6 +21,15 @@ import {
   projectCarrierTruth,
 } from './suratTraceProjection.ts'
 
+/**
+ * Bu CLI'ın KENDİ yan etkileri — okunan denemenin özelliği DEĞİL.
+ *
+ * Etiketler bilerek `INSPECTOR_` önekli: öneksiz `NETWORK_CALLS 0`, aynı iz
+ * `carrierCalled=true` derken "taşıyıcıya gidilmedi" gibi okunuyordu.
+ */
+const INSPECTOR_SIDE_EFFECT_COUNTERS =
+  'INSPECTOR_NETWORK_CALLS=0 · INSPECTOR_DB_WRITES=0 · INSPECTOR_CREATE_CALLS=0'
+
 const readArg = (name: string): string => {
   const index = process.argv.indexOf(`--${name}`)
   return index >= 0 ? String(process.argv[index + 1] ?? '').trim() : ''
@@ -112,6 +121,22 @@ function report(row: Record<string, unknown>): void {
     console.info(`${key.padEnd(28)} ${describeField(key, value)}`)
   }
 
+  // KAYIT KİMLİĞİ — hangi organizasyonun hangi satırı okundu?
+  //
+  // Kanarya AYNI alanları basar. ****2622 ile ****0944 ayrışması ancak bu iki
+  // çıktı yan yana konduğunda KANITLANABİLİR; kimlik görünmezse iki taraf da
+  // "kiracı deposundan okudum" der ve çelişki ölçülemez kalır.
+  console.info('\n═══ KAYIT KİMLİĞİ ═══════════════════════════════════════')
+  for (const key of [
+    'tenantOrganizationIdMasked', 'tenantIntegrationIdMasked',
+    'tenantIntegrationConfigured',
+  ]) {
+    const value = routing[key] ?? summary[key]
+    console.info(
+      `${key.padEnd(28)} ${value === undefined ? 'UNKNOWN' : describeField(key, value)}`,
+    )
+  }
+
   console.info('\n═══ KİMLİK PARİTESİ ═════════════════════════════════════')
   for (const key of [
     'resolverAccountFingerprint', 'wireAccountFingerprint', 'credentialMatch',
@@ -172,10 +197,7 @@ function report(row: Record<string, unknown>): void {
   // AYNI iz `carrierCalled=true` diyordu. Okuyan kişi bunu DENEMENİN özelliği
   // sanıyordu. Sayaçlar bu CLI'ın KENDİ yan etkileridir; taşıyıcı gerçeği
   // yukarıdaki "TASIYICI GERCEGI" bölümündedir.
-  console.info(
-    String.fromCharCode(10) + 'INSPECTOR_NETWORK_CALLS=0 · INSPECTOR_DB_WRITES=0'
-    + ' · INSPECTOR_CREATE_CALLS=0',
-  )
+  console.info('\n' + INSPECTOR_SIDE_EFFECT_COUNTERS)
 }
 
 async function main(): Promise<number> {

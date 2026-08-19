@@ -371,7 +371,13 @@ test('B1c: denetci SALT OKUNUR — yazma/create cagrisi YOK', () => {
       `denetci mutasyon/ag cagrisi iceriyor: ${forbidden}`,
     )
   }
-  assert.match(cli, /NETWORK_CALLS 0 · DB_WRITES 0 · CREATE_CALLS 0/)
+  // Sayaclar DENETCININ kendi yan etkisidir, DENEMENIN ozelligi degil:
+  // etiketsiz `NETWORK_CALLS 0` ayni izde `carrierCalled=true` dururken
+  // "tasiyiciya gidilmedi" gibi okunuyordu.
+  assert.match(
+    cli,
+    /INSPECTOR_NETWORK_CALLS=0 · INSPECTOR_DB_WRITES=0 · INSPECTOR_CREATE_CALLS=0/,
+  )
 })
 
 /* ═══ B3/B4 — KİMLİK ALANLARI KARIŞMAZ ═════════════════════════════ */

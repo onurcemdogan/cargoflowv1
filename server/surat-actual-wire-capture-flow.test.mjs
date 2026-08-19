@@ -275,7 +275,11 @@ test('WIRE-11: legacy debug gercek teli KIRLETEMEZ', () => {
 test('WIRE-12: istemci kimligi gercek teli DEGISTIREMEZ', () => {
   const server = stripComments(read('index.mjs'))
   // Kimlik kiraci deposundan; istek govdesinden DEGIL.
-  assert.match(server, /normalizeAuthoritativeSuratStore\(tenantIntegration\?\.surat\)/)
+  // Turev artik PAYLASILAN YUKLEYICININ icinde dogar; index.mjs onu cagirir
+  // ve deponun uzerine IKINCI bir turev UYGULAMAZ. Guard gevsetilmedi:
+  // kimligin kiraci deposundan geldigi hala YAPISAL olarak kanitlanir.
+  assert.match(server, /loadActiveSuratIntegrationForOrganization\(/)
+  assert.match(server, /authoritativeSuratStore = activeSuratIntegration\.store/)
   assert.match(server, /storedSuratConfig: authoritativeSuratStore/)
   assert.equal(
     /storedSuratConfig:\s*request\.body/.test(server), false,

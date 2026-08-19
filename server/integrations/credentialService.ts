@@ -109,13 +109,53 @@ export function decryptCredentialPayload(
   return JSON.parse(plaintext.toString('utf8')) as Record<string, unknown>
 }
 
-export async function getIntegrationCredential(
+/**
+ * Birden çok kayıt bulunduğunda atılır — SESSİZ SEÇİM YERİNE.
+ *
+ * `(organization_id, provider)` üzerinde tekil indeks VARDIR; yine de bu
+ * hata gerçektir: indeks düşerse, geri yükleme çift satır bırakırsa ya da
+ * başka bir yol satır eklerse, `rows[0]` HANGİ cariye yazılacağını sessizce
+ * seçerdi. Yanlış cariye açılan gönderi geri alınamaz.
+ */
+export class IntegrationCredentialAmbiguityError extends Error {
+  readonly code = 'INTEGRATION_CREDENTIAL_AMBIGUOUS'
+  readonly provider: IntegrationProvider
+  readonly recordCount: number
+  constructor(provider: IntegrationProvider, recordCount: number) {
+    super(
+      `${provider} entegrasyonu için ${recordCount} kayıt bulundu; `
+      + 'tek etkin kayıt zorunludur. Seçim YAPILMADI.',
+    )
+    this.name = 'IntegrationCredentialAmbiguityError'
+    this.provider = provider
+    this.recordCount = recordCount
+  }
+}
+
+export interface IntegrationCredentialRecord {
+  /** Kaydın kimliği — hangi satırın okunduğu karşılaştırılabilir olmalı. */
+  id: string
+  updatedAt: unknown
+  payload: Record<string, unknown>
+}
+
+/**
+ * TEK kaydı kimliğiyle döner. Sıfır kayıt → `null`; birden çok → FAIL CLOSED.
+ *
+ * Kimlik alanı Part 2 içindir: kanarya ile canlı POST'un AYNI satırı okuyup
+ * okumadığı ancak satır kimliği görünürse ampirik olarak karşılaştırılabilir.
+ */
+export async function getIntegrationCredentialRecord(
   db: CredentialDb,
   organizationId: string,
   provider: IntegrationProvider,
-): Promise<Record<string, unknown> | null> {
+): Promise<IntegrationCredentialRecord | null> {
   const rows = await db
-    .select({ encryptedPayload: integrationCredentials.encryptedPayload })
+    .select({
+      id: integrationCredentials.id,
+      updatedAt: integrationCredentials.updatedAt,
+      encryptedPayload: integrationCredentials.encryptedPayload,
+    })
     .from(integrationCredentials)
     .where(
       and(
@@ -123,9 +163,25 @@ export async function getIntegrationCredential(
         eq(integrationCredentials.provider, provider),
       ),
     )
+  if (rows.length > 1) {
+    throw new IntegrationCredentialAmbiguityError(provider, rows.length)
+  }
   const row = rows[0]
   if (!row) return null
-  return decryptCredentialPayload(String(row.encryptedPayload))
+  return {
+    id: String(row.id ?? ''),
+    updatedAt: row.updatedAt ?? null,
+    payload: decryptCredentialPayload(String(row.encryptedPayload)),
+  }
+}
+
+export async function getIntegrationCredential(
+  db: CredentialDb,
+  organizationId: string,
+  provider: IntegrationProvider,
+): Promise<Record<string, unknown> | null> {
+  const record = await getIntegrationCredentialRecord(db, organizationId, provider)
+  return record ? record.payload : null
 }
 
 // Frontend'in secret alanlarda gösterdiği maskeli placeholder (yalnız
