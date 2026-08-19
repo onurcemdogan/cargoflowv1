@@ -57,6 +57,20 @@
       "when": 1786395831672,
       "tag": "0007_big_thunderbolts",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1787089453000,
+      "tag": "0008_marketplace_provider_allowlist",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1787120919000,
+      "tag": "0009_surat_trace_attempts",
+      "breakpoints": true
     }
   ]
 }
