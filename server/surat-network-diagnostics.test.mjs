@@ -116,7 +116,11 @@ test('A/B/L: SOAP endpoint webservices (tek), prova endpoint yok', () => {
 function extractFunctionBody(source, signature) {
   const start = source.indexOf(signature)
   if (start < 0) return ''
-  let index = source.indexOf('{', start)
+  // Govde PARAMETRE LISTESI kapandiktan SONRA baslar. Imzadaki ilk `{`den
+  // baslamak, destructuring parametresi olan bir fonksiyonda esleme
+  // hemen kapandigi icin BOS govde uretiyordu — guard sessizce anlamsizlasir.
+  const paramsEnd = source.indexOf(')', start)
+  let index = source.indexOf('{', paramsEnd < 0 ? start : paramsEnd)
   let depth = 0
   for (; index < source.length; index += 1) {
     if (source[index] === '{') depth += 1
