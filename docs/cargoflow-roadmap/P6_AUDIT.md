@@ -87,3 +87,54 @@ ya da referans UYDURULMUŞTUR (test doğru şekilde engeller).
 
 - Referans üreticisi YAZILMADI.
 - Gerçek taşıyıcı create YOK, mutasyon YOK.
+
+---
+
+# ÇÖZÜLMEMİŞ SÖZLEŞME ALANLARI — KESİN KAYIT
+
+Aşağıdaki alanların pazaryeri DIŞI dal için değeri **bilinmiyor**. Hiçbiri
+tahmin edilmeyecek: her biri yanlış cariye borç yazma riski taşır ve bu hata
+geri alınamaz.
+
+| Alan | Pazaryeri dalı (KANITLI) | Pazaryeri dışı (BİLİNMİYOR) |
+| --- | --- | --- |
+| `billingParty` | `TRENDYOL_PAYS` (whoPays yok) / `SELLER_PAYS` (=1) | Trendyol sözleşmesi UYGULANMAZ. Kimin borçlandığı tanımsız. |
+| `credentialRole` | `PRIMARY_MARKETPLACE` | Hangi cari? Pazaryeri carisi burada geçerli DEĞİL olabilir. |
+| `Pazaryerimi` | `1` | Model `0` üretiyor; vendor'ın `0` için kuralı DOĞRULANMADI. |
+| `EntegrasyonFirmasi` | `'Trendyol'` | Boş (`''`) mu, başka bir değer mi — teyit YOK. |
+| `OzelKargoTakipNo` provenance | sağlayıcı `cargoTrackingNumber` (727…) | Sağlayıcı YOK. Format/uzunluk/tekillik kapsamı BİLİNMİYOR. |
+| `ReferansNo` / gönderi kimliği | `packageId` | Hangi alanın kimlik sayılacağı ve borçlandırmayı nasıl etkilediği BİLİNMİYOR. |
+| COD etkileşimi | COD bağımsız eksen; rol `DEDICATED_COD`/`SELLER_PAYS`/`PRIMARY` | Pazaryeri dışı + kapıda ödeme birleşimi HİÇ tanımlanmadı. |
+
+## P6 YALNIZ ŞUNLARDAN BİRİYLE AÇILIR
+
+1. **Resmî Sürat dokümantasyonu** — WSDL/XSD/PDF ya da teknik entegrasyon
+   kılavuzunun `Pazaryerimi=0` dalını tanımlayan bölümü.
+2. **Yazılı Sürat teknik teyidi** — vendor'dan alınmış, yukarıdaki alanları
+   açıkça belirten yazılı onay.
+3. **Doğrulanmış üretim artefaktı** — pazaryeri dışı, bilinen-iyi bir gönderi
+   ve onun **kanıtlanmış borçlandırma/cari sonucu**.
+
+Sözlü aktarım, benzetme, "muhtemelen pazaryeri gibidir" ve başka taşıyıcıdan
+genelleme **yeterli değildir**.
+
+## O ANA KADAR GEÇERLİ DEĞİŞMEZ
+
+```
+UNKNOWN_NON_MARKETPLACE_BILLING
+  → PRE_FLIGHT BLOCKED
+  → NETWORK_CALL = 0
+```
+
+S1'in fail-closed finansal guard'ı **gevşetilmeyecek**. `NM-4` üretim kodunda
+bir `ownPlatformReference` çağıranı belirdiği an düşer; o gün ya sözleşme
+kanıtlanmıştır ya da bir referans uydurulmuştur.
+
+## Yol haritası durumu
+
+```
+ROADMAP_IMPLEMENTATION_COMPLETE = YES   (P1–P5 geçti, 51/51)
+ROADMAP_OPERATIONAL_COMPLETE    = NO    (P6 dış sözleşmeye bağlı)
+```
+
+Bu ayrım kasıtlıdır: kod tarafı bitti, operasyonel kapsam bitmedi.

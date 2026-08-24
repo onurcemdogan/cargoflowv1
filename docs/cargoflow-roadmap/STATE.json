@@ -125,7 +125,7 @@
       "completedAt": null,
       "commit": null,
       "plannedBranch": "feat/surat-non-marketplace-contract",
-      "branch": null,
+      "branch": "feat/surat-non-marketplace-contract",
       "blockerDetail": "Surat pazaryeri DISI sozlesmesinin is kurali dogrulanmadi: WSDL alan adlarini (Pazaryerimi/OzelKargoTakipNo/EntegrasyonFirmasi) verir ama Pazaryerimi=0 icin OzelKargoTakipNo format/tekillik kuralini VERMEZ; surat-finalization CONTRACT yalniz pazaryeri dalini belgeler. Referans ureticisi yazmak yanlis cariye borc yazma riskidir. Sinir testle acik ve fail-closed kilitlendi (surat-non-marketplace-boundary-flow, 4/4). Detay: docs/cargoflow-roadmap/P6_AUDIT.md",
       "externalContract": {
         "status": "INSUFFICIENT",
@@ -665,6 +665,27 @@
       "status": "BLOCKED_EXTERNAL_ENVIRONMENT",
       "scope": "YALNIZ bu olcum. P1 implementation fazini BLOKLAMAZ.",
       "command": "uretimde olculmeli — bu ortamda uretim verisi yok"
+    },
+    "P6_NON_MARKETPLACE_CONTRACT": {
+      "status": "BLOCKED_EXTERNAL_CONTRACT",
+      "unresolvedFields": [
+        "billingParty",
+        "credentialRole",
+        "Pazaryerimi",
+        "EntegrasyonFirmasi",
+        "OzelKargoTakipNo provenance",
+        "ReferansNo / shipment identity provenance",
+        "COD interaction"
+      ],
+      "unlockRequires": [
+        "official Surat WSDL/XSD/PDF technical documentation",
+        "written Surat technical integration confirmation",
+        "verified known-good non-marketplace production artifact with proven billing/account outcome"
+      ],
+      "invariantUntilThen": "UNKNOWN_NON_MARKETPLACE_BILLING -> FAIL CLOSED -> NETWORK=0",
+      "detail": "docs/cargoflow-roadmap/P6_AUDIT.md"
     }
-  }
+  },
+  "roadmapImplementationComplete": true,
+  "roadmapOperationalComplete": false
 }
