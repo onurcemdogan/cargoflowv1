@@ -213,3 +213,33 @@ test('VERIFY-15: iz REGISTRATION_VERIFY bacagini AYRI gosterir', () => {
   assert.ok(soap.includes('gonderilerLength'))
   assert.ok(soap.includes('identityMatch'))
 })
+
+/* ═══ KİMLİK SIZINTISI — GÖRÜNEN DEĞER OTORİTE DEĞİL ═════════════════ */
+//
+// Üretim UI'ı "Sipariş No" alanında 727… takip numarasını gösteriyor
+// (bilerek: operatörün tanıdığı kimlik). Bu değer create/doğrulama
+// yollarına SIZARSA `WebSiparisKodu` yanlış olur ve teyit sessizce boşa
+// çıkar. Görünen değer YALNIZ sunum katmanında kalmalıdır.
+
+test('VERIFY-16: gorunen siparis numarasi sunum DISINA sizmaz', () => {
+  for (const file of [
+    'server/index.mjs',
+    'server/shipments/suratRegistrationVerification.ts',
+    'server/shipments/suratSoapPrimaryCreate.ts',
+  ]) {
+    assert.equal(
+      codeOf(file).includes('displayOrderNumber'), false,
+      `${file} gorunen degeri KULLANMAMALI`,
+    )
+  }
+})
+
+test('VERIFY-17: WebSiparisKodu kaynagi SIPARIS NUMARASIDIR', () => {
+  const chain = server.indexOf('async function createSuratRegisteredCommonBarcode')
+  const next = server.indexOf('\nasync function ', chain + 10)
+  const body = server.slice(chain, next > 0 ? next : undefined)
+  // Takip sorgusu order.orderNumber ile yapilir; packageId ya da 727 ile DEGIL.
+  assert.ok(body.includes('webSiparisKodu: order?.orderNumber'))
+  assert.equal(body.includes('webSiparisKodu: order?.packageId'), false)
+  assert.equal(body.includes('webSiparisKodu: order?.cargoTrackingNumber'), false)
+})
