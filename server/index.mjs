@@ -3177,7 +3177,26 @@ async function createSuratShipment(request, response) {
     normalizedConfig,
     order,
   )
-  const selectedConfig = credentialSelection.config
+  // İDEMPOTENCY KAYDI GERÇEKTEN KULLANILAN MODU YAZAR.
+  //
+  // Rota kararı burada da uygulanır; yoksa kayıt "kanonik" derken çağrı SOAP
+  // olurdu ve kanıt YALAN söylerdi. Anahtar DEĞİŞMEZ (`serviceMode` anahtara
+  // girmez), bu yüzden aynı sipariş için ikinci bir kilit doğmaz; yalnız
+  // semantik parmak izi doğru moda göre hesaplanır.
+  const { resolveSuratPrimaryCreateRoute: resolvePrimaryRouteForOperation } =
+    await import('./shipments/suratPrimaryCreateRoute.ts')
+  const operationRoute = resolvePrimaryRouteForOperation({
+    configuredServiceMode: credentialSelection.config.serviceMode,
+    marketplace: order?.marketplace,
+  })
+  const selectedConfig = operationRoute.soapPrimarySelected
+    ? {
+        ...credentialSelection.config,
+        serviceMode: operationRoute.serviceMode,
+        serviceType: operationRoute.serviceType,
+        createShipmentPath: operationRoute.createShipmentPath,
+      }
+    : credentialSelection.config
   // FİNANSAL PARMAK İZİ REPLAY KARARINDAN ÖNCE üretilir. Kapı SAF bir karar
   // katmanıdır (ağa çıkmaz, DB'ye yazmaz), bu yüzden idempotency kararından
   // önce güvenle çalıştırılabilir. Burada YALNIZ parmak izi alınır; kapının
@@ -3265,8 +3284,32 @@ async function createSuratShipmentCore(request, response) {
     request.body?.config?.surat ?? request.body?.config,
   )
   const credentialSelection = resolveSuratCredentialSet(baseConfig, order)
-  const config = credentialSelection.config
+  const configuredConfig = credentialSelection.config
   const trendyolConfig = fullConfig?.trendyol
+
+  // ═══ BİRİNCİL ROTA — DOĞRULANMIŞ SOAP ═════════════════════════════════
+  //
+  // Kanonik REST yolu doğru kiracı ve tam parite ile bile taşıyıcının KENDİ
+  // sonuç kurucusunda `InvalidCastException` ile reddedildi. Depoda
+  // DOĞRULANMIŞ başarı SOAP yolundadır (013 · BARCODE_SUCCESS ·
+  // verifiedShipment). YENİ uygun pazaryeri gönderileri o rotayı kullanır.
+  //
+  // Bu bir GERİ DÜŞÜŞ DEĞİLDİR: karar önceki denemenin sonucunu OKUMAZ.
+  const { resolveSuratPrimaryCreateRoute } = await import(
+    './shipments/suratPrimaryCreateRoute.ts'
+  )
+  const primaryRoute = resolveSuratPrimaryCreateRoute({
+    configuredServiceMode: configuredConfig.serviceMode,
+    marketplace: order?.marketplace,
+  })
+  const config = primaryRoute.soapPrimarySelected
+    ? {
+        ...configuredConfig,
+        serviceMode: primaryRoute.serviceMode,
+        serviceType: primaryRoute.serviceType,
+        createShipmentPath: primaryRoute.createShipmentPath,
+      }
+    : configuredConfig
 
   if (!order?.orderNumber) {
     response.json({
@@ -3501,18 +3544,49 @@ async function createSuratShipmentCore(request, response) {
     const labelOnlyChain =
       config.serviceType === 'OrtakBarkodOlusturSoap' ||
       String(config.createShipmentPath || '').endsWith('/OrtakBarkodOlustur')
-    const commonBarcodeResult = labelOnlyChain
-      ? await createSuratRegisteredCommonBarcode(
-          config,
-          orderForSurat,
-          reference,
-        )
-      : await createSuratCommonBarcodeSoap(
-          config,
-          orderForSurat,
-          reference,
-        )
-    response.json(commonBarcodeResult)
+    // ═══ OTORİTE KATMANI — LEGACY ADAPTÖR, LEGACY KİMLİK DEĞİL ══════════
+    //
+    // SOAP zarfı tarihsel ve doğrulanmıştır; DEĞİŞTİRİLMEZ. Kimlik ise
+    // kanonik yolun kazandığı güvencelerle korunur: dondurulmuş anlık
+    // görüntü, ağ sınırı paritesi, Trace V2. "Legacy mod = guard bypass"
+    // durumu OLUŞMAZ.
+    const { createSuratSoapPrimaryShipment } = await import(
+      './shipments/suratSoapPrimaryCreate.ts'
+    )
+    const soapAuthority = await buildSuratSoapCreateAuthority({
+      request,
+      config,
+      order: orderForSurat,
+      financialGate,
+    })
+    const boundConfig = soapAuthority.boundConfig
+    const soapOutcome = await createSuratSoapPrimaryShipment({
+      traceId: financialGate.trace?.traceId ?? soapAuthority.traceId,
+      stamp: () => new Date().toISOString(),
+      credentialSnapshot: soapAuthority.credentialSnapshot,
+      financialContext: financialGate.trace ?? {},
+      marketplace: orderForSurat?.marketplace,
+      credentialRecordIdentity: soapAuthority.credentialRecordIdentity,
+      // Zincirin ILK cagrisi SOAP degildir; parite ONCEDEN de olculur.
+      wireAccountPreview: boundConfig.kullaniciAdi,
+      executeCreate: async ({ onWireReady }) => {
+        const created = labelOnlyChain
+          ? await createSuratRegisteredCommonBarcode(
+              boundConfig,
+              orderForSurat,
+              reference,
+              { onWireReady },
+            )
+          : await createSuratCommonBarcodeSoap(
+              boundConfig,
+              orderForSurat,
+              reference,
+              { onWireReady },
+            )
+        return mapSuratSoapExecutionResult(created)
+      },
+    })
+    response.json(buildSuratSoapCreateResponse(soapOutcome))
     return
   }
 
@@ -5793,7 +5867,9 @@ function buildTrendyolPickingUpdateBlockedResponse({
   })
 }
 
-async function createSuratRegisteredCommonBarcode(config, order, reference) {
+async function createSuratRegisteredCommonBarcode(
+  config, order, reference, { onWireReady } = {},
+) {
   const dispatchRegistration = await createSuratLegacyRestJson(
     config,
     order,
@@ -5894,6 +5970,7 @@ async function createSuratRegisteredCommonBarcode(config, order, reference) {
       operationName: 'OrtakBarkodOlustur',
       serviceType: 'OrtakBarkodOlusturSoap',
       strictGonderiModel: true,
+      onWireReady,
     },
   )
   const barcodeLog =
@@ -7082,6 +7159,161 @@ function summarizeSuratCreateAttempt(result) {
   }
 }
 
+// ═══ SOAP BİRİNCİL CREATE — OTORİTE YARDIMCILARI ══════════════════════════
+
+/** Maskeli kimlik: ham değer ASLA basılmaz. */
+function maskAuthorityIdentifier(value) {
+  const text = String(value ?? '').trim()
+  if (!text) return 'NONE'
+  return text.length <= 4 ? '****' : `****${text.slice(-4)}`
+}
+
+/**
+ * SOAP çağrısı için OTORİTER kimlik bağlar.
+ *
+ * Kiracı modunda kimlik YALNIZ kiracının saklanmış Sürat config'inden gelir;
+ * istek gövdesi kimlik için OKUNMAZ. Tek kullanıcılı yerel kurulumda kiracı
+ * deposu YOKTUR ve kimlik yerel yapılandırmadan gelir — bu durumda kaynak
+ * etiketi de bunu SÖYLER, `tenant.surat.*` gibi görünmez.
+ */
+async function buildSuratSoapCreateAuthority({ request, config, order, financialGate }) {
+  const [snapshotModule, routing] = await Promise.all([
+    import('./shipments/suratCredentialSnapshot.ts'),
+    import('./shipments/suratRoutingModel.ts'),
+  ])
+  const organizationId = String(request?.auth?.organizationId ?? '')
+  let storedSuratConfig = null
+  let sourceLabel
+  let integrationIdMasked = 'UNKNOWN'
+  if (isTenantAuthMode() && organizationId) {
+    const [{ getDb }, { loadOrganizationIntegrationConfig }] = await Promise.all([
+      import('./db/client.ts'),
+      import('./integrations/credentialService.ts'),
+    ])
+    const tenantIntegration = await loadOrganizationIntegrationConfig(
+      getDb(), organizationId,
+    )
+    // HAM kayıt DOĞRUDAN kullanılamaz: `canonicalPrimary*` alanları
+    // TÜRETMEDE doğar. Kanarya ve kanonik yolla AYNI fonksiyon.
+    storedSuratConfig = snapshotModule.normalizeAuthoritativeSuratStore(
+      tenantIntegration?.surat,
+    )
+    integrationIdMasked = 'PRESENT'
+  } else {
+    storedSuratConfig = snapshotModule.normalizeAuthoritativeSuratStore(config)
+    sourceLabel = 'local.config.surat.primary'
+  }
+
+  const role = routing.resolveSuratCredentialContext({
+    config,
+    billingParty: routing.resolveBillingPartyV2(order?.rawOrder ?? {}).billingParty,
+    cod: routing.resolveCodContext({
+      enabled: financialGate?.financialFingerprint?.codEnabled === true,
+      collectionType: config?.kapidanOdemeTahsilatTipi,
+      amount: order?.cashOnDeliveryAmount,
+    }),
+    codPolicy: routing.resolveCodCredentialPolicy(config?.codCredentialPolicy),
+    serviceMode: config?.serviceMode,
+  }).role
+
+  const credentialSnapshot = snapshotModule.buildSuratCredentialSnapshot({
+    storedSuratConfig,
+    role,
+    sourceLabel,
+  })
+
+  // İstemci kimlik alanı gönderdiyse KAYDA GEÇER (değer TAŞINMAZ) —
+  // kabul edilmez, yalnız görünür olur.
+  const clientScan = snapshotModule.scanClientCredentialFields(
+    request?.body?.config?.surat ?? request?.body?.config ?? {},
+  )
+  if (clientScan.present) {
+    console.warn(
+      '[surat-credential] istemci kimlik alani YOK SAYILDI: '
+      + clientScan.fields.join(','),
+    )
+  }
+
+  return {
+    credentialSnapshot,
+    // KİMLİK ANLIK GÖRÜNTÜDEN — istek gövdesinden DEĞİL.
+    boundConfig: {
+      ...config,
+      kullaniciAdi: credentialSnapshot.kullaniciAdi,
+      sifre: credentialSnapshot.sifre,
+    },
+    credentialRecordIdentity: {
+      organizationIdMasked: maskAuthorityIdentifier(organizationId),
+      integrationIdMasked,
+    },
+    traceId: `CF-SOAP-${String(order?.packageId ?? order?.orderNumber ?? '')}`,
+  }
+}
+
+/** Legacy SOAP sonucunu sınıflandırıcının okuduğu ALANLARA indirger. */
+function mapSuratSoapExecutionResult(created) {
+  const log = created?.shipment?.suratCreateLog ?? created?.suratCreateLog ?? {}
+  const status = Number(log.responseStatus ?? created?.statusCode ?? 0)
+  return {
+    httpSuccess: status >= 200 && status < 300,
+    businessCode: log.responseCode ?? null,
+    businessMessage: log.responseMessage ?? null,
+    codeCategory: log.responseCategory ?? null,
+    trackingNumber: log.KargoTakipNo ?? '',
+    barcode: log.Barcode ?? '',
+    zpl: log.BarcodeRaw ?? '',
+    // DOĞRULANMIŞ KAYIT: read teyidinden gelir; 013 tek başına yeterli DEĞİL.
+    verifiedShipment: Boolean(
+      created?.shipment?.verifiedShipment ?? log.verifiedShipment,
+    ),
+    carrierCalled: true,
+    response: created,
+  }
+}
+
+/**
+ * Yanıt birleştirme — legacy gövde KORUNUR, iz EKLENİR.
+ *
+ * `ok` LEGACY SÖZLEŞMENİN kararıdır ve burada EZİLMEZ. Depo modeli iki ayrı
+ * başarı seviyesi tanır (`suratCreateResult.ts`): yazdırılabilir etiket
+ * oluşturma başarısı ile fiziksel taşıyıcı kabulü AYNI ŞEY DEĞİLDİR ve
+ * ikincisi birincinin ÖNKOŞULU değildir. `ok`u sınıflandırmayla AND'lemek o
+ * modeli sessizce değiştirir ve doğrulanmış etiketleri "başarısız" gösterirdi.
+ *
+ * Sınıflandırma ayrı alanlarda taşınır: operatör yüzeyi "kabul doğrulandı" ile
+ * "etiket hazır, kabul bekleniyor"u bu alanlardan ayırır.
+ */
+function buildSuratSoapCreateResponse(outcome) {
+  const trace = {
+    suratCreateTrace: outcome.suratCreateTrace,
+    traceAttempt: outcome.traceAttempt,
+  }
+  if (!outcome.response) {
+    return {
+      ok: false,
+      source: 'real',
+      errorSource: 'Frontend',
+      errorCode: outcome.errorCode,
+      carrierCreateCalled: outcome.carrierCalled,
+      message:
+        'Sürat kimlik doğrulaması tamamlanamadı; taşıyıcıya çağrı YAPILMADI.',
+      ...trace,
+    }
+  }
+  return {
+    ...outcome.response,
+    ok: Boolean(outcome.response.ok),
+    carrierCreateCalled: outcome.carrierCalled,
+    carrierCreateAttempts: outcome.carrierCreateAttempts,
+    // Sınıflandırma AYRI taşınır; `ok` ile karıştırılmaz.
+    carrierCreateStatus: outcome.suratCreateTrace?.carrierCreateStatus ?? null,
+    businessResult: outcome.classification?.finalClassification ?? null,
+    carrierRegistrationConfirmed:
+      outcome.classification?.carrierRegistrationConfirmed ?? false,
+    ...trace,
+  }
+}
+
 async function createSuratCommonBarcodeSoap(
   config,
   order,
@@ -7091,6 +7323,7 @@ async function createSuratCommonBarcodeSoap(
     serviceType =
       'GonderiyiKargoyaGonderYeniSiparisBarkodOlusturSoap',
     strictGonderiModel = true,
+    onWireReady,
   } = {},
 ) {
   const shipmentPayload = buildSuratShipmentPayload(order, reference, {
@@ -7112,6 +7345,7 @@ async function createSuratCommonBarcodeSoap(
         strictGonderiModel,
       })}
     `,
+    { onWireReady },
   )
   const resultText =
     decodeXml(extractTag(soap.text, `${operationName}Result`)) || soap.text
@@ -10524,7 +10758,8 @@ function parseBoolean(value) {
   return undefined
 }
 
-async function callSuratSoap(operation, innerXml) {
+async function callSuratSoap(operation, innerXml, soapOptions = {}) {
+  const onWireReady = soapOptions.onWireReady
   const body = `<?xml version="1.0" encoding="utf-8"?>
 <soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
   <soap:Body>
@@ -10533,6 +10768,11 @@ async function callSuratSoap(operation, innerXml) {
     </${operation}>
   </soap:Body>
 </soap:Envelope>`
+
+  // GERÇEK TEL — serileşen zarfın KENDİSİ, fetch'ten HEMEN ÖNCE.
+  // Sonradan yeniden kurgulanan zarf gerçek tel DEĞİLDİR; kanonik yolda
+  // ölçülen körlük tam olarak buydu. Geri çağrı FIRLATIRSA istek GİTMEZ.
+  if (typeof onWireReady === 'function') onWireReady(body)
 
   const startedAt = Date.now()
   try {

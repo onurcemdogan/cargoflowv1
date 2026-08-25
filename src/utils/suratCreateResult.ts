@@ -39,9 +39,17 @@ function firstNonEmpty(...values: unknown[]): string {
 //    barkod var; fiziksel Sürat kabulü henüz doğrulanmadı (business SUCCESS).
 //  - VERIFIED: operasyonel kabul doğrulandı (verified/dispatch confirmed).
 //  - CREATE_FAILED: kullanılabilir ZPL/kimlik yok veya açık business hata.
+//  - CARRIER_NOT_CALLED: kapı düştü, taşıyıcıya HİÇ gidilmedi. Operatör için
+//    bu "reddedildi"den FARKLI bir durumdur: hiçbir gönderi oluşmadı, tekrar
+//    denemek güvenlidir.
+//  - SAVED_BARCODE_FAILED: 039 — sipariş taşıyıcıda KAYDEDİLDİ ama barkod
+//    üretilemedi. Kör tekrar MÜKERRER gönderi demektir; "başarısız" diye
+//    göstermek operatörü tam olarak o hataya iter.
 export type SuratCreateBusinessResultCode =
   | 'LABEL_READY_AWAITING_ACCEPTANCE'
   | 'VERIFIED'
+  | 'CARRIER_NOT_CALLED'
+  | 'SAVED_BARCODE_FAILED'
   | 'CREATE_FAILED'
 
 export interface SuratCreateBusinessResult {
@@ -94,11 +102,21 @@ export function resolveSuratCreateBusinessResult(
   const carrierAcceptanceConfirmed = Boolean(
     s.verifiedShipment || s.dispatchRegistrationConfirmed,
   )
-  const businessResult: SuratCreateBusinessResultCode = !labelCreationOk
-    ? 'CREATE_FAILED'
-    : carrierAcceptanceConfirmed
-      ? 'VERIFIED'
-      : 'LABEL_READY_AWAITING_ACCEPTANCE'
+  // Taşıyıcıya GİDİLMEDİ ile GİDİLDİ-REDDEDİLDİ aynı ekran DEĞİLDİR: ilkinde
+  // hiçbir gönderi oluşmamıştır, ikincisinde oluşmuş OLABİLİR.
+  const carrierNotCalled = s.carrierCreateCalled === false
+  const savedBarcodeFailed =
+    String(s.carrierCreateStatus ?? '') === 'SAVED_BARCODE_FAILED' ||
+    String(s.businessResult ?? '') === 'SAVED_BARCODE_FAILED'
+  const businessResult: SuratCreateBusinessResultCode = carrierNotCalled
+    ? 'CARRIER_NOT_CALLED'
+    : savedBarcodeFailed
+      ? 'SAVED_BARCODE_FAILED'
+    : !labelCreationOk
+      ? 'CREATE_FAILED'
+      : carrierAcceptanceConfirmed
+        ? 'VERIFIED'
+        : 'LABEL_READY_AWAITING_ACCEPTANCE'
   return {
     labelCreationOk,
     carrierAcceptanceConfirmed,
