@@ -43,6 +43,8 @@ import {
 /** Taşıyıcı çağrısının SONUCU — bu modül onu yorumlar, üretmez. */
 export interface SoapCreateExecutionResult {
   httpSuccess?: unknown
+  /** BU denemede ağ sınırının geçildiğine dair kanıt (gerçek HTTP durumu). */
+  networkCrossed?: unknown
   businessCode?: unknown
   businessMessage?: unknown
   codeCategory?: unknown
@@ -224,7 +226,12 @@ export async function createSuratSoapPrimaryShipment(
 
   // ═══ TEL YAKALAMA — fetch'ten HEMEN ÖNCE ══════════════════════════════
   let wire: SoapWireCapture | null = null
-  const onWireReady = (envelope: string): void => {
+  // `edge` ayrimi: parite SOAP zarfi icin tasarlandi (anlik goruntu ile
+  // serilesen zarfi kiyaslar). Zincirin REST kayit adimi FARKLI bir kimlik
+  // alani tasir; oraya ayni kapiyi uygulamak calisan create'leri BLOKLARDI.
+  // Bu yuzden REST kenari YAKALANIR (gorunurluk) ama SOAP paritesine
+  // SOKULMAZ; parmak izi yine de ize yazilir ve fark GORUNUR kalir.
+  const onWireReady = (envelope: string, edge: string = 'SOAP'): void => {
     wire = captureSoapActualWire({
       envelope,
       operation: SOAP_PRIMARY_OPERATION,
@@ -236,6 +243,7 @@ export async function createSuratSoapPrimaryShipment(
     // Uretim izi CF-4102465808 tam olarak bu haldeydi: ACTUAL_WIRE eksik,
     // carrierCalled dogru.
     traceAttempt = appendActualWireStage(traceAttempt, wire, snapshot, stamp)
+    if (edge !== 'SOAP') return
     // ═══ KAPI 2 — AĞ SINIRI PARİTESİ ════════════════════════════════════
     // Karşılaştırma OTORİTER anlık görüntü ile GERÇEKTEN serileşen zarf
     // arasındadır. Bundan sonra hiçbir kimlik dönüşümü YOKTUR.
@@ -271,6 +279,9 @@ export async function createSuratSoapPrimaryShipment(
     // DEGILDIR. Istemci is hatasini istisnaya cevirse bile mesaj KANITTIR.
     const alreadyExists = !blocked
       && isSuratAlreadyExistsMessage((error as Error)?.message)
+    // Istisna da olsa: aga cikildigi KANITLANMALIDIR. Tel yakalanmadiysa
+    // zarf hic kurulmamis demektir ve sinir GECILMEMISTIR.
+    const crossedNetwork = !blocked && wire !== null
     traceAttempt = appendTraceStage(traceAttempt, {
       stage: blocked ? 'WIRE_BLOCKED' : 'CARRIER_RESPONSE',
       section: blocked ? 'CREDENTIAL_ROUTING' : 'RESPONSE',
@@ -283,7 +294,10 @@ export async function createSuratSoapPrimaryShipment(
           }
         : {
             // Ağ/istisna durumunda gönderinin OLUŞMADIĞI KANITLANMAMIŞTIR.
-            carrierCalled: true,
+            carrierCalled: crossedNetwork,
+            evidenceSource: crossedNetwork
+              ? 'CURRENT_CARRIER_RESPONSE'
+              : 'PRIOR_OR_LOCAL_EVIDENCE',
             carrierCreateStatus: 'UNKNOWN',
             carrierExceptionSummary: summarizeError(error),
           },
@@ -294,13 +308,13 @@ export async function createSuratSoapPrimaryShipment(
         carrierCreateStatus: blocked
           ? 'BLOCKED'
           : alreadyExists ? 'ALREADY_EXISTS' : 'UNKNOWN',
-        carrierCalled: !blocked,
+        carrierCalled: crossedNetwork,
       },
     })
     return {
       ok: false,
-      carrierCalled: !blocked,
-      carrierCreateAttempts: blocked ? 0 : 1,
+      carrierCalled: crossedNetwork,
+      carrierCreateAttempts: crossedNetwork ? 1 : 0,
       errorCode: blocked
         ? (error as SuratSoapWireBlockedError).errorCode
         : alreadyExists
@@ -334,11 +348,24 @@ export async function createSuratSoapPrimaryShipment(
     zpl: execution.zpl,
   })
 
+  // ═══ DENEME KAPSAMLI GERÇEK ═══════════════════════════════════════════
+  // `carrierCalled` ARTIK varsayılan olarak true DEĞİLDİR. Bu denemede ağa
+  // gerçekten çıkıldığının kanıtı: tel yakalandı (enstrümante sınır) ya da
+  // yürütme gerçek bir HTTP durumu bildirdi. Önceki sürüm
+  // `execution.carrierCalled !== false` diyerek YOKLUĞU onay sayıyordu ve
+  // üretim izi CF-4102563548'de çağrı yapılmamış gibi görünen aşamalarla
+  // `carrierCalled=true` yan yana çıkmıştı.
+  const crossedNetwork = wire !== null || execution.networkCrossed === true
   traceAttempt = appendTraceStage(traceAttempt, {
-    stage: 'CARRIER_RESPONSE', section: 'RESPONSE', at: stamp(),
+    stage: crossedNetwork ? 'CARRIER_RESPONSE' : 'VERIFICATION',
+    section: 'RESPONSE', at: stamp(),
     data: {
-      carrierCalled: execution.carrierCalled !== false,
-      createCallCount: 1,
+      carrierCalled: crossedNetwork,
+      // Ağ geçilmediyse sonuç YEREL/ÖNCEKİ kanıttandır; uydurma yanıt YOK.
+      evidenceSource: crossedNetwork
+        ? 'CURRENT_CARRIER_RESPONSE'
+        : 'PRIOR_OR_LOCAL_EVIDENCE',
+      createCallCount: crossedNetwork ? 1 : 0,
       businessResult: classification.finalClassification,
       carrierCode: classification.businessCode,
       carrierMessage: classification.businessMessage,
@@ -381,20 +408,20 @@ export async function createSuratSoapPrimaryShipment(
 
   traceAttempt = appendTraceStage(traceAttempt, {
     stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
-    data: { carrierCreateStatus, carrierCalled: execution.carrierCalled !== false },
+    data: { carrierCreateStatus, carrierCalled: crossedNetwork },
   })
 
   return {
     ok,
-    carrierCalled: execution.carrierCalled !== false,
-    carrierCreateAttempts: 1,
+    carrierCalled: crossedNetwork,
+    carrierCreateAttempts: crossedNetwork ? 1 : 0,
     errorCode: ok ? null : carrierCreateStatus,
     classification,
     wire,
     suratCreateTrace: {
       ...baseTrace,
       carrierCreateStatus,
-      carrierCreateAttempts: 1,
+      carrierCreateAttempts: crossedNetwork ? 1 : 0,
       businessResult: classification.finalClassification,
       carrierCode: classification.businessCode,
       trackingPresent: classification.trackingPresent,

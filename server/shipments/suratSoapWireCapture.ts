@@ -116,6 +116,68 @@ export function readEnvelopeKullaniciAdi(envelope: unknown): string {
  * `envelope` ağ çağrısına gidecek OLAN metindir. Başka hiçbir kaynağa
  * bakılmaz — sipariş, config ve önceki operasyon satırları OKUNMAZ.
  */
+/**
+ * JSON gövdeden `Gonderi` alanlarını okur ve SOAP ile AYNI şekli üretir.
+ * XML değilse denenir; JSON da değilse `null` döner ve SOAP yolu çalışır.
+ */
+function readJsonGonderi(body: string): SoapWireCapture | null {
+  const trimmed = body.trim()
+  if (!trimmed.startsWith('{')) return null
+  let parsed: Record<string, unknown>
+  try {
+    parsed = JSON.parse(trimmed) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  const gonderi = parsed.Gonderi
+  if (!gonderi || typeof gonderi !== 'object' || Array.isArray(gonderi)) {
+    return null
+  }
+  const fields = gonderi as Record<string, unknown>
+  const gonderiFieldNames = Object.keys(fields)
+  const gonderiFieldTypes: Record<string, string> = {}
+  for (const [key, value] of Object.entries(fields)) {
+    gonderiFieldTypes[key] = Array.isArray(value)
+      ? 'array' : value === null ? 'null' : typeof value
+  }
+  const safeValues: Record<string, unknown> = {}
+  for (const tag of SOAP_SAFE_VALUE_TAGS) {
+    if (SOAP_PII_TAGS.has(tag)) continue
+    const raw = fields[tag]
+    safeValues[tag] = raw === undefined || raw === null ? null : String(raw).trim()
+  }
+  const contractAbsentFields: Record<
+    string, { present: boolean; runtimeType: string }
+  > = {}
+  for (const tag of SOAP_ABSENT_BY_CONTRACT_TAGS) {
+    const present = Object.prototype.hasOwnProperty.call(fields, tag)
+    contractAbsentFields[tag] = {
+      present,
+      runtimeType: present
+        ? soapValueRuntimeType(String(fields[tag] ?? ''))
+        : soapValueRuntimeType(null),
+    }
+  }
+  const kullaniciAdi = String(parsed.KullaniciAdi ?? '').trim()
+  const sifre = String(parsed.Sifre ?? '')
+  return {
+    envelopePresent: true,
+    operation: '',
+    serviceMode: '',
+    gonderiPresent: true,
+    gonderiFieldNames,
+    gonderiFieldTypes,
+    safeValues,
+    contractAbsentFields,
+    credential: {
+      kullaniciAdiPresent: kullaniciAdi.length > 0,
+      sifrePresent: sifre.length > 0,
+      networkBoundaryAccountFingerprint: accountFingerprint(kullaniciAdi),
+    },
+    envelopeLength: trimmed.length,
+  }
+}
+
 export function captureSoapActualWire(params: {
   envelope?: unknown
   operation?: unknown
@@ -124,6 +186,13 @@ export function captureSoapActualWire(params: {
   const envelope = typeof params.envelope === 'string' ? params.envelope : ''
   const operation = String(params.operation ?? '')
   const serviceMode = String(params.serviceMode ?? '')
+
+  // AYNI ZİNCİRDE İKİ TAŞIMA VAR: kayıt adımı REST/JSON, barkod adımı SOAP.
+  // İkisi de `{ KullaniciAdi, Sifre, Gonderi }` şeklini taşır. JSON gövde
+  // yakalanmazsa ağa çıkılan bir kenar İZSİZ kalır — üretim izi
+  // CF-4102563548 tam olarak böyleydi.
+  const jsonWire = readJsonGonderi(envelope)
+  if (jsonWire) return { ...jsonWire, operation, serviceMode }
 
   const gonderiBody = readTag(envelope, 'Gonderi')
   const gonderiFieldNames: string[] = []

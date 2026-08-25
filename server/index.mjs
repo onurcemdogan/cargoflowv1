@@ -5874,6 +5874,7 @@ async function createSuratRegisteredCommonBarcode(
     config,
     order,
     reference,
+    { onWireReady },
   )
   const registrationLog =
     dispatchRegistration.shipment?.suratCreateLog ??
@@ -7256,6 +7257,9 @@ function mapSuratSoapExecutionResult(created) {
   const status = Number(log.responseStatus ?? created?.statusCode ?? 0)
   return {
     httpSuccess: status >= 200 && status < 300,
+    // BU DENEMEDE ag sinirinin gecildigine dair kanit: gercek bir HTTP
+    // durumu. Metinden ya da onceki operasyondan CIKARILMAZ.
+    networkCrossed: Number.isFinite(status) && status > 0,
     businessCode: log.responseCode ?? null,
     businessMessage: log.responseMessage ?? null,
     codeCategory: log.responseCategory ?? null,
@@ -7680,7 +7684,9 @@ function isSuratRestCreateAccepted({
   )
 }
 
-async function createSuratLegacyRestJson(config, order, reference) {
+async function createSuratLegacyRestJson(
+  config, order, reference, { onWireReady } = {},
+) {
   const shipmentPayload = buildSuratShipmentPayload(order, reference)
   const requestValidation = validateSuratRequestMapping(order, shipmentPayload)
   const trendyolPreflight = buildTrendyolShipmentPreflight(order)
@@ -7698,6 +7704,13 @@ async function createSuratLegacyRestJson(config, order, reference) {
     : 'Trendyol siparişinde TelefonCep bulunamadı. Sürat ön kayıt isteği boş telefonla gönderildi.'
 
   try {
+    // AGA CIKMADAN ONCE tel kaniti: bu kenar da zincirin bir parcasidir.
+    // Enstrumante edilmezse `carrierCalled=true` olurken telde ne gittigi
+    // KAYBOLUR (uretim izi CF-4102563548).
+    // REST kenari: YAKALAMA evet, SOAP paritesi hayir (farkli kimlik alani).
+    if (typeof onWireReady === 'function') {
+      onWireReady(JSON.stringify(payload), 'REST')
+    }
     const apiResponse = await fetch(endpoint, {
       method: 'POST',
       headers: {
