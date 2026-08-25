@@ -1,5 +1,9 @@
 // CANLI TAŞIYICI CREATE UYGUNLUĞU — TEK OTORİTE.
 //
+// SUNUCU TARAFI OTORİTEDİR. Bu modül daha önce `src/utils/` altındaydı ve
+// hiçbir sunucu çağıranı YOKTU — yani hiçbir şeyi korumuyordu. Tarayıcı
+// durumu bir create'i açamaz; karar burada verilir.
+//
 // "Yeni Siparişler" sekmesinde görünmek create adayı OLMAK DEMEK DEĞİLDİR.
 // Sekme bir GÖRÜNÜM filtresidir; taşıyıcıya gönderi yaratmak geri alınamaz
 // bir işlemdir. Bu yüzden uygunluk KANITA dayanır ve belirsizlikte KAPANIR.
@@ -15,10 +19,11 @@ export interface SuratCreateIdentity {
 }
 
 export const CREATE_INELIGIBLE_REASONS = [
+  // Deneme geçmişi OKUNAMADI. "Bilinmiyor" asla "sıfır" DEĞİLDİR.
+  'ATTEMPT_HISTORY_UNKNOWN',
   'PREVIOUS_CREATE_ATTEMPT_EXISTS',
   'CARRIER_EVIDENCE_EXISTS',
   'LABEL_ALREADY_CREATED',
-  'MARKETPLACE_STATE_NOT_ELIGIBLE',
   'IDENTITY_INCOMPLETE',
   'IDENTITY_INCONSISTENT',
 ] as const
@@ -32,18 +37,18 @@ export interface SuratCreateEligibility {
 const text = (value: unknown): string => String(value ?? '').trim()
 const filled = (value: unknown): boolean => text(value).length > 0
 
-/** Pazaryeri tarafında hâlâ create edilebilir durumlar. */
-const ELIGIBLE_MARKETPLACE_STATUSES = new Set([
-  'Created', 'Picking', 'Invoiced', 'ReadyToShip',
-])
-
 /**
  * Tek karar noktası. Kanıt EKSİKSE uygun DEĞİLDİR — "bilinmiyor" asla
  * "uygun" demek değildir.
  */
 export function resolveSuratCreateEligibility(params: {
   order: Record<string, unknown>
-  /** Bu paket için bilinen CargoFlow create denemesi sayısı. */
+  /**
+   * Deneme kanıtı. `known=false` ise geçmiş OKUNAMAMIŞTIR ve create AÇILMAZ;
+   * sayıyı 0 varsaymak, daha önce denenmiş bir paketi yeni sanmaktır.
+   */
+  attemptEvidence?: { known: boolean; count: number }
+  /** GERİYE UYUMLU kısayol; `attemptEvidence` verilmezse kullanılır. */
   createAttemptCount?: number
 }): SuratCreateEligibility {
   const order = params.order ?? {}
@@ -60,19 +65,26 @@ export function resolveSuratCreateEligibility(params: {
   if (!identity.orderNumber || !identity.packageId
     || !identity.cargoTrackingNumber) {
     reasons.push('IDENTITY_INCOMPLETE')
-  } else if (
-    // Roller ÇAKIŞAMAZ: takip numarası sipariş numarası olarak kullanılırsa
-    // `WebSiparisKodu` yanlış olur ve doğrulama sessizce boşa çıkar.
-    identity.orderNumber === identity.cargoTrackingNumber
-    || identity.packageId === identity.cargoTrackingNumber
-    || identity.orderNumber === identity.packageId
-  ) {
+  } else if (identity.orderNumber === identity.cargoTrackingNumber) {
+    // KANITLANMIŞ RİSK: takip numarası (727…) sipariş numarası olarak
+    // kullanılırsa `WebSiparisKodu` yanlış olur ve kayıt doğrulaması
+    // sessizce boşa çıkar — üretim UI'ı bu değeri "Sipariş No" diye
+    // gösterdiği için gerçek bir karışma yolu var.
+    //
+    // `packageId === cargoTrackingNumber` ya da `orderNumber === packageId`
+    // BURADA ENGELLENMEZ: bunların zarar verdiğine dair depo kanıtı YOK ve
+    // engellemek geçerli siparişleri sessizce bloklardı.
     reasons.push('IDENTITY_INCONSISTENT')
   }
 
   // ── ÖNCEKİ DENEME ─────────────────────────────────────────────────────
-  const attempts = Number(params.createAttemptCount ?? 0)
-  if (!Number.isFinite(attempts) || attempts > 0) {
+  // Idempotency katmanı (`reserveCreateOperation` / idempotencyKey) mükerrer
+  // create'i ZATEN ağ sınırında engelliyor ve kapsamı orada tanımlı. Burada
+  // farklı bir anahtarla ikinci bir sayım yapmak ÇAKIŞIR ve geçerli
+  // siparişleri yanlışlıkla bloklar. Bu yüzden "önceki deneme" kanıtı
+  // KALICI TAŞIYICI ARTEFAKTI üzerinden değerlendirilir (aşağıda).
+  const evidence = params.attemptEvidence
+  if (evidence && evidence.known && Number(evidence.count) > 0) {
     reasons.push('PREVIOUS_CREATE_ATTEMPT_EXISTS')
   }
 
@@ -92,11 +104,9 @@ export function resolveSuratCreateEligibility(params: {
     reasons.push('LABEL_ALREADY_CREATED')
   }
 
-  // ── PAZARYERİ DURUMU ──────────────────────────────────────────────────
-  const marketplaceStatus = text(order.marketplaceStatus)
-  if (!ELIGIBLE_MARKETPLACE_STATUSES.has(marketplaceStatus)) {
-    reasons.push('MARKETPLACE_STATE_NOT_ELIGIBLE')
-  }
+  // PAZARYERİ DURUMU BURADA DEĞERLENDİRİLMEZ: "uygun" statü kümesinin
+  // kaynağı depoda kanıtlı değil ve uydurmak, geçerli siparişleri sessizce
+  // bloklardı. Sekme/tab filtresi bu işi zaten görüyor.
 
   return { eligible: reasons.length === 0, reasons, identity }
 }

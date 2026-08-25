@@ -3408,6 +3408,36 @@ async function createSuratShipmentCore(request, response) {
   const { evaluateSuratFinancialGate } = await import(
     './shipments/suratFinancialGate.ts'
   )
+  // ═══ UYGUNLUK KAPISI — FİNANSAL KAPIDAN DA ÖNCE ══════════════════════
+  //
+  // Bu kontrol daha önce `src/utils/` altındaydı ve HİÇBİR sunucu çağıranı
+  // yoktu: tarayıcı tarafında duran, hiçbir şeyi korumayan bir tahmin.
+  // Karar artık BURADA, geri alınamaz taşıyıcı çağrısından önce verilir.
+  //
+  const {
+    resolveSuratCreateEligibility,
+  } = await import('./shipments/suratCreateEligibility.ts')
+  // Mükerrer create'i idempotency katmanı ağ sınırında ZATEN engelliyor.
+  // Buradaki kapı ONUN YERİNE GEÇMEZ; kalıcı taşıyıcı artefaktı, mevcut
+  // etiket ve kimlik tutarlılığı gibi ONDAN ÖNCE bilinebilen kanıtlara bakar.
+  const eligibility = resolveSuratCreateEligibility({
+    order: orderForSurat ?? {},
+  })
+  if (!eligibility.eligible) {
+    // TAŞIYICIYA GİDİLMEZ. Tarayıcı durumu bu kararı EZEMEZ.
+    response.json({
+      ok: false,
+      source: 'real',
+      errorSource: 'Frontend',
+      errorCode: 'SURAT_CREATE_NOT_ELIGIBLE',
+      message:
+        'Bu paket için yeni Sürat gönderisi oluşturulamaz: '
+        + eligibility.reasons.join(', '),
+      suratCreateEligibility: eligibility,
+    })
+    return
+  }
+
   const financialGate = evaluateSuratFinancialGate({
     config,
     order: orderForSurat,
