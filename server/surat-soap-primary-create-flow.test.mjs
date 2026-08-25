@@ -116,17 +116,19 @@ async function runSoap({ snapshot, execution, envelope, wireAccount } = {}) {
 
 /* ═══ SOAP-PRIMARY-1 ═══════════════════════════════════════════════ */
 
-test('SOAP-PRIMARY-1: yeni Trendyol pazaryeri create ORTAK_BARKOD_SOAP secer', () => {
+test('SOAP-PRIMARY-1: kayitli SURAT_CANONICAL_API EZILMEZ', () => {
+  // DUZELTILDI. Bu test eskiden TERSINI pinliyordu: kayitli kanonik modun
+  // calisma zamaninda ORTAK_BARKOD_SOAP olarak yeniden yazilmasini "dogru"
+  // sayiyordu. Uretim kanari on kontrolu kiracinin SURAT_CANONICAL_API
+  // sectigini ve bunun Surat'in bu musteri icin verdigi RESMI servis
+  // oldugunu gosterdi; yeniden yazma REGRESYONDU.
   const route = ROUTE.resolveSuratPrimaryCreateRoute({
     configuredServiceMode: 'SURAT_CANONICAL_API',
     marketplace: 'Trendyol',
   })
-  assert.equal(route.serviceMode, 'ORTAK_BARKOD_SOAP')
-  assert.equal(route.serviceType, 'OrtakBarkodOlusturSoap')
-  assert.equal(route.operation, 'OrtakBarkodOlustur')
-  assert.equal(route.soapPrimarySelected, true)
-  // Kayitli mod ezildi — SESSIZ degil, gorunur.
-  assert.equal(route.overrodeConfiguredMode, true)
+  assert.equal(route.serviceMode, 'SURAT_CANONICAL_API')
+  assert.equal(route.soapPrimarySelected, false)
+  assert.equal(route.overrodeConfiguredMode, false)
   assert.equal(route.configuredServiceMode, 'SURAT_CANONICAL_API')
 
   // Ilgisiz pazaryerlerinin modu DEGISMEZ: onlar icin depo kaniti YOK.
@@ -144,11 +146,13 @@ test('SOAP-PRIMARY-1: yeni Trendyol pazaryeri create ORTAK_BARKOD_SOAP secer', (
 
 /* ═══ SOAP-PRIMARY-2 ═══════════════════════════════════════════════ */
 
-test('SOAP-PRIMARY-2: kanonik API cagrilmaz', async () => {
+test('SOAP-PRIMARY-2: kanonik API kiracinin secimiyle CAGRILIR', async () => {
+  // DUZELTILDI. Eski hali "kanonik API cagrilmaz" diye pinliyordu — yani
+  // resmi servisin devre disi kalmasini SART kosuyordu.
   const route = ROUTE.resolveSuratPrimaryCreateRoute({
     configuredServiceMode: 'SURAT_CANONICAL_API', marketplace: 'trendyol',
   })
-  assert.notEqual(route.serviceMode, 'SURAT_CANONICAL_API')
+  assert.equal(route.serviceMode, 'SURAT_CANONICAL_API')
 
   // Rota kanonikten ONCE hesaplanmali; yoksa kanonik dal once eslesirdi.
   const server = stripComments(INDEX_SOURCE)
@@ -566,6 +570,8 @@ test('SOAP-PRIMARY-1b: acikca secilmis baska mod DEGISTIRILMEZ', () => {
   // Kapsam KIRIK KANONIK MODDUR. Kiraci baska bir modu ACIKCA sectiyse o
   // secim onundur; aksi halde bu duzeltme ilgisiz modlari ele gecirirdi.
   for (const mode of [
+    // Kanonik mod ARTIK bu listededir: hicbir kayitli mod ezilmez.
+    'SURAT_CANONICAL_API',
     'PRE_REGISTRATION_REST',
     'GONDERI_YENI_SOAP',
     'KARGO_BARKODU_SIPARIS_SOAP',

@@ -40,17 +40,35 @@ export const SOAP_PRIMARY_CREATE_PATH = '/api/OrtakBarkodOlustur'
 export const SOAP_PRIMARY_ELIGIBLE_MARKETPLACES = ['trendyol'] as const
 
 /**
- * DEĞİŞTİRİLEN modlar — yalnız bunlar.
+ * DEĞİŞTİRİLEN modlar — ARTIK HİÇBİRİ.
  *
- * Kapsam YALNIZ KIRIK KANONİK MODDUR. Kiracı başka bir modu AÇIKÇA seçtiyse
- * (`PRE_REGISTRATION_REST`, `GONDERI_YENI_SOAP` ya da hâlihazırda
- * `ORTAK_BARKOD_SOAP`) o seçim onundur ve burada yeniden yazılmaz.
+ * ═══ NEDEN BOŞ ═══════════════════════════════════════════════════════════
  *
- * Zaten SOAP olan kiracının rotası da DEĞİŞTİRİLMEZ: onun `serviceType`
- * seçimi hangi SOAP zincirinin çalışacağını belirler ve o tenant KIRIK
- * DEĞİLDİR. Bu turda düzeltilen tek şey kanonik REST'in reddedilmesidir.
+ * Bu liste `'SURAT_CANONICAL_API'` içeriyordu ve ÜRETİM REGRESYONUNUN kendisi
+ * buydu. Kiracı (TarzimTuba) kayıtlı olarak `SURAT_CANONICAL_API` seçmiştir —
+ * Sürat entegrasyon ekibinin bu müşteri için verdiği RESMÎ servistir
+ * (api02 · POST /api/OrtakBarkodOlustur, bkz. ef944e2). Buradaki eşleşme,
+ * çalışma zamanında o seçimi `ORTAK_BARKOD_SOAP` +
+ * `serviceType='OrtakBarkodOlusturSoap'` olarak YENİDEN YAZIYORDU.
+ *
+ * Sonuçları zincirleme oldu:
+ *   1. Resmî kanonik dal (`createSuratShipmentCore` içinde) HİÇ ULAŞILMAZ
+ *      hâle geldi — kiracı resmî servisi seçmişken legacy servise gidiyordu.
+ *   2. Yazılan `serviceType` tam olarak `labelOnlyChain` yordamını (index.mjs)
+ *      tetikliyor ve legacy İKİ ÇAĞRILI zinciri (`GonderiyiKargoyaGonder` →
+ *      `OrtakBarkodOlustur` SOAP) seçiyordu. Kanıtlanmış akış TEK çağrıdır.
+ *   3. Sonraki tüm düzeltmeler (kayıt doğrulama kapısı, TDZ çökmesi) bu
+ *      seçilmemesi gereken zincirin hasar kontrolüydü.
+ *
+ * Gerekçe olarak gösterilen `11415535074` artefaktı bir ETİKET kaydıdır
+ * (`/api/shipments/surat/label`), CREATE kaydı DEĞİL; create sözleşmesi diye
+ * okunması hatalıydı.
+ *
+ * Kiracının AÇIKÇA seçtiği mod hiçbir koşulda çalışma zamanında ezilmez.
+ * `SOAP_PRIMARY_*` sabitleri KALIR: gerçekten `ORTAK_BARKOD_SOAP` seçmiş
+ * kiracılar için SOAP otorite katmanı aynen çalışmaya devam eder.
  */
-export const SOAP_PRIMARY_REPLACEABLE_MODES = ['SURAT_CANONICAL_API'] as const
+export const SOAP_PRIMARY_REPLACEABLE_MODES = [] as const
 
 export interface SuratPrimaryCreateRoute {
   /** Bu istekte GERÇEKTEN kullanılacak mod. */
