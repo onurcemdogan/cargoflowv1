@@ -45,6 +45,8 @@ export interface SoapCreateExecutionResult {
   httpSuccess?: unknown
   /** BU denemede ağ sınırının geçildiğine dair kanıt (gerçek HTTP durumu). */
   networkCrossed?: unknown
+  /** Kayıt teyidi kanıtı (salt-okunur); iz ayrı bir bacak olarak gösterir. */
+  registrationVerification?: unknown
   businessCode?: unknown
   businessMessage?: unknown
   codeCategory?: unknown
@@ -367,6 +369,28 @@ export async function createSuratSoapPrimaryShipment(
   // üretim izi CF-4102563548'de çağrı yapılmamış gibi görünen aşamalarla
   // `carrierCalled=true` yan yana çıkmıştı.
   const crossedNetwork = wire !== null || execution.networkCrossed === true
+  // ═══ KAYIT TEYİDİ BACAĞI ═══════════════════════════════════════════════
+  // Üretim izi CF-4103216452'de teyit kanıtı GÖRÜNMÜYORDU. Salt-okunur
+  // sorgu bir taşıyıcı YANITI değildir; kendi bacağı olarak yazılır ve
+  // REST/SOAP yanıtlarıyla KARIŞMAZ.
+  if (execution.registrationVerification) {
+    const verify = execution.registrationVerification as Record<string, unknown>
+    traceAttempt = appendTraceStage(traceAttempt, {
+      stage: 'VERIFICATION', section: 'VERIFICATION', at: stamp(),
+      data: {
+        step: 'REGISTRATION_VERIFY',
+        readOnly: true,
+        operation: verify.operation ?? 'KargoTakipHareketDetayi',
+        webSiparisKoduSource: verify.webSiparisKoduSource ?? 'orderNumber',
+        gonderilerLength: verify.gonderilerLength ?? null,
+        identityMatch: verify.identityMatch ?? null,
+        verificationState: verify.state ?? null,
+        shipmentRegistered: verify.shipmentRegistered ?? false,
+        // Salt-okunur: taşıyıcı durumu DEĞİŞTİRMEZ.
+        carrierStateMutated: false,
+      },
+    })
+  }
   traceAttempt = appendTraceStage(traceAttempt, {
     stage: crossedNetwork ? 'CARRIER_RESPONSE' : 'VERIFICATION',
     section: 'RESPONSE', at: stamp(),

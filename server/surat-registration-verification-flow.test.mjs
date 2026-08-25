@@ -157,3 +157,59 @@ test('VERIFY-13: finansal kapi TUM create aglarindan ONCE', () => {
   const restCall = server.indexOf('const dispatchRegistration = await createSuratLegacyRestJson(')
   assert.ok(gate > 0 && restCall > 0 && gate < restCall)
 })
+
+/* ═══ VERIFY-7/8 — ZATEN VAR DALI DA TEYİT EDER ══════════════════════ */
+//
+// ÜRETİM İZİ CF-4103216452: taşıyıcı "Bu gonderi daha önce oluşturulmuş."
+// dedi. `duplicateShipment` → `registrationAccepted=false` → zincir ERKEN
+// dönüyordu ve salt-okunur teyit HİÇ ÇALIŞMIYORDU. Kayıt gerçekten var
+// olabilir; doğrulamadan ne barkod istenir ne "oluşturulamadı" denir.
+
+test('VERIFY-7: ZATEN VAR ikinci REST create YAPMAZ ama TEYIT eder', () => {
+  const chain = server.indexOf('async function createSuratRegisteredCommonBarcode')
+  const next = server.indexOf('\nasync function ', chain + 10)
+  const body = server.slice(chain, next > 0 ? next : undefined)
+  // Zaten-var dali VAR ve erken donusten ONCE gelir.
+  const already = body.indexOf('if (!registrationAccepted && registrationAlreadyExists) {')
+  const plainReject = body.indexOf('if (!registrationAccepted) {')
+  assert.ok(already > 0, 'zaten-var dali OLMALI')
+  assert.ok(already < plainReject, 'zaten-var dali duz reddin ONUNDE olmali')
+  // O dalda salt-okunur teyit CAGRILIR.
+  const branch = body.slice(already, plainReject)
+  assert.ok(branch.includes('await verifyRegistrationReadOnly()'))
+  // IKINCI REST create YOK.
+  assert.equal(branch.includes('createSuratLegacyRestJson('), false)
+  // BARKOD da CAGRILMAZ.
+  assert.equal(branch.includes('createSuratCommonBarcodeSoap('), false)
+})
+
+test('VERIFY-8: zaten-var karari YALNIZ salt-okunur sonuca dayanir', () => {
+  // Gonderiler=1 → mevcut kayit DOGRULANDI.
+  const verified = V.resolveRegistrationVerification({
+    registrationAccepted: true,
+    query: { ok: true, gonderilerLength: 1 },
+    registeredAtMs: NOW, nowMs: NOW + MIN,
+  })
+  assert.equal(verified.shipmentRegistered, true)
+  // Gonderiler=0 → beklemede; barkod YOK, tekrar create YOK.
+  const pending = V.resolveRegistrationVerification({
+    registrationAccepted: true,
+    query: { ok: true, gonderilerLength: 0 },
+    registeredAtMs: NOW, nowMs: NOW + MIN,
+  })
+  assert.equal(pending.continueToBarcode, false)
+})
+
+/* ═══ VERIFY-15 — İZDE AYRI BACAK ════════════════════════════════════ */
+
+test('VERIFY-15: iz REGISTRATION_VERIFY bacagini AYRI gosterir', () => {
+  const soap = codeOf('server/shipments/suratSoapPrimaryCreate.ts')
+  assert.ok(soap.includes("step: 'REGISTRATION_VERIFY'"))
+  assert.ok(soap.includes('readOnly: true'))
+  assert.ok(soap.includes('carrierStateMutated: false'))
+  // Teyit bacagi tasiyici YANITI olarak yazilmaz.
+  assert.ok(soap.includes("stage: 'VERIFICATION'"))
+  // Kimlik ve sayim gorunur.
+  assert.ok(soap.includes('gonderilerLength'))
+  assert.ok(soap.includes('identityMatch'))
+})

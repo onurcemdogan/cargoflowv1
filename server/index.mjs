@@ -5899,6 +5899,66 @@ async function createSuratRegisteredCommonBarcode(
       ),
   )
 
+  // ═══ ZATEN VAR — İKİNCİ CREATE YOK, AMA TEYİT ÇALIŞIR ════════════════
+  //
+  // ÖLÇÜLEN KUSUR (üretim izi CF-4103216452): taşıyıcı "Bu gonderi daha önce
+  // oluşturulmuş." dedi. Bu, `duplicateShipment` üzerinden
+  // `registrationAccepted=false` yapıyor ve zincir AŞAĞIDAKİ dalda geri
+  // dönüyordu — yani salt-okunur teyit HİÇ ÇALIŞMIYORDU. Kayıt taşıyıcıda
+  // GERÇEKTEN var olabilir; onu doğrulamadan ne barkod istenir ne de
+  // "oluşturulamadı" denir.
+  const {
+    resolveRegistrationVerification, registrationIdentityMatches,
+  } = await import('./shipments/suratRegistrationVerification.ts')
+
+  const registrationAlreadyExists = Boolean(
+    registrationLog?.duplicateShipment
+      ?? dispatchRegistration.createDiagnostics?.duplicateShipment,
+  ) || isSuratDuplicateShipmentMessage(
+    registrationLog?.responseMessage
+      ?? dispatchRegistration.createDiagnostics?.message
+      ?? dispatchRegistration.message,
+  )
+  if (!registrationAccepted && registrationAlreadyExists) {
+    // İKİNCİ REST CREATE YAPILMAZ. Yalnız salt-okunur sorgu.
+    const existingQuery = await verifyRegistrationReadOnly()
+    const existingVerification = resolveRegistrationVerification({
+      // Kayıt zaten var iddiası, kabul edilmiş kayıt gibi değerlendirilir:
+      // karar YALNIZ salt-okunur sonuca dayanır.
+      registrationAccepted: true,
+      query: existingQuery,
+      registeredAtMs: Date.now(),
+      nowMs: Date.now(),
+    })
+    return {
+      ...dispatchRegistration,
+      ok: false,
+      alreadyExists: true,
+      message: `Sürat kaydı zaten mevcut; ${existingVerification.reason}`,
+      registrationVerification: {
+        ...existingVerification,
+        readOnly: true,
+        operation: 'KargoTakipHareketDetayi',
+        webSiparisKoduSource: 'orderNumber',
+        webSiparisKodu: existingQuery?.webSiparisKodu ?? null,
+        identityMatch: registrationIdentityMatches({
+          expectedOrderNumber: order?.orderNumber,
+          queriedWebSiparisKodu: existingQuery?.webSiparisKodu,
+        }),
+      },
+      dispatchRegistration: {
+        ok: false,
+        createAccepted: false,
+        alreadyExists: true,
+        shipmentRegistered: existingVerification.shipmentRegistered,
+        verificationState: existingVerification.state,
+        gonderilerLength: existingVerification.gonderilerLength,
+        endpoint: dispatchRegistration.endpoint,
+        serviceType: dispatchRegistration.serviceType,
+      },
+    }
+  }
+
   if (!registrationAccepted) {
     const dispatchRejected =
       dispatchRegistration.shipment?.lifecycleStatus ===
@@ -5951,16 +6011,13 @@ async function createSuratRegisteredCommonBarcode(
   // kayıt bulamadı. Yani barkod adımı, taşıyıcıda KAYIT OLMADAN etiket
   // üretebilir. `72a1c12` bu kapıyı "ulaşılamaz" sanıp kaldırmıştı; eksik olan
   // kapı değil, ARADAKİ salt-okunur doğrulama adımıydı.
-  const {
-    resolveRegistrationVerification,
-  } = await import('./shipments/suratRegistrationVerification.ts')
   // Kiracı kimliği ÇAĞIRANDAN gelir; config'ten tahmin EDİLMEZ. Tahmin
   // edilseydi sorgu sessizce başarısız olur ve kapı HER create'i bloklardı.
   // SALT-OKUNUR TEYİT — zincirin KENDİ config'iyle. Kimlik bilgilerini
   // yeniden DB'den çözmek gereksiz bir başarısızlık noktasıydı: çözülemezse
   // kapı her create'i bloklardı. Sorgu anahtarı `WebSiparisKodu` = SİPARİŞ
   // NUMARASI (paket kimliği DEĞİL; takip ucu onu kabul etmez).
-  const registrationQuery = await (async () => {
+  const verifyRegistrationReadOnly = async () => {
     try {
       const queryReference = resolveSuratTrackingQueryReference({
         webSiparisKodu: order?.orderNumber,
@@ -5979,12 +6036,14 @@ async function createSuratRegisteredCommonBarcode(
           log?.gonderilerLength
             ?? (Array.isArray(gonderiler) ? gonderiler.length : 0),
         ),
+        webSiparisKodu: queryReference.value,
       }
     } catch {
-      // Sorgu patlarsa kayıt KANITLANMADI: kapı fail-closed davranır.
       return null
     }
-  })()
+  }
+
+  const registrationQuery = await verifyRegistrationReadOnly()
   const verification = resolveRegistrationVerification({
     registrationAccepted,
     query: registrationQuery,
@@ -7314,6 +7373,8 @@ function mapSuratSoapExecutionResult(created) {
     // BU DENEMEDE ag sinirinin gecildigine dair kanit: gercek bir HTTP
     // durumu. Metinden ya da onceki operasyondan CIKARILMAZ.
     networkCrossed: Number.isFinite(status) && status > 0,
+    // SALT-OKUNUR KAYIT TEYIDI — ize AYRI bir bacak olarak yazilir.
+    registrationVerification: created?.registrationVerification ?? null,
     businessCode: log.responseCode ?? null,
     businessMessage: log.responseMessage ?? null,
     codeCategory: log.responseCategory ?? null,
