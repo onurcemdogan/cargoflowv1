@@ -75,7 +75,9 @@ test('TRUTH-5: kayitli zincirin REST kenari onWireReady TASIYOR', () => {
     'REST kenari agdan once tel kaniti YAZMALI',
   )
   // Kenar ETIKETLI: yakalama evet, SOAP paritesi hayir.
-  assert.ok(source.includes("if (edge !== 'SOAP') return"))
+  // Kenar etiketli: REST'te yakalama + cagri asamasi var, SOAP paritesi yok.
+  assert.ok(source.includes("if (edge !== 'SOAP') {"))
+  assert.ok(source.includes('markCallStarted()'))
   const restCall = serverSource.indexOf('const dispatchRegistration = await createSuratLegacyRestJson(')
   const passed = serverSource.indexOf('{ onWireReady },', restCall)
   assert.ok(restCall > 0 && passed > restCall, 'zincir onWireReady GECIRMELI')

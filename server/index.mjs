@@ -5931,37 +5931,20 @@ async function createSuratRegisteredCommonBarcode(
     }
   }
 
-  if (!shipmentRegistered) {
-    return {
-      ...dispatchRegistration,
-      ok: false,
-      message:
-        'Sürat create isteği kabul edildi ancak read-only sorguda gönderi kaydı henüz bulunamadı. Etiket operasyonu çağrılmadı.',
-      dispatchRegistration: {
-        ok: false,
-        createAccepted: true,
-        shipmentRegistered: false,
-        endpoint: dispatchRegistration.endpoint,
-        serviceType: dispatchRegistration.serviceType,
-        responseStatus:
-          dispatchRegistration.responseStatus ??
-          dispatchRegistration.statusCode,
-        responseCode:
-          registrationLog?.responseCode ??
-          dispatchRegistration.createDiagnostics?.responseCategory,
-        responseMessage:
-          registrationLog?.responseMessage ??
-          dispatchRegistration.createDiagnostics?.message,
-        rawRequest: registrationLog?.rawRequest,
-        rawResponse: registrationLog?.rawResponse,
-      },
-      barcodeCreation: {
-        ok: false,
-        skipped: true,
-        reason: 'SHIPMENT_NOT_REGISTERED',
-      },
-    }
-  }
+  // ═══ ARA BAŞARI ZİNCİRİ SONLANDIRMAZ ═══════════════════════════════════
+  //
+  // ÖLÇÜLEN KUSUR (üretim izi CF-4103110390): REST kayıt adımı
+  // "<takipNo> nolu kayıt başarıyla oluşturuldu" dedi, yani taşıyıcı kaydı
+  // OLUŞTURDU — ama zincir burada `shipmentRegistered` bekleyip duruyordu.
+  // O bayrak YALNIZ barkod SONRASI takip doğrulamasından geliyor
+  // (`verifySuratCreateResultWithTracking`), dolayısıyla bu noktada ASLA
+  // doğru olamaz: SOAP barkod adımı ERİŞİLEMEZDİ.
+  //
+  // Kayıt KABUL edildiyse barkod adımına devam edilir. `shipmentRegistered`
+  // ayrı bir kanıt olarak DOĞRU şekilde raporlanmaya devam eder; yalnız
+  // devam etme koşulu olmaktan çıkar. Kayıt kabul EDİLMEDİYSE üstteki dal
+  // zaten döndü, yani bu değişiklik başarısız kaydı ilerletmez.
+  const readOnlyRegistrationConfirmed = shipmentRegistered
 
   const commonBarcodeResult = await createSuratCommonBarcodeSoap(
     config,
@@ -5978,9 +5961,12 @@ async function createSuratRegisteredCommonBarcode(
     commonBarcodeResult.shipment?.suratCreateLog ??
     commonBarcodeResult.suratCreateLog
   const dispatchRegistrationSummary = {
-    ok: shipmentRegistered,
+    // Kayit KABUL edildiyse adim basarilidir; read-only teyit AYRI kanittir
+    // ve yoklugu adimi basarisiz YAPMAZ (barkod adimindan once olusamaz).
+    ok: registrationAccepted,
     createAccepted: registrationAccepted,
     shipmentRegistered,
+    readOnlyRegistrationConfirmed,
     providerRegistrationConfirmed: shipmentRegistered,
     serdendipVerified: Boolean(
       dispatchRegistration.shipment?.verifiedShipment,

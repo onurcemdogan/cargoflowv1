@@ -242,8 +242,22 @@ export async function createSuratSoapPrimaryShipment(
     // atarsa `carrierCalled=true` olurken telde NE gittigi KAYBOLUYORDU.
     // Uretim izi CF-4102465808 tam olarak bu haldeydi: ACTUAL_WIRE eksik,
     // carrierCalled dogru.
-    traceAttempt = appendActualWireStage(traceAttempt, wire, snapshot, stamp)
-    if (edge !== 'SOAP') return
+    traceAttempt = appendActualWireStage(traceAttempt, wire, snapshot, stamp, edge)
+    // HER KENAR icin cagri baslangici yazilir: `carrierCalled=true` olan bir
+    // deneme CARRIER_CALL_STARTED tasimak ZORUNDA. Uretim izi CF-4103110390'da
+    // REST kenari tel kanitini yaziyor ama cagri asamasini YAZMIYORDU.
+    const markCallStarted = (): void => {
+      traceAttempt = appendTraceStage(traceAttempt, {
+        stage: 'CARRIER_CALL_STARTED', section: 'SERVICE_ROUTING', at: stamp(),
+        data: { operation: SOAP_PRIMARY_OPERATION, attempt: 1, step: edge },
+      })
+    }
+    if (edge !== 'SOAP') {
+      // REST kenari: yakalama + cagri asamasi EVET, SOAP paritesi HAYIR
+      // (farkli kimlik alani; ayni kapiya sokmak calisan create'i bloklardi).
+      markCallStarted()
+      return
+    }
     // ═══ KAPI 2 — AĞ SINIRI PARİTESİ ════════════════════════════════════
     // Karşılaştırma OTORİTER anlık görüntü ile GERÇEKTEN serileşen zarf
     // arasındadır. Bundan sonra hiçbir kimlik dönüşümü YOKTUR.
@@ -264,10 +278,7 @@ export async function createSuratSoapPrimaryShipment(
     // Cagri baslangici ancak tel kaniti YAZILDIKTAN ve parite GECTIKTEN
     // sonra isaretlenir; boylece `carrierCalled=true` olup telin bilinmedigi
     // bir iz URETILEMEZ.
-    traceAttempt = appendTraceStage(traceAttempt, {
-      stage: 'CARRIER_CALL_STARTED', section: 'SERVICE_ROUTING', at: stamp(),
-      data: { operation: SOAP_PRIMARY_OPERATION, attempt: 1 },
-    })
+    markCallStarted()
   }
 
   let execution: SoapCreateExecutionResult
@@ -455,10 +466,13 @@ function appendActualWireStage(
   wire: SoapWireCapture,
   snapshot: SuratCredentialSnapshot,
   stamp: () => string,
+  // Zincirde IKI tasima var; izde birbirine KARISMAMALI.
+  step: string = 'SOAP',
 ): SuratTraceAttempt {
   return appendTraceStage(attempt, {
     stage: 'ACTUAL_WIRE_READY', section: 'REQUEST', at: stamp(),
     data: {
+      step: step === 'SOAP' ? 'BARCODE_SOAP' : 'REGISTRATION_REST',
       envelopePresent: wire.envelopePresent,
       gonderiPresent: wire.gonderiPresent,
       operation: wire.operation,
