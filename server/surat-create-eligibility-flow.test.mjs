@@ -156,3 +156,98 @@ test('ELIG-REAL-11: eski istemci tarafi kopyasi KALDIRILDI', () => {
   }
   assert.equal(clientCopyExists, false, 'istemci kopyasi OLMAMALI')
 })
+
+/* ═══ DENETÇİ — GERÇEK YOLLA AYNI YORDAM ═════════════════════════════ */
+
+const inspector = codeOf('server/shipments/suratCreateEligibilityInspectCli.ts')
+const pkg = JSON.parse(readFileSync('package.json', 'utf8'))
+
+test('ELIG-INSPECT-1: denetci ve gercek create AYNI yordami kullanir', () => {
+  // Paralel/simule bir kopya, uretimden farkli cevap verir ve denetim
+  // YALAN SOYLER.
+  assert.ok(inspector.includes(
+    "import { resolveSuratCreateEligibility } from './suratCreateEligibility.ts'",
+  ))
+  assert.ok(inspector.includes('resolveSuratCreateEligibility({ order })'))
+  assert.ok(server.includes('resolveSuratCreateEligibility({'))
+})
+
+test('ELIG-INSPECT-2: denetci SALT OKUNUR — yazma/create YOK', () => {
+  for (const forbidden of ['.insert(', '.update(', '.delete(', 'createSurat']) {
+    assert.equal(inspector.includes(forbidden), false, forbidden)
+  }
+  assert.equal(/\bfetch\(/.test(inspector), false, 'ag cagrisi')
+  assert.ok(inspector.includes('NETWORK_CALLS 0 · DB_WRITES 0 · CREATE_CALLS 0'))
+})
+
+test('ELIG-INSPECT-2b: npm script KAYITLI ve .env yukler', () => {
+  const script = pkg.scripts?.['surat:create:eligibility:inspect']
+  assert.ok(script, 'script tanimli OLMALI')
+  assert.match(script, /--env-file-if-exists=\.env/)
+})
+
+test('ELIG-INSPECT-3: kimlik alanlari ROL AYRIMINI korur', () => {
+  const result = E.resolveSuratCreateEligibility({ order: { ...base } })
+  assert.equal(result.identity.orderNumber, '11529094251')
+  assert.equal(result.identity.packageId, '4096209239')
+  assert.equal(result.identity.cargoTrackingNumber, '7270036215917594')
+})
+
+test('ELIG-INSPECT-4: gorunen siparis numarasi denetciye SIZMAZ', () => {
+  assert.equal(inspector.includes('displayOrderNumber'), false)
+})
+
+test('ELIG-INSPECT-5: YAS TEK BASINA uygunlugu BOZMAZ', () => {
+  // Yas TANI kanitidir, durum DEGILDIR. Eski ama temiz paket UYGUNDUR.
+  const old = E.resolveSuratCreateEligibility({
+    order: { ...base, orderDate: '2026-08-22T09:00:00Z' },
+  })
+  assert.equal(old.eligible, true)
+  // Denetci yasi RAPORLAR ama uygunluga KATMAZ.
+  assert.ok(inspector.includes('AGE_HOURS'))
+  assert.equal(inspector.includes('ageHours >'), false)
+})
+
+test('ELIG-INSPECT-6: mevcut tasiyici/etiket kaniti uygunlugu BLOKLAR', () => {
+  const blocked = E.resolveSuratCreateEligibility({
+    order: { ...base, shipment: { barcodeValue: 'Web00157962154' } },
+  })
+  assert.equal(blocked.eligible, false)
+  assert.ok(blocked.reasons.includes('CARRIER_EVIDENCE_EXISTS'))
+})
+
+test('ELIG-INSPECT-7: olmayan sema alani UYDURULMAZ', () => {
+  // Sema `ozelKargoTakipNo` / `printZpl` TASIMAZ; denetci bunlari
+  // uydurmak yerine acikca bildirir.
+  assert.ok(inspector.includes('UNAVAILABLE_IN_CURRENT_SCHEMA'))
+  assert.equal(inspector.includes('shipmentRow.ozelKargoTakipNo'), false)
+  assert.equal(inspector.includes('shipmentRow.printZpl'), false)
+})
+
+/* ═══ STALE — "YENİ" SEKMESİ SÖZLEŞMESİ ═════════════════════════════ */
+
+const classification = codeOf('src/utils/orderClassification.ts')
+
+test('STALE-1: Yeni/acik siniflandirmasi SAKLANAN duruma baglidir', () => {
+  // Kaynak: marketplaceStatus + operationStatus + gonderi/etiket kaniti.
+  assert.ok(classification.includes('const isOpenOperation = !processClosed'))
+  assert.ok(classification.includes('isCanceledOrReturned'))
+  assert.ok(classification.includes('isDelivered'))
+  assert.ok(classification.includes('isArchived'))
+  assert.ok(classification.includes('isHandedToCargo'))
+})
+
+test('STALE-2: terminal durum Yeni sekmesinde KALAMAZ', () => {
+  const M = classification
+  // processClosed olan hicbir siparis acik sayilmaz.
+  assert.ok(M.includes('const processClosed = Boolean('))
+  // Ve barkod-bekliyor yalniz ACIK operasyonlarda mumkundur.
+  assert.ok(M.includes('isOpenOperation &&'))
+})
+
+test('STALE-3: YAS ya da senkron tazeligi siniflandirmaya GIRMEZ', () => {
+  // Eski bir siparisi yasa gore gizlemek durumu DEGISTIRMEZ, sadece
+  // gorunmez kilar. Saglayici hala hazirliyorsa gorunmeye DEVAM etmeli.
+  assert.equal(classification.includes('lastSuccessfulSyncAt'), false)
+  assert.equal(/ageHours|olderThanDays|staleAfter/.test(classification), false)
+})

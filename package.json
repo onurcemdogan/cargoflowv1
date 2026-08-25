@@ -52,6 +52,7 @@
     "benchmark:label-bundles": "node server/benchmarks/labelBundleBenchmark.ts",
     "surat:ssp-acceptance:check": "node server/shipments/sspAcceptanceCheckCli.ts",
     "surat:trace:inspect": "node --env-file-if-exists=.env server/shipments/suratTraceInspectCli.ts",
+    "surat:create:eligibility:inspect": "node --env-file-if-exists=.env server/shipments/suratCreateEligibilityInspectCli.ts",
     "surat:canary:precheck": "node --env-file-if-exists=.env server/shipments/suratCanaryPrecheckCli.ts",
     "surat:print-zpl:repair": "node server/shipments/repairPrintZplCli.ts"
   },
