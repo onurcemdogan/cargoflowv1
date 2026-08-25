@@ -25,7 +25,9 @@ import {
 } from './suratCreateTrace.ts'
 import { assertSuratWireCredentialParity } from './suratCredentialSnapshot.ts'
 import type { SuratCredentialSnapshot } from './suratCredentialSnapshot.ts'
-import { classifySuratCreateResponse } from './suratResponseClassification.ts'
+import {
+  classifySuratCreateResponse, isSuratAlreadyExistsMessage,
+} from './suratResponseClassification.ts'
 import type { SuratResponseClassification } from './suratResponseClassification.ts'
 import {
   captureSoapActualWire,
@@ -228,6 +230,12 @@ export async function createSuratSoapPrimaryShipment(
       operation: SOAP_PRIMARY_OPERATION,
       serviceMode: SOAP_PRIMARY_SERVICE_MODE,
     })
+    // KANIT AGDAN ONCE YAZILIR. Eskiden bu asama `executeCreate` DONDUKTEN
+    // sonra ekleniyordu; cagri patlarsa ya da yakalama sonrasi bir sey
+    // atarsa `carrierCalled=true` olurken telde NE gittigi KAYBOLUYORDU.
+    // Uretim izi CF-4102465808 tam olarak bu haldeydi: ACTUAL_WIRE eksik,
+    // carrierCalled dogru.
+    traceAttempt = appendActualWireStage(traceAttempt, wire, snapshot, stamp)
     // ═══ KAPI 2 — AĞ SINIRI PARİTESİ ════════════════════════════════════
     // Karşılaştırma OTORİTER anlık görüntü ile GERÇEKTEN serileşen zarf
     // arasındadır. Bundan sonra hiçbir kimlik dönüşümü YOKTUR.
@@ -244,21 +252,25 @@ export async function createSuratSoapPrimaryShipment(
         parity.reason ?? 'Kimlik paritesi başarısız.',
       )
     }
+    // SIRA: ACTUAL_WIRE_READY → parite → CARRIER_CALL_STARTED → ag.
+    // Cagri baslangici ancak tel kaniti YAZILDIKTAN ve parite GECTIKTEN
+    // sonra isaretlenir; boylece `carrierCalled=true` olup telin bilinmedigi
+    // bir iz URETILEMEZ.
+    traceAttempt = appendTraceStage(traceAttempt, {
+      stage: 'CARRIER_CALL_STARTED', section: 'SERVICE_ROUTING', at: stamp(),
+      data: { operation: SOAP_PRIMARY_OPERATION, attempt: 1 },
+    })
   }
-
-  traceAttempt = appendTraceStage(traceAttempt, {
-    stage: 'CARRIER_CALL_STARTED', section: 'SERVICE_ROUTING', at: stamp(),
-    data: { operation: SOAP_PRIMARY_OPERATION, attempt: 1 },
-  })
 
   let execution: SoapCreateExecutionResult
   try {
     execution = await params.executeCreate({ onWireReady })
   } catch (error) {
     const blocked = error instanceof SuratSoapWireBlockedError
-    if (wire) {
-      traceAttempt = appendActualWireStage(traceAttempt, wire, snapshot, stamp)
-    }
+    // TASIYICI "zaten var" DEDIYSE istek ULASMISTIR: bu bir tasima hatasi
+    // DEGILDIR. Istemci is hatasini istisnaya cevirse bile mesaj KANITTIR.
+    const alreadyExists = !blocked
+      && isSuratAlreadyExistsMessage((error as Error)?.message)
     traceAttempt = appendTraceStage(traceAttempt, {
       stage: blocked ? 'WIRE_BLOCKED' : 'CARRIER_RESPONSE',
       section: blocked ? 'CREDENTIAL_ROUTING' : 'RESPONSE',
@@ -279,7 +291,9 @@ export async function createSuratSoapPrimaryShipment(
     traceAttempt = appendTraceStage(traceAttempt, {
       stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
       data: {
-        carrierCreateStatus: blocked ? 'BLOCKED' : 'UNKNOWN',
+        carrierCreateStatus: blocked
+          ? 'BLOCKED'
+          : alreadyExists ? 'ALREADY_EXISTS' : 'UNKNOWN',
         carrierCalled: !blocked,
       },
     })
@@ -289,8 +303,16 @@ export async function createSuratSoapPrimaryShipment(
       carrierCreateAttempts: blocked ? 0 : 1,
       errorCode: blocked
         ? (error as SuratSoapWireBlockedError).errorCode
-        : 'SURAT_SOAP_TRANSPORT_FAILED',
-      classification: null,
+        : alreadyExists
+          ? 'SURAT_SHIPMENT_ALREADY_EXISTS'
+          : 'SURAT_SOAP_TRANSPORT_FAILED',
+      classification: alreadyExists
+        ? classifySuratCreateResponse({
+            httpSuccess: true,
+            businessMessage: (error as Error)?.message,
+            codeCategory: 'DUPLICATE_EXISTS',
+          })
+        : null,
       wire,
       suratCreateTrace: {
         ...baseTrace,
@@ -300,10 +322,6 @@ export async function createSuratSoapPrimaryShipment(
       traceAttempt,
       response: null,
     }
-  }
-
-  if (wire) {
-    traceAttempt = appendActualWireStage(traceAttempt, wire, snapshot, stamp)
   }
 
   const classification = classifySuratCreateResponse({

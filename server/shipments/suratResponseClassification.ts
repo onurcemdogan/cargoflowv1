@@ -25,6 +25,11 @@ export const FINAL_CLASSIFICATIONS = [
   'CREATED_VERIFICATION_INCOMPLETE',
   // 039: sipariş kaydedildi, barkod üretilemedi. TAM BAŞARI DEĞİLDİR.
   'SAVED_BARCODE_FAILED',
+  // Taşıyıcı "bu gönderi zaten var" diyor. Taşıma BAŞARILI, iş sonucu ise
+  // "kayıt MEVCUT". Ne başarısızlık ne de etiket başarısıdır: tanımlayıcılar
+  // ve ZPL SALT-OKUNUR biçimde kurtarılana kadar doğrulama BEKLER.
+  // ASLA otomatik tekrar create — mükerrer gönderi geri alınamaz.
+  'ALREADY_EXISTS_NEEDS_VERIFICATION',
   // Taşıyıcı "tekrar dene" diyor (038 gibi). Körlemesine değil, denetimli.
   'RETRYABLE_CARRIER_BUSY',
   // İş kuralı reddi — tekrar denemek aynı sonucu verir.
@@ -48,6 +53,23 @@ export interface SuratResponseClassification {
   isTerminal: boolean
   /** Yalnız bu doğruysa denetimli yeniden deneme düşünülebilir. */
   retryAllowed: boolean
+}
+
+/**
+ * Sürat'in "zaten var" ifadesi. Eşleme UYDURULMADI: `index.mjs`
+ * (`isSuratDuplicateShipmentMessage`) ve `009 · DUPLICATE_EXISTS` kod
+ * girdisiyle AYNI kanıta dayanır; SOAP yolunda kod gelmeyebildiği için
+ * mesaj tarafı da gerekir.
+ */
+export function isSuratAlreadyExistsMessage(value: unknown): boolean {
+  const ascii = String(value ?? '')
+    .toLocaleLowerCase('tr-TR')
+    .replaceAll('ğ', 'g').replaceAll('ü', 'u').replaceAll('ş', 's')
+    .replaceAll('ı', 'i').replaceAll('ö', 'o').replaceAll('ç', 'c')
+  return (
+    ascii.includes('bu gonderi daha once olusturulmus')
+    || ascii.includes('bu siparise ait gonderi olusmustur')
+  )
 }
 
 const nonEmpty = (value: unknown): boolean =>
@@ -87,6 +109,26 @@ export function classifySuratCreateResponse(input: {
   const base = {
     httpSuccess, businessCode, businessMessage,
     trackingPresent, barcodePresent, zplPresent,
+  }
+
+  // "ZATEN VAR" her şeyden ÖNCE gelir. Taşıyıcı bu cümleyi kurduysa istek
+  // ULAŞMIŞTIR ve karşı tarafta kayıt VARDIR — taşıma katmanı hatası olarak
+  // etiketlemek yanlış olur (üretim izi CF-4102465808 bu şekilde
+  // TRANSPORT_FAILED görünüyordu).
+  if (
+    category === 'DUPLICATE_EXISTS'
+    || isSuratAlreadyExistsMessage(input.businessMessage)
+  ) {
+    const recovered = trackingPresent && barcodePresent
+    return { ...base,
+      // Kayıt taşıyıcıda VAR; oluşturma yeniden DENENMEZ.
+      carrierRegistrationConfirmed: true,
+      verificationStage: recovered ? 'ARTIFACTS_COMPLETE' : 'ARTIFACTS_PARTIAL',
+      finalClassification: 'ALREADY_EXISTS_NEEDS_VERIFICATION',
+      // Artefaktlar kurtarılmadıkça İŞ BİTMİŞ sayılmaz.
+      isTerminal: false,
+      // KÖR TEKRAR YOK: yeni create mükerrer gönderi üretir.
+      retryAllowed: false }
   }
 
   // Taşıma katmanı düştüyse iş sonucu hakkında HİÇBİR ŞEY bilmiyoruz.
