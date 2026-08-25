@@ -5969,7 +5969,7 @@ async function createSuratRegisteredCommonBarcode(
         ...existingVerification,
         readOnly: true,
         operation: 'KargoTakipHareketDetayi',
-        webSiparisKoduSource: 'orderNumber',
+        webSiparisKoduSource: 'cargoTrackingNumber',
         webSiparisKodu: existingQuery?.webSiparisKodu ?? null,
         identityMatch: registrationIdentityMatches({
           expectedOrderNumber: order?.orderNumber,
@@ -6050,7 +6050,22 @@ async function createSuratRegisteredCommonBarcode(
   const verifyRegistrationReadOnly = async () => {
     try {
       const queryReference = resolveSuratTrackingQueryReference({
-        webSiparisKodu: order?.orderNumber,
+        // KİMLİK DÜZELTMESİ — `WebSiparisKodu` SİPARİŞ NUMARASI DEĞİLDİR.
+        //
+        // Depo kanıtı (dört bağımsız kaynak):
+        //   · docs/surat-service-map.md:31,34 — sorgu anahtarı kaynağı
+        //     açıkça `createRequest.OzelKargoTakipNo`
+        //   · docs/surat-service-map.md:83,88 — Trendyol `cargoTrackingNumber`
+        //     (727…) → `OzelKargoTakipNo` → `KargoTakipHareketDetayi.
+        //     WebSiparisKodu`
+        //   · docs/surat-service-map.md:93-104 — canlı sorgu örneği
+        //     `WebSiparisKodu=7270034268450518` (727… takip numarası)
+        //   · 17.07.2026 üretim koşusu — sipariş 11419469827 için eşleşen
+        //     anahtar `7270034487433781`, yani OzelKargoTakipNo
+        //
+        // Sipariş numarası (115…) ile sorulursa takip ucu HİÇBİR satır
+        // döndürmez ve teyit HER ZAMAN başarısız olur — kayıt var olsa bile.
+        webSiparisKodu: order?.cargoTrackingNumber,
       })
       if (!queryReference.ok) return null
       const body = { webSiparisKodu: queryReference.value, queryReference }

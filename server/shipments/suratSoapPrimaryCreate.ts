@@ -381,7 +381,8 @@ export async function createSuratSoapPrimaryShipment(
         step: 'REGISTRATION_VERIFY',
         readOnly: true,
         operation: verify.operation ?? 'KargoTakipHareketDetayi',
-        webSiparisKoduSource: verify.webSiparisKoduSource ?? 'orderNumber',
+        webSiparisKoduSource:
+          verify.webSiparisKoduSource ?? 'cargoTrackingNumber',
         gonderilerLength: verify.gonderilerLength ?? null,
         identityMatch: verify.identityMatch ?? null,
         verificationState: verify.state ?? null,

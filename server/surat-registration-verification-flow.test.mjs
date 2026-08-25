@@ -234,12 +234,25 @@ test('VERIFY-16: gorunen siparis numarasi sunum DISINA sizmaz', () => {
   }
 })
 
-test('VERIFY-17: WebSiparisKodu kaynagi SIPARIS NUMARASIDIR', () => {
+test('VERIFY-17: WebSiparisKodu kaynagi CREATE REFERANSIDIR', () => {
   const chain = server.indexOf('async function createSuratRegisteredCommonBarcode')
   const next = server.indexOf('\nasync function ', chain + 10)
   const body = server.slice(chain, next > 0 ? next : undefined)
-  // Takip sorgusu order.orderNumber ile yapilir; packageId ya da 727 ile DEGIL.
-  assert.ok(body.includes('webSiparisKodu: order?.orderNumber'))
+  // DUZELTILDI. Bu test "SIPARIS NUMARASIDIR" diye pinliyordu; yanlisti ve
+  // teyit sorgusunu HER ZAMAN bos donduruyordu.
+  //
+  // BIRLESTIRICI KURAL (docs/surat-service-map.md:31,34): okuma anahtari
+  // `createRequest.OzelKargoTakipNo`'dur — create sirasinda NE gonderildiyse
+  // O. Bu zincir (Trendyol pazaryeri) OzelKargoTakipNo olarak
+  // `cargoTrackingNumber` (727...) gonderir; okuma anahtari da odur.
+  //
+  // Kanit: service-map:83,88 ve :93-104 (canli ornek WebSiparisKodu=727...),
+  // outputs/surat-e2e-final-report-2026-07-17.md:46 (uretim kosusu).
+  //
+  // NOT: SSP/Serendip mutabakati AYRI akistir; orada create referansi
+  // orderNumber oldugu icin okuma anahtari da orderNumber'dir
+  // (surat-tracking-reconcile-flow SSP-QUERY-1). Iki akis CELISMEZ.
+  assert.ok(body.includes('webSiparisKodu: order?.cargoTrackingNumber'))
   assert.equal(body.includes('webSiparisKodu: order?.packageId'), false)
-  assert.equal(body.includes('webSiparisKodu: order?.cargoTrackingNumber'), false)
+  assert.equal(body.includes('webSiparisKodu: order?.orderNumber'), false)
 })
