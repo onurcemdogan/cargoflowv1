@@ -5944,7 +5944,75 @@ async function createSuratRegisteredCommonBarcode(
   // ayrı bir kanıt olarak DOĞRU şekilde raporlanmaya devam eder; yalnız
   // devam etme koşulu olmaktan çıkar. Kayıt kabul EDİLMEDİYSE üstteki dal
   // zaten döndü, yani bu değişiklik başarısız kaydı ilerletmez.
-  const readOnlyRegistrationConfirmed = shipmentRegistered
+  // ═══ KAPI — KAYIT SALT-OKUNUR TEYİT EDİLMEDEN BARKOD YOK ══════════════
+  //
+  // 17 Temmuz 2026 canlı ayrım testi (docs/surat-service-map.md): tek başına
+  // `OrtakBarkodOlustur` 013 + ZPL döndürdüğü hâlde dört salt-okunur sorgu da
+  // kayıt bulamadı. Yani barkod adımı, taşıyıcıda KAYIT OLMADAN etiket
+  // üretebilir. `72a1c12` bu kapıyı "ulaşılamaz" sanıp kaldırmıştı; eksik olan
+  // kapı değil, ARADAKİ salt-okunur doğrulama adımıydı.
+  const {
+    resolveRegistrationVerification,
+  } = await import('./shipments/suratRegistrationVerification.ts')
+  // Kiracı kimliği ÇAĞIRANDAN gelir; config'ten tahmin EDİLMEZ. Tahmin
+  // edilseydi sorgu sessizce başarısız olur ve kapı HER create'i bloklardı.
+  // SALT-OKUNUR TEYİT — zincirin KENDİ config'iyle. Kimlik bilgilerini
+  // yeniden DB'den çözmek gereksiz bir başarısızlık noktasıydı: çözülemezse
+  // kapı her create'i bloklardı. Sorgu anahtarı `WebSiparisKodu` = SİPARİŞ
+  // NUMARASI (paket kimliği DEĞİL; takip ucu onu kabul etmez).
+  const registrationQuery = await (async () => {
+    try {
+      const queryReference = resolveSuratTrackingQueryReference({
+        webSiparisKodu: order?.orderNumber,
+      })
+      if (!queryReference.ok) return null
+      const body = { webSiparisKodu: queryReference.value, queryReference }
+      const tracked =
+        config.trackingServiceType === 'KargoTakipHareketDetayiRest'
+          ? await trackShipmentRest(config, queryReference.value, body)
+          : await trackShipmentSoap(config, queryReference.value, body)
+      const log = tracked?.trackingLog ?? tracked
+      const gonderiler = log?.Gonderiler
+      return {
+        ok: tracked?.ok !== false,
+        gonderilerLength: Number(
+          log?.gonderilerLength
+            ?? (Array.isArray(gonderiler) ? gonderiler.length : 0),
+        ),
+      }
+    } catch {
+      // Sorgu patlarsa kayıt KANITLANMADI: kapı fail-closed davranır.
+      return null
+    }
+  })()
+  const verification = resolveRegistrationVerification({
+    registrationAccepted,
+    query: registrationQuery,
+    registeredAtMs: Date.now(),
+    nowMs: Date.now(),
+  })
+  const readOnlyRegistrationConfirmed = verification.shipmentRegistered
+  if (!verification.continueToBarcode) {
+    // BARKOD ÇAĞRILMAZ. İkinci create de YAPILMAZ: adaylar tanı için korunur.
+    return {
+      ...dispatchRegistration,
+      ok: false,
+      message: `Sürat kaydı kabul edildi; ${verification.reason}`,
+      registrationVerification: verification,
+      dispatchRegistration: {
+        ok: registrationAccepted,
+        createAccepted: registrationAccepted,
+        shipmentRegistered: false,
+        readOnlyRegistrationConfirmed: false,
+        verificationState: verification.state,
+        gonderilerLength: verification.gonderilerLength,
+        endpoint: dispatchRegistration.endpoint,
+        serviceType: dispatchRegistration.serviceType,
+        responseCode: registrationLog?.responseCode ?? null,
+        responseMessage: registrationLog?.responseMessage ?? null,
+      },
+    }
+  }
 
   const commonBarcodeResult = await createSuratCommonBarcodeSoap(
     config,
