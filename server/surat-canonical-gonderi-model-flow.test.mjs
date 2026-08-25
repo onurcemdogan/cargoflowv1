@@ -77,7 +77,12 @@ test('CANON-3: Pazaryerimi SAYIDIR ve tam sayi alanlari number', () => {
   ]) {
     assert.equal(typeof model[key], 'number', key)
   }
-  assert.equal(typeof model.Iademi, 'boolean')
+  // SOZLESME: `byte Iademi` — Enum(numerik), ZORUNLU (0/1). Resmi ornek
+  // request `"Iademi": 0` gonderir. Bu satir eskiden `boolean` PINLIYORDU,
+  // yani sozlesme ihlalini SART kosuyordu (CF-4104179900 denetimi).
+  assert.equal(typeof model.Iademi, 'number')
+  assert.equal(model.Iademi, 0)
+  assert.equal(JSON.stringify(model).includes('"Iademi":false'), false)
   // Swagger'da string olanlar string kalir.
   assert.equal(typeof model.BirimDesi, 'string')
   assert.equal(typeof model.BirimKg, 'string')
@@ -240,7 +245,7 @@ test('CANON-14: GOLDEN Trendyol DTO', () => {
       GonderiSekli: 0,
       Pazaryerimi: 1,
       EntegrasyonFirmasi: 'Trendyol',
-      Iademi: false,
+      Iademi: 0,
     },
   })
   // Baska tenant kimligi SIZMAZ.

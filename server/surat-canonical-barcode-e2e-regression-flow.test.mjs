@@ -241,3 +241,43 @@ test('E2E-WIRING: index.mjs kayitli modu calisma zamaninda EZMEZ', () => {
   assert.match(INDEX_SOURCE, /config\.serviceMode === SURAT_CANONICAL_SERVICE_MODE/)
   assert.match(INDEX_SOURCE, /createCanonicalSuratShipmentForRequest/)
 })
+
+/* ═══ CONTRACT-IADEMI-1 — ZORUNLU ALAN TİPİ ════════════════════════ */
+
+test('CONTRACT-IADEMI-1: Iademi sayisal enum gonderir, boolean DEGIL', async () => {
+  // SÖZLEŞME (Sürat "GonderiyiKargoyaGonder Entegrasyonu API Dokümanı",
+  // Gönderi class'ı — kanonik modelin türetildiği 31 alanlık sınıf):
+  //
+  //   byte Iademi   ZORUNLU   Enum(numerik): 0 = standart, 1 = iade
+  //
+  // Resmî örnek request: `"Iademi": 0`.
+  //
+  // KUSURLU TEL (CF-4104179900): `"Iademi":false` — JSON boolean.
+  // Bu, resmî örnekten sapan TEK zorunlu alandı.
+  const { body, calls } = await runCanonicalCreate()
+  const raw = String(calls[0].init?.body ?? '')
+
+  assert.equal(typeof body.Gonderi.Iademi, 'number')
+  assert.equal(body.Gonderi.Iademi, 0)
+  // Kusurlu tel bir daha URETILEMEZ.
+  assert.equal(raw.includes('"Iademi":false'), false, 'kusurlu tel geri geldi')
+  assert.equal(raw.includes('"Iademi":true'), false)
+
+  // Resmî örnekle tip uyumu: sayısal enum alanları sayı, string alanlar
+  // string. `BirimDesi`/`BirimKg` resmî örnekte de STRING gönderilir
+  // ("BirimDesi": "1"), bu yüzden onlar DEGISTIRILMEZ.
+  for (const key of [
+    'KargoTuru', 'OdemeTipi', 'Adet', 'KapidanOdemeTahsilatTipi',
+    'TasimaSekli', 'TeslimSekli', 'GonderiSekli', 'Pazaryerimi', 'Iademi',
+  ]) {
+    assert.equal(typeof body.Gonderi[key], 'number', `${key} sayisal OLMALI`)
+  }
+  for (const key of ['BirimDesi', 'BirimKg', 'ReferansNo', 'OzelKargoTakipNo']) {
+    assert.equal(typeof body.Gonderi[key], 'string', `${key} string OLMALI`)
+  }
+  // Boş string / null KAÇAĞI YOK: builder opsiyonel alanları ATLAR.
+  for (const [key, value] of Object.entries(body.Gonderi)) {
+    assert.notEqual(value, '', `${key} bos string gonderiyor`)
+    assert.notEqual(value, null, `${key} null gonderiyor`)
+  }
+})

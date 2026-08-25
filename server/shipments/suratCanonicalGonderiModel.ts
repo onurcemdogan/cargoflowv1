@@ -48,7 +48,16 @@ export interface SuratGonderiModel {
   TeslimSubeKodu?: string
   Pazaryerimi: number
   EntegrasyonFirmasi?: string
-  Iademi: boolean
+  /**
+   * SÖZLEŞME: `byte Iademi` — Enum(numerik), ZORUNLU.
+   *   0 = standart gönderi · 1 = iade
+   * Kaynak: Sürat "GonderiyiKargoyaGonder Entegrasyonu API Dokümanı",
+   * Gönderi class'ı (31 alan) ve resmî örnek request (`"Iademi": 0`).
+   *
+   * `boolean` OLAMAZ: JSON `false` sayısal enum DEĞİLDİR ve sözleşmeye
+   * uymayan tek zorunlu alan buydu (CF-4104179900 denetimi).
+   */
+  Iademi: number
 }
 
 /** Swagger `OrtakBarkodOlusturParam` kökü. */
@@ -307,7 +316,8 @@ export const SURAT_SERVICE_DEFAULTS = {
   TeslimSekli: 1,
   KapidanOdemeTahsilatTipi: 0,
   GonderiSekli: 0,
-  Iademi: false,
+  // 0 = standart gönderi (sözleşme: byte enum, boolean DEĞİL).
+  Iademi: 0,
 } as const
 
 export interface CanonicalShipmentInput {
