@@ -143,3 +143,54 @@ test('TRC-11: sozlesmede WhoPays yoksa tel alani UYDURULMAZ', () => {
   assert.equal(wire.wireWhoPaysPresent, false)
   assert.equal(wire.wireWhoPaysReason, 'CONTRACT_HAS_NO_WHO_PAYS_FIELD')
 })
+
+/* ═══ BLOKLU AŞAMA — YAZICI/DEPO TİP UYUMU ═══════════════════════════ */
+//
+// ÖLÇÜLEN KUSUR (entegrasyon derlemesi): `SuratTraceAttempt.stages[].stage`
+// `TRACE_ALL_STAGES` kabul ederken `appendTraceStage`'in PARAMETRESİ
+// `TRACE_LIFECYCLE_STAGES` ile daraltılmıştı. `WIRE_BLOCKED` yazan her çağıran
+// derlenmiyordu (suratSoapPrimaryCreate.ts 160/188/263). Depo ile yazıcı AYNI
+// kümeyi kabul etmelidir.
+
+test('TRC-12: WIRE_BLOCKED gecerli bir iz OLAYIDIR', () => {
+  assert.ok(T.TRACE_ALTERNATE_STAGES.includes('WIRE_BLOCKED'))
+  assert.ok(T.TRACE_ALL_STAGES.includes('WIRE_BLOCKED'))
+  // Yazici kabul ETMELI — yoksa aga cikilmadigi kanit KAYDEDILEMEZ.
+  const attempt = T.appendTraceStage(open('CF-BLK'), {
+    stage: 'WIRE_BLOCKED', at: 'x', section: 'CREDENTIAL_ROUTING',
+    data: { reason: 'CREDENTIAL_MISMATCH' },
+  })
+  assert.equal(attempt.stages.at(-1).stage, 'WIRE_BLOCKED')
+})
+
+test('TRC-13: WIRE_BLOCKED mutlu-yol SIRASININ uyesi DEGILDIR', () => {
+  assert.equal(T.TRACE_LIFECYCLE_STAGES.includes('WIRE_BLOCKED'), false)
+  // Tam dongu iddiasi hala YALNIZ lifecycle asamalarindan olusur.
+  assert.equal(T.isTraceLifecycleComplete(full('CF-OK', 'A')), true)
+})
+
+test('TRC-14: depo ve yazici AYNI asama kumesini kabul eder', () => {
+  // Kusur tam olarak bu iki kumenin AYRISMASIYDI.
+  for (const stage of T.TRACE_ALL_STAGES) {
+    const attempt = T.appendTraceStage(open('CF-ALL'), { stage, at: 'x' })
+    assert.equal(attempt.stages.at(-1).stage, stage, stage)
+  }
+})
+
+test('TRC-15: bloklu deneme CARRIER_CALL asamasi TASIMAZ', () => {
+  let attempt = open('CF-BLK2')
+  attempt = T.appendTraceStage(attempt, {
+    stage: 'PRE_FLIGHT', at: 'x', section: 'BILLING',
+  })
+  attempt = T.appendTraceStage(attempt, {
+    stage: 'WIRE_BLOCKED', at: 'x', section: 'CREDENTIAL_ROUTING',
+  })
+  attempt = T.appendTraceStage(attempt, {
+    stage: 'FINAL', at: 'x', section: 'FINAL_RESULT',
+    data: { carrierCalled: false },
+  })
+  const stages = attempt.stages.map((entry) => entry.stage)
+  assert.equal(stages.includes('CARRIER_CALL'), false, 'aga CIKILMADI')
+  assert.equal(stages.includes('CARRIER_CALL_STARTED'), false)
+  assert.equal(attempt.stages.at(-1).data.carrierCalled, false)
+})
