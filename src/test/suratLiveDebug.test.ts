@@ -235,3 +235,57 @@ describe('create hatasi mesaji', () => {
     expect(LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE).not.toMatch(/etiket oluştur\w*u/)
   })
 })
+
+describe('iki tasima bacagi AYRI gorunur', () => {
+  // Uretim izi CF-4103294752: REST kaydi BASARILI, SOAP barkodu BASARISIZ.
+  // Tek bir CARRIER_RESPONSE gostermek birini gizliyordu.
+  const twoLegTrace = {
+    traceId: 'CF-TWO', schemaVersion: 2,
+    createdAt: '2026-08-19T10:00:00.000Z',
+    stages: [
+      { stage: 'PRE_FLIGHT', at: 'x', section: 'BILLING', data: {} },
+      { stage: 'ACTUAL_WIRE_READY', at: 'x', section: 'REQUEST',
+        data: { step: 'REGISTRATION_REST' } },
+      { stage: 'CARRIER_CALL_STARTED', at: 'x', section: 'SERVICE_ROUTING',
+        data: { step: 'REST' } },
+      { stage: 'CARRIER_RESPONSE', at: 'x', section: 'RESPONSE',
+        data: { step: 'REST', carrierMessage: 'nolu kayıt başarıyla oluşturuldu' } },
+      { stage: 'ACTUAL_WIRE_READY', at: 'x', section: 'REQUEST',
+        data: { step: 'BARCODE_SOAP' } },
+      { stage: 'CARRIER_CALL_STARTED', at: 'x', section: 'SERVICE_ROUTING',
+        data: { step: 'SOAP' } },
+      { stage: 'CARRIER_RESPONSE', at: 'x', section: 'RESPONSE',
+        data: { step: 'SOAP', carrierMessage: 'Bilgiler güncellenirken hata oluştu.' } },
+      { stage: 'FINAL', at: 'x', section: 'FINAL_RESULT', data: {} },
+    ],
+  }
+
+  it('her bacak ayri ayri projekte edilir', () => {
+    const model = buildLiveDebugViewModel(twoLegTrace)!
+    expect(model.legs.length).toBeGreaterThanOrEqual(2)
+    const steps = model.legs.map((leg) => leg.step)
+    expect(steps).toContain('REGISTRATION_REST')
+    expect(steps).toContain('BARCODE_SOAP')
+  })
+
+  it('REST basarisi SOAP hatasini GIZLEMEZ', () => {
+    const model = buildLiveDebugViewModel(twoLegTrace)!
+    const all = JSON.stringify(model.legs)
+    expect(all).toContain('başarıyla oluşturuldu')
+    expect(all).toContain('Bilgiler güncellenirken hata')
+  })
+
+  it('tek bacakli iz de bozulmadan projekte edilir', () => {
+    const single = {
+      traceId: 'CF-ONE', schemaVersion: 2, createdAt: 'x',
+      stages: [
+        { stage: 'ACTUAL_WIRE_READY', at: 'x', section: 'REQUEST', data: {} },
+        { stage: 'CARRIER_RESPONSE', at: 'x', section: 'RESPONSE',
+          data: { carrierMessage: 'tek' } },
+      ],
+    }
+    const model = buildLiveDebugViewModel(single)!
+    expect(model.legs.length).toBe(1)
+    expect(model.legs[0].response?.carrierMessage).toBe('tek')
+  })
+})

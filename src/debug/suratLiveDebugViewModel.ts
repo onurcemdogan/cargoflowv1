@@ -73,6 +73,44 @@ export interface LiveDebugViewModel {
   finalResult: Record<string, unknown>
   carrierCalled: boolean
   stages: string[]
+  /** Her taşıma bacağı AYRI: REST kaydı ile SOAP barkodu karışmaz. */
+  legs: Array<{
+    step: string
+    wire: Record<string, unknown> | null
+    callStarted: Record<string, unknown> | null
+    response: Record<string, unknown> | null
+  }>
+}
+
+/**
+ * İz iki taşıma bacağı taşıyabilir: REST kaydı ve SOAP barkodu. Tek bir
+ * `CARRIER_RESPONSE` göstermek birini gizler — üretimde REST başarısı
+ * SOAP hatasını maskeliyordu. Aşamalar `step` ayırt edicisine göre
+ * gruplanır; ayırt edici yoksa tek bacak olarak sunulur.
+ */
+function buildLegs(trace: StoredTrace): LiveDebugViewModel['legs'] {
+  const order: string[] = []
+  const byStep = new Map<string, LiveDebugViewModel['legs'][number]>()
+  const stepOf = (entry: { data: unknown }): string => {
+    const data = (entry.data ?? {}) as Record<string, unknown>
+    return String(data.step ?? 'CARRIER')
+  }
+  for (const entry of trace.stages) {
+    if (!['ACTUAL_WIRE_READY', 'CARRIER_CALL_STARTED', 'CARRIER_RESPONSE']
+      .includes(entry.stage)) continue
+    const step = stepOf(entry)
+    if (!byStep.has(step)) {
+      byStep.set(step, { step, wire: null, callStarted: null, response: null })
+      order.push(step)
+    }
+    const leg = byStep.get(step)!
+    const data = redactForDisplay(entry.data) as Record<string, unknown>
+    if (entry.stage === 'ACTUAL_WIRE_READY') leg.wire = data
+    if (entry.stage === 'CARRIER_CALL_STARTED') leg.callStarted = data
+    // Aynı bacakta birden çok yanıt olursa SONUNCUSU geçerlidir.
+    if (entry.stage === 'CARRIER_RESPONSE') leg.response = data
+  }
+  return order.map((step) => byStep.get(step)!)
 }
 
 export function buildLiveDebugViewModel(
@@ -117,6 +155,7 @@ export function buildLiveDebugViewModel(
     finalResult: redactForDisplay(final) as Record<string, unknown>,
     // Taşıyıcıya gidilmediyse bu AŞAMA HİÇ YOKTUR; kanıt budur.
     carrierCalled: trace.stages.some((entry) => entry.stage === 'CARRIER_CALL'),
+    legs: buildLegs(trace),
     stages: trace.stages.map((entry) => entry.stage),
   }
 }
