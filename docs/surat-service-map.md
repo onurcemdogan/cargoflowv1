@@ -298,3 +298,38 @@ Düzeltilen kod hatası: `executeRegisteredSuratLabel` etiket sayaç kilidini
 taşıyıcıya ulaşmadan yazıyordu; istek gövdesi (desi dahil) artık sayaç
 yazılmadan önce doğrulanıyor ve taşıyıcıya ulaşmayan hata etiket hakkını
 tüketmiyor.
+
+## 25 Ağustos 2026 — CF-4103661055: ağ başladı, sonuç bilinmiyor
+
+Paket `4103661055` · sipariş `11538296497` · takip `7270036359838267`.
+
+İz kanıtı: `CARRIER_CALL_STARTED` yazıldı, `carrierCalled=true`,
+`carrierCreateStatus=UNKNOWN`, **hiçbir taşıyıcı iş yanıtı yakalanmadı**.
+Süreç şu uygulama istisnasıyla düştü:
+
+```
+Cannot access 'verifyRegistrationReadOnly' before initialization
+```
+
+**Kök neden.** `server/index.mjs` içinde salt-okunur teyit yardımcısı `const`
+ok fonksiyonu olarak TANIMLANMADAN ÖNCE, "kayıt zaten var" dalında
+çağrılıyordu (kullanım 5954, tanım 6050) — JavaScript temporal dead zone.
+Çözüm satır taşımak değil, **hoist edilen fonksiyon bildirimine** çevirmektir:
+bildirim kapsam başına hoist olduğu için hata yeniden sıralamayla bile
+üretilemez. Kilit: `REGVERIFY-TDZ-1`, `REGVERIFY-TDZ-2`.
+
+**Çıkarılan kural.** Taşıyıcı ağına çıkıldıktan sonraki bir çökme, yerelde
+"gönderi yok" görüntüsü bırakır. Bu görüntü **yeni create izni değildir**:
+kayıt taşıyıcıda oluşmuş olabilir ve ikinci `GonderiyiKargoyaGonder`
+mükerrer gönderi yaratır. `carrierCallStarted=true` + iş yanıtı yok artık
+`REQUIRES_READ_ONLY_RECONCILIATION` demektir (`suratCrashRecovery.ts`), ve
+`Gonderiler=0` hiçbir dalda otomatik REST tekrarına yol açmaz.
+
+**İz doğruluğu.** Uygulama istisnası `CARRIER_RESPONSE` diye yazılıyordu.
+Taşıyıcı hiçbir şey söylememişken "taşıyıcı yanıtı" demek yaşam döngüsü
+geçmişini bozar; ayrı `APPLICATION_EXCEPTION` yedek aşaması eklendi.
+
+**Arayüz doğruluğu.** Debug Merkezi `carrierCalled` değerini yalnız
+`CARRIER_CALL` aşamasının varlığından türetiyordu. Bu denemede o aşama hiç
+yazılmadı ve arayüz "Taşıyıcı çağrıldı: hayır" gösterdi — Trace V2
+`carrierCalled=true` derken. Otorite Trace V2'dir (`UI-TRACE-1`).

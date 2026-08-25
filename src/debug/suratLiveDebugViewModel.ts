@@ -72,6 +72,9 @@ export interface LiveDebugViewModel {
   verification: Record<string, unknown>
   finalResult: Record<string, unknown>
   carrierCalled: boolean
+  /** Taşıyıcı GERÇEKTEN iş yanıtı verdi mi? İstisna yanıt DEĞİLDİR. */
+  carrierBusinessResponseReceived: boolean
+  applicationException: boolean
   stages: string[]
 }
 
@@ -115,8 +118,30 @@ export function buildLiveDebugViewModel(
     response: redactForDisplay(response) as Record<string, unknown>,
     verification: redactForDisplay(verification) as Record<string, unknown>,
     finalResult: redactForDisplay(final) as Record<string, unknown>,
-    // Taşıyıcıya gidilmediyse bu AŞAMA HİÇ YOKTUR; kanıt budur.
-    carrierCalled: trace.stages.some((entry) => entry.stage === 'CARRIER_CALL'),
+    // TRACE V2 OTORİTEDİR.
+    //
+    // ÖLÇÜLEN KUSUR — CF-4103661055: bu alan YALNIZ `CARRIER_CALL` aşamasının
+    // varlığına bakıyordu. O denemede aşamalar CARRIER_CALL_STARTED →
+    // (istisna) şeklindeydi; `CARRIER_CALL` hiç yazılmadı. Sonuç: Trace V2
+    // `carrierCalled=true` derken arayüz "Taşıyıcı çağrıldı: hayır" gösterdi
+    // — yani operatöre "tekrar deneyebilirsin" diyen YANLIŞ bir özet.
+    //
+    // Ağ sınırının geçildiği KANITI `CARRIER_CALL_STARTED`tır ya da herhangi
+    // bir aşamanın açıkça `carrierCalled=true` demesidir.
+    carrierCalled: trace.stages.some((entry) => (
+      entry.stage === 'CARRIER_CALL' || entry.stage === 'CARRIER_CALL_STARTED'
+      || (entry.data as Record<string, unknown> | undefined)
+        ?.carrierCalled === true
+    )),
+    // Ağa çıkmak ile taşıyıcının CEVAP VERMESİ ayrı şeylerdir.
+    carrierBusinessResponseReceived: trace.stages.some((entry) => (
+      entry.stage === 'CARRIER_RESPONSE'
+      && (entry.data as Record<string, unknown> | undefined)
+        ?.carrierBusinessResponseReceived !== false
+    )),
+    applicationException: trace.stages.some(
+      (entry) => entry.stage === 'APPLICATION_EXCEPTION',
+    ),
     stages: trace.stages.map((entry) => entry.stage),
   }
 }

@@ -26,6 +26,9 @@ export const CREATE_INELIGIBLE_REASONS = [
   'LABEL_ALREADY_CREATED',
   'IDENTITY_INCOMPLETE',
   'IDENTITY_INCONSISTENT',
+  // Taşıyıcı çağrısı BAŞLADI ama iş yanıtı ALINMADI (CF-4103661055).
+  // Kayıt oluşmuş OLABİLİR; yeni create MÜKERRER gönderi yaratır.
+  'REQUIRES_READ_ONLY_RECONCILIATION',
 ] as const
 
 export interface SuratCreateEligibility {
@@ -50,6 +53,16 @@ export function resolveSuratCreateEligibility(params: {
   attemptEvidence?: { known: boolean; count: number }
   /** GERİYE UYUMLU kısayol; `attemptEvidence` verilmezse kullanılır. */
   createAttemptCount?: number
+  /**
+   * Kalıcı izlerden okunan taşıyıcı-çağrısı gerçeği. Süreç, taşıyıcı ağına
+   * çıktıktan SONRA çöktüyse yerelde "gönderi yok" görünür — ama taşıyıcıda
+   * VAR olabilir. Bu yüzden karar yerel yokluğa değil, ÇAĞRI KANITINA dayanır.
+   */
+  carrierCallEvidence?: {
+    known: boolean
+    carrierCallStarted: boolean
+    carrierBusinessResponseReceived: boolean
+  }
 }): SuratCreateEligibility {
   const order = params.order ?? {}
   const shipment = (order.shipment ?? {}) as Record<string, unknown>
@@ -96,6 +109,17 @@ export function resolveSuratCreateEligibility(params: {
     || filled(shipment.technicalZpl)
   ) {
     reasons.push('CARRIER_EVIDENCE_EXISTS')
+  }
+
+  // ── ÇÖKME SONRASI: ÇAĞRI BAŞLADI, SONUÇ BİLİNMİYOR ────────────────────
+  // "Bilinmiyor" ASLA "tekrar yaratılabilir" DEĞİLDİR. Önce salt-okunur
+  // mutabakat; ikinci `GonderiyiKargoyaGonder` buradan AÇILMAZ.
+  const carrierCall = params.carrierCallEvidence
+  if (
+    carrierCall?.known === true && carrierCall.carrierCallStarted === true
+    && carrierCall.carrierBusinessResponseReceived !== true
+  ) {
+    reasons.push('REQUIRES_READ_ONLY_RECONCILIATION')
   }
 
   // ── ETİKET ────────────────────────────────────────────────────────────

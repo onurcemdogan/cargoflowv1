@@ -263,7 +263,15 @@ export const TRACE_LIFECYCLE_STAGES = [
  * aşamaları üretir" değişmezi ANLAMSIZLAŞIRDI: hiçbir başarılı çağrı
  * bloklanmış olamaz.
  */
-export const TRACE_ALTERNATE_STAGES = ['WIRE_BLOCKED'] as const
+// `APPLICATION_EXCEPTION`: taşıyıcıdan İŞ YANITI ALINMADAN sürecin kendi
+// içinde düşmesi. CF-4103661055'te uygulama istisnası (`Cannot access
+// 'verifyRegistrationReadOnly' before initialization`) `CARRIER_RESPONSE`
+// diye yazılmıştı — taşıyıcı hiçbir şey söylememişken "taşıyıcı yanıtı" demek
+// yaşam döngüsü geçmişini BOZAR. Yedek aşamadır: `TRACE_LIFECYCLE_STAGES`
+// sırası değişmez, şema v2 korunur.
+export const TRACE_ALTERNATE_STAGES = [
+  'WIRE_BLOCKED', 'APPLICATION_EXCEPTION',
+] as const
 
 /** Kabul edilen TÜM aşama adları (doğrulama için). */
 export const TRACE_ALL_STAGES = [

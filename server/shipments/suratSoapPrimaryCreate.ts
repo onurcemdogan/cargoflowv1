@@ -23,6 +23,9 @@ import {
   createTraceAttempt,
   type SuratTraceAttempt,
 } from './suratCreateTrace.ts'
+import {
+  TRANSPORT_LEG_CONTRACT, type TransportLeg,
+} from './suratCrashRecovery.ts'
 import { assertSuratWireCredentialParity } from './suratCredentialSnapshot.ts'
 import type { SuratCredentialSnapshot } from './suratCredentialSnapshot.ts'
 import {
@@ -251,7 +254,13 @@ export async function createSuratSoapPrimaryShipment(
     const markCallStarted = (): void => {
       traceAttempt = appendTraceStage(traceAttempt, {
         stage: 'CARRIER_CALL_STARTED', section: 'SERVICE_ROUTING', at: stamp(),
-        data: { operation: SOAP_PRIMARY_OPERATION, attempt: 1, step: edge },
+        data: {
+          ...legMetadata(
+            edge === 'SOAP' ? 'BARCODE_SOAP' : 'REGISTRATION_REST',
+            { started: true, completed: false },
+          ),
+          operation: SOAP_PRIMARY_OPERATION, attempt: 1, step: edge,
+        },
       })
     }
     if (edge !== 'SOAP') {
@@ -296,7 +305,12 @@ export async function createSuratSoapPrimaryShipment(
     // zarf hic kurulmamis demektir ve sinir GECILMEMISTIR.
     const crossedNetwork = !blocked && wire !== null
     traceAttempt = appendTraceStage(traceAttempt, {
-      stage: blocked ? 'WIRE_BLOCKED' : 'CARRIER_RESPONSE',
+      // TAŞIYICI YANITI YALNIZ TAŞIYICI KONUŞTUYSA. "Zaten var" mesajı
+      // taşıyıcının İŞ yanıtıdır; uygulama istisnası DEĞİLDİR ve
+      // `CARRIER_RESPONSE` diye yazılamaz (CF-4103661055).
+      stage: blocked
+        ? 'WIRE_BLOCKED'
+        : alreadyExists ? 'CARRIER_RESPONSE' : 'APPLICATION_EXCEPTION',
       section: blocked ? 'CREDENTIAL_ROUTING' : 'RESPONSE',
       at: stamp(),
       data: blocked
@@ -312,6 +326,9 @@ export async function createSuratSoapPrimaryShipment(
               ? 'CURRENT_CARRIER_RESPONSE'
               : 'PRIOR_OR_LOCAL_EVIDENCE',
             carrierCreateStatus: 'UNKNOWN',
+            // Ağ sınırı GEÇİLMİŞ olabilir ama iş yanıtı YOKTUR. Bu ayrım,
+            // "ikinci create güvenli mi" sorusunun tek doğru girdisidir.
+            carrierBusinessResponseReceived: alreadyExists,
             carrierExceptionSummary: summarizeError(error),
           },
     })
@@ -378,6 +395,9 @@ export async function createSuratSoapPrimaryShipment(
     traceAttempt = appendTraceStage(traceAttempt, {
       stage: 'VERIFICATION', section: 'VERIFICATION', at: stamp(),
       data: {
+        ...legMetadata('REGISTRATION_VERIFY', {
+          started: true, completed: true,
+        }),
         step: 'REGISTRATION_VERIFY',
         readOnly: true,
         operation: verify.operation ?? 'KargoTakipHareketDetayi',
@@ -485,6 +505,26 @@ function summarizeError(error: unknown): string {
   return message.split('\n')[0].slice(0, 200)
 }
 
+/**
+ * Bacak nitelikleri SÖZLEŞMEDEN gelir, çağırandan DEĞİL. Böylece salt-okunur
+ * bir bacak "mutasyon yaptı" ya da tersi diye YAZILAMAZ.
+ */
+function legMetadata(
+  leg: TransportLeg,
+  progress: { started: boolean; completed: boolean },
+): Record<string, unknown> {
+  const contract = TRANSPORT_LEG_CONTRACT[leg]
+  return {
+    transportLeg: leg,
+    legStarted: progress.started,
+    legCompleted: progress.completed,
+    readOnly: contract.readOnly,
+    carrierStateMutated: contract.carrierStateMutated,
+    legOperation: contract.operation,
+    identitySource: contract.identitySource,
+  }
+}
+
 function appendActualWireStage(
   attempt: SuratTraceAttempt,
   wire: SoapWireCapture,
@@ -496,6 +536,11 @@ function appendActualWireStage(
   return appendTraceStage(attempt, {
     stage: 'ACTUAL_WIRE_READY', section: 'REQUEST', at: stamp(),
     data: {
+      // GERÇEK taşıma bacağı. Üstteki `serviceMode` etiketi bir MOD adıdır;
+      // hangi ağ çağrısının yapıldığını KANITLAMAZ (CF-4103661055).
+      ...legMetadata(step === 'SOAP' ? 'BARCODE_SOAP' : 'REGISTRATION_REST', {
+        started: true, completed: false,
+      }),
       step: step === 'SOAP' ? 'BARCODE_SOAP' : 'REGISTRATION_REST',
       envelopePresent: wire.envelopePresent,
       gonderiPresent: wire.gonderiPresent,

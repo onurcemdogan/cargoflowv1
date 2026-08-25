@@ -184,12 +184,21 @@ export function projectCarrierTruth(stages: unknown): Record<string, unknown> {
   const started = stageData(stages, 'CARRIER_CALL_STARTED')
   const call = stageData(stages, 'CARRIER_CALL')
   const response = stageData(stages, 'CARRIER_RESPONSE')
+  // Uygulama istisnası AYRI okunur: taşıyıcı yanıtı yerine geçmez.
+  const appException = stageData(stages, 'APPLICATION_EXCEPTION')
   const final = stageData(stages, 'FINAL')
   const pick = (key: string): unknown =>
-    response?.[key] ?? final?.[key] ?? call?.[key] ?? WIRE_FIELD_ABSENT
+    response?.[key] ?? appException?.[key] ?? final?.[key] ?? call?.[key]
+      ?? WIRE_FIELD_ABSENT
   return {
     carrierCallStarted: started !== null,
-    carrierCalled: response?.carrierCalled ?? final?.carrierCalled ?? false,
+    carrierCalled: response?.carrierCalled ?? appException?.carrierCalled
+      ?? final?.carrierCalled ?? false,
+    // TAŞIYICI KONUŞTU MU? Uygulama istisnası "hayır"dır. `carrierCalled`
+    // (ağ sınırı geçildi) ile KARIŞTIRILAMAZ.
+    carrierBusinessResponseReceived: response !== null
+      && response?.carrierBusinessResponseReceived !== false,
+    applicationException: appException !== null,
     carrierCreateAttempts:
       response?.createCallCount ?? call?.attempts ?? WIRE_FIELD_ABSENT,
     carrierCreateStatus: pick('carrierCreateStatus'),

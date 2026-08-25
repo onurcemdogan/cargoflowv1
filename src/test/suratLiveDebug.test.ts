@@ -110,9 +110,14 @@ describe('Canlı Debug — gorunum modeli', () => {
   })
 
   it('bloklanan deneme: CARRIER_CALL yok', () => {
-    const blocked = { ...trace('CF-BLOCK'),
-      stages: trace('CF-BLOCK').stages.filter((entry) =>
-        ['PRE_FLIGHT', 'ROUTING', 'FINAL'].includes(entry.stage)) }
+    // Bloklanan denemede FINAL de `carrierCalled: false` YAZAR (WIRE_BLOCKED
+    // dali). Eski fixture burada `true` birakiyordu; arayuz yalnizca
+    // `CARRIER_CALL` asamasina baktigi icin celiski GORUNMUYORDU. Trace V2
+    // otoritesine gecince fixture'in kendi celiskisi ortaya cikti.
+    const blocked = { ...trace('CF-BLOCK', { final: { carrierCalled: false } }),
+      stages: trace('CF-BLOCK', { final: { carrierCalled: false } })
+        .stages.filter((entry) =>
+          ['PRE_FLIGHT', 'ROUTING', 'FINAL'].includes(entry.stage)) }
     const model = buildLiveDebugViewModel(blocked)!
     expect(model.carrierCalled).toBe(false)
     expect(model.stages).not.toContain('CARRIER_CALL')
@@ -233,5 +238,49 @@ describe('create hatasi mesaji', () => {
       .not.toContain('oluşturuldu fakat')
     expect(LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE).toContain('doğrulanamadı')
     expect(LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE).not.toMatch(/etiket oluştur\w*u/)
+  })
+})
+
+/* ═══ UI-TRACE-1 — TRACE V2 OTORİTEDİR ═════════════════════════════ */
+
+describe('UI-TRACE-1: Debug Merkezi taşıyıcı gerçeğini Trace V2 den alır', () => {
+  // ÜRETİM İZİ CF-4103661055 — aşamalar CARRIER_CALL_STARTED ile bitti,
+  // `CARRIER_CALL` HİÇ yazılmadı ve süreç uygulama istisnasıyla düştü.
+  // Eski arayüz yalnız `CARRIER_CALL` arıyordu ve "Taşıyıcı çağrıldı: hayır"
+  // gösteriyordu — Trace V2 `carrierCalled=true` derken.
+  const crashed = {
+    traceId: 'CF-4103661055', schemaVersion: 2,
+    createdAt: '2026-08-25T10:00:00.000Z',
+    stages: [
+      { stage: 'PRE_FLIGHT', at: 'x', section: 'BILLING', data: {
+        billingParty: 'TRENDYOL_PAYS', preflightValid: true,
+        preflightFailures: [] } },
+      { stage: 'ACTUAL_WIRE_READY', at: 'x', section: 'REQUEST', data: {} },
+      { stage: 'CARRIER_CALL_STARTED', at: 'x', section: 'SERVICE_ROUTING',
+        data: { operation: 'GonderiyiKargoyaGonder' } },
+      { stage: 'APPLICATION_EXCEPTION', at: 'x', section: 'RESPONSE', data: {
+        carrierCalled: true, carrierCreateStatus: 'UNKNOWN',
+        carrierBusinessResponseReceived: false } },
+      { stage: 'FINAL', at: 'x', section: 'FINAL_RESULT', data: {
+        carrierCalled: true, carrierCreateStatus: 'UNKNOWN' } },
+    ],
+  }
+
+  it('CARRIER_CALL yokken bile cagri BASLADIYSA evet der', () => {
+    const model = buildLiveDebugViewModel(crashed as never)
+    expect(model?.carrierCalled).toBe(true)
+  })
+
+  it('taşıyıcı IS YANITI ile ag cagrisini KARISTIRMAZ', () => {
+    const model = buildLiveDebugViewModel(crashed as never)
+    expect(model?.carrierBusinessResponseReceived).toBe(false)
+    expect(model?.applicationException).toBe(true)
+  })
+
+  it('gercek is yaniti alindiginda ikisi de dogrudur', () => {
+    const model = buildLiveDebugViewModel(trace('CF-OK') as never)
+    expect(model?.carrierCalled).toBe(true)
+    expect(model?.carrierBusinessResponseReceived).toBe(true)
+    expect(model?.applicationException).toBe(false)
   })
 })

@@ -184,9 +184,23 @@ export function SuratLiveDebugPanel({ traces }: { traces?: unknown }) {
             {model.preflight.failures.length > 0
               ? ` · ${model.preflight.failures.join(', ')}` : ''}
           </p>
+          {/* Trace V2 OTORİTEDİR: "ağa çıkıldı" ile "taşıyıcı cevap verdi"
+              ayrı satırlarda gösterilir. Tek satıra indirgemek, çağrı
+              başlamışken "hayır" yazan yanıltıcı özeti geri getirir. */}
           <p className="integration-hint">
             Taşıyıcı çağrıldı: {model.carrierCalled ? 'evet' : 'hayır'}
           </p>
+          <p className="integration-hint">
+            Taşıyıcı iş yanıtı:{' '}
+            {model.carrierBusinessResponseReceived ? 'alındı' : 'ALINMADI'}
+            {model.applicationException ? ' · uygulama istisnası' : ''}
+          </p>
+          {model.carrierCalled && !model.carrierBusinessResponseReceived ? (
+            <p className="integration-hint integration-hint--warning">
+              Taşıyıcı çağrısı başladı fakat sonuç bilinmiyor. Bu gönderi
+              TEKRAR OLUŞTURULAMAZ; salt-okunur mutabakat gerekir.
+            </p>
+          ) : null}
         </>
       ) : null}
 

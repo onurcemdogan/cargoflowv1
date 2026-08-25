@@ -2435,6 +2435,124 @@ app.post(
 )
 app.post('/api/shipments/surat/label', createSuratLabelForRegisteredShipment)
 
+// ═══ SALT-OKUNUR KAYIT MUTABAKATI ══════════════════════════════════════
+//
+// CF-4103661055: taşıyıcı çağrısı BAŞLADI, uygulama istisnası düştü, yerelde
+// sonuç YOK. Böyle bir paket artık "yeni create adayı" DEĞİLDİR; taşıyıcıda
+// kaydın gerçekten oluşup oluşmadığı önce OKUNARAK saptanır.
+//
+// SIFIR CREATE: bu uç `GonderiyiKargoyaGonder` de `OrtakBarkodOlustur` da
+// ÇAĞIRMAZ. Yalnız `KargoTakipHareketDetayi` sorgular.
+//
+// Kimlik ve config TARAYICIDAN GELMEZ: sipariş numarası kiracının kendi
+// kaydından okunur, kimlik bilgileri `tenantInjectCredentials` ile
+// veritabanından enjekte edilir.
+app.post('/api/shipments/surat/reconcile-registration', async (request, response) => {
+  const organizationId = request?.auth?.organizationId
+  if (!isTenantAuthMode() || !organizationId) {
+    response.status(404).json({ ok: false })
+    return
+  }
+  const packageId = String(request.body?.packageId ?? '').trim()
+  if (!packageId) {
+    response.status(400).json({
+      ok: false, errorCode: 'SURAT_RECONCILE_PACKAGE_REQUIRED',
+      message: 'packageId zorunludur.',
+    })
+    return
+  }
+  try {
+    const [{ getDb }, schema, drizzle, recovery, verification] =
+      await Promise.all([
+        import('./db/client.ts'),
+        import('./db/schema.ts'),
+        import('drizzle-orm'),
+        import('./shipments/suratCrashRecovery.ts'),
+        import('./shipments/suratRegistrationVerification.ts'),
+      ])
+    const rows = await getDb()
+      .select()
+      .from(schema.orders)
+      .where(drizzle.and(
+        drizzle.eq(schema.orders.organizationId, organizationId),
+        drizzle.eq(schema.orders.packageId, packageId),
+      ))
+      .limit(1)
+    const orderRow = rows?.[0]
+    if (!orderRow) {
+      response.status(404).json({
+        ok: false, errorCode: 'SURAT_RECONCILE_ORDER_NOT_FOUND',
+        message: 'Bu kiracıda bu paket bulunamadı.',
+      })
+      return
+    }
+    // SORGU ANAHTARI SİPARİŞ NUMARASIDIR. `packageId` ya da
+    // `cargoTrackingNumber` ile sorulursa takip ucu satır DÖNDÜRMEZ ve
+    // "kayıt yok" sanılır — kanıtlanmış yanlış negatif.
+    const queryReference = resolveSuratTrackingQueryReference({
+      webSiparisKodu: orderRow.orderNumber,
+    })
+    if (!queryReference.ok) {
+      response.status(400).json({
+        ok: false, errorCode: 'SURAT_TRACKING_REFERENCE_INVALID',
+        message: queryReference.message,
+      })
+      return
+    }
+    const config = normalizeSuratConfig(
+      request.body?.config?.surat ?? request.body?.config,
+    )
+    const body = { webSiparisKodu: queryReference.value, queryReference }
+    const tracked =
+      config.trackingServiceType === 'KargoTakipHareketDetayiRest'
+        ? await trackShipmentRest(config, queryReference.value, body)
+        : await trackShipmentSoap(config, queryReference.value, body)
+    const log = tracked?.trackingLog ?? tracked
+    const gonderiler = log?.Gonderiler
+    const gonderilerLength = Number(
+      log?.gonderilerLength
+        ?? (Array.isArray(gonderiler) ? gonderiler.length : 0),
+    )
+    const identityMatch = verification.registrationIdentityMatches({
+      expectedOrderNumber: orderRow.orderNumber,
+      queriedWebSiparisKodu: queryReference.value,
+    })
+    const decision = recovery.resolveReconciliation({
+      query: { ok: tracked?.ok !== false, gonderilerLength },
+      identityMatch,
+      // Kayıt zamanı bilinmiyor: eşik "görünmedi = yok" demeyi ENGELLER.
+      registeredAtMs: null,
+      nowMs: Date.now(),
+    })
+    response.json({
+      ok: true,
+      readOnly: true,
+      transportLeg: 'REGISTRATION_VERIFY',
+      operation: 'KargoTakipHareketDetayi',
+      webSiparisKodu: queryReference.value,
+      webSiparisKoduSource: 'orderNumber',
+      packageId,
+      gonderiler: gonderilerLength,
+      identityMatch,
+      registrationExists: decision.registrationExists,
+      outcome: decision.outcome,
+      resumeToBarcode: decision.resumeToBarcode,
+      replayRegistration: decision.replayRegistration,
+      reason: decision.reason,
+      createCalls: 0,
+    })
+  } catch (error) {
+    // Sorgu başarısızsa BİLİNMEZ kalır; ikinci create'e DÖNÜŞMEZ.
+    response.status(503).json({
+      ok: false,
+      errorCode: 'SURAT_RECONCILE_QUERY_FAILED',
+      outcome: 'FAIL_CLOSED',
+      replayRegistration: false,
+      message: String(error?.message ?? 'Mutabakat sorgusu başarısız.'),
+    })
+  }
+})
+
 app.post('/api/diagnostics/surat/common-barcode-loop', (request, response) => {
   const order = request.body?.order ?? {}
   const config = normalizeSuratConfig(
@@ -3245,6 +3363,39 @@ async function createSuratShipment(request, response) {
 // Debug boştu. Artık iz SUNUCUDA saklanır; sayfa yenilense de durur.
 //
 // BEST-EFFORT: debug yazımı create sonucunu ASLA etkilemez.
+/**
+ * Bu paket için taşıyıcı çağrısının başlayıp başlamadığını KALICI izlerden
+ * okur. AĞ ÇAĞIRMAZ, DB'YE YAZMAZ. Okunamazsa `known=false` döner.
+ */
+async function readSuratCarrierCallEvidence(request, order) {
+  const packageId = String(
+    order?.packageId ?? order?.shipmentPackageId ?? '',
+  ).trim()
+  const unknown = {
+    known: false,
+    carrierCallStarted: false,
+    carrierBusinessResponseReceived: false,
+    traceId: null,
+  }
+  if (!packageId) return unknown
+  try {
+    const organizationId = request?.auth?.organizationId
+    if (!organizationId || !isTenantAuthMode()) return unknown
+    const [{ getDb }, repository, recovery] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/suratTraceRepository.ts'),
+      import('./shipments/suratCrashRecovery.ts'),
+    ])
+    const traces = await repository.listTraceAttempts(
+      getDb(), organizationId, 200,
+    )
+    return recovery.readCarrierCallEvidence(traces ?? [], packageId)
+  } catch {
+    // Bilinmezlik "çağrı yapılmadı" DEĞİLDİR; `known=false` olarak taşınır.
+    return unknown
+  }
+}
+
 async function persistSuratTraceAttempt(request, result) {
   try {
     const organizationId = request?.auth?.organizationId
@@ -3420,8 +3571,19 @@ async function createSuratShipmentCore(request, response) {
   // Mükerrer create'i idempotency katmanı ağ sınırında ZATEN engelliyor.
   // Buradaki kapı ONUN YERİNE GEÇMEZ; kalıcı taşıyıcı artefaktı, mevcut
   // etiket ve kimlik tutarlılığı gibi ONDAN ÖNCE bilinebilen kanıtlara bakar.
+  // ═══ ÇÖKME SONRASI MUTABAKAT KANITI ═════════════════════════════════
+  // CF-4103661055: taşıyıcı çağrısı BAŞLADI, ardından uygulama istisnası
+  // düştü ve HİÇBİR iş yanıtı yakalanmadı. Yerelde gönderi görünmediği için
+  // bir sonraki tıklama İKİNCİ bir `GonderiyiKargoyaGonder` gönderebilirdi.
+  // Kanıt kalıcı izlerden okunur; okunamazsa `known=false` olarak İŞARETLENİR
+  // ("çağrı yapılmadı" diye SUNULMAZ) ve mükerrer koruması idempotency
+  // katmanında kalır — debug tablosu yüzünden create durdurulmaz.
+  const carrierCallEvidence = await readSuratCarrierCallEvidence(
+    request, orderForSurat,
+  )
   const eligibility = resolveSuratCreateEligibility({
     order: orderForSurat ?? {},
+    carrierCallEvidence,
   })
   if (!eligibility.eligible) {
     // TAŞIYICIYA GİDİLMEZ. Tarayıcı durumu bu kararı EZEMEZ.
@@ -3434,6 +3596,11 @@ async function createSuratShipmentCore(request, response) {
         'Bu paket için yeni Sürat gönderisi oluşturulamaz: '
         + eligibility.reasons.join(', '),
       suratCreateEligibility: eligibility,
+      carrierCallEvidence,
+      // Operatöre ne YAPILACAĞI söylenir: tekrar create DEĞİL, mutabakat.
+      requiredNextAction: eligibility.reasons.includes(
+        'REQUIRES_READ_ONLY_RECONCILIATION',
+      ) ? 'READ_ONLY_RECONCILIATION' : null,
     })
     return
   }
@@ -6047,7 +6214,13 @@ async function createSuratRegisteredCommonBarcode(
   // yeniden DB'den çözmek gereksiz bir başarısızlık noktasıydı: çözülemezse
   // kapı her create'i bloklardı. Sorgu anahtarı `WebSiparisKodu` = SİPARİŞ
   // NUMARASI (paket kimliği DEĞİL; takip ucu onu kabul etmez).
-  const verifyRegistrationReadOnly = async () => {
+  // YAPISAL KURAL: bu, `const` ok fonksiyonu DEĞİL, HOIST EDİLEN bir fonksiyon
+  // BİLDİRİMİDİR. CF-4103661055'te taşıyıcı çağrısı BAŞLADIKTAN sonra
+  // "Cannot access 'verifyRegistrationReadOnly' before initialization" ile
+  // düştük: `const` tanımdan önce çağrılmıştı (temporal dead zone). Bildirim
+  // kapsam başına hoist olduğu için bu hata artık YENİDEN SIRALAMAYLA BİLE
+  // ÜRETİLEMEZ. REGVERIFY-TDZ-1/2 bunu kilitler.
+  async function verifyRegistrationReadOnly() {
     try {
       const queryReference = resolveSuratTrackingQueryReference({
         webSiparisKodu: order?.orderNumber,
