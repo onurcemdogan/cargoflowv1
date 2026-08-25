@@ -374,7 +374,12 @@ export function createTraceAttempt(params: {
 export function appendTraceStage(
   attempt: SuratTraceAttempt,
   entry: {
-    stage: (typeof TRACE_LIFECYCLE_STAGES)[number]
+    // DEPO zaten `TRACE_ALL_STAGES` kabul ediyordu; YAZICI dar kalmıştı ve
+    // `WIRE_BLOCKED` yazan her çağıran derlenmiyordu. `WIRE_BLOCKED` geçerli
+    // bir iz OLAYIDIR ama mutlu-yol SIRASININ üyesi DEĞİLDİR — ağa
+    // çıkılmadığında yazılır. Sıra/mutlu-yol iddiaları
+    // `TRACE_LIFECYCLE_STAGES` kullanmaya DEVAM eder.
+    stage: (typeof TRACE_ALL_STAGES)[number]
     at: string
     section?: (typeof TRACE_SECTIONS)[number] | null
     data?: unknown
