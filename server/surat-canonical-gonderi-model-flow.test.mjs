@@ -77,12 +77,15 @@ test('CANON-3: Pazaryerimi SAYIDIR ve tam sayi alanlari number', () => {
   ]) {
     assert.equal(typeof model[key], 'number', key)
   }
-  // SOZLESME: `byte Iademi` — Enum(numerik), ZORUNLU (0/1). Resmi ornek
-  // request `"Iademi": 0` gonderir. Bu satir eskiden `boolean` PINLIYORDU,
-  // yani sozlesme ihlalini SART kosuyordu (CF-4104179900 denetimi).
-  assert.equal(typeof model.Iademi, 'number')
-  assert.equal(model.Iademi, 0)
-  assert.equal(JSON.stringify(model).includes('"Iademi":false'), false)
+  // SOZLESME: CANLI OpenAPI 3 (api02) `GonderiModel.Iademi` = boolean.
+  // Kaynak: docs/contracts/surat-web-api-swagger-v2.json
+  //
+  // DUZELTME: bu satir kisa sure `number` pinledi. Gerekce 2024 tarihli
+  // `GonderiyiKargoyaGonder` PDF'inin `byte Iademi` satiriydi — ama o PDF
+  // BASKA bir urunun sozlesmesidir. Kaynak hiyerarsisinde canli dogrudan
+  // sozlesme ustte oldugu icin boolean GECERLIDIR.
+  assert.equal(typeof model.Iademi, 'boolean')
+  assert.equal(model.Iademi, false)
   // Swagger'da string olanlar string kalir.
   assert.equal(typeof model.BirimDesi, 'string')
   assert.equal(typeof model.BirimKg, 'string')
@@ -245,7 +248,7 @@ test('CANON-14: GOLDEN Trendyol DTO', () => {
       GonderiSekli: 0,
       Pazaryerimi: 1,
       EntegrasyonFirmasi: 'Trendyol',
-      Iademi: 0,
+      Iademi: false,
     },
   })
   // Baska tenant kimligi SIZMAZ.

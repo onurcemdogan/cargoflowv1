@@ -90,35 +90,76 @@ yayındadır. `server/index.mjs:70-75` legacy sabitleri de eski ürüne aittir.
 `HOST_CLASSIFICATION = API02_LIVE_FOR_THIS_ACCOUNT` (OFFICIAL_PUBLIC).
 Host DEĞİŞTİRİLMEDİ ve değiştirilmemelidir.
 
-## Canlı sözleşmenin söyledikleri — ve SÖYLEMEDİKLERİ
+## Canlı sözleşme — UÇ AİLESİ MATRİSİ
 
-`docs/contracts/surat-web-api-swagger-v2.json` (api02'den alındı, sır
-İÇERMEZ) **20 uç** listeler. ANCAK: hiçbir uç için `parameters`,
-`definitions` ya da yanıt şeması YOKTUR — yalnız yol listesidir.
+`docs/contracts/surat-web-api-swagger-v2.json` (api02, **OpenAPI 3**, 20 uç,
+45 şema; sır İÇERMEZ).
 
-Dolayısıyla bu sözleşme alan tiplerini (`Iademi` dahil) ve `KargoBarkod`
-rolünü **BELİRLEYEMEZ**. Bu sorular hâlâ açıktır.
+> DÜZELTME: bu kayıt bir tur boyunca "yalnız yol listesi, şema yok" diyordu.
+> YANLIŞTI — belge OpenAPI 3'tür ve şemalar `components.schemas` altındadır;
+> Swagger-2 anahtarlarına (`parameters`/`definitions`) bakıldığı için boş
+> görünmüştü.
 
-### AÇIK SORU — pazaryeri için AYRI uç var
+Dördü de `OrtakBarkod` etiketi altındadır:
 
-Listede şunlar da bulunuyor:
+| Uç | İstek | Yanıt | Adres taşır? | Semantik |
+| --- | --- | --- | --- | --- |
+| `/api/OrtakBarkodOlustur` **(kullandığımız)** | `OrtakBarkodOlusturParam{KullaniciAdi,Sifre,Gonderi:GonderiModel}` | `ResultMesaj` | EVET (31 alan) | YENİ gönderi kurar |
+| `/api/PazaryeriOrtakBarkod` | `MarketPlace{KullaniciAdi,Sifre,Data:Gonder}` | `ResultMesaj` | HAYIR | MEVCUT pazaryeri kaydını referansla çağırır |
+| `/api/PazaryeriGonderi` | `OrtakBarkodOlusturParam` | `ResultMesaj` | EVET | YENİ gönderi kurar (pazaryeri) |
+| `/api/CreateCommonBarcode` | `CreateCommonBarcodeParam{UserName,Password,Shipment:ShipmentModel}` | `CreateCommonBarcodeResult` | EVET | `GonderiModel`'in İngilizce aynası |
+
+`Gonder` (yalnız `PazaryeriOrtakBarkod`):
 
 ```
-/api/OrtakBarkodOlustur      ← şu an KULLANDIĞIMIZ (genel)
-/api/PazaryeriOrtakBarkod    ← pazaryeri ortak barkod
-/api/PazaryeriGonderi        ← pazaryeri gönderi
-/api/CreateCommonBarcode
+EntegrasyonFirmasi  → WebMusteriEntegrasyon (enum)
+KargoMusteriKodu    string
+WebSiparisKodu      string
+Desi / Kg           decimal
+Adet                int32
 ```
 
-Biz `Pazaryerimi=1` + `EntegrasyonFirmasi=Trendyol` taşıyan bir pazaryeri
-gönderisini **GENEL** uca gönderiyoruz. Genel ucun sonuç kurucusunun
-pazaryeri gönderisini işleyememesi, gözlenen
-`String → KargoBarkod` cast hatası için **KANITA DAYALI BİR ADAYDIR**.
+`WebMusteriEntegrasyon` enum: **Trendyol=1**, Hepsiburada=2, N11=3,
+Gittigidiyor=4, CicekSepeti=5, Dolap=6, Bos=7.
 
-**UÇ DEĞİŞTİRİLMEDİ.** Swagger bu uçların gövdesini belgelemiyor;
-`PazaryeriOrtakBarkod`'un ne kabul ettiği ve ne döndürdüğü BİLİNMİYOR.
-Kanıtsız uç değiştirmek `bfcf7b8` hatasının tekrarı olur. Sürat'a sorulacak
-soru budur.
+### WhoPays — SÖZLEŞMEDEN DOĞRULANDI
+
+`MusteriEntegrasyonOdemeSekli`: Bos=0, **GondericiOder=1**, AliciOder=2,
+**EntegrasyonFirmasiOder=3**, EntegrasyonFirmasiKendiOder=4,
+EntegrasyonFirmasiOderKendi=5.
+
+`expectedSuratWhoPays` eşlemesi artık TAHMİN DEĞİL: `TRENDYOL_PAYS → 3` =
+"entegrasyon firması öder", `SELLER_PAYS → 1` = "gönderici öder". Eşleme
+DEĞİŞMEDİ; artık resmî kaynağı var.
+
+### `KargoBarkod` nerede oluşur
+
+`ResultMesaj.Barcode` sözleşmede `{"type":"array","items":{}}` — **tipsiz
+dizi**. Sunucu tarafında bu liste `KargoBarkod` taşır. `String → KargoBarkod`
+cast'i tam olarak buraya bir MESAJ (string) konmaya çalışıldığında oluşur.
+`KargoBarkod` istekte YOKTUR; hata Sürat kendi yanıtını kurarken doğar.
+
+### AÇIK SORU — hangi uç?
+
+Trendyol siparişini Sürat'a **Trendyol'un kendi beslemesi** açıyor
+(17.07.2026 üretim kanıtı). Yani kayıt ZATEN VARDIR. Biz ise adres/alıcı
+taşıyan `GonderiModel` ile **YENİ gönderi kuran** genel uca gidiyoruz.
+`PazaryeriOrtakBarkod` ise adres taşımaz: mevcut kaydı
+`EntegrasyonFirmasi + WebSiparisKodu` ile çağırır — bu senaryoya BİÇİMSEL
+OLARAK uyan tek uçtur.
+
+`EXPECTED_ENDPOINT = SUPPORTED` (PROVEN DEĞİL): sözleşmede hiçbir uç için
+açıklama metni yok ve `KargoMusteriKodu`'nun ne olduğu BİLİNMİYOR.
+**UÇ DEĞİŞTİRİLMEDİ.** Kanıt PROVEN'e ulaşmadan uç değiştirmek `bfcf7b8`
+hatasının tekrarıdır.
+
+### `Iademi` — GERİ ALINDI
+
+Canlı sözleşme `GonderiModel.Iademi = {"type":"boolean"}` der. Kısa süre
+sayısal `0`'a çevrilmişti; gerekçe 2024 tarihli `GonderiyiKargoyaGonder`
+PDF'inin `byte Iademi` satırıydı. O PDF **başka bir ürünün** sözleşmesidir.
+Kaynak hiyerarşisinde canlı doğrudan sözleşme üstte olduğu için `boolean`
+geri alındı. `IADEMI_FINDING = NOT_A_MISMATCH`.
 
 ## Marketplace ön koşulu
 

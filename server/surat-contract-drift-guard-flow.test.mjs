@@ -98,3 +98,60 @@ test('DRIFT-6: yeni server test dosyalari test:surat icinde KAYITLI', () => {
   const orphans = onDisk.filter((f) => !listed.has(f))
   assert.deepEqual(orphans, [], `test:surat icinde OLMAYAN: ${orphans.join(', ')}`)
 })
+
+/* ═══ CANLI SÖZLEŞME OLGULARI ══════════════════════════════════════ */
+
+const CONTRACT = JSON.parse(readFileSync(
+  new URL('../docs/contracts/surat-web-api-swagger-v2.json', here), 'utf8',
+))
+const SCHEMAS = CONTRACT.components.schemas
+const bodyRef = (route) => CONTRACT.paths[route].post.requestBody
+  .content['application/json'].schema.oneOf[0].$ref.split('/').pop()
+
+test('CONTRACT-1: uc ailesi ve istek govdeleri SABIT', () => {
+  // Dordu de ayni `OrtakBarkod` etiketi altinda; govdeleri FARKLI.
+  assert.equal(bodyRef('/api/OrtakBarkodOlustur'), 'OrtakBarkodOlusturParam')
+  assert.equal(bodyRef('/api/PazaryeriOrtakBarkod'), 'MarketPlace')
+  assert.equal(bodyRef('/api/PazaryeriGonderi'), 'OrtakBarkodOlusturParam')
+  assert.equal(bodyRef('/api/CreateCommonBarcode'), 'CreateCommonBarcodeParam')
+})
+
+test('CONTRACT-2: PazaryeriOrtakBarkod ADRES TASIMAZ', () => {
+  // Bu, ucun MEVCUT kaydi referansla cagirdiginin yapisal kanitidir:
+  // adres/alici alani olmadan YENI gonderi kurulamaz.
+  const gonder = SCHEMAS.Gonder.properties
+  assert.deepEqual(Object.keys(gonder), [
+    'EntegrasyonFirmasi', 'KargoMusteriKodu', 'WebSiparisKodu',
+    'Desi', 'Kg', 'Adet',
+  ])
+  // Genel uc ise adres TASIR.
+  assert.ok('AliciAdresi' in SCHEMAS.GonderiModel.properties)
+  assert.ok('KisiKurum' in SCHEMAS.GonderiModel.properties)
+})
+
+test('CONTRACT-3: Trendyol pazaryeri enum degeri 1', () => {
+  const e = SCHEMAS.WebMusteriEntegrasyon
+  assert.equal(e['x-enumNames'][0], 'Trendyol')
+  assert.equal(e.enum[0], 1)
+})
+
+test('CONTRACT-4: WhoPays eslemesi SOZLESMEDEN dogrulanir', () => {
+  // expectedSuratWhoPays artik TAHMIN DEGIL.
+  const e = SCHEMAS.MusteriEntegrasyonOdemeSekli
+  const at = (name) => e.enum[e['x-enumNames'].indexOf(name)]
+  assert.equal(at('GondericiOder'), 1)          // SELLER_PAYS
+  assert.equal(at('EntegrasyonFirmasiOder'), 3) // TRENDYOL_PAYS
+})
+
+test('CONTRACT-5: Iademi CANLI SOZLESMEDE boolean', () => {
+  // 2024 tarihli BASKA urunun PDF'i `byte` diyordu; bu uc icin GECERSIZ.
+  assert.equal(SCHEMAS.GonderiModel.properties.Iademi.type, 'boolean')
+})
+
+test('CONTRACT-6: ResultMesaj.Barcode TIPSIZ dizi (KargoBarkod burada)', () => {
+  const barcode = SCHEMAS.ResultMesaj.properties.Barcode
+  assert.equal(barcode.type, 'array')
+  assert.deepEqual(barcode.items, {})
+  // `KargoBarkod` istekte YOKTUR — cast hatasi yanit kurulurken olusur.
+  assert.equal(JSON.stringify(SCHEMAS.GonderiModel).includes('KargoBarkod'), false)
+})

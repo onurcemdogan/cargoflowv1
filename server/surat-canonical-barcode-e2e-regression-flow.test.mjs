@@ -244,31 +244,24 @@ test('E2E-WIRING: index.mjs kayitli modu calisma zamaninda EZMEZ', () => {
 
 /* ═══ CONTRACT-IADEMI-1 — ZORUNLU ALAN TİPİ ════════════════════════ */
 
-test('CONTRACT-IADEMI-1: Iademi sayisal enum gonderir, boolean DEGIL', async () => {
-  // SÖZLEŞME (Sürat "GonderiyiKargoyaGonder Entegrasyonu API Dokümanı",
-  // Gönderi class'ı — kanonik modelin türetildiği 31 alanlık sınıf):
+test('CONTRACT-IADEMI-1: telde giden tipler CANLI SOZLESMEYE uyar', async () => {
+  // TEK OTORITE: api02'nin canli OpenAPI 3 sozlesmesi
+  // (docs/contracts/surat-web-api-swagger-v2.json).
   //
-  //   byte Iademi   ZORUNLU   Enum(numerik): 0 = standart, 1 = iade
+  //   GonderiModel.Iademi = {"type":"boolean"}
   //
-  // Resmî örnek request: `"Iademi": 0`.
-  //
-  // KUSURLU TEL (CF-4104179900): `"Iademi":false` — JSON boolean.
-  // Bu, resmî örnekten sapan TEK zorunlu alandı.
+  // DUZELTME NOTU: bu test kisa sure `Iademi`'nin SAYISAL olmasini sart
+  // kosuyordu; gerekce 2024 tarihli `GonderiyiKargoyaGonder` PDF'iydi. O PDF
+  // farkli bir urune aittir ve bu ucu BAGLAMAZ. Canli sozlesme boolean der.
   const { body, calls } = await runCanonicalCreate()
   const raw = String(calls[0].init?.body ?? '')
 
-  assert.equal(typeof body.Gonderi.Iademi, 'number')
-  assert.equal(body.Gonderi.Iademi, 0)
-  // Kusurlu tel bir daha URETILEMEZ.
-  assert.equal(raw.includes('"Iademi":false'), false, 'kusurlu tel geri geldi')
-  assert.equal(raw.includes('"Iademi":true'), false)
+  assert.equal(typeof body.Gonderi.Iademi, 'boolean')
+  assert.equal(raw.includes('"Iademi":false'), true)
 
-  // Resmî örnekle tip uyumu: sayısal enum alanları sayı, string alanlar
-  // string. `BirimDesi`/`BirimKg` resmî örnekte de STRING gönderilir
-  // ("BirimDesi": "1"), bu yüzden onlar DEGISTIRILMEZ.
   for (const key of [
     'KargoTuru', 'OdemeTipi', 'Adet', 'KapidanOdemeTahsilatTipi',
-    'TasimaSekli', 'TeslimSekli', 'GonderiSekli', 'Pazaryerimi', 'Iademi',
+    'TasimaSekli', 'TeslimSekli', 'GonderiSekli', 'Pazaryerimi',
   ]) {
     assert.equal(typeof body.Gonderi[key], 'number', `${key} sayisal OLMALI`)
   }
