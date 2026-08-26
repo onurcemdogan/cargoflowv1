@@ -139,19 +139,47 @@ dizi**. Sunucu tarafında bu liste `KargoBarkod` taşır. `String → KargoBarko
 cast'i tam olarak buraya bir MESAJ (string) konmaya çalışıldığında oluşur.
 `KargoBarkod` istekte YOKTUR; hata Sürat kendi yanıtını kurarken doğar.
 
-### AÇIK SORU — hangi uç?
+### AÇIK SORU — hangi uç? (DARALTILDI)
 
-Trendyol siparişini Sürat'a **Trendyol'un kendi beslemesi** açıyor
-(17.07.2026 üretim kanıtı). Yani kayıt ZATEN VARDIR. Biz ise adres/alıcı
-taşıyan `GonderiModel` ile **YENİ gönderi kuran** genel uca gidiyoruz.
-`PazaryeriOrtakBarkod` ise adres taşımaz: mevcut kaydı
-`EntegrasyonFirmasi + WebSiparisKodu` ile çağırır — bu senaryoya BİÇİMSEL
-OLARAK uyan tek uçtur.
+**ÜÇ uç AYNI gövdeyi alır** (`OrtakBarkodOlusturParam` → `ResultMesaj`):
 
-`EXPECTED_ENDPOINT = SUPPORTED` (PROVEN DEĞİL): sözleşmede hiçbir uç için
-açıklama metni yok ve `KargoMusteriKodu`'nun ne olduğu BİLİNMİYOR.
-**UÇ DEĞİŞTİRİLMEDİ.** Kanıt PROVEN'e ulaşmadan uç değiştirmek `bfcf7b8`
-hatasının tekrarıdır.
+```
+/api/OrtakBarkodOlustur       ← şu an kullandığımız (GENEL)
+/api/PazaryeriGonderi         ← PAZARYERİ, aynı gövde, aynı yanıt
+/api/GonderiyiKargoyaGonder
+```
+
+`/api/PazaryeriOrtakBarkod` ise FARKLI gövde ister (`MarketPlace{Data:Gonder}`)
+ve **`KargoMusteriKodu`** alanına ihtiyaç duyar.
+
+**`KargoMusteriKodu` ÇÖZÜLEMEDİ.** Yalnız bu Swagger'da geçiyor: WSDL'de
+YOK, hiçbir PDF'te YOK, hiçbir üretim izinde YOK, kendi commit'lerimden
+önceki geçmişte YOK. Sözleşmede açıklama/örnek/varsayılan da YOK (0 adet).
+`KARGO_MUSTERI_KODU_CONFIDENCE = UNKNOWN`.
+
+**Tarihsel kanıt yön değiştirdi.** Kanıtlanmış başarılı SOAP operasyonu
+`GonderiyiKargoyaGonderYeniSiparisBarkodOlustur`, WSDL'de
+`{KullaniciAdi, Sifre, Gonderi: GonderiModel}` alır — yani **adres taşıyan
+tam model**. Bu, "pazaryeri gönderisi adres taşımayan uca gitmeli" okumasını
+ÇÜRÜTÜR: pazaryeri siparişi için tam `GonderiModel` göndermek tarihsel
+olarak ÇALIŞMIŞTIR.
+
+Dolayısıyla en güçlü aday artık **`/api/PazaryeriGonderi`**:
+
+| Ölçüt | PazaryeriGonderi | PazaryeriOrtakBarkod |
+| --- | --- | --- |
+| İstek gövdesi | **mevcut gövdemizle AYNI** | farklı; yeni alanlar |
+| Bilinmeyen alan | **YOK** | `KargoMusteriKodu` UNKNOWN |
+| Yanıt | `ResultMesaj` (aynı) | `ResultMesaj` (aynı) |
+| Tarihsel şekil uyumu | **EVET** | hayır |
+| Pazaryeri farkındalığı | evet (ad) | evet (ad + şekil) |
+
+`EXPECTED_ENDPOINT = /api/PazaryeriGonderi` — **SUPPORTED, PROVEN DEĞİL.**
+Sözleşmede hiçbir uç için açıklama metni yoktur; ayrım YALNIZ ad ve şekle
+dayanır. Uç ADA BAKARAK değiştirilmez.
+
+**Yanıt tarafı riski YOK:** her iki pazaryeri ucu da `ResultMesaj` döndürür,
+yani ayrıştırıcı ve baskı hattı DEĞİŞMEDEN çalışır. Değişecek tek şey YOL.
 
 ### `Iademi` — GERİ ALINDI
 

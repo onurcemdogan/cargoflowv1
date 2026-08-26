@@ -155,3 +155,33 @@ test('CONTRACT-6: ResultMesaj.Barcode TIPSIZ dizi (KargoBarkod burada)', () => {
   // `KargoBarkod` istekte YOKTUR — cast hatasi yanit kurulurken olusur.
   assert.equal(JSON.stringify(SCHEMAS.GonderiModel).includes('KargoBarkod'), false)
 })
+
+test('CONTRACT-7: UC aday uc AYNI govdeyi alir', () => {
+  // Uc degisimi bu ucler icin GOVDE DEGISIKLIGI GEREKTIRMEZ.
+  for (const route of [
+    '/api/OrtakBarkodOlustur', '/api/PazaryeriGonderi',
+    '/api/GonderiyiKargoyaGonder',
+  ]) {
+    assert.equal(bodyRef(route), 'OrtakBarkodOlusturParam', route)
+  }
+  // Her iki pazaryeri ucu da AYNI yaniti dondurur -> parser/baski degismez.
+  const resp = (r) => CONTRACT.paths[r].post.responses['200']
+    .content['application/json'].schema.oneOf[0].$ref.split('/').pop()
+  assert.equal(resp('/api/OrtakBarkodOlustur'), 'ResultMesaj')
+  assert.equal(resp('/api/PazaryeriGonderi'), 'ResultMesaj')
+  assert.equal(resp('/api/PazaryeriOrtakBarkod'), 'ResultMesaj')
+})
+
+test('CONTRACT-8: sozlesme KargoMusteriKodu alanini TANIMLAMAZ', () => {
+  // Uc secimini bloklayan tek somut bilinmeyen. Sozlesmede aciklama/ornek/
+  // varsayilan YOKTUR; alan yalnizca `Gonder` icinde gecer.
+  const raw = JSON.stringify(CONTRACT)
+  assert.equal((raw.match(/KargoMusteriKodu/g) ?? []).length, 1)
+  assert.equal(/"example"|"examples"|"default"/.test(raw), false)
+  assert.equal((raw.match(/"description":"[^"]+"/g) ?? []).length, 0)
+  // Kayit bunu UNKNOWN olarak TASIR.
+  const registry = readFileSync(
+    new URL('../docs/contracts/TRENDYOL-SURAT.md', here), 'utf8',
+  )
+  assert.ok(registry.includes('KARGO_MUSTERI_KODU_CONFIDENCE = UNKNOWN'))
+})

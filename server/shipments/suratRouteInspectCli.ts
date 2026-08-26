@@ -112,11 +112,14 @@ export function runSuratRouteInspect(): number {
     desi: 2, adet: 1,
   }
 
+  // Aynı `OrtakBarkod` etiketi altındaki adaylar. `GonderiyiKargoyaGonder`
+  // de AYNI gövdeyi alır ve karşılaştırmaya dahildir.
   const CANDIDATES = [
     '/api/OrtakBarkodOlustur',
-    '/api/PazaryeriOrtakBarkod',
     '/api/PazaryeriGonderi',
+    '/api/PazaryeriOrtakBarkod',
     '/api/CreateCommonBarcode',
+    '/api/GonderiyiKargoyaGonder',
   ]
 
   console.info('=== SÜRAT UÇ AİLESİ KARŞILAŞTIRMASI (SALT OKUNUR) ===')
@@ -144,6 +147,13 @@ export function runSuratRouteInspect(): number {
       `   semantik: ${carriesAddress
         ? 'ADRES TAŞIR → YENİ gönderi kurar'
         : 'ADRES TAŞIMAZ → MEVCUT kaydı referansla çağırır'}`,
+    )
+    // ŞU AN GÖNDERDİĞİMİZ gövdeyle uyumlu mu? Uyumluysa uç değişimi
+    // GÖVDE DEĞİŞİKLİĞİ GEREKTİRMEZ ve bilinmeyen alan doğurmaz.
+    console.info(
+      `   gövde uyumu: ${request === 'OrtakBarkodOlusturParam'
+        ? 'AYNI — mevcut gövde DEĞİŞMEDEN kullanılabilir'
+        : `FARKLI (${request}) — yeni alanlar gerekir`}`,
     )
     console.info('')
   }
