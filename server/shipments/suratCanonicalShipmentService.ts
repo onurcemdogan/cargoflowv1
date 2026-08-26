@@ -54,6 +54,8 @@ export interface CanonicalShipmentResult {
   errorCode?: string
   /** Aynı çalıştırmada yapılan taşıyıcı create çağrısı sayısı (denetim). */
   carrierCreateAttempts: number
+  /** GERÇEKTEN çağrılan uç yolu (pazaryeri mi genel mi) — izde görünür. */
+  createPath?: string
 }
 
 /** Mevcut idempotency mekanizmasına 3A-2'de bağlanacak sözleşme. */
@@ -235,6 +237,8 @@ export async function createCanonicalSuratShipment(
       printArtifactStatus: resolvePrintArtifactStatus(vendor),
       vendorMessage: vendor.vendorMessage,
       carrierCreateAttempts: 1,
+      // Hangi ucun çağrıldığı SONUÇLA birlikte taşınır.
+      createPath: vendor.createPath,
     }
     // Etiket ÇÖZÜLEMESE BİLE gönderi oluştu → İKİNCİ create YOK.
     await params.persistence?.persist({
@@ -279,7 +283,10 @@ export function buildCanonicalShipmentLogContext(params: {
   return {
     tenantId: params.organizationId,
     adapter: 'SURAT_WEB_API',
-    operation: 'OrtakBarkodOlustur',
+    // Sabit ad YAZILMAZ: gerçekten çağrılan uç raporlanır.
+    operation: (params.result.createPath ?? '/api/OrtakBarkodOlustur')
+      .replace('/api/', ''),
+    endpoint: params.result.createPath ?? '/api/OrtakBarkodOlustur',
     marketplace: params.marketplace,
     carrierCreateStatus: params.result.carrierCreateStatus,
     outcome: params.result.outcome,

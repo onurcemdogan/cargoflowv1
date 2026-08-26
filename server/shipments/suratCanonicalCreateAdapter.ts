@@ -288,7 +288,11 @@ export function mapCanonicalResultToCreateResponse(params: {
     canonicalCreate: {
       adapter: 'SURAT_WEB_API',
       host: 'api02.suratkargo.com.tr',
-      operation: SURAT_CANONICAL_OPERATION_NAME,
+      // Pazaryeri gönderisi `/api/PazaryeriGonderi`'ye gider; iz SABİT ad
+      // değil GERÇEKTEN çağrılan ucu gösterir.
+      operation: (result.createPath ?? `/api/${SURAT_CANONICAL_OPERATION_NAME}`)
+        .replace('/api/', ''),
+      endpoint: result.createPath ?? `/api/${SURAT_CANONICAL_OPERATION_NAME}`,
       carrierCreateStatus: result.carrierCreateStatus,
       // Etiket durumu artık yapısal sınıflandırmadan gelir.
       printArtifactStatus:

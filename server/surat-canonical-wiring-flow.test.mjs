@@ -393,7 +393,10 @@ test('WIRE-HOST: hedef host kullanici girdisinden ALINMAZ', async () => {
     })
     assert.equal(
       spy.calls[0].url,
-      'https://api02.suratkargo.com.tr/api/OrtakBarkodOlustur',
+            // ROTA DEĞİŞTİ: `Pazaryerimi=1` gönderisi pazaryeri ucuna gider.
+      // Canlı sözleşmede iki uç AYNI istek/yanıt modelini kullanır;
+      // değişen tek şey yoldur (CF-4104179900 sonrası).
+      'https://api02.suratkargo.com.tr/api/PazaryeriGonderi',
     )
   } finally { spy.restore() }
 })
