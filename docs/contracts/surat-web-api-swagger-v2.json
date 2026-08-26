@@ -1,0 +1,2854 @@
+{
+  "x-generator": "NSwag v14.6.3.0 (NJsonSchema v11.5.2.0 (Newtonsoft.Json v13.0.0.0))",
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Sürat Kargo Web API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/BarkodDetay/BarkoddanGelenKargoDetayi": {
+      "post": {
+        "tags": [
+          "BarkodDetay"
+        ],
+        "operationId": "BarkodDetay_BarkoddanGelenKargoDetayi",
+        "parameters": [
+          {
+            "name": "CariKodu",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 1
+          },
+          {
+            "name": "Sifre",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 2
+          },
+          {
+            "name": "Barkod",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 3
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/BarkoddanGelenKargo"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/BarkodDetay/GonderilenKargoDetayi": {
+      "post": {
+        "tags": [
+          "BarkodDetay"
+        ],
+        "operationId": "BarkodDetay_GonderilenKargoDetayi",
+        "parameters": [
+          {
+            "name": "CariKodu",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 1
+          },
+          {
+            "name": "Sifre",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 2
+          },
+          {
+            "name": "BasTar",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 3
+          },
+          {
+            "name": "BitTar",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 4
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/GonderilenKargoList"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ParcaliGonderiOlustur": {
+      "post": {
+        "tags": [
+          "GonderiyiKargoyaGonder"
+        ],
+        "operationId": "GonderiyiKargoyaGonder_ParcaliGonderiOlustur",
+        "requestBody": {
+          "x-name": "gonderi",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/Gonderi"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/GonderiyiKargoyaGonder": {
+      "post": {
+        "tags": [
+          "GonderiyiKargoyaGonder"
+        ],
+        "operationId": "GonderiyiKargoyaGonder_GonderiyiKargoyaGonder",
+        "requestBody": {
+          "x-name": "ortakBarkodOlusturParam",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/OrtakBarkodOlusturParam"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/CreateShipment": {
+      "post": {
+        "tags": [
+          "Shipment"
+        ],
+        "operationId": "Shipment_CreateShipment",
+        "requestBody": {
+          "x-name": "shipment",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CreateShipmentRequest"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/CancelShipment": {
+      "post": {
+        "tags": [
+          "Shipment"
+        ],
+        "operationId": "Shipment_CancelShipment",
+        "parameters": [
+          {
+            "name": "AccountCode",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 1
+          },
+          {
+            "name": "Password",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 2
+          },
+          {
+            "name": "WebOrderCode",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 3
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/RecallShipment": {
+      "post": {
+        "tags": [
+          "Shipment"
+        ],
+        "operationId": "Shipment_RecallShipment",
+        "requestBody": {
+          "x-name": "request",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/RecallShipmentRequest"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/GonderiOlustur": {
+      "post": {
+        "tags": [
+          "Gonderi"
+        ],
+        "operationId": "Gonderi_GonderiOlustur",
+        "requestBody": {
+          "x-name": "gonderi",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/GonderiRequest"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/GonderiSil": {
+      "post": {
+        "tags": [
+          "Gonderi"
+        ],
+        "operationId": "Gonderi_GonderiSil",
+        "parameters": [
+          {
+            "name": "CariKodu",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 1
+          },
+          {
+            "name": "Sifre",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 2
+          },
+          {
+            "name": "WebSiparisKodu",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 3
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/GonderiGeriCek": {
+      "post": {
+        "tags": [
+          "Gonderi"
+        ],
+        "operationId": "Gonderi_GonderiGeriCek",
+        "requestBody": {
+          "x-name": "request",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/GonderiyiGericekRequest"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/CargoTracking": {
+      "post": {
+        "tags": [
+          "KargoTakipHareket"
+        ],
+        "operationId": "KargoTakipHareket_CargoTracking",
+        "parameters": [
+          {
+            "name": "UserName",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 1
+          },
+          {
+            "name": "Password",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 2
+          },
+          {
+            "name": "ShipmentNumber",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 3
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/CargoTrackingResponse"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/KargoTakipHareketDetayi": {
+      "post": {
+        "tags": [
+          "KargoTakipHareket"
+        ],
+        "operationId": "KargoTakipHareket_KargoTakipHareketDetayi",
+        "parameters": [
+          {
+            "name": "CariKodu",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 1
+          },
+          {
+            "name": "Sifre",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 2
+          },
+          {
+            "name": "WebSiparisKodu",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 3
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/GonderiSonuc"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/KargoTakipHareketCoklu": {
+      "post": {
+        "tags": [
+          "KargoTakipHareket"
+        ],
+        "operationId": "KargoTakipHareket_KargoTakipHareketCoklu",
+        "parameters": [
+          {
+            "name": "CariKodu",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 1
+          },
+          {
+            "name": "Sifre",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 2
+          },
+          {
+            "name": "BaslangicTarihi",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 3
+          },
+          {
+            "name": "BitisTarihi",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 4
+          },
+          {
+            "name": "KargonunDurumuSayi",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int32"
+            },
+            "x-position": 5
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/KargoTakipHareketCokluSonuc"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/KargoTakipTarihce": {
+      "post": {
+        "tags": [
+          "KargoTakipHareket"
+        ],
+        "operationId": "KargoTakipHareket_KargoTakipTarihce",
+        "requestBody": {
+          "x-name": "kargoTakipTarihceRequest",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/KargoTakipTarihceRequest"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/KargoTakipTarihceList"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/CreateCommonBarcode": {
+      "post": {
+        "tags": [
+          "OrtakBarkod"
+        ],
+        "operationId": "OrtakBarkod_CreateCommonBarcode",
+        "requestBody": {
+          "x-name": "createCommonBarcodeParam",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CreateCommonBarcodeParam"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/CreateCommonBarcodeResult"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/OrtakBarkodOlustur": {
+      "post": {
+        "tags": [
+          "OrtakBarkod"
+        ],
+        "operationId": "OrtakBarkod_OrtakBarkodOlustur",
+        "requestBody": {
+          "x-name": "ortakBarkodOlusturParam",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/OrtakBarkodOlusturParam"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ResultMesaj"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/PazaryeriGonderi": {
+      "post": {
+        "tags": [
+          "OrtakBarkod"
+        ],
+        "operationId": "OrtakBarkod_PazaryeriGonderi",
+        "requestBody": {
+          "x-name": "ortakBarkodOlusturParam",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/OrtakBarkodOlusturParam"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ResultMesaj"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/PazaryeriOrtakBarkod": {
+      "post": {
+        "tags": [
+          "OrtakBarkod"
+        ],
+        "operationId": "OrtakBarkod_PazaryeriOrtakBarkod",
+        "requestBody": {
+          "x-name": "marketPlace",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/MarketPlace"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ResultMesaj"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/GonderiBarkodOlustur": {
+      "post": {
+        "tags": [
+          "OrtakBarkod"
+        ],
+        "operationId": "OrtakBarkod_GonderiBarkodOlustur",
+        "requestBody": {
+          "x-name": "Gonderi",
+          "content": {
+            "application/json": {
+              "schema": {
+                "nullable": true,
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/DataDto"
+                  }
+                ]
+              }
+            }
+          },
+          "x-position": 1
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/PazaryeriGonderiHareketDetay": {
+      "post": {
+        "tags": [
+          "Pazaryeri"
+        ],
+        "operationId": "Pazaryeri_PazaryeriGonderiHareketDetay",
+        "parameters": [
+          {
+            "name": "CariKodu",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 1
+          },
+          {
+            "name": "Sifre",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            },
+            "x-position": 2
+          }
+        ],
+        "requestBody": {
+          "x-name": "WebSiparisKodlari",
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "nullable": true,
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "x-position": 3
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/GonderiSonuc"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "BarkoddanGelenKargo": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "IsError": {
+            "type": "boolean"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "BarkoddanGelenKargoDetayi": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/BarkoddanGelenKargoDetayi"
+            }
+          }
+        }
+      },
+      "BarkoddanGelenKargoDetayi": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "GonderenUnvan": {
+            "type": "string",
+            "nullable": true
+          },
+          "GonderenAdres": {
+            "type": "string",
+            "nullable": true
+          },
+          "GonderenTelefon": {
+            "type": "string",
+            "nullable": true
+          },
+          "OdemeSekli": {
+            "type": "string",
+            "nullable": true
+          },
+          "TakipNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "GonderenSube": {
+            "type": "string",
+            "nullable": true
+          },
+          "GonderenSubeTelefonu": {
+            "type": "string",
+            "nullable": true
+          },
+          "GonderenCariKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "Adet": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "Desi": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "Kg": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "GonderenIl": {
+            "type": "string",
+            "nullable": true
+          },
+          "GonderenIlce": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "GonderilenKargoList": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "IsError": {
+            "type": "boolean"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "GonderilenKargoDetayi": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/GonderilenKargoDetayi"
+            }
+          }
+        }
+      },
+      "GonderilenKargoDetayi": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "TakipNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "OdemeSekli": {
+            "type": "string",
+            "nullable": true
+          },
+          "AliciUnvan": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeslimatDurum": {
+            "type": "string",
+            "nullable": true
+          },
+          "Durum": {
+            "type": "string",
+            "nullable": true
+          },
+          "SonBulunduguYer": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeslimAlan": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeslimTarihi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Tutar": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "DevirSebebi": {
+            "type": "string",
+            "nullable": true
+          },
+          "VarisSubeAdi": {
+            "type": "string",
+            "nullable": true
+          },
+          "VarisSubeTel": {
+            "type": "string",
+            "nullable": true
+          },
+          "VarisIl": {
+            "type": "string",
+            "nullable": true
+          },
+          "VarisIlce": {
+            "type": "string",
+            "nullable": true
+          },
+          "AliciAdres": {
+            "type": "string",
+            "nullable": true
+          },
+          "AliciCariKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "AliciCepTel": {
+            "type": "string",
+            "nullable": true
+          },
+          "WebSiparisKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "OlusturulmaTarihi": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "Gonderi": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "AliciUnvan",
+          "AliciIl",
+          "AliciIlce",
+          "AliciAdres",
+          "AliciTelefon",
+          "OdemeTipi",
+          "SiparisKodu",
+          "IsKapidaOdemeliKargo",
+          "Kargolar",
+          "TeslimSekli",
+          "Pazaryerimi",
+          "Iademi",
+          "KargoIcerigi"
+        ],
+        "properties": {
+          "AliciUnvan": {
+            "type": "string",
+            "minLength": 1
+          },
+          "AliciIl": {
+            "type": "integer",
+            "format": "int32",
+            "maximum": 81.0,
+            "minimum": 1.0
+          },
+          "AliciIlce": {
+            "type": "string",
+            "minLength": 1
+          },
+          "AliciAdres": {
+            "type": "string",
+            "minLength": 1
+          },
+          "AliciTelefon": {
+            "$ref": "#/components/schemas/Telefon"
+          },
+          "OdemeTipi": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IrsaliyeSeriNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "IrsaliyeSiraNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "ReferansNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "SiparisKodu": {
+            "type": "string",
+            "minLength": 1
+          },
+          "IsKapidaOdemeliKargo": {
+            "type": "boolean"
+          },
+          "KapidaOdemeli": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/KapidaOdemeli"
+              }
+            ]
+          },
+          "Kargolar": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Kargolar"
+            }
+          },
+          "EkHizmet": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EkHizmetler"
+              }
+            ]
+          },
+          "TeslimSekli": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Pazaryerimi": {
+            "type": "boolean"
+          },
+          "EntegrasyonFirmasi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Iademi": {
+            "type": "boolean"
+          },
+          "KargoIcerigi": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      },
+      "Telefon": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "CepTel": {
+            "type": "string",
+            "nullable": true
+          },
+          "EvTel": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsTel": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "KapidaOdemeli": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "KapidanOdemeTutari": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "Kargolar": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "BirimDesi": {
+            "type": "string",
+            "nullable": true
+          },
+          "BirimKg": {
+            "type": "string",
+            "nullable": true
+          },
+          "KoliBarkod": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "EkHizmetler": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "AliciyaSms": {
+            "type": "boolean"
+          },
+          "GondericiyeSms": {
+            "type": "boolean"
+          }
+        }
+      },
+      "OrtakBarkodOlusturParam": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "KullaniciAdi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Sifre": {
+            "type": "string",
+            "nullable": true
+          },
+          "Gonderi": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GonderiModel"
+              }
+            ]
+          }
+        }
+      },
+      "GonderiModel": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "KisiKurum": {
+            "type": "string",
+            "nullable": true
+          },
+          "SahisBirim": {
+            "type": "string",
+            "nullable": true
+          },
+          "AliciAdresi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Il": {
+            "type": "string",
+            "nullable": true
+          },
+          "Ilce": {
+            "type": "string",
+            "nullable": true
+          },
+          "TelefonEv": {
+            "type": "string",
+            "nullable": true
+          },
+          "TelefonIs": {
+            "type": "string",
+            "nullable": true
+          },
+          "TelefonCep": {
+            "type": "string",
+            "nullable": true
+          },
+          "Email": {
+            "type": "string",
+            "nullable": true
+          },
+          "AliciKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "KargoTuru": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "OdemeTipi": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IrsaliyeSeriNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "IrsaliyeSiraNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "ReferansNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "OzelKargoTakipNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "Adet": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "BirimDesi": {
+            "type": "string",
+            "nullable": true
+          },
+          "BirimKg": {
+            "type": "string",
+            "nullable": true
+          },
+          "KargoIcerigi": {
+            "type": "string",
+            "nullable": true
+          },
+          "KapidanOdemeTahsilatTipi": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "KapidanOdemeTutari": {
+            "type": "string",
+            "nullable": true
+          },
+          "EkHizmetler": {
+            "type": "string",
+            "nullable": true
+          },
+          "TasimaSekli": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "TeslimSekli": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "SevkAdresi": {
+            "type": "string",
+            "nullable": true
+          },
+          "GonderiSekli": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "TeslimSubeKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "Pazaryerimi": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "EntegrasyonFirmasi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Iademi": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CreateShipmentRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "Username": {
+            "type": "string",
+            "nullable": true
+          },
+          "Password": {
+            "type": "string",
+            "nullable": true
+          },
+          "CompanyId": {
+            "$ref": "#/components/schemas/PazaryeriEntegrasyon"
+          },
+          "Data": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/ShipmentData"
+            }
+          }
+        }
+      },
+      "PazaryeriEntegrasyon": {
+        "type": "integer",
+        "description": "",
+        "x-enumNames": [
+          "Hazirda",
+          "TurkTelekomIade",
+          "LastikWeb",
+          "Navlungo",
+          "OtoDevi",
+          "Topluyoruz",
+          "EnglishHome",
+          "Beyyoglu",
+          "Flo",
+          "TacPorselen",
+          "Goturc",
+          "TSoft",
+          "Kargorasyon",
+          "Muzigo",
+          "Yenitoptanci",
+          "Majolika",
+          "Kargom",
+          "Endolu",
+          "KRGL",
+          "KargomKolay",
+          "KoctasPazaryeri"
+        ],
+        "enum": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21
+        ]
+      },
+      "ShipmentData": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "Desi": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "Weight": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "Quantity": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Price": {
+            "type": "string",
+            "nullable": true
+          },
+          "Payer": {
+            "$ref": "#/components/schemas/MusteriEntegrasyonOdemeSekli"
+          },
+          "SalesCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "Sender": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ShipmentCustomer"
+              }
+            ]
+          },
+          "Recipient": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ShipmentCustomer"
+              }
+            ]
+          },
+          "ShipmentStatus": {
+            "$ref": "#/components/schemas/GonderiStatu"
+          },
+          "Content": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentType": {
+            "$ref": "#/components/schemas/GonderiSekli"
+          },
+          "IsCashOnDelivery": {
+            "type": "boolean"
+          },
+          "CashOnDeliveryAmount": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "DeliveryCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "DeliveryPointCode": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "MusteriEntegrasyonOdemeSekli": {
+        "type": "integer",
+        "description": "",
+        "x-enumNames": [
+          "Bos",
+          "GondericiOder",
+          "AliciOder",
+          "EntegrasyonFirmasiOder",
+          "EntegrasyonFirmasiKendiOder",
+          "EntegrasyonFirmasiOderKendi"
+        ],
+        "enum": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5
+        ]
+      },
+      "ShipmentCustomer": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "CustomerId": {
+            "type": "string",
+            "nullable": true
+          },
+          "FirstName": {
+            "type": "string",
+            "nullable": true
+          },
+          "LastName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Phone": {
+            "type": "string",
+            "nullable": true
+          },
+          "Email": {
+            "type": "string",
+            "nullable": true
+          },
+          "Address": {
+            "type": "string",
+            "nullable": true
+          },
+          "CityId": {
+            "type": "string",
+            "nullable": true
+          },
+          "DistrictName": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "GonderiStatu": {
+        "type": "integer",
+        "description": "",
+        "x-enumNames": [
+          "Kullanilmadi",
+          "Kullanildi",
+          "Iptal"
+        ],
+        "enum": [
+          1,
+          2,
+          3
+        ]
+      },
+      "GonderiSekli": {
+        "type": "integer",
+        "description": "",
+        "x-enumNames": [
+          "Standart",
+          "Pudo",
+          "BuKoli",
+          "EasyPoint",
+          "TrendyolPudo",
+          "SubePudo",
+          "Hepsimat",
+          "SuratliEsnafNoktasi",
+          "Yurtdisi",
+          "Depo",
+          "Sirketici",
+          "DepoIade"
+        ],
+        "enum": [
+          0,
+          4,
+          5,
+          7,
+          8,
+          8,
+          9,
+          10,
+          11,
+          12,
+          201,
+          202
+        ]
+      },
+      "RecallShipmentRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "Username": {
+            "type": "string",
+            "nullable": true
+          },
+          "Password": {
+            "type": "string",
+            "nullable": true
+          },
+          "TrackingCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "isSales": {
+            "type": "boolean"
+          },
+          "CancelReason": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "GonderiRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "KullaniciAdi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Sifre": {
+            "type": "string",
+            "nullable": true
+          },
+          "FirmaId": {
+            "$ref": "#/components/schemas/PazaryeriEntegrasyon"
+          },
+          "Data": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/Data"
+            }
+          }
+        }
+      },
+      "Data": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "Desi": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "Kg": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "Adet": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Fiyat": {
+            "type": "string",
+            "nullable": true
+          },
+          "KimOder": {
+            "$ref": "#/components/schemas/MusteriEntegrasyonOdemeSekli"
+          },
+          "SatisKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "Gonderen": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Gonderen"
+              }
+            ]
+          },
+          "Alici": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Alici"
+              }
+            ]
+          },
+          "GonderiDurumu": {
+            "$ref": "#/components/schemas/GonderiStatu"
+          },
+          "Icerik": {
+            "type": "string",
+            "nullable": true
+          },
+          "GonderiSekli": {
+            "$ref": "#/components/schemas/GonderiSekli"
+          },
+          "IsKapidanTahsilat": {
+            "type": "boolean"
+          },
+          "KapidaTahsilatTutari": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "TeslimKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeslimNoktaKodu": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "Gonderen": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Alici"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "KimlikNo": {
+                "type": "string",
+                "nullable": true
+              }
+            }
+          }
+        ]
+      },
+      "Alici": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "MusteriId": {
+            "type": "string",
+            "nullable": true
+          },
+          "Adi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Soyadi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Telefon": {
+            "type": "string",
+            "nullable": true
+          },
+          "Email": {
+            "type": "string",
+            "nullable": true
+          },
+          "Adres": {
+            "type": "string",
+            "nullable": true
+          },
+          "IlId": {
+            "type": "string",
+            "nullable": true
+          },
+          "IlceAdi": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "GonderiyiGericekRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "KullaniciAdi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Sifre": {
+            "type": "string",
+            "nullable": true
+          },
+          "TakipKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "isSatis": {
+            "type": "boolean"
+          },
+          "IptalNeden": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "CargoTrackingResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "IsError": {
+            "type": "boolean"
+          },
+          "errorMessageEN": {
+            "type": "string",
+            "nullable": true
+          },
+          "errorMessageTR": {
+            "type": "string",
+            "nullable": true
+          },
+          "Data": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/CargoTrackingResult"
+            }
+          }
+        }
+      },
+      "CargoTrackingResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ShipmentObjId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "InvoiceType": {
+            "type": "string",
+            "nullable": true
+          },
+          "InvoiceSerialNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "InvoiceOrderNumber": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "InvoiceCreateDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "InvoiceTypeNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "EstimatedDeliveryDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "TotalNumberOfItem": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "NumberOfItem": {
+            "type": "string",
+            "nullable": true
+          },
+          "TotalDeciKg": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "VatAmount": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "VatExcludedAmount": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "TotalAmount": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "RefundAmount": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "InboundBranch": {
+            "type": "string",
+            "nullable": true
+          },
+          "InboundBranchPhone": {
+            "type": "string",
+            "nullable": true
+          },
+          "OutboundBranch": {
+            "type": "string",
+            "nullable": true
+          },
+          "OutboundBranchPhone": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentTrackingNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "TrackingURL": {
+            "type": "string",
+            "nullable": true
+          },
+          "CurrentLocation": {
+            "type": "string",
+            "nullable": true
+          },
+          "CurrentMovementDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentStatusTR": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentStatusEN": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentStatusId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "DelayStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "DelayReasonTR": {
+            "type": "string",
+            "nullable": true
+          },
+          "DelayReasonEN": {
+            "type": "string",
+            "nullable": true
+          },
+          "ReturnStatus": {
+            "type": "string",
+            "nullable": true
+          },
+          "ReturnDescriptionTR": {
+            "type": "string",
+            "nullable": true
+          },
+          "ReturnDescriptionEN": {
+            "type": "string",
+            "nullable": true
+          },
+          "DeliveryDate": {
+            "type": "string",
+            "nullable": true
+          },
+          "Recipient": {
+            "type": "string",
+            "nullable": true
+          },
+          "MeasuredDeci": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "MeasuredKg": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "MeasuredAmount": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "PaymentType": {
+            "type": "string",
+            "nullable": true
+          },
+          "Transactions": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/CargoTransaction"
+            }
+          }
+        }
+      },
+      "CargoTransaction": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "ObjId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ProcessingBranch": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "TransactionProcess": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "TransactionTime": {
+            "type": "string",
+            "nullable": true
+          },
+          "OperationBranch": {
+            "type": "string",
+            "nullable": true
+          },
+          "StatusTR": {
+            "type": "string",
+            "nullable": true
+          },
+          "StatusEN": {
+            "type": "string",
+            "nullable": true
+          },
+          "StatusCode": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "GonderiSonuc": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "IsError": {
+            "type": "boolean"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "Gonderiler": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/KargoGonderileri"
+            }
+          }
+        }
+      },
+      "KargoGonderileri": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "KargoObjId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "EvrakTuru": {
+            "type": "string",
+            "nullable": true
+          },
+          "SeriNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "SiraNo": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "Evraktarihi": {
+            "type": "string",
+            "nullable": true
+          },
+          "TesellumdenFaturaNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "PlanlananTeslimTarihi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Satiskodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "ToplamAdet": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "ParcaSiraSayi": {
+            "type": "string",
+            "nullable": true
+          },
+          "ToplamDesiKg": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "KdvTutar": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "TutarKdvsiz": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "Tutar": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "IadeTutar": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "CikisSubesi": {
+            "type": "string",
+            "nullable": true
+          },
+          "CikisSubeTel": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeslimatSubesi": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeslimatSubeTel": {
+            "type": "string",
+            "nullable": true
+          },
+          "KargoTakipNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "TakipUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "KargonunBulunduguYer": {
+            "type": "string",
+            "nullable": true
+          },
+          "SonHareketTarihi": {
+            "type": "string",
+            "nullable": true
+          },
+          "KargonunDurumu": {
+            "type": "string",
+            "nullable": true
+          },
+          "KargonunDurumuSayi": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "DevirDurum": {
+            "type": "string",
+            "nullable": true
+          },
+          "DevirSebebi": {
+            "type": "string",
+            "nullable": true
+          },
+          "IadeDurum": {
+            "type": "string",
+            "nullable": true
+          },
+          "IadeAciklama": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeslimTarihi": {
+            "type": "string",
+            "nullable": true
+          },
+          "TeslimAlan": {
+            "type": "string",
+            "nullable": true
+          },
+          "OlcumDesi": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "OlcumKg": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "OlcumTutar": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "TahsilatTipi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Hareketler": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/KargoHareketi"
+            }
+          }
+        }
+      },
+      "KargoHareketi": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "HareketObjId": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "IslemSubesi": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "IslemSureci": {
+            "type": "string",
+            "nullable": true
+          },
+          "Aciklama": {
+            "type": "string",
+            "nullable": true
+          },
+          "IslemTarihi": {
+            "type": "string",
+            "nullable": true
+          },
+          "HareketYeri": {
+            "type": "string",
+            "nullable": true
+          },
+          "Islem": {
+            "type": "string",
+            "nullable": true
+          },
+          "KargoHareketKargonunDurumuSayi": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "KargoTakipHareketCokluSonuc": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "IsError": {
+            "type": "boolean"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "Gonderiler": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/KargoTakipHareketCoklu"
+            }
+          }
+        }
+      },
+      "KargoTakipHareketCoklu": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/KargoGonderileri"
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "GonderenUnvan": {
+                "type": "string",
+                "nullable": true
+              },
+              "AliciUnvan": {
+                "type": "string",
+                "nullable": true
+              }
+            }
+          }
+        ]
+      },
+      "KargoTakipTarihceList": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "Response": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/KargoTakipTarihceResult"
+            }
+          }
+        }
+      },
+      "KargoTakipTarihceResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "IsError": {
+            "type": "boolean"
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "Result": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "$ref": "#/components/schemas/KargoTakipTarihceResponse"
+            }
+          }
+        }
+      },
+      "KargoTakipTarihceResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "WebSiparisKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "TakipNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "HareketTipi": {
+            "type": "string",
+            "nullable": true
+          },
+          "HareketTarihi": {
+            "type": "string",
+            "nullable": true
+          },
+          "HareketYeri": {
+            "type": "string",
+            "nullable": true
+          },
+          "ToplamDesiKg": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "KargoTakipTarihceRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "CariKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "Sifre": {
+            "type": "string",
+            "nullable": true
+          },
+          "WebSiparisKodlari": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "KargoTakipNoList": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "CreateCommonBarcodeResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "isError": {
+            "type": "boolean"
+          },
+          "MessageTR": {
+            "type": "string",
+            "nullable": true
+          },
+          "MessageEN": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "Barcode": {
+            "type": "array",
+            "nullable": true,
+            "items": {}
+          },
+          "BarcodeNo": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "Value": {
+            "nullable": true
+          }
+        }
+      },
+      "CreateCommonBarcodeParam": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "UserName": {
+            "type": "string",
+            "nullable": true
+          },
+          "Password": {
+            "type": "string",
+            "nullable": true
+          },
+          "Shipment": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ShipmentModel"
+              }
+            ]
+          }
+        }
+      },
+      "ShipmentModel": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "SenderInformation": {
+            "type": "string",
+            "nullable": true
+          },
+          "Description": {
+            "type": "string",
+            "nullable": true
+          },
+          "RecipientAddress": {
+            "type": "string",
+            "nullable": true
+          },
+          "City": {
+            "type": "string",
+            "nullable": true
+          },
+          "District": {
+            "type": "string",
+            "nullable": true
+          },
+          "HomePhone": {
+            "type": "string",
+            "nullable": true
+          },
+          "WorkPhone": {
+            "type": "string",
+            "nullable": true
+          },
+          "MobilePhone": {
+            "type": "string",
+            "nullable": true
+          },
+          "EmailAddress": {
+            "type": "string",
+            "nullable": true
+          },
+          "RecipientId": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentType": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "PaymentType": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "InvoiceSerialNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "InvoiceOrderNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "ReferenceNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentNumber": {
+            "type": "string",
+            "nullable": true
+          },
+          "Item": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Deci": {
+            "type": "string",
+            "nullable": true
+          },
+          "Kg": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentContent": {
+            "type": "string",
+            "nullable": true
+          },
+          "CODPaymentType": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "CODAmount": {
+            "type": "string",
+            "nullable": true
+          },
+          "AdditionalServices": {
+            "type": "string",
+            "nullable": true
+          },
+          "TransportationType": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "DeliveryType": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "WarehouseAddress": {
+            "type": "string",
+            "nullable": true
+          },
+          "ShipmentModal": {
+            "type": "integer",
+            "format": "int32",
+            "nullable": true
+          },
+          "OutboundBranchCode": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsMarketplace": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "MarketPlace": {
+            "type": "string",
+            "nullable": true
+          },
+          "IsReturn": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ResultMesaj": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "isError": {
+            "type": "boolean"
+          },
+          "Message": {
+            "type": "string",
+            "nullable": true
+          },
+          "KargoTakipNo": {
+            "type": "string",
+            "nullable": true
+          },
+          "Barcode": {
+            "type": "array",
+            "nullable": true,
+            "items": {}
+          },
+          "BarcodeNo": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "string"
+            }
+          },
+          "Value": {
+            "nullable": true
+          }
+        }
+      },
+      "MarketPlace": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "KullaniciAdi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Sifre": {
+            "type": "string",
+            "nullable": true
+          },
+          "Data": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Gonder"
+              }
+            ]
+          }
+        }
+      },
+      "Gonder": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "EntegrasyonFirmasi": {
+            "$ref": "#/components/schemas/WebMusteriEntegrasyon"
+          },
+          "KargoMusteriKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "WebSiparisKodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "Desi": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "Kg": {
+            "type": "number",
+            "format": "decimal"
+          },
+          "Adet": {
+            "type": "integer",
+            "format": "int32"
+          }
+        }
+      },
+      "WebMusteriEntegrasyon": {
+        "type": "integer",
+        "description": "",
+        "x-enumNames": [
+          "Trendyol",
+          "Hepsiburada",
+          "N11",
+          "Gittigidiyor",
+          "CicekSepeti",
+          "Dolap",
+          "Bos"
+        ],
+        "enum": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ]
+      },
+      "DataDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "Adet": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Desi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Kg": {
+            "type": "string",
+            "nullable": true
+          },
+          "KimOder": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Satiskodu": {
+            "type": "string",
+            "nullable": true
+          },
+          "Gonderen": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GonderenAliciDto"
+              }
+            ]
+          },
+          "Alici": {
+            "nullable": true,
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/GonderenAliciDto"
+              }
+            ]
+          },
+          "Icerik": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "GonderenAliciDto": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "MusteriId": {
+            "type": "string",
+            "nullable": true
+          },
+          "Adi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Soyadi": {
+            "type": "string",
+            "nullable": true
+          },
+          "Telefon": {
+            "type": "string",
+            "nullable": true
+          },
+          "Email": {
+            "type": "string",
+            "nullable": true
+          },
+          "IlId": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "Ilce": {
+            "type": "string",
+            "nullable": true
+          },
+          "Adres": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      }
+    }
+  }
+}

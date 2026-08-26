@@ -242,8 +242,11 @@ test('TY-SURAT-17: WebSiparisKodu SIPARIS NUMARASI DEGILDIR', () => {
   )
   assert.ok(registry.includes('DÜZELTİLMİŞ VARSAYIM'))
   assert.ok(registry.includes('PRODUCTION_PROVEN'))
-  // Host celiskisi SAKLANMAZ.
-  assert.ok(registry.includes('CONFLICTING'))
+  // Host sorusu 2026-08-26 salt-okunur fingerprinting ile COZULDU:
+  // api01 origin'i 522, api02 canli "Sürat Kargo Web API" servis ediyor ve
+  // /api/OrtakBarkodOlustur orada tanimli. Bu satir eskiden 'CONFLICTING'
+  // pinliyordu; kanit degistigi icin GUNCELLENDI.
+  assert.ok(registry.includes('API02_LIVE_FOR_THIS_ACCOUNT'))
   // Kimlikler AYRI kalir.
   assert.ok(registry.includes('`packageId` | `ReferansNo`'))
 })

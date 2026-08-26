@@ -7,7 +7,7 @@ Sırlar İÇERMEZ. Her satır KANIT SEVİYESİ taşır.
 | Marketplace | Trendyol | OFFICIAL |
 | Carrier | Sürat Kargo | OFFICIAL |
 | Servis modu | `SURAT_CANONICAL_API` | PRODUCTION (canary precheck, TarzimTuba) |
-| Host | `https://api02.suratkargo.com.tr` | **ÇELİŞKİLİ** — aşağıya bakın |
+| Host | `https://api02.suratkargo.com.tr` | OFFICIAL_PUBLIC — aşağıya bakın |
 | Operasyon | `POST /api/OrtakBarkodOlustur` | SCHEMA_DERIVED (ef944e2) |
 | İstek şeması | `{KullaniciAdi, Sifre, Gonderi{31 alan}}` | OFFICIAL (Sürat "GonderiyiKargoyaGonder Entegrasyonu API Dokümanı", Gönderi class) |
 | Yanıt şeması | `ResultMesaj {isError, Message, Barcode[], BarcodeNo[]}` | SCHEMA_DERIVED |
@@ -67,20 +67,58 @@ olarak NE gönderildiyse O. Bu, iki görünürdeki çelişkiyi çözer:
 
 İki akış ÇELİŞMEZ; SSP mantığı DEĞİŞTİRİLMEDİ.
 
-## Host — ÇÖZÜLMEMİŞ ÇELİŞKİ
+## Host — ÇÖZÜLDÜ (salt-okunur kanıtla)
 
-| Kaynak | api01 | api02 |
+2026-08-26 salt-okunur uç fingerprinting (DNS/HEAD/GET; kimlik bilgisi YOK,
+gövde YOK, mutasyon YOK):
+
+| Kontrol | api01 | api02 |
 | --- | --- | --- |
-| Sürat PDF ×3 (`tmp/pdf-text/`) | **Canlı Link** | **Test Link** |
-| `server/index.mjs:70-75` (legacy REST sabitleri) | `SURAT_REST_LIVE_BASE_URL` | `SURAT_REST_TEST_BASE_URL` |
-| `suratWebApiClient.ts:29-36` (kanonik) | — | "VENDOR_CONFIRMED_LIVE" |
+| DNS | 104.18.24.222 / .25.222 (Cloudflare) | AYNI edge IP'leri |
+| `/swagger/ui/index` | **HTTP 522** — origin yanıt vermiyor | **HTTP 200** |
+| `/swagger/docs/v1` | 404 (gövde 3162 B) | 404 (gövde 1926 B) → FARKLI backend |
+| Canlı sözleşme | — | `/swagger/v2/swagger.json` → **"Sürat Kargo Web API" 1.0.0** |
 
-Kanonik istemcinin iddiasını destekleyen ARTEFAKT DEPODA YOK: `ef944e2`
-commit metni ve kod yorumu dışında e-posta/Swagger/örnek bulunamadı
-(`git log --all -S"api02"` tarandı). `HOST_CONTRACT_CONFIDENCE = CONFLICTING`.
+`/api/OrtakBarkodOlustur` **api02'nin canlı Web API'sinde tanımlıdır**.
+api01'in origin'i şu an ulaşılamıyor.
 
-Host DEĞİŞTİRİLMEDİ: api01'e geçmek gerçek ve faturalanabilir gönderi
-yaratabilir; önce satıcı teyidi gerekir.
+**Çelişki nasıl çözülür:** depo PDF'lerindeki `api01=Canlı / api02=Test`
+eşlemesi 2024 tarihli **`GonderiyiKargoyaGonder` REST ürününe** aittir. Bu
+kayıt farklı bir ürünü — "Sürat Kargo Web API" — tanımlar ve o ürün api02'de
+yayındadır. `server/index.mjs:70-75` legacy sabitleri de eski ürüne aittir.
+
+`HOST_CLASSIFICATION = API02_LIVE_FOR_THIS_ACCOUNT` (OFFICIAL_PUBLIC).
+Host DEĞİŞTİRİLMEDİ ve değiştirilmemelidir.
+
+## Canlı sözleşmenin söyledikleri — ve SÖYLEMEDİKLERİ
+
+`docs/contracts/surat-web-api-swagger-v2.json` (api02'den alındı, sır
+İÇERMEZ) **20 uç** listeler. ANCAK: hiçbir uç için `parameters`,
+`definitions` ya da yanıt şeması YOKTUR — yalnız yol listesidir.
+
+Dolayısıyla bu sözleşme alan tiplerini (`Iademi` dahil) ve `KargoBarkod`
+rolünü **BELİRLEYEMEZ**. Bu sorular hâlâ açıktır.
+
+### AÇIK SORU — pazaryeri için AYRI uç var
+
+Listede şunlar da bulunuyor:
+
+```
+/api/OrtakBarkodOlustur      ← şu an KULLANDIĞIMIZ (genel)
+/api/PazaryeriOrtakBarkod    ← pazaryeri ortak barkod
+/api/PazaryeriGonderi        ← pazaryeri gönderi
+/api/CreateCommonBarcode
+```
+
+Biz `Pazaryerimi=1` + `EntegrasyonFirmasi=Trendyol` taşıyan bir pazaryeri
+gönderisini **GENEL** uca gönderiyoruz. Genel ucun sonuç kurucusunun
+pazaryeri gönderisini işleyememesi, gözlenen
+`String → KargoBarkod` cast hatası için **KANITA DAYALI BİR ADAYDIR**.
+
+**UÇ DEĞİŞTİRİLMEDİ.** Swagger bu uçların gövdesini belgelemiyor;
+`PazaryeriOrtakBarkod`'un ne kabul ettiği ve ne döndürdüğü BİLİNMİYOR.
+Kanıtsız uç değiştirmek `bfcf7b8` hatasının tekrarı olur. Sürat'a sorulacak
+soru budur.
 
 ## Marketplace ön koşulu
 
