@@ -73,10 +73,7 @@ test('WEB-2/3/4: POST /api/OrtakBarkodOlustur + JSON kok govde', async () => {
   assert.equal(f.calls.length, 1)
   assert.equal(
     f.calls[0].url,
-        // ROTA DEĞİŞTİ: `Pazaryerimi=1` gönderisi pazaryeri ucuna gider.
-    // Canlı sözleşmede iki uç AYNI istek/yanıt modelini kullanır;
-    // değişen tek şey yoldur (CF-4104179900 sonrası).
-    'https://api02.suratkargo.com.tr/api/PazaryeriGonderi',
+    'https://api02.suratkargo.com.tr/api/OrtakBarkodOlustur',
   )
   assert.equal(f.calls[0].init.method, 'POST')
   assert.equal(f.calls[0].init.headers['Content-Type'], 'application/json')

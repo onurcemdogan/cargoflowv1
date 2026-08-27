@@ -108,10 +108,7 @@ test('SURAT-CANONICAL-BARCODE-E2E-REGRESSION-1', async () => {
   assert.equal(calls.length, 1, 'kanonik create TEK cagri OLMALI')
   const url = calls[0].url
   assert.ok(url.startsWith('https://api02.suratkargo.com.tr/'), url)
-  // ROTA DEĞİŞTİ: bu fixture `Pazaryerimi=1` taşır, dolayısıyla pazaryeri
-  // ucuna gider. Canlı sözleşmede iki uç AYNI istek/yanıt modelini
-  // kullanır; değişen tek şey yoldur.
-  assert.ok(url.endsWith('/api/PazaryeriGonderi'), url)
+  assert.ok(url.endsWith('/api/OrtakBarkodOlustur'), url)
   assert.equal(String(calls[0].init?.method ?? '').toUpperCase(), 'POST')
 
   // ── LEGACY ZİNCİR TAMAMEN YOK ───────────────────────────────────────
@@ -220,7 +217,7 @@ test('BILLING-E2E-7: tek tiklama ikinci bir gonderi URETEMEZ', async () => {
   assert.equal(calls.length, 1)
   // Kanonik zincirde ikinci create dali YOKTUR.
   assert.equal(
-    calls.filter((c) => c.url.includes('PazaryeriGonderi')).length, 1,
+    calls.filter((c) => c.url.includes('OrtakBarkodOlustur')).length, 1,
   )
 })
 

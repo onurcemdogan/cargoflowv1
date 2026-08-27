@@ -3462,6 +3462,69 @@ async function createSuratShipmentCore(request, response) {
   // ResultMesaj ayrıştırması tamamen Ünite 1/2/3A-1 servislerindedir.
   // Bu dalda legacy/api01/SOAP/test fallback YOKTUR.
   if (config.serviceMode === SURAT_CANONICAL_SERVICE_MODE) {
+    // ═══ KANITLANMIŞ BARKOD TAŞIMASI — TRENDYOL PAZARYERİ ════════════════
+    //
+    // Bu bir GERİ DÖNÜŞ ya da FALLBACK DEĞİLDİR: Trendyol × Sürat akışı için
+    // BİRİNCİL barkod taşımasıdır ve TEK gerçek üretim kanıtına dayanır.
+    //
+    // KANIT (`server/fixtures/surat-real-success-11415535074.zpl`):
+    //   host       webservices.suratkargo.com.tr/services.asmx
+    //   protokol   SOAP/XML
+    //   operasyon  OrtakBarkodOlustur · serviceType OrtakBarkodOlusturSoap
+    //   sonuç      013 · gerçek barkod · 2049 baytlık gerçek ZPL · yazdırıldı
+    //   çağrı      1
+    // Aynı ZPL bugünkü ayrıştırıcıdan BAYT BAYT AYNI geçiyor
+    // (`SURAT_HISTORICAL_REAL_ZPL_REPLAY`), yani hat bu yanıtı işleyebilir.
+    //
+    // KANONİK REST AİLESİ KAPANDI — iki kontrollü canlı deneme, barkod YOK:
+    //   4104179900 · POST /api/OrtakBarkodOlustur → String→KargoBarkod
+    //   4105268542 · POST /api/PazaryeriGonderi   → "Result is null!"
+    //
+    // BU DALDA YOKTUR: REST çağrısı, kayıt (`GonderiyiKargoyaGonder`),
+    // kayıt doğrulama, `labelOnlyChain` çıkarımı, REST→SOAP geri düşüşü,
+    // otomatik tekrar. Tam olarak TEK mutasyon çağrısı yapılır.
+    //
+    // Finansal kapı, uygunluk kapısı ve Trendyol Picking kapısı bu noktadan
+    // ÖNCE çalışır ve DEĞİŞMEMİŞTİR.
+    if (isTrendyolMarketplaceOrder(orderForSurat)) {
+      const { createSuratSoapPrimaryShipment } = await import(
+        './shipments/suratSoapPrimaryCreate.ts'
+      )
+      const soapAuthority = await buildSuratSoapCreateAuthority({
+        request,
+        config,
+        order: orderForSurat,
+        financialGate,
+      })
+      const boundConfig = soapAuthority.boundConfig
+      const soapOutcome = await createSuratSoapPrimaryShipment({
+        traceId: financialGate.trace?.traceId ?? soapAuthority.traceId,
+        stamp: () => new Date().toISOString(),
+        credentialSnapshot: soapAuthority.credentialSnapshot,
+        financialContext: financialGate.trace ?? {},
+        marketplace: orderForSurat?.marketplace,
+        credentialRecordIdentity: soapAuthority.credentialRecordIdentity,
+        wireAccountPreview: boundConfig.kullaniciAdi,
+        executeCreate: async ({ onWireReady }) => {
+          // TEK ÇAĞRI. Operasyon adı KANITLANMIŞ artefakttan gelir; bu
+          // fonksiyonun varsayılanı (combined op) BİLEREK EZİLİR.
+          const created = await createSuratCommonBarcodeSoap(
+            boundConfig,
+            orderForSurat,
+            reference,
+            {
+              operationName: 'OrtakBarkodOlustur',
+              serviceType: 'OrtakBarkodOlusturSoap',
+              onWireReady,
+            },
+          )
+          return mapSuratSoapExecutionResult(created)
+        },
+      })
+      response.json(buildSuratSoapCreateResponse(soapOutcome))
+      return
+    }
+
     const { createCanonicalSuratShipmentForRequest } = await import(
       './shipments/suratCanonicalCreateAdapter.ts'
     )
@@ -7320,6 +7383,28 @@ function maskAuthorityIdentifier(value) {
  * deposu YOKTUR ve kimlik yerel yapılandırmadan gelir — bu durumda kaynak
  * etiketi de bunu SÖYLER, `tenant.surat.*` gibi görünmez.
  */
+/**
+ * Trendyol PAZARYERİ gönderisi mi?
+ *
+ * Kanıtlanmış SOAP barkod taşıması YALNIZ bu akış için seçilir. Diğer
+ * pazaryerleri ve kendi platform gönderileri kanonik REST yolunda KALIR —
+ * onlar için bu değişikliği destekleyen üretim kanıtı YOKTUR.
+ *
+ * `index.mjs` `.ts` modüllerini yalnız DİNAMİK import ile yükler; bu yordam
+ * ise SENKRONDUR. Bu yüzden değer burada sabittir ve
+ * `SURAT_MARKETPLACE_REGISTRY.TRENDYOL.entegrasyonFirmasi` ile AYNI olduğu
+ * testle kilitlenir (`SOAP-PROVEN-5`) — sessizce ayrışamaz.
+ */
+const TRENDYOL_MARKETPLACE_NAME = 'Trendyol'
+
+function isTrendyolMarketplaceOrder(order) {
+  const marketplace = String(order?.marketplace ?? '')
+    .trim().toLocaleLowerCase('tr-TR')
+  if (!marketplace) return false
+  return marketplace
+    === TRENDYOL_MARKETPLACE_NAME.trim().toLocaleLowerCase('tr-TR')
+}
+
 async function buildSuratSoapCreateAuthority({ request, config, order, financialGate }) {
   const [snapshotModule, routing] = await Promise.all([
     import('./shipments/suratCredentialSnapshot.ts'),

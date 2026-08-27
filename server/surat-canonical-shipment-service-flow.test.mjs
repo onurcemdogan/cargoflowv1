@@ -112,10 +112,7 @@ test('SVC-1: Trendyol happy path → SUCCESS, TEK cagri', async () => {
   assert.equal(f.calls.length, 1)
   assert.equal(
     f.calls[0].url,
-        // ROTA DEĞİŞTİ: `Pazaryerimi=1` gönderisi pazaryeri ucuna gider.
-    // Canlı sözleşmede iki uç AYNI istek/yanıt modelini kullanır;
-    // değişen tek şey yoldur (CF-4104179900 sonrası).
-    'https://api02.suratkargo.com.tr/api/PazaryeriGonderi',
+    'https://api02.suratkargo.com.tr/api/OrtakBarkodOlustur',
   )
   assert.equal(store.saved.length, 1)
   const body = JSON.parse(f.calls[0].init.body)

@@ -376,20 +376,52 @@ test('SOAP-PRIMARY-10: basarisiz kanonik siparis SOAP ile OTOMATIK tekrarlanmaz'
     )
   }
 
-  // Sunucuda kanonik hatadan SOAP'a otomatik gecis YOKTUR.
+  // Sunucuda kanonik HATADAN SOAP'a otomatik gecis YOKTUR.
+  //
+  // GUNCELLEME: kanonik dal artik Trendyol pazaryeri gonderisini KANITLANMIS
+  // SOAP barkod tasimasina yonlendiriyor. Bu bir GERI DUSUS DEGILDIR ve bu
+  // testin korudugu degismezi ihlal etmez: secim, HERHANGI bir tasiyici
+  // cagrisindan ONCE ve YALNIZ pazaryeri kimligine gore yapilir; onceki bir
+  // denemenin sonucu OKUNMAZ.
+  //
+  // Bu yuzden asagidaki kontrol "SOAP adi gecmesin" gibi bir VEKIL olmaktan
+  // cikarilip GERCEK degismeze baglanir.
   const server = stripComments(INDEX_SOURCE)
   const canonicalAt = server.indexOf(
     'if (config.serviceMode === SURAT_CANONICAL_SERVICE_MODE) {',
   )
   const soapAt = server.indexOf("if (config.serviceMode === 'ORTAK_BARKOD_SOAP') {")
   const canonicalBlock = server.slice(canonicalAt, soapAt)
+
+  // 1) IKI CAGRILI kayit zinciri kanonik dalda ASLA YOK.
   assert.equal(
     canonicalBlock.includes('createSuratRegisteredCommonBarcode'), false,
-    'kanonik dal SOAP create cagiriyor',
+    'kanonik dal iki cagrili kayit zincirini cagiriyor',
   )
-  assert.equal(
-    canonicalBlock.includes('createSuratSoapPrimaryShipment'), false,
-    'kanonik dal SOAP birincil yolunu cagiriyor',
+
+  // 2) SOAP secimi PAZARYERI kimligine dayanir, bir SONUCA degil.
+  const guardAt = canonicalBlock.indexOf(
+    'if (isTrendyolMarketplaceOrder(orderForSurat)) {',
+  )
+  assert.ok(guardAt > 0, 'SOAP secimi pazaryeri kosuluna bagli OLMALI')
+  const soapBlock = canonicalBlock.slice(
+    guardAt,
+    canonicalBlock.indexOf('createCanonicalSuratShipmentForRequest', guardAt),
+  )
+  // 3) Secim, kanonik REST denendikten SONRA gelmez: blok kanonik sonucu ya
+  //    da hatasini OKUMAZ; catch icinde DEGILDIR.
+  for (const forbidden of [
+    'canonicalResult', 'catch', 'errorCode', 'retry', 'fallback',
+  ]) {
+    assert.equal(
+      soapBlock.includes(forbidden), false,
+      `SOAP secimi ${forbidden} okuyor — geri dusus olurdu`,
+    )
+  }
+  // 4) Guard, kanonik REST adaptorunun cagrilmasindan ONCE gelir.
+  assert.ok(
+    guardAt < canonicalBlock.indexOf('createCanonicalSuratShipmentForRequest'),
+    'SOAP secimi kanonik REST cagrisindan SONRA geliyor',
   )
 })
 

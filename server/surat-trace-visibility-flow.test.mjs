@@ -414,13 +414,37 @@ test('B10/B11: kanonik hatadan SONRA otomatik SOAP create YOK', () => {
   )
   assert.ok(nextBranchAt > canonicalAt, 'kanonik dal sinirlanamadi')
   const region = SOURCE.slice(canonicalAt, nextBranchAt)
+
+  // IKI CAGRILI kayit zinciri ve siparis-barkod SOAP'i kanonik dalda YOK.
   for (const soap of [
-    'createSuratCommonBarcodeSoap', 'createSuratRegisteredCommonBarcode',
-    'createSuratBarcodeOrderSoap',
+    'createSuratRegisteredCommonBarcode', 'createSuratBarcodeOrderSoap',
   ]) {
     assert.equal(
       region.includes(soap), false,
       `kanonik dal hata sonrasi SOAP create cagiriyor: ${soap}`,
+    )
+  }
+
+  // GUNCELLEME: Trendyol pazaryeri gonderisi artik KANITLANMIS SOAP barkod
+  // tasimasini kullaniyor (`createSuratCommonBarcodeSoap`, TEK cagri). Bu bir
+  // FALLBACK DEGILDIR, bu yuzden "ad gecmesin" vekili yerine GERCEK degismez
+  // dogrulanir: secim, herhangi bir tasiyici cagrisindan ONCE ve YALNIZ
+  // pazaryeri kimligine gore yapilir; bir SONUC okunmaz.
+  const guardAt = region.indexOf('if (isTrendyolMarketplaceOrder(orderForSurat)) {')
+  assert.ok(guardAt > 0, 'SOAP secimi pazaryeri kosuluna bagli OLMALI')
+  const restAt = region.indexOf('createCanonicalSuratShipmentForRequest')
+  assert.ok(restAt > guardAt, 'SOAP secimi kanonik REST cagrisindan SONRA')
+  const soapBlock = region.slice(guardAt, restAt)
+  assert.equal(
+    (soapBlock.match(/createSuratCommonBarcodeSoap\(/g) ?? []).length, 1,
+    'kanonik Trendyol dalinda TEK SOAP cagrisi OLMALI',
+  )
+  for (const forbidden of [
+    'canonicalResult', 'catch', 'errorCode', 'retry', 'fallback',
+  ]) {
+    assert.equal(
+      soapBlock.includes(forbidden), false,
+      `SOAP secimi ${forbidden} okuyor — geri dusus olurdu`,
     )
   }
 })

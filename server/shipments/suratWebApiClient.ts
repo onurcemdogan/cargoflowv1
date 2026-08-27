@@ -39,51 +39,6 @@ export const SURAT_CANONICAL_LIVE_API_BASE_URL =
 export const SURAT_CANONICAL_CREATE_PATH = '/api/OrtakBarkodOlustur'
 
 /**
- * PAZARYERI gönderisi için ayrı yol.
- *
- * ═══ NEDEN ═══════════════════════════════════════════════════════════════
- *
- * api02'nin CANLI OpenAPI 3 sözleşmesi (`docs/contracts/` altında işlenmiş
- * hâli) `/api/PazaryeriGonderi` ile `/api/OrtakBarkodOlustur` için AYNI istek
- * modelini (`OrtakBarkodOlusturParam`) ve AYNI yanıt modelini (`ResultMesaj`)
- * tanımlar. Yani yol dışında hiçbir şey değişmez: gövde de, ayrıştırıcı da,
- * baskı hattı da aynen kalır.
- *
- * ÜRETİM KANITI: `Pazaryerimi=1` + `EntegrasyonFirmasi=Trendyol` taşıyan bir
- * gönderi GENEL uca gönderildiğinde taşıyıcı kendi sonuç kurucusunda
- * `System.InvalidCastException: String → KargoBarkod`
- * (`OrtakBarkodController:1836`) veriyor (CF-4104179900). `ResultMesaj.Barcode`
- * sözleşmede tipsiz dizidir ve sunucu tarafında `KargoBarkod` taşır — hata
- * oraya bir MESAJ konmaya çalışıldığında oluşur.
- *
- * SINIFLANDIRMA: SUPPORTED (PROVEN DEĞİL). Sözleşmede hiçbir ucun açıklaması
- * yoktur; ayrım ad ve şekle dayanır. Tek kontrollü canlı canary bunu
- * kesinleştirecek.
- */
-export const SURAT_MARKETPLACE_CREATE_PATH = '/api/PazaryeriGonderi'
-
-/**
- * Yol, GÖNDERİNİN KENDİSİNDEN türetilir — çağıranın ayrı bir bayrağından
- * DEĞİL. Böylece `Pazaryerimi=1` olan bir gönderinin genel uca gitmesi
- * YAPISAL OLARAK imkânsızdır; iki alan birbirinden ayrılamaz.
- */
-export function resolveSuratCanonicalCreatePath(
-  gonderi: Pick<SuratGonderiModel, 'Pazaryerimi'> | null | undefined,
-): string {
-  return Number(gonderi?.Pazaryerimi) === 1
-    ? SURAT_MARKETPLACE_CREATE_PATH
-    : SURAT_CANONICAL_CREATE_PATH
-}
-
-/** İzde/loglarda görünen operasyon adı — seçilen yolla TUTARLI. */
-export function resolveSuratCanonicalOperationName(
-  gonderi: Pick<SuratGonderiModel, 'Pazaryerimi'> | null | undefined,
-): string {
-  return resolveSuratCanonicalCreatePath(gonderi)
-    .replace('/api/', '')
-}
-
-/**
  * SSRF/yanlış hedef koruması: canonical istemci YALNIZ vendor tarafından
  * doğrulanmış canlı host'a istek atabilir. Yeni host eklemek AÇIK bir kod
  * değişikliği gerektirir; yapılandırmadan rastgele URL kabul edilmez.
@@ -191,8 +146,6 @@ export interface SuratResultMesaj {
 }
 
 export interface SuratCanonicalCreateResult {
-  /** GERÇEKTEN çağrılan yol — izde kurgulanmaz, buradan taşınır. */
-  createPath?: string
   trackingNo: string
   barcode: unknown[]
   barcodeNo: string[]
@@ -313,8 +266,7 @@ export async function createOrtakBarkodShipment(
 ): Promise<SuratCanonicalCreateResult> {
   const baseUrl = params.baseUrl ?? SURAT_CANONICAL_LIVE_API_BASE_URL
   assertAllowedHost(baseUrl)
-  // Pazaryeri gönderisi pazaryeri ucuna gider; diğerleri genel uca.
-  const endpoint = `${baseUrl}${resolveSuratCanonicalCreatePath(params.gonderi)}`
+  const endpoint = `${baseUrl}${SURAT_CANONICAL_CREATE_PATH}`
   const request: SuratOrtakBarkodRequest = {
     KullaniciAdi: params.credentials.kullaniciAdi,
     Sifre: params.credentials.sifre,
@@ -374,25 +326,19 @@ export async function createOrtakBarkodShipment(
       'unknown',
     )
   }
-  return {
-    ...parseSuratOrtakBarkodResponse(payload as SuratResultMesaj),
-    // İz GERÇEKTEN çağrılan yolu taşır; sabitten yeniden türetilmez.
-    createPath: resolveSuratCanonicalCreatePath(params.gonderi),
-  }
+  return parseSuratOrtakBarkodResponse(payload as SuratResultMesaj)
 }
 
 /** Sır içermeyen log bağlamı (parola/gövde/tam takip no ASLA yazılmaz). */
 export function buildSuratCanonicalLogContext(params: {
   organizationId: string
   marketplace?: string
-  /** Seçilen operasyon; verilmezse genel uç adı yazılır. */
-  operation?: string
   credentials: SuratProductionCredentials
 }): Record<string, string> {
   return {
     tenantId: params.organizationId,
     adapter: 'SURAT_WEB_API',
-    operation: params.operation ?? 'OrtakBarkodOlustur',
+    operation: 'OrtakBarkodOlustur',
     host: new URL(SURAT_CANONICAL_LIVE_API_BASE_URL).hostname,
     marketplace: String(params.marketplace ?? ''),
     carrierAccountFingerprint: fingerprintAccount(params.credentials.kullaniciAdi),
