@@ -3486,7 +3486,16 @@ async function createSuratShipmentCore(request, response) {
     //
     // Finansal kapı, uygunluk kapısı ve Trendyol Picking kapısı bu noktadan
     // ÖNCE çalışır ve DEĞİŞMEMİŞTİR.
-    if (isTrendyolMarketplaceOrder(orderForSurat)) {
+    // Taşıma kararı TEK OTORİTEDEN gelir. Denetçi (`surat:billing:inspect`)
+    // de AYNI fonksiyonu çağırır; kopya mantık olsaydı ikisi ayrışır ve
+    // denetim yine yanlış taşıma raporlardı.
+    const { usesProvenSoapLabelTransport } = await import(
+      './shipments/suratLabelTransportRoute.ts'
+    )
+    if (usesProvenSoapLabelTransport({
+      configuredServiceMode: config.serviceMode,
+      marketplace: orderForSurat?.marketplace,
+    })) {
       const { createSuratSoapPrimaryShipment } = await import(
         './shipments/suratSoapPrimaryCreate.ts'
       )
@@ -7383,28 +7392,6 @@ function maskAuthorityIdentifier(value) {
  * deposu YOKTUR ve kimlik yerel yapılandırmadan gelir — bu durumda kaynak
  * etiketi de bunu SÖYLER, `tenant.surat.*` gibi görünmez.
  */
-/**
- * Trendyol PAZARYERİ gönderisi mi?
- *
- * Kanıtlanmış SOAP barkod taşıması YALNIZ bu akış için seçilir. Diğer
- * pazaryerleri ve kendi platform gönderileri kanonik REST yolunda KALIR —
- * onlar için bu değişikliği destekleyen üretim kanıtı YOKTUR.
- *
- * `index.mjs` `.ts` modüllerini yalnız DİNAMİK import ile yükler; bu yordam
- * ise SENKRONDUR. Bu yüzden değer burada sabittir ve
- * `SURAT_MARKETPLACE_REGISTRY.TRENDYOL.entegrasyonFirmasi` ile AYNI olduğu
- * testle kilitlenir (`SOAP-PROVEN-5`) — sessizce ayrışamaz.
- */
-const TRENDYOL_MARKETPLACE_NAME = 'Trendyol'
-
-function isTrendyolMarketplaceOrder(order) {
-  const marketplace = String(order?.marketplace ?? '')
-    .trim().toLocaleLowerCase('tr-TR')
-  if (!marketplace) return false
-  return marketplace
-    === TRENDYOL_MARKETPLACE_NAME.trim().toLocaleLowerCase('tr-TR')
-}
-
 async function buildSuratSoapCreateAuthority({ request, config, order, financialGate }) {
   const [snapshotModule, routing] = await Promise.all([
     import('./shipments/suratCredentialSnapshot.ts'),

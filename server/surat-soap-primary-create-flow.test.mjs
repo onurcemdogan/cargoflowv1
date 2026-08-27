@@ -401,7 +401,7 @@ test('SOAP-PRIMARY-10: basarisiz kanonik siparis SOAP ile OTOMATIK tekrarlanmaz'
 
   // 2) SOAP secimi PAZARYERI kimligine dayanir, bir SONUCA degil.
   const guardAt = canonicalBlock.indexOf(
-    'if (isTrendyolMarketplaceOrder(orderForSurat)) {',
+    'if (usesProvenSoapLabelTransport({',
   )
   assert.ok(guardAt > 0, 'SOAP secimi pazaryeri kosuluna bagli OLMALI')
   const soapBlock = canonicalBlock.slice(

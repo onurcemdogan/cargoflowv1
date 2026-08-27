@@ -22,6 +22,7 @@ const SOAP = await import('./shipments/suratSoapPrimaryCreate.ts')
 const SNAP = await import('./shipments/suratCredentialSnapshot.ts')
 const ROUTING = await import('./shipments/suratRoutingModel.ts')
 const MODEL = await import('./shipments/suratCanonicalGonderiModel.ts')
+const TRANSPORT = await import('./shipments/suratLabelTransportRoute.ts')
 
 const here = new URL('.', import.meta.url)
 const INDEX_SOURCE = readFileSync(new URL('./index.mjs', here), 'utf8')
@@ -150,7 +151,7 @@ test('TRENDYOL_SURAT_PROVEN_SOAP_BARCODE_E2E', async () => {
 
 test('SOAP-PROVEN-1: kanonik Trendyol dali SOAP tasimasini secer', () => {
   const at = INDEX_SOURCE.indexOf(
-    'if (isTrendyolMarketplaceOrder(orderForSurat)) {',
+    'if (usesProvenSoapLabelTransport({',
   )
   assert.ok(at > 0, 'Trendyol pazaryeri dali OLMALI')
   const block = INDEX_SOURCE.slice(
@@ -167,7 +168,7 @@ test('SOAP-PROVEN-1: kanonik Trendyol dali SOAP tasimasini secer', () => {
 
 test('SOAP-PROVEN-2: bu dalda REST/kayit/zincir YOKTUR', () => {
   const at = INDEX_SOURCE.indexOf(
-    'if (isTrendyolMarketplaceOrder(orderForSurat)) {',
+    'if (usesProvenSoapLabelTransport({',
   )
   const block = INDEX_SOURCE.slice(
     at, INDEX_SOURCE.indexOf('const { createCanonicalSuratShipmentForRequest }', at),
@@ -185,7 +186,10 @@ test('SOAP-PROVEN-2: bu dalda REST/kayit/zincir YOKTUR', () => {
 
 test('SOAP-PROVEN-3: pazaryeri OLMAYAN gonderi kanonik REST te KALIR', () => {
   // Degisiklik YALNIZ Trendyol icindir; digerleri icin uretim kaniti YOK.
-  assert.ok(INDEX_SOURCE.includes('function isTrendyolMarketplaceOrder(order)'))
+  // Karar TEK OTORITEDEDIR: `suratLabelTransportRoute.ts`. Denetci de AYNI
+  // fonksiyonu cagirir; satir ici kopya YOKTUR.
+  assert.ok(INDEX_SOURCE.includes('suratLabelTransportRoute.ts'))
+  assert.equal(INDEX_SOURCE.includes('function isTrendyolMarketplaceOrder'), false)
   assert.ok(INDEX_SOURCE.includes('createCanonicalSuratShipmentForRequest'))
 })
 
@@ -214,13 +218,35 @@ test('SOAP-PROVEN-4: WhoPays ve kimlik izolasyonu DEGISMEDI', () => {
   )
 })
 
-test('SOAP-PROVEN-5: Trendyol adi kayit defteriyle AYNI', () => {
-  // `index.mjs` senkrondur ve `.ts` sabitini import edemez; deger orada
-  // sabittir. Bu test sessiz ayrismayi ENGELLER.
-  assert.ok(INDEX_SOURCE.includes("const TRENDYOL_MARKETPLACE_NAME = 'Trendyol'"))
+test('SOAP-PROVEN-5: SOAP uygun pazaryeri kayit defteriyle AYNI', () => {
+  // Karar TEK OTORITEDEDIR; index.mjs artik satir ici sabit TUTMAZ.
+  // Uygun pazaryeri adi, model kayit defteriyle AYNI olmali — aksi halde
+  // Trendyol siparisleri sessizce kanonik REST'e duserdi.
+  assert.deepEqual([...TRANSPORT.SURAT_SOAP_LABEL_MARKETPLACES], ['trendyol'])
   assert.equal(
-    MODEL.SURAT_MARKETPLACE_REGISTRY.TRENDYOL.entegrasyonFirmasi, 'Trendyol',
+    MODEL.SURAT_MARKETPLACE_REGISTRY.TRENDYOL.entegrasyonFirmasi.toLowerCase(),
+    TRANSPORT.SURAT_SOAP_LABEL_MARKETPLACES[0],
   )
+  // Kanitlanmis uc degerleri de sabit.
+  assert.equal(
+    TRANSPORT.SURAT_SOAP_LABEL_HOST, 'webservices.suratkargo.com.tr/services.asmx',
+  )
+  assert.equal(TRANSPORT.SURAT_SOAP_LABEL_OPERATION, 'OrtakBarkodOlustur')
+  assert.equal(TRANSPORT.SURAT_SOAP_LABEL_SERVICE_TYPE, 'OrtakBarkodOlusturSoap')
+
+  // Trendyol + kanonik kayitli mod -> KANITLANMIS SOAP.
+  const trendyol = TRANSPORT.resolveSuratLabelTransport({
+    configuredServiceMode: 'SURAT_CANONICAL_API', marketplace: 'Trendyol',
+  })
+  assert.equal(trendyol.transport, 'SOAP')
+  assert.equal(trendyol.effectiveHost, TRANSPORT.SURAT_SOAP_LABEL_HOST)
+  // Pazaryeri OLMAYAN gonderi kanonik REST'te KALIR.
+  const own = TRANSPORT.resolveSuratLabelTransport({
+    configuredServiceMode: 'SURAT_CANONICAL_API', marketplace: '',
+  })
+  assert.equal(own.transport, 'CANONICAL_REST')
+  // Karar ONCEKI SONUCU girdi olarak ALMAZ (geri dusus olamaz).
+  assert.equal(TRANSPORT.resolveSuratLabelTransport.length, 1)
 })
 
 test('SOAP-PROVEN-6: yeni test test:surat icinde KAYITLI', () => {

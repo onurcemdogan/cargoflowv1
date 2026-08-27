@@ -430,7 +430,7 @@ test('B10/B11: kanonik hatadan SONRA otomatik SOAP create YOK', () => {
   // FALLBACK DEGILDIR, bu yuzden "ad gecmesin" vekili yerine GERCEK degismez
   // dogrulanir: secim, herhangi bir tasiyici cagrisindan ONCE ve YALNIZ
   // pazaryeri kimligine gore yapilir; bir SONUC okunmaz.
-  const guardAt = region.indexOf('if (isTrendyolMarketplaceOrder(orderForSurat)) {')
+  const guardAt = region.indexOf('if (usesProvenSoapLabelTransport({')
   assert.ok(guardAt > 0, 'SOAP secimi pazaryeri kosuluna bagli OLMALI')
   const restAt = region.indexOf('createCanonicalSuratShipmentForRequest')
   assert.ok(restAt > guardAt, 'SOAP secimi kanonik REST cagrisindan SONRA')

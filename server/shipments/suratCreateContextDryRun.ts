@@ -32,6 +32,7 @@ import {
   SURAT_CANONICAL_CREATE_PATH,
   SURAT_CANONICAL_ALLOWED_HOSTS,
 } from './suratWebApiClient.ts'
+import { resolveSuratLabelTransport } from './suratLabelTransportRoute.ts'
 
 const text = (value: unknown): string => String(value ?? '').trim()
 
@@ -182,11 +183,23 @@ export const BILLING_RELEVANT_GONDERI_FIELDS = [
 ] as const
 
 export interface CreateContextSummary {
+  /** Kiracının SAKLADIĞI mod. */
   serviceMode: string
   serviceType: string
   operationName: string
   createHost: string
   createPath: string
+  // ═══ FİİLÎ TAŞIMA — GERÇEK create ile AYNI çözücüden ══════════════════
+  // Denetçi eskiden yalnız kayıtlı modu basıyordu ve üretim SOAP çağırırken
+  // `SURAT_CANONICAL_API` + api02 diyordu (CF-4108176742). Artık İKİSİ de
+  // raporlanır ve fark AÇIKÇA görünür.
+  effectiveLabelTransport: string
+  effectiveServiceMode: string
+  effectiveHost: string
+  effectiveOperation: string
+  effectiveServiceType: string
+  effectiveTransportDiffers: boolean
+  effectiveTransportReason: string
   /** `PRIMARY` | `SELLER_PAYS` | `CASH_ON_DELIVERY` — gerçek çözücüden. */
   credentialClass: string
   credentialResolved: boolean
@@ -298,12 +311,27 @@ export function buildCreateContextSummary(
     if (reportable.includes(value)) secretValuesLeaked.push(field)
   }
 
+  // GERÇEK create yolunun kullandığı çözücünün TA KENDİSİ.
+  const transport = resolveSuratLabelTransport({
+    configuredServiceMode:
+      (input.suratConfig as Record<string, unknown>)?.serviceMode
+        ?? SURAT_CANONICAL_SERVICE_MODE,
+    marketplace: (input.order as Record<string, unknown>)?.marketplace,
+  })
+
   return {
     serviceMode: SURAT_CANONICAL_SERVICE_MODE,
     serviceType: SURAT_CANONICAL_SERVICE_TYPE,
     operationName: SURAT_CANONICAL_OPERATION_NAME,
     createHost: SURAT_CANONICAL_ALLOWED_HOSTS[0],
     createPath: SURAT_CANONICAL_CREATE_PATH,
+    effectiveLabelTransport: transport.transport,
+    effectiveServiceMode: transport.effectiveServiceMode,
+    effectiveHost: transport.effectiveHost,
+    effectiveOperation: transport.effectiveOperation,
+    effectiveServiceType: transport.effectiveServiceType,
+    effectiveTransportDiffers: transport.differsFromConfigured,
+    effectiveTransportReason: transport.reason,
     credentialClass: billingParty,
     credentialResolved: account !== null,
     accountFingerprint: account?.accountFingerprint ?? '',
@@ -386,10 +414,17 @@ export function formatCreateContextReport(
 ): string[] {
   const lines = [
     `CASE                    ${label}`,
-    `SERVICE_MODE            ${summary.serviceMode}`,
-    `SERVICE_TYPE            ${summary.serviceType}`,
-    `CREATE_PATH             ${summary.createHost}${summary.createPath}`,
-    `OPERATION               ${summary.operationName}`,
+    `CONFIGURED_SERVICE_MODE ${summary.serviceMode}`,
+    `CONFIGURED_SERVICE_TYPE ${summary.serviceType}`,
+    `CONFIGURED_CREATE_PATH  ${summary.createHost}${summary.createPath}`,
+    '',
+    `EFFECTIVE_LABEL_TRANSPORT ${summary.effectiveLabelTransport}`,
+    `EFFECTIVE_SERVICE_MODE  ${summary.effectiveServiceMode}`,
+    `EFFECTIVE_HOST          ${summary.effectiveHost}`,
+    `EFFECTIVE_OPERATION     ${summary.effectiveOperation}`,
+    `EFFECTIVE_SERVICE_TYPE  ${summary.effectiveServiceType}`,
+    `EFFECTIVE_DIFFERS       ${summary.effectiveTransportDiffers ? 'YES' : 'NO'}`,
+    `EFFECTIVE_REASON        ${summary.effectiveTransportReason}`,
     '',
     `CREDENTIAL_CLASS        ${summary.credentialClass}`,
     `CREDENTIAL_RESOLVED     ${summary.credentialResolved ? 'YES' : 'NO'}`,
