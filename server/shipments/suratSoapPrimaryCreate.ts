@@ -93,6 +93,13 @@ export interface SoapPrimaryCreateParams {
 }
 
 export interface SoapPrimaryCreateOutcome {
+  /**
+   * ETİKET DURUMU — taşıyıcı kayıt teyidinden BAĞIMSIZ.
+   * `READY` iken operatör hemen yazdırabilir.
+   */
+  labelState?: 'READY' | 'GENERATING' | 'FAILED'
+  /** Salt-okunur kayıt teyidi. `PENDING` etiketi BLOKLAMAZ. */
+  carrierVerificationState?: 'CONFIRMED' | 'PENDING'
   ok: boolean
   /** Ağa GERÇEKTEN çıkıldı mı? Bloklandıysa 0 çağrı. */
   carrierCalled: boolean
@@ -429,8 +436,32 @@ export async function createSuratSoapPrimaryShipment(
     },
   })
 
-  const ok = classification.finalClassification === 'CREATED_CONFIRMED'
-    && verifiedShipment
+  // ═══ İKİ AYRI EKSEN ══════════════════════════════════════════════════
+  //
+  // ÖLÇÜLEN KUSUR — CF-4108176742: taşıyıcı `016` ile oluşturmayı onayladı,
+  // gerçek barkod ve 2104 baytlık gerçek ZPL döndü, operatör etiketi BASTI —
+  // ama sonuç `TRACKING_CONFIRMATION_MISSING` görünüyordu, çünkü `ok`
+  // salt-okunur takip teyidini (`verifiedShipment`) ŞART koşuyordu.
+  //
+  // Etiketin KULLANILABİLİRLİĞİ ile taşıyıcı KAYIT TEYİDİ farklı sorulardır.
+  // Depo kuralı da bunu zaten söylüyor (490e33d): geçerli ZPL varsa create
+  // başarılıdır; `verifiedShipment` ŞART DEĞİL, yalnız tanıdır. Ayrıca
+  // 17.07.2026 üretim bulgusu: kayıt yüzeyleri YALNIZ fiziksel tesellümden
+  // sonra dolar — yani teyit, baskıdan SONRA gelir. Baskıyı ona bağlamak
+  // sırayı tersine çevirir.
+  const artifactsComplete =
+    classification.barcodePresent === true && classification.zplPresent === true
+  const labelState =
+    classification.finalClassification === 'CREATED_CONFIRMED' && artifactsComplete
+      ? 'READY'
+      : classification.finalClassification === 'CREATED_CONFIRMED'
+        ? 'GENERATING'
+        : 'FAILED'
+  /** Salt-okunur kayıt teyidi — ETİKETİ BLOKLAMAZ. */
+  const carrierVerificationState = verifiedShipment ? 'CONFIRMED' : 'PENDING'
+
+  // Yazdırılabilir etiket = başarı. Teyit BEKLEMEDE olabilir.
+  const ok = labelState === 'READY'
   const carrierCreateStatus = ok
     ? 'SUCCESS'
     : classification.finalClassification === 'SAVED_BARCODE_FAILED'
@@ -443,7 +474,13 @@ export async function createSuratSoapPrimaryShipment(
 
   traceAttempt = appendTraceStage(traceAttempt, {
     stage: 'FINAL', section: 'FINAL_RESULT', at: stamp(),
-    data: { carrierCreateStatus, carrierCalled: crossedNetwork },
+    data: {
+      carrierCreateStatus,
+      carrierCalled: crossedNetwork,
+      // İki eksen izde de AYRI görünür.
+      labelState,
+      carrierVerificationState,
+    },
   })
 
   return {
@@ -463,7 +500,11 @@ export async function createSuratSoapPrimaryShipment(
       barcodePresent: classification.barcodePresent,
       zplPresent: classification.zplPresent,
       verifiedShipment,
+      labelState,
+      carrierVerificationState,
     },
+    labelState,
+    carrierVerificationState,
     traceAttempt,
     response: execution.response ?? null,
   }

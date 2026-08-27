@@ -322,7 +322,18 @@ test('SOAP-PRIMARY-8: dogrulanmis kimlik olmadan 016 BASARI DEGILDIR', async () 
   )
   assert.equal(partial.outcome.classification.carrierRegistrationConfirmed, false)
 
-  // Artefaktlar TAM ama read teyidi YOK: yine "olusturuldu" DENMEZ.
+  // ARTEFAKTLAR TAM + read teyidi HENUZ YOK.
+  //
+  // DUZELTILDI. Bu blok eskiden `ok=false` ve `TRACKING_CONFIRMATION_MISSING`
+  // pinliyordu; yani YAZDIRILABILIR bir etiketi BASARISIZ sayiyordu.
+  // Uretim CF-4108176742 tam olarak buydu: 016, gercek barkod, 2104 baytlik
+  // gercek ZPL, operator etiketi BASTI — sonuc "eksik" gorunuyordu.
+  //
+  // Iki eksen AYRIDIR: etiket kullanilabilirligi vs tasiyici kayit teyidi.
+  // Depo kurali da bunu soyluyor (490e33d): gecerli ZPL varsa create
+  // basarilidir, `verifiedShipment` SART DEGIL. Ayrica 17.07.2026 bulgusu:
+  // kayit yuzeyleri YALNIZ fiziksel tesellumden sonra dolar — teyit
+  // BASKIDAN SONRA gelir; baskiyi ona baglamak sirayi ters cevirir.
   const unverified = await runSoap({
     execution: {
       httpSuccess: true, businessCode: '016', codeCategory: 'BARCODE_SUCCESS',
@@ -330,11 +341,24 @@ test('SOAP-PRIMARY-8: dogrulanmis kimlik olmadan 016 BASARI DEGILDIR', async () 
       zpl: '^XA^XZ', verifiedShipment: false, response: { ok: true },
     },
   })
-  assert.equal(unverified.outcome.ok, false)
+  assert.equal(unverified.outcome.ok, true, 'yazdirilabilir etiket BASARIDIR')
+  assert.equal(unverified.outcome.labelState, 'READY')
+  // Teyit BEKLEMEDE — ama etiketi BLOKLAMAZ.
+  assert.equal(unverified.outcome.carrierVerificationState, 'PENDING')
   assert.equal(
-    unverified.outcome.suratCreateTrace.carrierCreateStatus,
-    'TRACKING_CONFIRMATION_MISSING',
+    unverified.outcome.suratCreateTrace.carrierCreateStatus, 'SUCCESS',
   )
+
+  // Teyit gelince YALNIZ dogrulama ekseni degisir.
+  const verified = await runSoap({
+    execution: {
+      httpSuccess: true, businessCode: '016', codeCategory: 'BARCODE_SUCCESS',
+      trackingNumber: '41176176501029', barcode: 'Web00157962154',
+      zpl: '^XA^XZ', verifiedShipment: true, response: { ok: true },
+    },
+  })
+  assert.equal(verified.outcome.labelState, 'READY')
+  assert.equal(verified.outcome.carrierVerificationState, 'CONFIRMED')
 })
 
 /* ═══ SOAP-PRIMARY-9 ═══════════════════════════════════════════════ */
