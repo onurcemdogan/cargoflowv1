@@ -277,6 +277,18 @@ export const orders = pgTable(
     orderNumber: text('order_number').notNull(),
     externalOrderId: text('external_order_id'),
     marketplaceStatus: text('marketplace_status'),
+    // ── SATIŞ DİSPOZİSYONU (sale | return | cancel) ────────────────────
+    //
+    // NEDEN KOLON: dashboard toplamları Postgres içinde hesaplanır ve
+    // gruplama bu alana göre yapılır. Dispozisyon `marketplace_status`'ın
+    // yanı sıra ŞİFRELİ ham payload'daki `status` sinyalini de kullanır;
+    // SQL onu okuyamaz. Kuralı SQL'de YENİDEN YAZMAK ikinci bir uygulama
+    // doğurur ve zamanla ayrışır.
+    //
+    // Bu yüzden değer YAZIM ANINDA, istemcinin kullandığı AYNI saf
+    // fonksiyonla (`orderDispositionOf`) hesaplanıp saklanır: tek
+    // uygulama, SQL'de gruplanabilir.
+    salesDisposition: text('sales_disposition'),
     operationStatus: text('operation_status'),
     customerFirstName: text('customer_first_name'),
     customerLastName: text('customer_last_name'),

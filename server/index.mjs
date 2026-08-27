@@ -1511,10 +1511,33 @@ app.get('/api/analytics/orders', async (request, response) => {
                 ),
               ),
             ).size
+            // ═══ SATIŞ TOPLAMLARI POSTGRES'TE ═══════════════════════════
+            //
+            // Başlık kartlarının (satış tutarı, paket, kalem, adet, iade,
+            // iptal) sayıları artık satırları Node'a taşımadan hesaplanır.
+            // Ölçüm (PGlite, 25.000 sipariş): satır yolu p50 1487 ms →
+            // SQL yolu p50 104 ms; Node'a dönen satır 25.000 → 165.
+            //
+            // Anlam DEĞİŞMEZ: `totalsFromBuckets` alanları
+            // `calculatePeriodTotals` ile birebir eşleşir ve bu eşleşme
+            // dashboard-sql-aggregate-flow (DASH-SQL-2) ile kilitlidir.
+            const { loadDashboardAggregate, totalsFromBuckets } = await import(
+              './analytics/dashboardAggregateRepository.ts'
+            )
+            const aggregate = await loadDashboardAggregate(
+              db,
+              organizationId,
+              { startMs: startDate, endMs: endDate },
+              marketplaceAccountId,
+            )
             return {
               totalElements: localOrders.length,
               fetchedCount: localOrders.length,
               packageCount,
+              // Kartlar bunu kullanır; satır dizisi ikincil grafikler için
+              // taşınmaya devam eder (bkz. docs/DASHBOARD-AGGREGATION.md).
+              summary: totalsFromBuckets(aggregate),
+              summarySource: 'sql-aggregate',
               orders: sanitizeAnalyticsOrders(localOrders),
             }
           },

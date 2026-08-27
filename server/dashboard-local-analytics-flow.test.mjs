@@ -24,6 +24,22 @@ function sliceBlock(src, anchor, length = 2400) {
   return src.slice(idx, idx + length)
 }
 
+/**
+ * Bir dalı SABİT KARAKTER SAYISIYLA değil, GERÇEK SINIRIYLA keser.
+ *
+ * KÖK NEDEN: `sliceBlock(..., 2600)` bir pencere genişliği dayatıyordu.
+ * Dala meşru bir kod eklendiğinde (SQL toplaması) beklenen ifadeler
+ * pencerenin DIŞINA taşıyor ve test, gerçek bir regresyon olmadığı hâlde
+ * kırılıyordu. Ölçtüğü şey invaryant değil, KOD UZUNLUĞUYDU.
+ */
+function sliceUntil(src, anchor, endAnchor) {
+  const start = src.indexOf(anchor)
+  assert.notEqual(start, -1, `beklenen kod bulunamadı: ${anchor}`)
+  const end = src.indexOf(endAnchor, start)
+  assert.notEqual(end, -1, `dal sonu bulunamadı: ${endAnchor}`)
+  return src.slice(start, end)
+}
+
 const schema = await import('./db/schema.ts')
 process.env.ORDER_DATA_ENCRYPTION_KEY = randomBytes(32).toString('hex')
 process.env.SHIPMENT_ENCRYPTION_KEY = randomBytes(32).toString('hex')
@@ -120,7 +136,12 @@ test('DLA-2: Cancelled/Returned siparisler analitige dahil (yerel statuden turet
 // ── 3: endpoint auth branch — yerel DB, provider YOK, cache account-scoped ──
 test('DLA-3: /api/analytics/orders auth branch yerel DB kullanir; provider CAGRILMAZ', () => {
   const server = readSrc('server/index.mjs')
-  const block = sliceBlock(server, 'satış analitiği YALNIZ yerel PostgreSQL', 2600)
+  // Auth dalının TAMAMI: başlangıcından legacy dalına kadar.
+  const block = sliceUntil(
+    server,
+    'satış analitiği YALNIZ yerel PostgreSQL',
+    'LEGACY modu (DATABASE_URL yok)',
+  )
   // Aktif hesap cozulur + yerel DB analitik cagrilir.
   assert.match(block, /resolveActiveMarketplaceAccountId/)
   assert.match(block, /listOrdersForAnalytics/)

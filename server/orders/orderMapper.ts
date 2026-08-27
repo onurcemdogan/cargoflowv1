@@ -3,6 +3,25 @@
 // korunur) AÇIKÇA ayrılır. PII/adres ve raw payload şifreli tutulur.
 import { createHash } from 'node:crypto'
 import { encryptOrderPayload, decryptOrderPayload } from './orderEncryption.ts'
+import { orderDispositionOf } from '../../src/dashboard/dashboardSalesMetricDefinition.ts'
+
+/**
+ * Satış dispozisyonu YAZIM ANINDA hesaplanır.
+ *
+ * İSTEMCİYLE AYNI FONKSİYON kullanılır (`orderDispositionOf`). Kural SQL'de
+ * yeniden yazılsaydı ikinci bir uygulama doğar ve Türkçe-katlamalı normalize,
+ * RETURN>CANCEL>SALE önceliği ve alt-dize eşleşmesi zamanla ayrışırdı. Ayrıca
+ * sinyallerden biri (`rawOrder.status`) ŞİFRELİ payload'dadır; SQL onu
+ * okuyamaz.
+ */
+function resolveSalesDisposition(order: Record<string, unknown>): string {
+  return orderDispositionOf({
+    marketplaceStatus: order.marketplaceStatus,
+    packageStatus: order.packageStatus,
+    shipmentStatusName: order.shipmentStatusName,
+    rawOrder: order.rawOrder ?? order,
+  })
+}
 
 function str(value: unknown): string {
   return String(value ?? '').trim()
@@ -110,6 +129,7 @@ export function toOrderInsertValues(
     orderNumber: str(order.orderNumber) || str(order.packageId),
     externalOrderId: str(order.externalOrderId) || null,
     marketplaceStatus: str(order.marketplaceStatus) || null,
+    salesDisposition: resolveSalesDisposition(order),
     operationStatus: str(order.operationStatus) || null,
     customerFirstName: str(order.customerFirstName) || null,
     customerLastName: str(order.customerLastName) || null,
@@ -141,6 +161,7 @@ export function marketplaceUpdateSet(
     orderNumber: str(order.orderNumber) || str(order.packageId),
     externalOrderId: str(order.externalOrderId) || null,
     marketplaceStatus: str(order.marketplaceStatus) || null,
+    salesDisposition: resolveSalesDisposition(order),
     customerFirstName: str(order.customerFirstName) || null,
     customerLastName: str(order.customerLastName) || null,
     customerEmail: str(order.customerEmail) || null,

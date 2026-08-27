@@ -186,5 +186,6 @@
   "server/tenant-label-editor-render-flow.test.mjs",
   "server/app-performance-flow.test.mjs",
   "server/trendyol-high-volume-auto-label-e2e-flow.test.mjs",
+  "server/dashboard-sql-aggregate-flow.test.mjs",
   "server/label-address-styling-flow.test.mjs"
 ]

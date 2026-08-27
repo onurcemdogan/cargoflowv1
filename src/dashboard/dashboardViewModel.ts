@@ -1714,3 +1714,8 @@ function firstString(...values: Array<string | undefined>): string {
   return values.map((value) => String(value ?? '').trim()).find(Boolean) ?? ''
 }
 
+
+// Test dikişi: SQL toplaması bu fonksiyonun ÇIKTISIYLA karşılaştırılır.
+// Kopya bir referans uygulaması yazmak, karşılaştırmayı anlamsız kılardı —
+// karşılaştırılan şey ÜRETİMDE çalışan koddur.
+export const __testing = { calculatePeriodTotals }
