@@ -3070,6 +3070,8 @@ async function syncTrendyolStreamForOrganization(organizationId) {
         marketplaceAccountId,
         requireMarketplaceAccount: true,
       })
+      // Akışta yeni görülen paketler de kuyruğa alınır (sınır içinde).
+      await enqueueAutoLabelAfterSync(db, organizationId)
     }
 
     // KISMİ İLERLEME KORUNUR: çekim yarıda kaldıysa bile imleç yazılır ve
@@ -3109,6 +3111,35 @@ async function syncTrendyolStreamForAllOrganizations() {
     await syncTrendyolStreamForOrganization(target.organizationId)
   }
   return { organizations: targets.length }
+}
+
+// Senkron sonrası otomatik etiket kuyruğunu besler.
+//
+// GÜVENLİ: aktivasyon sınırı yoksa TEK BİR paket bile taranmaz. Sınır
+// varsa yalnız sınırdan SONRA ilk görülen paketler sıraya girer — bayrak
+// açıldığında geçmiş yığın otomatik etiketlenmez.
+//
+// BEST-EFFORT: burada bir hata senkronu BOZMAZ; etiket elle üretilebilir.
+async function enqueueAutoLabelAfterSync(db, organizationId) {
+  try {
+    const { enqueueEligibleAutoLabelJobs } = await import(
+      './shipments/autoLabelProducer.ts'
+    )
+    const report = await enqueueEligibleAutoLabelJobs(db, organizationId)
+    if (report.enqueued > 0) {
+      console.log(
+        `[auto-label] ${report.enqueued} paket kuyruga alindi `
+        + `(incelenen ${report.examined})`,
+      )
+    }
+    return report
+  } catch (error) {
+    console.error(
+      '[auto-label] kuyruk beslemesi basarisiz: '
+      + (error instanceof Error ? error.message : String(error)),
+    )
+    return null
+  }
 }
 
 async function syncTrendyolOrdersForOrganization(organizationId) {
@@ -3179,6 +3210,8 @@ async function syncTrendyolOrdersForOrganization(organizationId) {
     // DERİNLEMESİNE SAVUNMA: hesap kimliği yoksa yazma REDDEDİLİR.
     requireMarketplaceAccount: true,
   })
+  // Yeni görülen paketler otomatik etiket kuyruğuna alınır (sınır içinde).
+  await enqueueAutoLabelAfterSync(db, organizationId)
   return { synced: true }
   } finally {
     // Kayıt HER DURUMDA düşer (hata/erken dönüş dâhil).

@@ -98,3 +98,45 @@ kaydedildiği gibi yeniden kullanılır; zincir tükendiğinde
 
 Çekim yarıda kalsa bile (`FETCH_FAILED`) imleç yazılır: **kısmi ilerleme
 korunur**.
+
+## ═══ AKTİVASYON SINIRI — GEÇMİŞ YIĞIN KORUMASI ═══
+
+### Kanıtlanmış boşluk
+
+Bir tur boyunca üretim kodunda `enqueueLabelJob` çağıran **tek bir yer
+yoktu**. Kuyruk, worker ve politika hazırdı ama **üretici** yoktu: yani
+`LABEL_WORKER_ENABLED=true` yapılsaydı worker boş kuyruğu dönüp duracak,
+hiçbir etiket üretilmeyecekti. "Otomatik etiket" üretici olmadan
+tamamlanmış sayılmaz.
+
+### En kritik risk
+
+Üretici eklenirken bayrak açıldığı anda **geçmiş yığının tamamının** sıraya
+girmesi. Bu, tek bir ayar değişikliğiyle binlerce **geri alınamaz** ve
+**faturalanabilir** Sürat etiketi demektir.
+
+### Çözüm
+
+`autoLabel.activatedAt` (ISO) org ayarlarında saklanır ve aday sorgusu
+**SQL'de** `first_seen_at >= activatedAt` ile sınırlanır: sınırdan önceki
+paketler Node'a **bile gelmez**.
+
+**Fail-safe:** sınır yoksa, boşsa veya geçersizse hiçbir paket sıraya
+girmez. "Sınır tanımsız" asla "sınırsız" demek değildir. Paketin ilk
+görülme zamanı bilinmiyorsa da sıraya girmez.
+
+Açmadan önce kaç paketin etkileneceği sorulabilir:
+`countAutoLabelCandidates(db, orgId, boundaryMs)`.
+
+Tek turda en fazla `AUTO_LABEL_PRODUCER_BATCH` (200) aday işlenir —
+sınırsız yığın işleme yoktur.
+
+### Kanıt
+
+`server/auto-label-activation-boundary-flow.test.mjs`: 120 geçmiş + 3 yeni
+paketli kiracıda aktivasyon sonrası **yalnız 3** paket incelenir ve sıraya
+alınır (BOUNDARY-2); üretici iki kez çalışsa da mükerrer iş doğmaz
+(BOUNDARY-3); aktivasyon diğer org ayarlarını silmez (BOUNDARY-4);
+üretici hem durum hem akış senkronuna bağlıdır (BOUNDARY-7).
+
+Politika tarafı: `surat-auto-label-policy-flow` AUTO-BOUNDARY-1…4.

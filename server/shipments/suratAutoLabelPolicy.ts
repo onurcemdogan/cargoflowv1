@@ -45,6 +45,9 @@ export const AUTO_LABEL_BLOCK_REASONS = [
   'LABEL_ALREADY_PRESENT',
   'CARRIER_ARTIFACT_PRESENT',
   'PREVIOUS_NETWORK_CROSSED',
+  // Aktivasyon sınırından ÖNCE görülmüş paket — geçmiş yığın otomatik
+  // etiketlenmez.
+  'BEFORE_ACTIVATION_BOUNDARY',
 ] as const
 
 export type AutoLabelBlockReason = (typeof AUTO_LABEL_BLOCK_REASONS)[number]
@@ -60,6 +63,33 @@ export interface AutoLabelSettings {
   enabled?: boolean
   marketplaces?: string[]
   carriers?: string[]
+  /**
+   * ═══ AKTİVASYON SINIRI ═══════════════════════════════════════════════
+   *
+   * Otomatik etiketin AÇILDIĞI an (ISO). YALNIZ bu andan SONRA ilk kez
+   * görülen paketler otomatik sıraya girer.
+   *
+   * NEDEN ZORUNLU: bayrak açıldığında kiracının açık sekmesinde binlerce
+   * uygun geçmiş paket bekliyor olabilir. Sınır olmasaydı tek bir ayar
+   * değişikliği binlerce GERİ ALINAMAZ ve FATURALANABİLİR Sürat etiketi
+   * üretirdi. Sınır yoksa politika hiçbir paketi kabul etmez (fail-safe).
+   */
+  activatedAt?: string
+}
+
+/**
+ * Aktivasyon sınırını ms olarak çözer.
+ *
+ * FAIL-SAFE: sınır yoksa veya okunamıyorsa `null` döner ve hiçbir paket
+ * otomatik sıraya girmez. "Sınır tanımsız" ASLA "sınırsız" demek değildir.
+ */
+export function resolveActivationBoundary(
+  settings?: AutoLabelSettings | null,
+): number | null {
+  const raw = String(settings?.activatedAt ?? '').trim()
+  if (!raw) return null
+  const parsed = Date.parse(raw)
+  return Number.isFinite(parsed) ? parsed : null
 }
 
 const norm = (value: unknown): string =>
@@ -131,6 +161,11 @@ export function resolveAutoLabelEnqueue(params: {
   hasCarrierArtifact: boolean
   /** Önceki denemede ağ sınırı geçildi mi? (Trace V2 kanıtı) */
   previousNetworkCrossed: boolean
+  /**
+   * Paketin YEREL olarak İLK GÖRÜLDÜĞÜ an (ms). Aktivasyon sınırıyla
+   * karşılaştırılır; bilinmiyorsa paket otomatik sıraya GİRMEZ.
+   */
+  firstSeenAtMs?: number
 }): AutoLabelEnqueueDecision {
   const jobKey = autoLabelJobKey({ ...params.scope, packageId: params.packageId })
   const block = (
@@ -142,6 +177,24 @@ export function resolveAutoLabelEnqueue(params: {
   })
   if (!gate.enabled) {
     return block(gate.reason ?? 'AUTO_LABEL_DISABLED', 'Kiracı kapsamı kapalı.')
+  }
+  // ═══ AKTİVASYON SINIRI — GEÇMİŞ YIĞIN OTOMATİK ETİKETLENMEZ ═════════
+  //
+  // Paket, otomatik etiket AÇILMADAN ÖNCE görüldüyse otomatik sıraya
+  // GİRMEZ. Operatör onu elle etiketleyebilir; karar insanındır.
+  const boundary = resolveActivationBoundary(params.settings)
+  if (boundary === null) {
+    return block(
+      'BEFORE_ACTIVATION_BOUNDARY',
+      'Aktivasyon sınırı yok; geçmiş yığın otomatik etiketlenmez.',
+    )
+  }
+  const firstSeen = Number(params.firstSeenAtMs)
+  if (!Number.isFinite(firstSeen) || firstSeen < boundary) {
+    return block(
+      'BEFORE_ACTIVATION_BOUNDARY',
+      'Paket aktivasyon sınırından önce görülmüş.',
+    )
   }
   // Zaten etiket varsa taşıyıcıya GİDİLMEZ.
   if (params.hasLabelArtifact) {
