@@ -139,6 +139,13 @@ export interface SuratSemanticModel {
   readonly boldAddressSlots: readonly ZplField[]
   /** Şablon parmak izi — destek kararının makine-okunur özeti. */
   readonly fingerprint: string
+  /** Kaynakta ZATEN bulunan QR sayısı (0/1). `1` ise composer QR EKLEMEZ. */
+  readonly sourceQrCount?: number
+  /**
+   * Taşıyıcı adres bloğunu KENDİSİ dolduruyor mu?
+   * `true` ise composer adresi TEKRAR YAZMAZ (çift adres basılmaz).
+   */
+  readonly carrierOwnsAddressBlock?: boolean
   readonly printWidth: number
   readonly labelLength: number
 }
@@ -152,6 +159,28 @@ function fontMatches(field: ZplField, expected: SuratFontSignature): boolean {
   if (font.orientation !== expected.orientation) return false
   if (font.height !== expected.height) return false
   if (font.width !== expected.width) return false
+  if (expected.fontName !== undefined && font.fontName !== expected.fontName) return false
+  return true
+}
+
+/**
+ * TOLERANSLI font eşleşmesi.
+ *
+ * ÖLÇÜLEN GERÇEK: taşıyıcı aynı slotun PUNTOSUNU değiştiriyor
+ * (`^A0N,35,33` → `^A0N,30,36`, `^A0N,15,25` → `^A0N,20,33`). Punto kilidi
+ * bu yüzden şablonu tamamen reddettiriyordu ve etiket ham basılıyordu.
+ *
+ * KİMLİK katı kalır (font ailesi + yön): bunlar değişirse alan gerçekten
+ * başka bir alandır. Yalnız BOYUT gevşetilir — punto, alanın ANLAMINI
+ * değiştirmez.
+ */
+function fontFamilyMatches(
+  field: ZplField, expected: SuratFontSignature,
+): boolean {
+  const font = field.font
+  if (!font) return false
+  if (font.fontId !== expected.fontId) return false
+  if (font.orientation !== expected.orientation) return false
   if (expected.fontName !== undefined && font.fontName !== expected.fontName) return false
   return true
 }
@@ -180,6 +209,44 @@ function locate(
     return { error: `${slot.label} alanında ^FD yok` }
   }
   return { field }
+}
+
+/**
+ * Kaymış slot için TOLERANSLI arama — YALNIZ sahipsiz alanlar üzerinde.
+ *
+ * Yarıçap, gözlenen gerçek kaymadan (12 nokta) türetilir. Yarıçap içinde
+ * BİRDEN FAZLA aday varsa ya da hiç yoksa HATA döner: tahmin YAPILMAZ.
+ * Yanlış slota bağlanan bir alan, yanlış paketi taşıyan bir etiket demektir.
+ */
+const SLOT_DRIFT_RADIUS = 16
+
+function locateNearby(
+  fields: readonly ZplField[],
+  slot: SuratSlotSpec,
+  claimed: ReadonlySet<ZplField>,
+): { field: ZplField } | { error: string } {
+  const candidates = fields.filter((field) => {
+    if (claimed.has(field)) return false
+    if (field.positionType !== 'FT') return false
+    if (field.kind !== slot.kind) return false
+    const dx = field.x - slot.x
+    const dy = field.y - slot.y
+    if (Math.hypot(dx, dy) > SLOT_DRIFT_RADIUS) return false
+    // Font AİLESİ (kimlik) korunmalı; yalnız punto serbesttir.
+    if (slot.font && !fontFamilyMatches(field, slot.font)) return false
+    if (slot.kind !== 'graphic' && field.dataCommand === null) return false
+    return true
+  })
+  if (candidates.length === 0) {
+    return { error: `${slot.label} slotu yok (^FT${slot.x},${slot.y})` }
+  }
+  if (candidates.length > 1) {
+    // BELİRSİZLİKTE TAHMİN YOK — ham etikete düşülür.
+    return {
+      error: `${slot.label} slotu BELİRSİZ (${candidates.length} aday, ±${SLOT_DRIFT_RADIUS})`,
+    }
+  }
+  return { field: candidates[0] }
 }
 
 export interface SuratFieldExtraction {
@@ -228,19 +295,46 @@ function extractFromZplFields(
 ): SuratFieldExtraction {
   const fields: Partial<Record<SuratSemanticKey, SuratSemanticField>> = {}
   const errors: string[] = []
-  for (const baseSlot of SLOTS) {
-    // Yalnız BEKLENTİ değişir; koordinat, komut ailesi ve gövde kontrolü aynı.
-    const slot: SuratSlotSpec =
-      baseSlot.key === 'transferCenter' &&
-      expectations.transferFontWidth !== undefined &&
-      baseSlot.font
-        ? { ...baseSlot, font: { ...baseSlot.font, width: expectations.transferFontWidth } }
-        : baseSlot
+
+  // ═══ İKİ AŞAMALI SLOT SAHİPLENMESİ ═══════════════════════════════════
+  //
+  // NEDEN: taşıyıcı şablonu aynı slotları birkaç nokta kaydırıyor
+  // (`^FT115,470` → `^FT115,460`). Koordinat kilidi bunu "şablon tanınmadı"
+  // sayıp etiketi ham bastırıyordu.
+  //
+  // NEDEN İKİ AŞAMA: en yakın slot komşusu 20 nokta uzakta (adres 1/adres 2).
+  // Tek aşamada toleranslı arama, bir alanı YANLIŞ slota bağlayabilirdi.
+  // Bu yüzden önce TAM eşleşmeler alanı SAHİPLENİR; toleranslı arama yalnız
+  // SAHİPSİZ alanlar üzerinde çalışır ve belirsizlikte HATA verir.
+  //
+  // Bir alan en fazla BİR slota bağlanır → slotlar arası anlam sızıntısı
+  // YAPISAL OLARAK imkânsızdır.
+  const claimed = new Set<ZplField>()
+  const resolvedSlots: SuratSlotSpec[] = SLOTS.map((baseSlot) =>
+    baseSlot.key === 'transferCenter' &&
+    expectations.transferFontWidth !== undefined &&
+    baseSlot.font
+      ? { ...baseSlot, font: { ...baseSlot.font, width: expectations.transferFontWidth } }
+      : baseSlot)
+
+  const exactHits = new Map<SuratSemanticKey, ZplField>()
+  for (const slot of resolvedSlots) {
     const found = locate(zplFields, slot)
+    if ('error' in found) continue
+    exactHits.set(slot.key, found.field)
+    claimed.add(found.field)
+  }
+
+  for (const slot of resolvedSlots) {
+    const exact = exactHits.get(slot.key)
+    const found: { field: ZplField } | { error: string } = exact
+      ? { field: exact }
+      : locateNearby(zplFields, slot, claimed)
     if ('error' in found) {
       errors.push(found.error)
       continue
     }
+    claimed.add(found.field)
     const raw = found.field.data ?? ''
     fields[slot.key] = {
       key: slot.key,
@@ -272,6 +366,8 @@ function unsupported(
     addressLines: [],
     boldAddressSlots: [],
     fingerprint: 'unsupported',
+    sourceQrCount: 0,
+    carrierOwnsAddressBlock: false,
     printWidth,
     labelLength,
   }
@@ -306,7 +402,20 @@ export function resolveSuratSemanticModel(zpl: string): SuratSemanticModel {
   if (count('GB') !== 9) return fail(`beklenmeyen çizgi sayısı (^GB ${count('GB')})`)
   if (count('BC') !== 1) return fail(`beklenmeyen Code128 sayısı (^BC ${count('BC')})`)
   if (count('BX') !== 1) return fail(`beklenmeyen DataMatrix sayısı (^BX ${count('BX')})`)
-  if (count('BQ') !== 0) return fail(`kaynakta beklenmeyen QR var (^BQ ${count('BQ')})`)
+  // ═══ KAYNAKTAKİ QR — İKİ SÜRÜM ═══════════════════════════════════════
+  //
+  // Tasarım "kaynakta QR YOK, composer QR EKLER" varsayıyordu. Taşıyıcının
+  // güncel şablonu QR'ı ZATEN içeriyor; iskelet ise AYNI (GB 9, BC 1, BX 1,
+  // FO 9). Ret kaldırıldı ama GEVŞETİLMEDİ: 0 veya 1 QR kabul edilir, ikiden
+  // fazlası reddedilir, ve sayı parmak izine yazılır.
+  //
+  // KRİTİK: QR varlığı DİĞER slotları KAYDIRMAZ — slotlar konumla
+  // eşleşir, sıra numarasıyla DEĞİL. "QR geldi, alan indeksi +1" gibi bir
+  // çıkarım YOKTUR.
+  const sourceQrCount = count('BQ')
+  if (sourceQrCount > 1) {
+    return fail(`kaynakta birden fazla QR var (^BQ ${sourceQrCount})`)
+  }
 
   // ── 20 semantic alan ──────────────────────────────────────────────────
   const extraction = extractFromZplFields(zplFields)
@@ -323,18 +432,45 @@ export function resolveSuratSemanticModel(zpl: string): SuratSemanticModel {
   if (addressLines.length === 0) return fail('kaynakta adres satırı yok')
 
   // ── Bold adres bölgesi: üç slot da var ve BOŞ olmalı ──────────────────
+  // ═══ BOLD ADRES BÖLGESİ — İKİ SÜRÜM ══════════════════════════════════
+  //
+  // v1: taşıyıcı bu üç satırı BOŞ bırakır ve composer adresi oraya BÜYÜK
+  //     puntoyla tekrar yazar.
+  // v2: taşıyıcı bu bölgeyi ARTIK KENDİSİ dolduruyor (gözlenen gerçek
+  //     üretim etiketinde `^FT63,417` adres, `^FT63,433` kapı no).
+  //
+  // v2'de "slot dolu" bir HATA DEĞİLDİR: composer'ın ekleyeceği bilgi zaten
+  // oradadır ve üzerine yazmak adresi İKİ KEZ basardı. Bu durumda bölge
+  // devralınmaz ve `boldAddressSlots` BOŞ kalır.
+  //
+  // Slot HİÇ YOKSA yine HATA: bu, tanımadığımız bir şablondur.
   const boldAddressSlots: ZplField[] = []
+  let carrierOwnsAddressBlock = false
   for (const slot of BOLD_ADDRESS_SLOTS) {
     const found = locate(zplFields, slot)
-    if ('error' in found) return fail(found.error)
+    if ('error' in found) {
+      // v2'de üçüncü satır hiç bulunmayabilir; bölge taşıyıcıya aitse bu
+      // beklenen bir farktır, aksi hâlde tanınmayan şablondur.
+      if (carrierOwnsAddressBlock) continue
+      return fail(found.error)
+    }
     if ((found.field.data ?? '').trim() !== '') {
-      return fail(`${slot.label} slotu kaynakta DOLU — yazılamaz`)
+      carrierOwnsAddressBlock = true
+      continue
     }
     boldAddressSlots.push(found.field)
+    // NOT: kısmen dolu blok aşağıda tamamen devredilir — composer'ın kalan
+    // boş satırlara yazması adresi PARÇALI basardı.
   }
 
+  // Blok KISMEN doluysa tamamı taşıyıcıya aittir: kalan boş satırlara yazmak
+  // adresin bir kısmını taşıyıcının, kalanını bizim basmamız demekti.
+  if (carrierOwnsAddressBlock) boldAddressSlots.length = 0
+
   const fingerprint = [
-    'surat-real-v1',
+    // QR'sız kaynak `v1`, QR'lı taşıyıcı şablonu `v2`. Aynı iskelet.
+    sourceQrCount === 0 ? 'surat-real-v1' : 'surat-real-v2',
+    `bq${sourceQrCount}`,
     `pw${printWidth}`,
     `ll${labelLength}`,
     `gb${count('GB')}`,
@@ -343,6 +479,7 @@ export function resolveSuratSemanticModel(zpl: string): SuratSemanticModel {
     `fd${count('FD')}`,
     `slots${SLOTS.length}`,
     `bold${boldAddressSlots.length}`,
+    `addr${carrierOwnsAddressBlock ? 'carrier' : 'composer'}`,
   ].join('.')
 
   return {
@@ -354,11 +491,19 @@ export function resolveSuratSemanticModel(zpl: string): SuratSemanticModel {
     addressLines,
     boldAddressSlots,
     fingerprint,
+    sourceQrCount,
+    carrierOwnsAddressBlock,
     printWidth,
     labelLength,
   }
 }
 
-/** Şablon parmak izinin composer tarafından desteklenen sabit değeri. */
+/**
+ * v1 (QR'sız) şablonun parmak izi.
+ *
+ * Artık TEK desteklenen değer DEĞİLDİR: taşıyıcının güncel QR'lı şablonu
+ * `surat-real-v2…` üretir ve o da desteklenir. Sabit, v1 regresyonunu
+ * kilitlemek için durur.
+ */
 export const SUPPORTED_TEMPLATE_FINGERPRINT =
-  'surat-real-v1.pw799.ll799.gb9.bc1.bx1.fd38.slots20.bold3'
+  'surat-real-v1.bq0.pw799.ll799.gb9.bc1.bx1.fd38.slots20.bold3.addrcomposer'

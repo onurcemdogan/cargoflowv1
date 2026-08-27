@@ -56,7 +56,10 @@ import {
   type SuratSemanticKey,
   type SuratSemanticModel,
 } from './suratSemanticParser.ts'
-import { resolveSuratQrPayload, type SuratQrRejection, type SuratQrSource } from './suratQrPayload.ts'
+import {
+  resolveSuratQrPayload,
+  type SuratQrRejection, type SuratQrResolution, type SuratQrSource,
+} from './suratQrPayload.ts'
 
 // ═══ ÖLÇÜLMÜŞ SABİTLER ════════════════════════════════════════════════════
 //
@@ -568,15 +571,24 @@ export function composeSuratDurusoftLabel(
   }
 
   // ── 3) QR: doğrulanmış 727 + gerçek boşluk ────────────────────────────
-  const qr = resolveSuratQrPayload({
+  //
+  // TAŞIYICI ZATEN QR BASIYORSA composer İKİNCİSİNİ EKLEMEZ. Aynı gönderi
+  // için iki QR, tarayıcıda hangisinin okunacağını belirsizleştirir.
+  const carrierAlreadyPrintsQr = Number(semantic.sourceQrCount ?? 0) > 0
+  const qr: SuratQrResolution = carrierAlreadyPrintsQr
+    ? {
+        payload: null, source: null, rejection: null,
+        diagnostic: 'kaynak QR taşıyor; composer ikinci QR EKLEMEZ',
+      }
+    : resolveSuratQrPayload({
     cargoTrackingNumber: input.cargoTrackingNumber,
     ozelKargoTakipNo: input.ozelKargoTakipNo,
-    forbiddenValues: INVARIANT_KEYS.map((key) => fields[key]?.text).concat(
-      counted.digits,
-      fields.branch?.text,
-      fields.recipientPhone?.text,
-    ),
-  })
+      forbiddenValues: INVARIANT_KEYS.map((key) => fields[key]?.text).concat(
+        counted.digits,
+        fields.branch?.text,
+        fields.recipientPhone?.text,
+      ),
+    })
 
   // Komşu alanların İŞGAL KUTULARI, semantic geometriden türetilir.
   // Karakter sayısına bağlı sabit eşik YOKTUR: her kutu kendi metni, kendi
@@ -876,13 +888,22 @@ export function verifySuratOutputInvariants(
   // QR beklendiği gibi mi? (gövde EXACT doğrulanmış değer olmalı)
   const document = parseZplDocument(outputZpl)
   const qrCommands = document.commands.filter((command) => command.name === 'BQ')
+  // ═══ KAYNAKTA ZATEN QR OLABİLİR ══════════════════════════════════════
+  //
+  // Taşıyıcının güncel şablonu (v2) QR'ı KENDİSİ basıyor. Değişmez kontrolü
+  // "composer QR eklemediyse çıktıda QR OLMAMALI" varsayarsa, taşıyıcının
+  // kendi QR'ını bizim ürettiğimiz sanıp geçerli etiketi REDDEDER.
+  //
+  // Beklenen QR sayısı = kaynaktaki + composer'ın eklediği. Composer, kaynak
+  // zaten QR taşıyorsa İKİNCİSİNİ EKLEMEZ (çift QR basılmaz).
+  const sourceQrCount = Number(source.sourceQrCount ?? 0)
   if (expectedQrPayload === null) {
-    if (qrCommands.length > 0) {
+    if (qrCommands.length > sourceQrCount) {
       return { ok: false, reason: 'beklenmeyen QR üretildi' }
     }
     return { ok: true, reason: '' }
   }
-  if (qrCommands.length > 1) {
+  if (qrCommands.length > sourceQrCount + 1) {
     return { ok: false, reason: `birden çok QR (${qrCommands.length})` }
   }
   if (qrCommands.length === 1) {

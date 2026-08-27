@@ -273,18 +273,26 @@ test('CF-12: BELİRSİZ kritik alan FAIL-SAFE', async () => {
   assert.match(semantic.reason, /BELİRSİZ/)
 })
 
-test('CF-13: FONT İMZASI kayarsa FAIL-SAFE', async () => {
+test('CF-13: font KİMLİĞİ değişirse FAIL-SAFE, PUNTO değişirse değil', async () => {
   const { resolveSuratSemanticModel } = await parser()
-  // Koordinat aynı, font farklı → şablon bizim tanıdığımız şablon DEĞİL.
+  // GÜNCELLENDİ. Bu test eskiden PUNTO değişimini de reddediyordu; taşıyıcı
+  // güncel şablonda puntoları değiştirdiği için bu, geçerli etiketlerin
+  // hepsini ham bastırıyordu (kök neden).
+  //
+  // KİMLİK katı kalır: font AİLESİ/yön değişirse alan gerçekten başkadır.
   for (const [from, to] of [
-    ['^FT514,79^A0N,28,28', '^FT514,79^A0N,29,28'],
-    ['^FT63,376^A@N,15,10,TT0003M_', '^FT63,376^A0N,15,10'],
-    ['^FT25,706^A0B,20,28', '^FT25,706^A0N,20,28'],
+    ['^FT63,376^A@N,15,10,TT0003M_', '^FT63,376^A0N,15,10'],  // aile değişti
+    ['^FT25,706^A0B,20,28', '^FT25,706^A0N,20,28'],           // yön değişti
   ]) {
     const semantic = resolveSuratSemanticModel(zpl.replace(from, to))
-    assert.equal(semantic.supported, false, `font değişimi yakalanmalı: ${to}`)
-    assert.match(semantic.reason, /font imzası uyuşmuyor|beklenen komut ailesi/)
+    assert.equal(semantic.supported, false, `font KİMLİĞİ değişimi yakalanmalı: ${to}`)
+    assert.match(semantic.reason, /font imzası uyuşmuyor|beklenen komut ailesi|slotu yok/)
   }
+  // PUNTO kayması artık DESTEKLENİR — alanın anlamı değişmez.
+  const resized = resolveSuratSemanticModel(
+    zpl.replace('^FT514,79^A0N,28,28', '^FT514,79^A0N,29,28'),
+  )
+  assert.equal(resized.supported, true, resized.reason ?? '')
 })
 
 test('CF-14: yazılacak bölge DOLUYSA veya kaynakta QR VARSA FAIL-SAFE', async () => {
@@ -294,14 +302,28 @@ test('CF-14: yazılacak bölge DOLUYSA veya kaynakta QR VARSA FAIL-SAFE', async 
   const filled = resolveSuratSemanticModel(
     zpl.replace(emptySlot, '^FT63,417^A0N,15,25^FH' + BS + '^FDDOLU^FS'),
   )
-  assert.equal(filled.supported, false)
-  assert.match(filled.reason, /slotu kaynakta DOLU/)
+  // GÜNCELLENDİ. Taşıyıcının güncel şablonu bu bölgeyi KENDİSİ dolduruyor;
+  // "dolu" artık bir hata değil, composer'ın oraya YAZMAMASI gereken bir
+  // varyanttır (çift adres basılmaz).
+  assert.equal(filled.supported, true, filled.reason ?? '')
+  assert.equal(filled.carrierOwnsAddressBlock, true)
+  assert.equal(filled.boldAddressSlots.length, 0)
 
+  // Kaynakta QR olması da artık DESTEKLENİR (v2). Composer ikinci QR EKLEMEZ.
   const withQr = resolveSuratSemanticModel(
     zpl.replace('^PQ1', '^FO600,600^BQN,2,5^FDLA,7271234567890^FS^PQ1'),
   )
-  assert.equal(withQr.supported, false)
-  assert.match(withQr.reason, /beklenmeyen QR/)
+  assert.equal(withQr.supported, true, withQr.reason ?? '')
+  assert.equal(withQr.sourceQrCount, 1)
+
+  // İKİDEN FAZLA QR hâlâ FAIL-SAFE: tanımadığımız bir şablondur.
+  const twoQr = resolveSuratSemanticModel(
+    zpl.replace('^PQ1',
+      '^FO600,600^BQN,2,5^FDLA,7271234567890^FS'
+      + '^FO600,700^BQN,2,5^FDLA,7271234567891^FS^PQ1'),
+  )
+  assert.equal(twoQr.supported, false)
+  assert.match(twoQr.reason, /birden fazla QR/)
 })
 
 test('CF-15: composer’ın VERİ bağımlılıkları boşsa FAIL-SAFE', async () => {
