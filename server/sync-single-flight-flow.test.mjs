@@ -133,18 +133,38 @@ test('SYNC-SINGLEFLIGHT-6: hata sonrasi ucus SERBEST kalir', () => {
     '    // SÜREÇ İÇİ UÇUŞ HER DURUMDA düşer (hata/erken dönüş dâhil); aksi hâlde',
   )
   assert.ok(manualFinally, 'manuel yolda finally temizligi')
-  assert.equal(
-    SOURCE.split('endSyncFlight(flightKey)').length - 1,
-    2,
-    'manuel + arka plan: iki temizlik noktasi',
-  )
+  // GERCEK DEGISMEZ: ucusu ALAN HER YOL onu `finally` icinde BIRAKIR.
+  //
+  // Burada eskiden sabit bir sayi (2) dayatiliyordu. O sayi, ucusu DOGRU
+  // sekilde birakan YENI bir senkron yolu eklendiginde de kirilir; yani
+  // gercek kusuru degil, yol SAYISINI olcuyordu. Artik her `begin` sahibi
+  // fonksiyon TEK TEK dogrulanir: sayi degil, ESLESME zorunludur.
   const lines = SOURCE.split(/\r?\n/)
-  const start = lines.findIndex((line) =>
-    line.startsWith('async function syncTrendyolOrdersForOrganization'),
-  )
-  const end = lines.findIndex((line, index) => index > start && line === '}')
-  const body = lines.slice(start, end).join('\n')
-  assert.ok(body.includes('} finally {'), 'arka plan yolunda finally')
+  const holders = []
+  let current = null
+  for (const line of lines) {
+    const declaration = /^async function ([A-Za-z0-9_]+)/.exec(line)
+    if (declaration) current = { name: declaration[1], lines: [] }
+    if (current) current.lines.push(line)
+    if (current && line === '}') {
+      const body = current.lines.join('\n')
+      if (body.includes('beginSyncFlight(flightKey)')) {
+        holders.push({ name: current.name, body })
+      }
+      current = null
+    }
+  }
+
+  // En az arka plan durum senkronu ve akis senkronu ucus alir; hic almiyorsa
+  // test sessizce anlamsizlasmis demektir.
+  assert.ok(holders.length >= 2, `ucus alan yol sayisi: ${holders.length}`)
+  for (const holder of holders) {
+    assert.ok(holder.body.includes('} finally {'), `${holder.name}: finally yok`)
+    assert.ok(
+      holder.body.includes('endSyncFlight(flightKey)'),
+      `${holder.name}: ucus BIRAKILMIYOR`,
+    )
+  }
 })
 
 test('SYNC-SINGLEFLIGHT-7: retry ve PARTIAL veri guvencesi KORUNUR', () => {

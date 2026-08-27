@@ -2919,6 +2919,175 @@ async function querySuratTrackingForCandidate(candidate) {
 // retention saati rutin senkronla yapay olarak TAZELENMEZ.
 // `operation_status` da EZİLMEZ: LABEL_PRINTED yerinde kalır, nihai aşamayı
 // resolver marketplace Shipped önceliğiyle üretir.
+// ═══ TRENDYOL STREAM SENKRONU — ÇALIŞMA ZAMANI BAĞLANTISI ═══════════════
+//
+// Stream adaptörü (`trendyolOrderStream.ts`) saf bir kütüphanedir. Burada
+// gerçek kimlik, gerçek `fetch` ve YEREL KALICILIK bağlanır.
+//
+// İKİNCİ BİR PERSISTENCE YAZILMAZ: toplanan paketler, elle "Şimdi Yenile"
+// akışının kullandığı AYNI normalizer ve AYNI `persistSyncResult` yolundan
+// geçer. Ayrı bir yazım yolu olsaydı hesap kapsamı, tekillik ve arşiv
+// kuralları zamanla ayrışırdı.
+//
+// İMLEÇ SÜREÇTE DEĞİL VERİTABANINDA: `organization_settings.settings_json`
+// altında saklanır; şema göçü GEREKMEZ ve süreç yeniden başlasa bile
+// mutabakat kaldığı yerden sürer.
+const TRENDYOL_STREAM_CHECKPOINT_KEY = 'trendyolStreamCheckpoint'
+
+async function readTrendyolStreamCheckpoint(db, organizationId) {
+  const { organizationSettings } = await import('./db/schema.ts')
+  const { eq } = await import('drizzle-orm')
+  const rows = await db
+    .select()
+    .from(organizationSettings)
+    .where(eq(organizationSettings.organizationId, organizationId))
+    .limit(1)
+  const settings = rows[0]?.settingsJson ?? {}
+  return settings[TRENDYOL_STREAM_CHECKPOINT_KEY] ?? null
+}
+
+async function writeTrendyolStreamCheckpoint(db, organizationId, checkpoint) {
+  const { organizationSettings } = await import('./db/schema.ts')
+  const { eq } = await import('drizzle-orm')
+  const rows = await db
+    .select()
+    .from(organizationSettings)
+    .where(eq(organizationSettings.organizationId, organizationId))
+    .limit(1)
+  const settings = rows[0]?.settingsJson ?? {}
+  // MERGE: etiket şablonu ve gönderi varsayılanları KORUNUR.
+  const next = { ...settings, [TRENDYOL_STREAM_CHECKPOINT_KEY]: checkpoint }
+  if (!rows[0]) {
+    await db
+      .insert(organizationSettings)
+      .values({ organizationId, settingsJson: next })
+    return
+  }
+  await db
+    .update(organizationSettings)
+    .set({ settingsJson: next, updatedAt: new Date() })
+    .where(eq(organizationSettings.organizationId, organizationId))
+}
+
+async function syncTrendyolStreamForOrganization(organizationId) {
+  const [{ getDb }, { getIntegrationCredential }, service, stream, scheduler] =
+    await Promise.all([
+      import('./db/client.ts'),
+      import('./integrations/credentialService.ts'),
+      import('./orders/orderPersistenceService.ts'),
+      import('./marketplaces/trendyolOrderStream.ts'),
+      import('./marketplaces/trendyolStreamScheduler.ts'),
+    ])
+  const db = getDb()
+  const credentials = await getIntegrationCredential(db, organizationId, 'trendyol')
+  if (!credentials || !Object.keys(credentials).length) return { synced: false }
+
+  // HESAP KAPSAMI ZORUNLU — mevcut turla AYNI kural. Çözülemezse bu
+  // organizasyon ATLANIR; NULL kapsamına gölge satır YAZILMAZ.
+  const accountScope = await resolveActiveMarketplaceAccountScope(db, organizationId)
+  if (accountScope.status !== 'ok') {
+    console.error(
+      `[trendyol-stream] atlandi org=${organizationId} sebep=${accountScope.status}`,
+    )
+    return { synced: false, skipped: accountScope.status }
+  }
+  const marketplaceAccountId = accountScope.accountId
+
+  // Manuel senkron sürüyorsa bu tur SESSİZCE atlanır (istek ikiye katlanmaz).
+  const flightKey = syncFlightKey(organizationId, marketplaceAccountId)
+  if (!beginSyncFlight(flightKey)) return { synced: false }
+
+  try {
+    const stored = await readTrendyolStreamCheckpoint(db, organizationId)
+
+    // ═══ PENCERE SABİT KALMALIDIR ═══════════════════════════════════════
+    //
+    // İmleç, VERİLDİĞİ SORGUYA göre çözülür. Pencere her turda `Date.now()`
+    // ile yeniden hesaplansaydı parmak izi her seferinde değişir, imleç HER
+    // TUR ATILIR ve zincir hiç sürdürülemezdi (sonsuz baştan başlama).
+    //
+    // Bu yüzden yarım kalmış bir zincir varsa pencere KAYDEDİLDİĞİ GİBİ
+    // yeniden kullanılır; ancak zincir tükendiğinde (`NO_MORE_PAGES`) yeni
+    // ve güncel bir pencere planlanır.
+    const chainOpen =
+      Boolean(stored?.cursor) && stored?.status !== 'NO_MORE_PAGES'
+    const window = chainOpen && Number.isFinite(Number(stored?.windowStart))
+      ? { startDate: Number(stored.windowStart), endDate: Number(stored.windowEnd) }
+      : stream.planStreamWindows({ nowMs: Date.now() }).at(-1)
+    const filters = {
+      startDate: window.startDate,
+      endDate: window.endDate,
+      size: stream.TRENDYOL_STREAM_MAX_SIZE,
+    }
+    const fingerprint = stream.streamFilterFingerprint(filters)
+    // İmleç YALNIZ filtre parmak izi AYNIYSA sürdürülür.
+    const resume = scheduler.resolveStreamResume({
+      checkpoint: stored,
+      currentFingerprint: fingerprint,
+    })
+
+    const result = await stream.runTrendyolStream({
+      baseUrl: getTrendyolBaseUrl(credentials),
+      sellerId: credentials.sellerId,
+      filters,
+      startCursor: resume.cursor,
+      fetchJson: async (url) => {
+        const response = await fetchTrendyolJson(url, credentials)
+        return { ok: response.ok === true, body: response.data }
+      },
+      delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    })
+
+    if (result.packages.length > 0) {
+      const normalized = normalizeTrendyolOrders({ content: result.packages })
+      await service.persistSyncResult(db, organizationId, normalized.orders, {
+        // ARŞİVLEME YOK: stream turu "tam liste" olduğunu KANITLAYAMAZ.
+        complete: false,
+        fetchedCount: normalized.orders.length,
+        marketplaceAccountId,
+        requireMarketplaceAccount: true,
+      })
+    }
+
+    // KISMİ İLERLEME KORUNUR: çekim yarıda kaldıysa bile imleç yazılır ve
+    // sonraki tur kaldığı yerden devam eder.
+    await writeTrendyolStreamCheckpoint(db, organizationId, {
+      organizationId,
+      marketplace: 'Trendyol',
+      syncType: 'orders_stream',
+      cursor: result.resumeCursor,
+      filterFingerprint: result.filterFingerprint,
+      windowStart: window.startDate,
+      windowEnd: window.endDate,
+      lastRunAt: Date.now(),
+      status: result.stopReason,
+    })
+    return {
+      synced: true,
+      pages: result.pages,
+      packages: result.packages.length,
+      stopReason: result.stopReason,
+      resumed: resume.resumed,
+    }
+  } catch (error) {
+    console.error(
+      `[trendyol-stream] tur hatasi org=${organizationId}: `
+      + (error instanceof Error ? error.message : String(error)),
+    )
+    return { synced: false }
+  } finally {
+    endSyncFlight(flightKey)
+  }
+}
+
+async function syncTrendyolStreamForAllOrganizations() {
+  const targets = await listTrendyolSyncTargets(100)
+  for (const target of targets) {
+    await syncTrendyolStreamForOrganization(target.organizationId)
+  }
+  return { organizations: targets.length }
+}
+
 async function syncTrendyolOrdersForOrganization(organizationId) {
   const [{ getDb }, { getIntegrationCredential }, service] = await Promise.all([
     import('./db/client.ts'),
@@ -3197,6 +3366,144 @@ async function startSuratTrackingReconcileOnBoot() {
   }
 }
 
+// ═══ ARKA PLAN ETİKET WORKER'I ═══════════════════════════════════════════
+//
+// EN KRİTİK KARAR: worker KENDİ create'ini KURMAZ.
+//
+// `runLabel`, elle basılan butonun çağırdığı AYNI handler'ı
+// (`withSuratTracePersistence(createSuratShipment)`) SENTETİK bir istek/yanıt
+// çiftiyle çalıştırır. Ağ yoktur, ikinci bir uygulama yoktur: aynı rota
+// çözümü, aynı kimlik anlık görüntüsü, aynı faturalama kapısı, aynı
+// Trace V2 kalıcılığı, aynı persistence.
+//
+// İkinci bir create yazılsaydı, zamanla butondan ayrışır ve güvenceler
+// yalnız birinde kalırdı. Bu yüzden burada YALNIZ girdi hazırlanır.
+async function runLabelJobViaCreateHandler(job) {
+  const organizationId = String(job.organizationId ?? '')
+  const marketplace = String(job.marketplace ?? 'Trendyol')
+  const packageId = String(job.packageId ?? '')
+  if (!organizationId || !packageId) {
+    return { labelReady: false, networkCrossed: false, blocked: true,
+      errorCode: 'JOB_IDENTITY_MISSING' }
+  }
+
+  const [{ getDb }, persistence, repository] = await Promise.all([
+    import('./db/client.ts'),
+    import('./orders/orderPersistenceService.ts'),
+    import('./orders/orderRepository.ts'),
+  ])
+  const db = getDb()
+  const row = await repository.findOrderByPackageId(
+    db, organizationId, marketplace, packageId,
+  )
+  if (!row) {
+    return { labelReady: false, networkCrossed: false, blocked: true,
+      errorCode: 'ORDER_NOT_FOUND' }
+  }
+  // Butonun gönderdiğiyle AYNI view-model.
+  const order = await persistence.getOrder(db, organizationId, String(row.id))
+  if (!order) {
+    return { labelReady: false, networkCrossed: false, blocked: true,
+      errorCode: 'ORDER_NOT_FOUND' }
+  }
+
+  // Kimlik istek gövdesinden DEĞİL, org kaydından gelir — tenantInject
+  // ara katmanının yaptığının AYNISI.
+  const syntheticRequest = {
+    auth: { organizationId },
+    body: { order },
+    query: {},
+    headers: {},
+  }
+  syntheticRequest.body.config = await loadRequestOrgConfig(syntheticRequest)
+  syntheticRequest.body.credentials = syntheticRequest.body.config?.trendyol
+
+  let payload = null
+  let statusCode = 200
+  const syntheticResponse = {
+    status(code) { statusCode = code; return this },
+    json(body) { if (payload === null) payload = body; return this },
+  }
+
+  // AĞ SINIRI: handler çağrıldıktan sonra sonuç belirsizse iş bir daha
+  // TALEP EDİLMEZ. Bu yüzden `networkCrossed` iyimser değil, ihtiyatlı
+  // işaretlenir: handler'a girildiyse ağ geçilmiş SAYILIR.
+  let networkCrossed = false
+  try {
+    networkCrossed = true
+    await withSuratTracePersistence(createSuratShipment)(
+      syntheticRequest, syntheticResponse,
+    )
+  } catch (error) {
+    return {
+      labelReady: false,
+      networkCrossed,
+      errorCode: 'CREATE_HANDLER_EXCEPTION',
+      errorSummary: error instanceof Error ? error.message : String(error),
+    }
+  }
+
+  // ═══ KANONİK ALAN OKUNUR, TÜREV ALAN DEĞİL ═════════════════════════
+  //
+  // Etiketin hazır olup olmadığının TEK otoritesi `labelState`'tir
+  // (`suratSoapPrimaryCreate`: READY | GENERATING | FAILED) ve `ok` zaten
+  // ondan türetilir. Burada `zpl`/`barcodeRaw` gibi alanlara bakmak, yanıt
+  // şekli değiştiğinde sessizce "hazır değil" demeye başlardı: alan
+  // YAZILIR ama OKUNMAZ kusurunun aynısı.
+  const ok = payload?.ok === true && statusCode < 400
+  const labelState = payload?.labelState ?? null
+  return {
+    labelReady: labelState ? labelState === 'READY' : ok,
+    networkCrossed,
+    blocked: payload?.blocked === true,
+    errorCode: payload?.errorCode ?? null,
+    errorSummary: payload?.message ?? null,
+    // Taşıyıcı çağrısı sayısı da kanonik adıyla taşınır.
+    carrierCalls: Number(
+      payload?.carrierCreateAttempts
+        ?? (payload?.carrierCreateCalled ? 1 : 0),
+    ),
+  }
+}
+
+// VARSAYILAN KAPALI. `LABEL_WORKER_ENABLED` açıkça açılmadıkça hiçbir
+// zamanlayıcı kurulmaz → boot'ta taşıyıcı çağrısı YOK, periyodik create YOK.
+async function startLabelJobWorkerOnBoot() {
+  if (!isTenantAuthMode()) return
+  try {
+    const [{ getDb }, worker] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/labelJobWorker.ts'),
+    ])
+    const started = worker.startLabelJobScheduler({
+      runCycle: () =>
+        worker.runLabelJobCycle({
+          db: getDb(),
+          workerId: `${process.pid}@${BUILD_REVISION}`,
+          runLabel: runLabelJobViaCreateHandler,
+        }),
+    })
+    if (started) console.log('[label-worker] arka plan etiket worker etkin')
+  } catch {
+    // BEST-EFFORT: kurulamazsa uygulama normal çalışır, elle etiket üretilir.
+  }
+}
+
+// VARSAYILAN KAPALI. `TRENDYOL_STREAM_SYNC_ENABLED` açıkça açılmadıkça
+// zamanlayıcı kurulmaz → boot'ta pazaryeri çağrısı YOK.
+async function startTrendyolStreamSyncOnBoot() {
+  if (!isTenantAuthMode()) return
+  try {
+    const scheduler = await import('./marketplaces/trendyolStreamScheduler.ts')
+    const started = scheduler.startTrendyolStreamScheduler({
+      runCycle: () => syncTrendyolStreamForAllOrganizations(),
+    })
+    if (started) console.log('[trendyol-stream] akış senkronu etkin')
+  } catch {
+    // BEST-EFFORT: kurulamazsa mevcut durum senkronu çalışmaya devam eder.
+  }
+}
+
 app.listen(port, host, () => {
   console.log(`CargoFlow API listening on http://${host}:${port}`)
   void reconcileLabelBundlesOnBoot()
@@ -3204,6 +3511,9 @@ app.listen(port, host, () => {
   void startSuratTrackingReconcileOnBoot()
   void startTrendyolStatusSyncOnBoot()
   void startStaleOpenReconcileOnBoot()
+  // İkisi de VARSAYILAN KAPALI; bayrak açıkça açılmadıkça kurulmazlar.
+  void startLabelJobWorkerOnBoot()
+  void startTrendyolStreamSyncOnBoot()
 })
 
 // Kapanışta yeni tur başlatılmaz (mevcut zamanlayıcı temizlenir).
@@ -3220,6 +3530,12 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
       .catch(() => undefined)
     void import('./orders/staleOpenReconciler.ts')
       .then((scheduler) => scheduler.stopStaleReconcileScheduler())
+      .catch(() => undefined)
+    void import('./shipments/labelJobWorker.ts')
+      .then((worker) => worker.stopLabelJobScheduler())
+      .catch(() => undefined)
+    void import('./marketplaces/trendyolStreamScheduler.ts')
+      .then((scheduler) => scheduler.stopTrendyolStreamScheduler())
       .catch(() => undefined)
   })
 }

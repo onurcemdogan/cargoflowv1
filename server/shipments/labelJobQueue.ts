@@ -15,6 +15,11 @@
 import { and, eq, lte, or, sql } from 'drizzle-orm'
 import { labelJobs } from '../db/schema.ts'
 
+// Drizzle'ın akıcı sorgu kurucusu (`.from().where().limit()`) her adımda
+// farklı bir jenerik tip döndürür ve burada elle yazılamaz. Depo kodunun
+// geri kalanındaki (printZplItems, tenantBlockLoader) sözleşmeyle aynı
+// biçimde, YALNIZ bu yerel `Db` şekli için kural gevşetilir.
+/* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = {
   execute: (query: unknown) => Promise<unknown>
   insert: (table: unknown) => any
