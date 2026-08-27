@@ -13,15 +13,23 @@ const here = new URL('.', import.meta.url)
 const SCOPE = {
   organizationId: 'org-1', marketplace: 'Trendyol', carrier: 'Surat',
 }
+// AKTIVASYON SINIRI: kiracinin otomatik etiketi ACTIGI an. Yalniz bu andan
+// SONRA ilk kez gorulen paketler otomatik siraya girer.
+const ACTIVATED_AT = '2026-08-27T00:00:00.000Z'
+const AFTER_ACTIVATION = Date.parse('2026-08-27T06:00:00.000Z')
+const BEFORE_ACTIVATION = Date.parse('2026-08-26T18:00:00.000Z')
+
 const ENABLED = {
   enabled: true, marketplaces: ['trendyol'], carriers: ['surat'],
+  activatedAt: ACTIVATED_AT,
 }
 const base = (over = {}) => ({
   scope: SCOPE, packageId: 'PKG-1', settings: ENABLED,
   eligibility: { eligible: true, reasons: [] },
   billingResolved: true, credentialResolved: true,
   hasLabelArtifact: false, hasCarrierArtifact: false,
-  previousNetworkCrossed: false, ...over,
+  previousNetworkCrossed: false,
+  firstSeenAtMs: AFTER_ACTIVATION, ...over,
 })
 
 /* ═══ VARSAYILAN KAPALI ════════════════════════════════════════════ */
@@ -206,11 +214,65 @@ test('AUTO-NO-SECOND-IMPL: politika KENDI create/uygunluk mantigini KURMAZ', () 
 })
 
 test('AUTO-REG: yeni test dosyasi test:surat icinde KAYITLI', () => {
+  // Liste `package.json`'dan AYRI bir dosyada: 190 dosyada komut satiri
+  // Windows cmd.exe'nin 8191 karakter sinirini asiyordu ve paket
+  // CALISMADAN dusuyordu. Acik kayit KORUNUR, yalnizca yeri degisti.
   const listed = new Set(
-    JSON.parse(readFileSync(new URL('../package.json', here), 'utf8'))
-      .scripts['test:surat'].split(' ').filter((x) => x.endsWith('.test.mjs')),
+    JSON.parse(readFileSync(new URL('./testing/suratSuiteFiles.json', here), 'utf8')),
   )
   const onDisk = readdirSync(here)
     .filter((f) => f.endsWith('.test.mjs')).map((f) => `server/${f}`)
   assert.deepEqual(onDisk.filter((f) => !listed.has(f)), [])
+})
+
+/* ═══ AKTIVASYON SINIRI ════════════════════════════════════════════ */
+
+test('AUTO-BOUNDARY-1: GECMIS yigin otomatik SIRAYA ALINMAZ', () => {
+  // KOK RISK: bayrak acildiginda kiracinin acik sekmesinde binlerce uygun
+  // GECMIS paket bekliyor olabilir. Sinir olmasaydi tek bir ayar degisikligi
+  // binlerce GERI ALINAMAZ ve FATURALANABILIR Surat etiketi uretirdi.
+  const d = AUTO.resolveAutoLabelEnqueue(
+    base({ firstSeenAtMs: BEFORE_ACTIVATION }),
+  )
+  assert.equal(d.enqueue, false)
+  assert.equal(d.blockReason, 'BEFORE_ACTIVATION_BOUNDARY')
+})
+
+test('AUTO-BOUNDARY-2: sinir YOKSA hicbir paket siraya girmez (fail-safe)', () => {
+  // "Sinir tanimsiz" ASLA "sinirsiz" demek degildir.
+  for (const settings of [
+    { enabled: true, marketplaces: ['trendyol'], carriers: ['surat'] },
+    { enabled: true, marketplaces: ['trendyol'], carriers: ['surat'], activatedAt: '' },
+    { enabled: true, marketplaces: ['trendyol'], carriers: ['surat'], activatedAt: 'gecersiz' },
+  ]) {
+    const d = AUTO.resolveAutoLabelEnqueue(base({ settings }))
+    assert.equal(d.enqueue, false, JSON.stringify(settings))
+    assert.equal(d.blockReason, 'BEFORE_ACTIVATION_BOUNDARY')
+  }
+  assert.equal(AUTO.resolveActivationBoundary(null), null)
+  assert.equal(AUTO.resolveActivationBoundary({ activatedAt: ACTIVATED_AT }),
+    Date.parse(ACTIVATED_AT))
+})
+
+test('AUTO-BOUNDARY-3: ilk gorulme ZAMANI bilinmiyorsa siraya girmez', () => {
+  for (const firstSeenAtMs of [undefined, null, NaN, 'dun']) {
+    const d = AUTO.resolveAutoLabelEnqueue(base({ firstSeenAtMs }))
+    assert.equal(d.enqueue, false, String(firstSeenAtMs))
+    assert.equal(d.blockReason, 'BEFORE_ACTIVATION_BOUNDARY')
+  }
+})
+
+test('AUTO-BOUNDARY-4: sinirdan SONRA gorulen paket siraya GIRER', () => {
+  const d = AUTO.resolveAutoLabelEnqueue(
+    base({ firstSeenAtMs: AFTER_ACTIVATION }),
+  )
+  assert.equal(d.enqueue, true)
+  assert.equal(d.blockReason, null)
+  // Tam sinirin USTUNDE olan paket de kabul edilir (>= karsilastirmasi).
+  assert.equal(
+    AUTO.resolveAutoLabelEnqueue(
+      base({ firstSeenAtMs: Date.parse(ACTIVATED_AT) }),
+    ).enqueue,
+    true,
+  )
 })

@@ -148,23 +148,63 @@ describe('Etiket Şablonları — kodsuz düzenleyici', () => {
     expect(productLine()).toContain('Ürün A')
   })
 
-  it('HIKAYE-4: adres TASIYICININ metnidir — sahte punto dugmesi SUNULMAZ', () => {
-    // DÜRÜSTLÜK KURALI: Sürat etiketinde adresi TAŞIYICI basar. Puntosunu
-    // değiştiremeyiz; oraya çalışmayan bir düğme koymak operatöre yalan
-    // bir yetki gösterirdi. Bunun yerine satır açıkça işaretlenir.
+  it('HIKAYE-4: teslimat adresi puntosu/kalinligi KODSUZ buyutulur', () => {
+    // ÖNCEKİ TUR: adres taşıyıcının metni sayılıyordu ve düzenleyicide
+    // hiçbir kontrol sunulmuyordu. COMPOSED şablonda adres bandı BİZİMDİR:
+    // taşıyıcının ^FD gövdesi boşaltılır ve adres bizim ayarlarımızla
+    // yeniden basılır. Artık gerçek kontrol vardır.
+    const { onSave } = renderEditor()
+    const section = document.querySelector(
+      '.address-style-editor',
+    ) as HTMLElement
+    expect(section).toBeTruthy()
+
+    const punto = within(section).getByLabelText('Punto')
+    fireEvent.change(punto, { target: { value: '22' } })
+    // Taşıyıcı adresi bugün zaten KALIN basar; varsayılan da kalındır.
+    // Kontrolün gerçekten çalıştığını kanıtlamak için KAPATIP tekrar AÇILIR.
+    const kalin = within(section).getByLabelText('Kalın') as HTMLInputElement
+    expect(kalin.checked).toBe(true)
+    fireEvent.click(kalin)
+    expect(kalin.checked).toBe(false)
+    fireEvent.click(kalin)
+    fireEvent.change(within(section).getByLabelText('Satır aralığı'), {
+      target: { value: '1.2' },
+    })
+    fireEvent.change(within(section).getByLabelText('Hizalama'), {
+      target: { value: 'center' },
+    })
+
+    save()
+    const saved = onSave.mock.calls.at(-1)?.[0] as LabelTemplate
+    expect(saved.addressStyle?.fontSize).toBe(22)
+    expect(saved.addressStyle?.bold).toBe(true)
+    expect(saved.addressStyle?.lineHeight).toBe(1.2)
+    expect(saved.addressStyle?.align).toBe('center')
+  })
+
+  it('HIKAYE-4b: SIGMAYAN adres URETIME ALINMADAN once UYARIR', () => {
     renderEditor()
-    const row = fieldRow('Adres')
-    expect(within(row).queryByRole('spinbutton')).toBeNull()
-    expect(within(row).getByText(/taşıyıcı basar/i)).toBeTruthy()
-    // Operatörün etikete GERÇEKTEN yazdırabildiği bloklarda punto vardır.
-    expect(
-      within(fieldRow('Satın Alan Adı')).getByRole('spinbutton'),
-    ).toBeTruthy()
+    const section = document.querySelector(
+      '.address-style-editor',
+    ) as HTMLElement
+    // Sığan yapılandırmada bilgi satırı, sığmayanda HATA gösterilir.
+    expect(section.querySelector('.address-style-ok')).toBeTruthy()
+    fireEvent.change(within(section).getByLabelText('Punto'), {
+      target: { value: '48' },
+    })
+    const error = section.querySelector('.address-style-error')
+    expect(error).toBeTruthy()
+    // Sessiz kırpma YOK: operatöre ne yapacağı SÖYLENİR.
+    expect(error?.textContent).toMatch(/sığmıyor|küçült|azalt|biner/)
   })
 
   it('KAPASITE: sigmayacak sablon URETIME ALINMADAN once uyarilir', () => {
     renderEditor()
-    expect(screen.queryByRole('status')).toBeNull()
+    // Kapasite uyarısı blok listesine aittir; adres bölümünün kendi bilgi
+    // satırı bu sorguya karışmamalıdır.
+    const bandWarning = () => document.querySelector('.template-band-warning')
+    expect(bandWarning()).toBeNull()
     for (const label of ['Satın Alan Adı', 'Sipariş Tarihi', 'Sipariş Saati']) {
       const row = fieldRow(label)
       fireEvent.click(within(row).getByLabelText(label))
@@ -172,7 +212,7 @@ describe('Etiket Şablonları — kodsuz düzenleyici', () => {
         target: { value: '40' },
       })
     }
-    expect(screen.getByRole('status').textContent).toMatch(/BASILMAZ/)
+    expect(bandWarning()?.textContent).toMatch(/BASILMAZ/)
   })
 
   it('KILIT: tasiyici kimlik bloklarinin DEGERI de SUNUMU da duzenlenemez', () => {

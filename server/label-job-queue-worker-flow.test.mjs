@@ -258,9 +258,11 @@ test('WORKER-NO-SECOND-IMPL: worker KENDI Surat istemcisini KURMAZ', () => {
 })
 
 test('QUEUE-REG: yeni test dosyasi test:surat icinde KAYITLI', () => {
+  // Liste `package.json`'dan AYRI bir dosyada: 190 dosyada komut satiri
+  // Windows cmd.exe'nin 8191 karakter sinirini asiyordu ve paket
+  // CALISMADAN dusuyordu. Acik kayit KORUNUR, yalnizca yeri degisti.
   const listed = new Set(
-    JSON.parse(readFileSync(join(here, '..', 'package.json'), 'utf8'))
-      .scripts['test:surat'].split(' ').filter((x) => x.endsWith('.test.mjs')),
+    JSON.parse(readFileSync(join(here, 'testing', 'suratSuiteFiles.json'), 'utf8')),
   )
   const onDisk = readdirSync(here)
     .filter((f) => f.endsWith('.test.mjs')).map((f) => `server/${f}`)

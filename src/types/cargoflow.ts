@@ -1060,9 +1060,38 @@ export const IDENTITY_LOCKED_LABEL_FIELDS: readonly LabelFieldKey[] = [
   'shipmentCode', 'trackingNumber', 'shippingProvider',
 ]
 
+/**
+ * Adres bloğunun SUNUM ayarları — kodsuz düzenleyiciden gelir.
+ *
+ * YALNIZ COMPOSED (özel/CargoFlow) şablonlarda geçerlidir. `RAW_SURAT_FALLBACK`
+ * modunda taşıyıcı ZPL'i aynen basılır ve bu ayarlar DEVREDE DEĞİLDİR.
+ *
+ * Geometri güvenliği `resolveAddressBlockLayout` ile zorlanır: sığmayan veya
+ * barkod/QR üzerine binen bir yapılandırma ÜRETİME ALINMADAN reddedilir.
+ */
+export interface LabelAddressStyleConfig {
+  visible?: boolean
+  fontSize?: number
+  bold?: boolean
+  lineHeight?: number
+  maxLines?: number
+  wrap?: boolean
+  align?: 'left' | 'center' | 'right'
+}
+
+/** Etiketin hangi sözleşmeyle basılacağı. */
+export type LabelRenderMode = 'RAW_SURAT_FALLBACK' | 'COMPOSED'
+
 export interface LabelTemplate {
   id: string
   name: string
+  /**
+   * Varsayılan `COMPOSED`: composer bandı bizimdir ve adres sunumu
+   * yapılandırılabilir. `RAW_SURAT_FALLBACK` seçilirse taşıyıcı biçimi
+   * AYNEN korunur.
+   */
+  renderMode?: LabelRenderMode
+  addressStyle?: LabelAddressStyleConfig
   widthMm: number
   heightMm: number
   widthDots: number

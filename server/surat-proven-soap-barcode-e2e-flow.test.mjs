@@ -250,9 +250,11 @@ test('SOAP-PROVEN-5: SOAP uygun pazaryeri kayit defteriyle AYNI', () => {
 })
 
 test('SOAP-PROVEN-6: yeni test test:surat icinde KAYITLI', () => {
+  // Liste `package.json`'dan AYRI bir dosyada: 190 dosyada komut satiri
+  // Windows cmd.exe'nin 8191 karakter sinirini asiyordu ve paket
+  // CALISMADAN dusuyordu. Acik kayit KORUNUR, yalnizca yeri degisti.
   const listed = new Set(
-    JSON.parse(readFileSync(new URL('../package.json', here), 'utf8'))
-      .scripts['test:surat'].split(' ').filter((x) => x.endsWith('.test.mjs')),
+    JSON.parse(readFileSync(new URL('./testing/suratSuiteFiles.json', here), 'utf8')),
   )
   const onDisk = readdirSync(here)
     .filter((f) => f.endsWith('.test.mjs')).map((f) => `server/${f}`)

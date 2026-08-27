@@ -5,6 +5,11 @@ import { LabelHtmlPreview } from '../components/LabelHtmlPreview'
 import { PageHeader } from '../components/PageHeader'
 import { defaultLabelTypography } from '../services/integrationConfigService'
 import {
+  DEFAULT_ADDRESS_STYLE,
+  ADDRESS_STYLE_LIMITS,
+  resolveAddressBlockLayout,
+} from '../utils/labelAddressBlock'
+import {
   isProductLinePart,
   isTenantRenderableBlock,
   resolveTenantBlocks,
@@ -127,6 +132,37 @@ export function LabelTemplatesPage({
     () => normalizeEditorFields(template.fields),
   )
   const [draggedKey, setDraggedKey] = useState<LabelFieldKey>()
+  // ── ADRES SUNUMU ──────────────────────────────────────────────────────
+  // COMPOSED şablonlarda adres bloğu BİZİM alanımızdır; taşıyıcının ^FD
+  // gövdesi boşaltılır ve adres bu ayarlarla yeniden basılır.
+  const [addressStyle, setAddressStyle] = useState(() => ({
+    ...DEFAULT_ADDRESS_STYLE,
+    ...(template.addressStyle ?? {}),
+  }))
+  function updateAddress(patch: Partial<typeof addressStyle>) {
+    setAddressStyle((current) => ({ ...current, ...patch }))
+  }
+
+  // GEOMETRİ DOĞRULAMASI — ÜRETİME ALMADAN ÖNCE.
+  //
+  // Gerçek üretim etiketinden ÖLÇÜLDÜ: adres satırları 417..458 arasında,
+  // bir sonraki taşıyıcı içeriği 476'da başlar. Korunan kutular barkod
+  // bandı ve alt makine-okunur bölgedir.
+  const addressPreview = useMemo(() => {
+    const lines = [
+      previewOrder?.address,
+      [previewOrder?.district, previewOrder?.city].filter(Boolean).join(' '),
+    ].filter((line): line is string => Boolean(String(line ?? '').trim()))
+    return resolveAddressBlockLayout({
+      lines: lines.length > 0 ? lines : ['Ornek Mahallesi Ornek Caddesi No 12'],
+      style: addressStyle,
+      band: { left: 63, right: 700, top: 400, bottom: 470 },
+      protectedBoxes: [
+        { left: 48, top: 120, right: 700, bottom: 300 },
+        { left: 48, top: 476, right: 775, bottom: 780 },
+      ],
+    })
+  }, [addressStyle, previewOrder])
 
   // ÖN UYARI: etikete gerçekten yazılacak blokların isteyeceği dikey alan.
   // KESİN karar baskı anında verilir (bant etiketten etikete değişir); bu
@@ -149,7 +185,10 @@ export function LabelTemplatesPage({
   const bandOverflow = requestedBandHeight > TENANT_BAND_NOMINAL_HEIGHT
 
   function applyTemplate(id: string, name: string) {
-    const nextTemplate = buildTemplate(previewTemplate, id, name, fields)
+    const nextTemplate = {
+      ...buildTemplate(previewTemplate, id, name, fields),
+      addressStyle,
+    }
     setPreviewTemplate(nextTemplate)
     onSave(nextTemplate)
   }
@@ -402,6 +441,12 @@ export function LabelTemplatesPage({
                   <span className="field-locked-note" title="Ürün satırı parçası">
                     ürün satırında
                   </span>
+                ) : field.key === 'address' || field.key === 'cityDistrict' ? (
+                  // Adres artık COMPOSED bandda BİZİM kontrolümüzdedir;
+                  // ayarları yukarıdaki "Teslimat Adresi" bölümündedir.
+                  <span className="field-locked-note" title="Adres ayarları">
+                    yukarıdaki adres bölümünden
+                  </span>
                 ) : (
                   <span
                     className="field-locked-note"
@@ -419,6 +464,109 @@ export function LabelTemplatesPage({
               </div>
             ))}
           </div>
+          {/* ═══ ADRES SUNUMU — KODSUZ ═══════════════════════════════════
+              Adres, COMPOSED şablonlarda BİZİM bandımızdadır: taşıyıcının
+              ^FD gövdesi boşaltılır ve adres bu ayarlarla yeniden basılır.
+              Ham (RAW_SURAT_FALLBACK) modda bu bölüm devre dışıdır ve
+              taşıyıcı biçimi AYNEN korunur. */}
+          <section className="address-style-editor">
+            <div className="panel-heading compact">
+              <div>
+                <h2>Teslimat Adresi</h2>
+                <span>
+                  Punto, kalınlık, satır aralığı, satır sınırı ve hizalama
+                  kodsuz ayarlanır. Sığmayan yapılandırma ÜRETİME ALINMADAN
+                  reddedilir; sessizce kırpılmaz.
+                </span>
+              </div>
+            </div>
+            <div className="address-style-controls">
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={addressStyle.visible !== false}
+                  onChange={(event) =>
+                    updateAddress({ visible: event.target.checked })
+                  }
+                />
+                <span>Adresi göster</span>
+              </label>
+              <label className="field-style-control">
+                <span>Punto</span>
+                <input
+                  type="number"
+                  min={ADDRESS_STYLE_LIMITS.minFontSize}
+                  max={ADDRESS_STYLE_LIMITS.maxFontSize}
+                  value={addressStyle.fontSize}
+                  onChange={(event) =>
+                    updateAddress({ fontSize: Number(event.target.value) })
+                  }
+                />
+              </label>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={addressStyle.bold === true}
+                  onChange={(event) => updateAddress({ bold: event.target.checked })}
+                />
+                <span>Kalın</span>
+              </label>
+              <label className="field-style-control">
+                <span>Satır aralığı</span>
+                <input
+                  type="number"
+                  step={0.05}
+                  min={ADDRESS_STYLE_LIMITS.minLineHeight}
+                  max={ADDRESS_STYLE_LIMITS.maxLineHeight}
+                  value={addressStyle.lineHeight}
+                  onChange={(event) =>
+                    updateAddress({ lineHeight: Number(event.target.value) })
+                  }
+                />
+              </label>
+              <label className="field-style-control">
+                <span>Satır sayısı</span>
+                <input
+                  type="number"
+                  min={ADDRESS_STYLE_LIMITS.minMaxLines}
+                  max={ADDRESS_STYLE_LIMITS.maxMaxLines}
+                  value={addressStyle.maxLines}
+                  onChange={(event) =>
+                    updateAddress({ maxLines: Number(event.target.value) })
+                  }
+                />
+              </label>
+              <label className="field-style-control">
+                <span>Hizalama</span>
+                <select
+                  value={addressStyle.align}
+                  onChange={(event) =>
+                    updateAddress({
+                      align: event.target.value as typeof addressStyle.align,
+                    })
+                  }
+                >
+                  <option value="left">Sola</option>
+                  <option value="center">Ortala</option>
+                  <option value="right">Sağa</option>
+                </select>
+              </label>
+            </div>
+            {/* SESSİZ KIRPMA YOK: sığmayan yapılandırma AÇIKÇA reddedilir ve
+                operatöre ne yapacağı söylenir. */}
+            {addressPreview.ok ? (
+              <p className="address-style-ok" role="status">
+                Adres {addressPreview.lineCount} satır sürüyor;{' '}
+                {addressPreview.requiredHeight}/{addressPreview.availableHeight}{' '}
+                dot kullanılıyor. Bu boyut etikete sığıyor.
+              </p>
+            ) : (
+              <p className="address-style-error" role="alert">
+                {addressPreview.message}
+              </p>
+            )}
+          </section>
+
           {bandOverflow ? (
             <p className="template-band-warning" role="status">
               Seçilen bloklar yaklaşık {requestedBandHeight} dot yer istiyor;
