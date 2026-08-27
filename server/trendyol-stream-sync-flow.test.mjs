@@ -261,3 +261,87 @@ test('TY-SYNC-REG: yeni test dosyasi test:surat icinde KAYITLI', () => {
     .filter((f) => f.endsWith('.test.mjs')).map((f) => `server/${f}`)
   assert.deepEqual(onDisk.filter((f) => !listed.has(f)), [])
 })
+
+/* ═══ OPERASYONEL ZAMANLAYICI + YENİDEN BAŞLATMA ═══════════════════ */
+
+const SCHED = await import('./marketplaces/trendyolStreamScheduler.ts')
+
+test('TY-SCHED-1: zamanlayici varsayilan KAPALI', () => {
+  assert.equal(SCHED.isStreamSchedulerEnabled({}), false)
+  assert.equal(
+    SCHED.isStreamSchedulerEnabled({ TRENDYOL_STREAM_SYNC_ENABLED: 'false' }), false,
+  )
+  assert.equal(
+    SCHED.isStreamSchedulerEnabled({ TRENDYOL_STREAM_SYNC_ENABLED: '1' }), true,
+  )
+  assert.equal(
+    SCHED.startTrendyolStreamScheduler({ runCycle: async () => {}, env: {} }), false,
+  )
+  SCHED.stopTrendyolStreamScheduler()
+})
+
+test('TY-SCHED-2: acikken kurulur ve turlar UST USTE BINMEZ', async () => {
+  let started = 0
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  const ok = SCHED.startTrendyolStreamScheduler({
+    intervalMs: 60_000,
+    env: { TRENDYOL_STREAM_SYNC_ENABLED: 'true' },
+    runCycle: async () => { started += 1; await gate },
+  })
+  try {
+    assert.equal(ok, true)
+    // Ikinci kurulum yeni zamanlayici ACMAZ.
+    assert.equal(
+      SCHED.startTrendyolStreamScheduler({
+        runCycle: async () => { started += 1 },
+        env: { TRENDYOL_STREAM_SYNC_ENABLED: 'true' },
+      }),
+      true,
+    )
+  } finally {
+    release()
+    SCHED.stopTrendyolStreamScheduler()
+  }
+  assert.ok(started <= 1, 'turlar ust uste bindi')
+})
+
+test('TY-SCHED-3: YENIDEN BASLATMA sonrasi imlec DEPODAN surdurulur', () => {
+  const fingerprint = STREAM.streamFilterFingerprint(FILTERS)
+  // Surec coktu; bellekteki imlec kayboldu ama kontrol noktasi DURUYOR.
+  const resumed = SCHED.resolveStreamResume({
+    checkpoint: {
+      organizationId: 'org-1', marketplace: 'Trendyol', syncType: 'STREAM',
+      cursor: 'CUR-42', windowStart: FILTERS.startDate, windowEnd: FILTERS.endDate,
+      lastRunAt: 1, lastModifiedSeen: 1, filterFingerprint: fingerprint,
+      status: 'PARTIAL',
+    },
+    currentFingerprint: fingerprint,
+  })
+  assert.equal(resumed.resumed, true)
+  assert.equal(resumed.cursor, 'CUR-42')
+})
+
+test('TY-SCHED-4: FILTRE degistiyse imlec ATILIR (kayip/mukerrer olmaz)', () => {
+  const resumed = SCHED.resolveStreamResume({
+    checkpoint: {
+      organizationId: 'org-1', marketplace: 'Trendyol', syncType: 'STREAM',
+      cursor: 'CUR-42', windowStart: 0, windowEnd: 1,
+      lastRunAt: 1, lastModifiedSeen: 1,
+      filterFingerprint: STREAM.streamFilterFingerprint(FILTERS),
+      status: 'PARTIAL',
+    },
+    currentFingerprint: STREAM.streamFilterFingerprint({ ...FILTERS, endDate: 9_999 }),
+  })
+  assert.equal(resumed.resumed, false)
+  assert.equal(resumed.cursor, null)
+  assert.equal(resumed.reason, 'FILTER_CHANGED_CURSOR_DISCARDED')
+})
+
+test('TY-SCHED-5: kontrol noktasi YOKSA bastan baslar', () => {
+  const fresh = SCHED.resolveStreamResume({
+    checkpoint: null, currentFingerprint: 'x',
+  })
+  assert.equal(fresh.cursor, null)
+  assert.equal(fresh.reason, 'NO_CHECKPOINT')
+})
