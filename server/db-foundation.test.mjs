@@ -55,6 +55,9 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
     [
       'integration_credentials',
       'integration_sync_state',
+      // ARKA PLAN ETIKET IS KUYRUGU (0010). Tekillik VERITABANI kisitindadir:
+      // ayni paket icin ikinci mantiksal is OLUSAMAZ.
+      'label_jobs',
       'marketplace_accounts',
       'order_lines',
       'orders',

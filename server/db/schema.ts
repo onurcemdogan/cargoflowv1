@@ -656,6 +656,47 @@ export const integrationSyncState = pgTable(
 // Bu tablo organizations/users ile ilişkili DEĞİLDİR; platform genelinde
 // hesap yönetimi yetkisi taşır. İlk admin yalnız CLI ile oluşturulur (public
 // bootstrap YOK). Parola argon2id hash; düz parola asla saklanmaz.
+// ARKA PLAN ETİKET İŞ KUYRUĞU.
+//
+// Taşıyıcı etiketi GERİ ALINAMAZ ve FATURALANABİLİR. "Aynı paket iki kez
+// işlenmesin" güvencesi uygulama katmanında değil, VERİTABANI kısıtındadır:
+// iki worker, süreç yeniden başlatma ya da webhook+stream aynı paketi
+// bulduğunda bile MANTIKSAL İŞ TEKTİR.
+export const labelJobs = pgTable(
+  'label_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id').notNull(),
+    marketplace: text('marketplace').notNull(),
+    carrier: text('carrier').notNull(),
+    // Kimlik PAKETTİR; `orderNumber` DEĞİL (sipariş bölünebilir).
+    packageId: text('package_id').notNull(),
+    jobType: text('job_type').notNull().default('LABEL_PREPARE'),
+    status: text('status').notNull().default('QUEUED'),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    availableAt: timestamp('available_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lockedAt: timestamp('locked_at', { withTimezone: true }),
+    lockedBy: text('locked_by'),
+    lastErrorCode: text('last_error_code'),
+    lastErrorSummary: text('last_error_summary'),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => ({
+    identity: uniqueIndex('label_jobs_identity_key').on(
+      table.organizationId, table.marketplace, table.carrier,
+      table.packageId, table.jobType,
+    ),
+    claim: index('label_jobs_claim_idx').on(table.status, table.availableAt),
+  }),
+)
+
 export const platformAdmins = pgTable('platform_admins', {
   id: uuid('id').primaryKey().defaultRandom(),
   username: text('username').notNull().unique(),

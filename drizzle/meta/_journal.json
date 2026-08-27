@@ -71,6 +71,13 @@
       "when": 1787120919000,
       "tag": "0009_surat_trace_attempts",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1787856310789,
+      "tag": "0010_label_jobs",
+      "breakpoints": true
     }
   ]
 }
