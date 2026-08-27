@@ -5,6 +5,7 @@
 //
 //   [kaynak komutlar — AYNEN, aynı sırada, aynı satır sonlarıyla]
 //   [ürün footer komutları]
+//   [kiracı blokları — kodsuz düzenleyicinin çıktısı]
 //   [orijinal ^PQ]        (varsa)
 //   [orijinal ^XZ]
 //
@@ -14,14 +15,22 @@
 // Şablon bilinen Sürat şablonu değilse veya ürün satırı güvenli alana
 // sığmıyorsa printZpl = technicalZpl olur ve sebep AÇIKÇA raporlanır
 // (sessiz kırpma veya bilinmeyen koordinata yazma YOKTUR).
+import type { LabelFieldKey } from '../types/cargoflow.ts'
 import { parseSuratZplGeometry } from './suratZplGeometry.ts'
 import {
   buildFooterZplCommands,
   planSuratFooter,
+  resolveFooterArea,
   resolveSuratTemplateFingerprint,
+  type ProductLineParts,
   type SuratFooterProfileKey,
   type SuratProductLineItem,
 } from './suratZplProductLine.ts'
+import {
+  buildTenantBlockZplCommands,
+  planTenantBlocks,
+  type TenantBlock,
+} from './labelTenantBlocks.ts'
 
 import {
   composeSuratDurusoftLabel,
@@ -89,6 +98,13 @@ export interface AugmentedSuratZpl {
   fallbackReason?: AugmentedZplFallbackReason
   /** Kullanıcıya gösterilebilir güvenli açıklama (PII içermez). */
   fallbackMessage?: string
+  /**
+   * Kodsuz düzenleyicinin bu etikete GERÇEKTEN bastığı blok sayısı ve yer
+   * kalmadığı için basılamayanlar. Sıfır olmayan `tenantBlocksDropped`
+   * operatöre gösterilir — sessiz kırpma YOKTUR.
+   */
+  tenantBlocksPrinted: number
+  tenantBlocksDropped: readonly LabelFieldKey[]
   /** Teşhis ölçüleri (dot) — PII içermez. */
   metrics?: {
     contentBottom: number
@@ -116,6 +132,16 @@ function resolveInsertionIndex(zpl: string): number {
 }
 
 export interface DeriveAugmentedOptions {
+  /**
+   * Kiracının kodsuz düzenleyicide açtığı bloklar. Verilmezse davranış
+   * eskisiyle BİREBİR aynıdır (hiç blok basılmaz).
+   */
+  tenantBlocks?: readonly TenantBlock[]
+  /**
+   * Ürün satırının hangi parçalarının basılacağı (adet / varyant / SKU).
+   * Verilmezse bugünkü çıktı BİREBİR korunur.
+   */
+  productLineParts?: ProductLineParts
   /**
    * Verilirse DuruSoft composer DENENİR. Verilmezse davranış eskisiyle
    * BİREBİR aynıdır (augmentation-only, RT-10A sözleşmesi).
@@ -154,6 +180,8 @@ export function deriveAugmentedSuratZpl(
     templateFingerprint: '',
     augmented: composed,
     augmentationStatus: 'unavailable',
+    tenantBlocksPrinted: 0,
+    tenantBlocksDropped: [],
     ...composeFields,
   }
   if (!sourceZpl.trim()) {
@@ -179,38 +207,76 @@ export function deriveAugmentedSuratZpl(
     }
   }
 
+  // Kaynak ^CI28 (UTF-8) kullanıyorsa Türkçe karakterler AYNEN yazılır.
+  const utf8 = /\^CI28/i.test(baseZpl)
+  const tenantSource = options.tenantBlocks ?? []
+
+  /**
+   * Kiracı bloklarını, ürün satırlarından ARTAN banda yerleştirir.
+   *
+   * Ürün satırı yoksa bant tamamen kiracınındır. Yer yetmeyen blok
+   * BASILMAZ ve `dropped` ile açıkça bildirilir.
+   */
+  function emitTenantBlocks(consumedTop: number) {
+    if (tenantSource.length === 0) {
+      return { commands: [] as string[], printed: 0, dropped: [] as LabelFieldKey[] }
+    }
+    const area = resolveFooterArea(geometry)
+    const tenantPlan = planTenantBlocks(tenantSource, {
+      x: area.x,
+      top: Math.max(area.top, consumedTop),
+      bottom: area.bottom,
+      width: area.width,
+    })
+    return {
+      commands: buildTenantBlockZplCommands(tenantPlan, { utf8 }),
+      printed: tenantPlan.blocks.length,
+      dropped: tenantPlan.dropped.map((block) => block.key),
+    }
+  }
+
   const usableItems = (Array.isArray(items) ? items : []).filter(
     (item) => String(item?.productName ?? '').trim().length > 0,
   )
-  if (usableItems.length === 0) {
+
+  const plan =
+    usableItems.length > 0
+      ? planSuratFooter(usableItems, geometry, options.productLineParts)
+      : null
+  const productCommands =
+    plan && plan.ok && plan.profile && plan.area && plan.blocks
+      ? buildFooterZplCommands(plan, { utf8 })
+      : []
+  const productUsedHeight =
+    productCommands.length > 0 ? (plan?.usedHeight ?? 0) : 0
+  const productArea = productCommands.length > 0 ? plan?.area : undefined
+  const tenant = emitTenantBlocks(
+    (productArea?.top ?? 0) + productUsedHeight,
+  )
+
+  // Ürün satırı ÜRETİLEMEDİYSE mevcut sözleşme korunur: sebep aynen
+  // raporlanır. Kiracı blokları bağımsız bir katmandır ve varsa yine basılır.
+  // Bu erken dönüşlerde de taşma bilgisi TAŞINIR: operatör bloklarının
+  // neden görünmediğini öğrenemezse hatayı şablonda arar.
+  if (usableItems.length === 0 && tenant.commands.length === 0) {
     return {
       ...withFingerprint,
+      tenantBlocksDropped: tenant.dropped,
       fallbackReason: 'no_items',
       augmentationStatus: 'unavailable',
     }
   }
-
-  const plan = planSuratFooter(usableItems, geometry)
-  if (!plan.ok || !plan.profile || !plan.area || !plan.blocks) {
+  if (usableItems.length > 0 && productCommands.length === 0) {
     return {
       ...withFingerprint,
+      tenantBlocksDropped: tenant.dropped,
       fallbackReason: 'footer_overflow',
       augmentationStatus: 'overflow',
       fallbackMessage: AUGMENTATION_FALLBACK_WARNING,
     }
   }
 
-  // Kaynak ^CI28 (UTF-8) kullanıyorsa Türkçe karakterler AYNEN yazılır.
-  const utf8 = /\^CI28/i.test(baseZpl)
-  const commands = buildFooterZplCommands(plan, { utf8 })
-  if (commands.length === 0) {
-    return {
-      ...withFingerprint,
-      fallbackReason: 'footer_overflow',
-      augmentationStatus: 'overflow',
-    }
-  }
-
+  const commands = [...productCommands, ...tenant.commands]
   const insertAt = resolveInsertionIndex(baseZpl)
   if (insertAt < 0) {
     return { ...withFingerprint, fallbackReason: 'unsupported_template' }
@@ -227,24 +293,38 @@ export function deriveAugmentedSuratZpl(
     newline +
     tail
 
+  const metricsArea = productArea ?? resolveFooterArea(geometry)
   return {
     printZpl,
     sourceZpl,
     printZplLength: printZpl.length,
     printZplVersion: PRINT_ZPL_VERSION,
-    printZplFooterProfile: plan.profile.key,
+    printZplFooterProfile: productCommands.length > 0 && plan?.profile
+      ? plan.profile.key
+      : null,
     templateFingerprint: fingerprint.signature,
-    augmented: true,
-    augmentationStatus: 'success',
+    // `augmented` ÜRÜN SATIRINI anlatır (mevcut sözleşme). Kiracı blokları
+    // AYRI bir katmandır: yalnız onlar basıldığında ürün satırı hâlâ YOKTUR
+    // ve bu durum `no_items` olarak DÜRÜSTÇE raporlanır — aksi halde çağıran
+    // katmanlar "ürün satırı eklendi" sanırdı.
+    augmented: productCommands.length > 0,
+    ...(productCommands.length > 0
+      ? { augmentationStatus: 'success' as const }
+      : {
+          augmentationStatus: 'unavailable' as const,
+          fallbackReason: 'no_items' as const,
+        }),
+    tenantBlocksPrinted: tenant.printed,
+    tenantBlocksDropped: tenant.dropped,
     ...composeFields,
     metrics: {
       contentBottom: geometry.contentBottom,
-      footerTop: plan.area.top,
-      footerBottom: plan.area.top + (plan.usedHeight ?? 0),
-      footerLeft: plan.area.x,
-      footerWidth: plan.area.width,
+      footerTop: metricsArea.top,
+      footerBottom: metricsArea.top + productUsedHeight,
+      footerLeft: metricsArea.x,
+      footerWidth: metricsArea.width,
       labelLength: geometry.labelLength,
-      usedHeight: plan.usedHeight ?? 0,
+      usedHeight: productUsedHeight,
     },
   }
 }

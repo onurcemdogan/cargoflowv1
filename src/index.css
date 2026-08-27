@@ -2825,6 +2825,46 @@ button:disabled {
   white-space: normal;
 }
 
+/* KIRACI BLOKLARI — kodsuz duzenleyicinin cikardigi satirlar. Baski
+   ZPL'inde de composer bandina ayni sirayla yazilir. SESSIZ KIRPMA YOK:
+   metin sarilir, taşan blok ZPL tarafinda ACIKCA raporlanir. */
+/* Kapasite ON UYARISI — sigmayan sablon URETIME ALINMADAN once gorunur. */
+.template-band-warning {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(180, 83, 9, .35);
+  background: rgba(251, 191, 36, .12);
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.field-locked-note {
+  font-size: 12px;
+  opacity: .7;
+  white-space: nowrap;
+}
+
+.surat-tenant-section {
+  display: grid;
+  align-content: start;
+  gap: 1px;
+  padding: 2px 9px 6px;
+  border-top: 1px solid rgba(0, 0, 0, .18);
+}
+
+.surat-tenant-block {
+  display: block;
+  line-height: 1.15;
+  overflow-wrap: break-word;
+  white-space: normal;
+}
+
+.surat-tenant-bottom {
+  margin-top: auto;
+}
+
 .surat-product-section {
   display: grid;
   align-content: start;

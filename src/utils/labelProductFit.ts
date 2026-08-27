@@ -73,12 +73,17 @@ export const UNSPECIFIED_METADATA_VALUE = 'Belirtilmemiş'
 // "(Beden: 42)", bazılarında "(Renk: X, Beden: Y)" çıkması sona erer.
 //
 // SKU yoksa köşeli parantez HİÇ basılmaz (boş "[]" üretilmez).
-export function buildProductMetaText(item: ProductFitItem): string {
+export function buildProductMetaText(
+  item: ProductFitItem,
+  // Kiracının kapattığı parça HİÇ basılmaz; boş "()" veya "[]" oluşmaz.
+  parts: { variant: boolean; sku: boolean } = { variant: true, sku: true },
+): string {
   const color = String(item.color ?? '').trim() || UNSPECIFIED_METADATA_VALUE
   const size = String(item.size ?? '').trim() || UNSPECIFIED_METADATA_VALUE
-  const grouped = `(Renk: ${color}, Beden: ${size})`
+  const grouped = parts.variant ? `(Renk: ${color}, Beden: ${size})` : ''
   const sku = String(item.sku ?? '').trim()
-  return sku ? `${grouped} [${sku}]` : grouped
+  const tail = parts.sku && sku ? `[${sku}]` : ''
+  return [grouped, tail].filter(Boolean).join(' ')
 }
 
 // Bir metnin verilen genişlik/puntoda kaç satır SARACAĞINI tahmin eder.

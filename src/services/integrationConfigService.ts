@@ -1,5 +1,6 @@
 import type {
   IntegrationConfig,
+  LabelFieldConfig,
   LabelTemplate,
   LabelTypographyConfig,
   PrinterSettings,
@@ -16,6 +17,61 @@ const LABEL_TEMPLATE_KEY = 'cargoflow.labelTemplate'
 // Relative path: tarayıcıda vite proxy (dev) / same-origin (prod) üzerinden
 // gider, böylece auth cookie'si (credentials:'include') sunucuya ulaşır.
 const LOCAL_CONFIG_ENDPOINT = '/api/local-config/integration'
+const LABEL_TEMPLATE_ENDPOINT = '/api/labels/template'
+
+/**
+ * Sunucudaki blok ayarlarını yerel katalog satırlarının ÜZERİNE yazar.
+ *
+ * Sunucu yalnız KİRACININ BASABİLDİĞİ blokları saklar; taşıyıcıya ait
+ * satırlar yerelde olduğu gibi kalır ve sunucudan gelen veriyle
+ * DEĞİŞTİRİLEMEZ.
+ *
+ * BİRLEŞİM, KESİŞİM DEĞİL. Yerel listede BULUNMAYAN sunucu blokları da
+ * eklenir. Aksi hâlde kusur şuydu: `defaultLabelTemplate.fields` eski 11
+ * bloğu taşıdığı için, A cihazında ayarlanan "Satın Alan Adı / alt / 44 punto"
+ * localStorage'ı boş olan B cihazında SESSİZCE düşer — sunucu ve baskı o
+ * bloğu bilirken düzenleyici bilmez. Yani ayar yine "yazılır ama okunmaz"
+ * durumuna düşerdi.
+ */
+function mergeStoredFields(
+  local: LabelFieldConfig[],
+  stored: unknown[],
+): LabelFieldConfig[] {
+  const remoteEntries = stored.filter(
+    (entry): entry is Record<string, unknown> => Boolean(entry),
+  )
+  const byKey = new Map(remoteEntries.map((entry) => [String(entry.key), entry]))
+  const apply = (
+    field: LabelFieldConfig,
+    remote: Record<string, unknown>,
+  ): LabelFieldConfig => ({
+    ...field,
+    visible: remote.visible === true,
+    order: Number.isFinite(Number(remote.order)) ? Number(remote.order) : field.order,
+    fontSize: Number.isFinite(Number(remote.fontSize))
+      ? Number(remote.fontSize)
+      : undefined,
+    bold: remote.bold === true,
+    placement: (remote.placement ?? field.placement) as LabelFieldConfig['placement'],
+  })
+
+  const merged = local.map((field) => {
+    const remote = byKey.get(field.key)
+    return remote ? apply(field, remote) : field
+  })
+  const known = new Set(local.map((field) => field.key))
+  for (const remote of remoteEntries) {
+    const key = String(remote.key) as LabelFieldConfig['key']
+    if (!key || known.has(key)) continue
+    merged.push(
+      apply(
+        { key, label: String(remote.label ?? key), visible: false, order: merged.length + 1 },
+        remote,
+      ),
+    )
+  }
+  return merged
+}
 
 // Maskelenmiş auth-mode durum yanıtı (secret İÇERMEZ). Yalnız tanımlayıcı,
 // ortam ve secret VARLIK bayrakları taşır.
@@ -402,6 +458,60 @@ export class IntegrationConfigService {
       saveToStorage(LABEL_TEMPLATE_KEY, normalized)
     }
     return normalized
+  }
+
+  /**
+   * Şablonu SUNUCUDAN yükler (auth modu).
+   *
+   * KÖK NEDEN: şablon yalnız localStorage'da tutulduğu sürece sunucudaki
+   * baskı yolu onu göremiyordu — operatörün açtığı blok arka plan
+   * etiketinde ve başka bir cihazda YOKTU. Sunucu artık otoriterdir;
+   * localStorage yalnız auth dışı yerel kullanım içindir.
+   *
+   * TAŞIYICI/PAZARYERİ ÇAĞRISI YOKTUR.
+   */
+  async fetchLabelTemplate(): Promise<LabelTemplate | null> {
+    if (!this.isAuthMode()) return null
+    try {
+      const response = await fetch(LABEL_TEMPLATE_ENDPOINT, {
+        credentials: 'include',
+      })
+      if (!response.ok) return null
+      const payload = await response.json()
+      const stored = payload?.template
+      if (!stored || !Array.isArray(stored.fields)) return null
+      const local = this.loadLabelTemplate()
+      const merged = {
+        ...local,
+        fields: mergeStoredFields(local.fields, stored.fields),
+        updatedAt: String(stored.updatedAt ?? local.updatedAt),
+      }
+      saveToStorage(LABEL_TEMPLATE_KEY, merged)
+      return merged
+    } catch {
+      // Ağ/sunucu erişilemedi: yerel şablon KULLANILMAYA DEVAM EDER.
+      return null
+    }
+  }
+
+  /** Şablonu sunucuya KALICI yazar. Başarısızlık sessizce yutulmaz. */
+  async pushLabelTemplate(
+    template: LabelTemplate,
+  ): Promise<{ ok: boolean; rejected: string[] }> {
+    if (!this.isAuthMode()) return { ok: true, rejected: [] }
+    try {
+      const response = await fetch(LABEL_TEMPLATE_ENDPOINT, {
+        method: 'PUT',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields: template.fields }),
+      })
+      if (!response.ok) return { ok: false, rejected: [] }
+      const payload = await response.json()
+      return { ok: true, rejected: Array.isArray(payload?.rejected) ? payload.rejected : [] }
+    } catch {
+      return { ok: false, rejected: [] }
+    }
   }
 
   saveLabelTemplate(template: LabelTemplate): LabelTemplate {

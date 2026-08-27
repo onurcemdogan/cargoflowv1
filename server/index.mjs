@@ -339,6 +339,8 @@ const TENANT_AUTH_PATHS = [
   '/api/onboarding',
   '/api/shipments/surat',
   '/api/labels/zpl',
+  // Kodsuz etiket şablonu org kapsamlıdır; auth kapısının ARKASINDA durur.
+  '/api/labels/template',
   // KÖK NEDEN (canlı): resmî Sürat render ucu bu listede YOKTU. Express
   // `app.use(path, mw)` ÖN EK eşleşmesi yapar ve '/api/labels/zpl',
   // '/api/labels/render/surat' ile EŞLEŞMEZ. Bu yüzden tenantAuth hiç
@@ -2202,6 +2204,66 @@ app.post('/api/onboarding/complete', async (request, response) => {
     response.json({ ok: true, ...result.status })
   } catch {
     response.status(500).json({ ok: false, message: 'Onboarding tamamlanamadı.' })
+  }
+})
+
+// ═══ KODSUZ ETİKET ŞABLONU ═══════════════════════════════════════════════
+// Şablon org kapsamında KALICI olur (organization_settings.settings_json).
+// Bu uçlar TAŞIYICIYA VE PAZARYERİNE ÇIKMAZ: ne Sürat ne Trendyol çağrılır,
+// hiçbir gönderi oluşturulmaz veya değiştirilmez. Yalnız kendi ayarımız
+// okunur/yazılır.
+async function requireLabelTemplateContext(request, response) {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) {
+    response.status(404).json({
+      ok: false,
+      message: 'Etiket şablonu yalnız auth modda kullanılabilir.',
+    })
+    return null
+  }
+  try {
+    const [{ getDb }, repo] = await Promise.all([
+      import('./db/client.ts'),
+      import('./labels/labelTemplateRepository.ts'),
+    ])
+    return { db: getDb(), repo, organizationId: request.auth.organizationId }
+  } catch {
+    response.status(503).json({
+      ok: false,
+      message: 'Etiket şablonu katmanı yüklenemedi; PostgreSQL yapılandırmasını kontrol edin.',
+    })
+    return null
+  }
+}
+
+app.get('/api/labels/template', async (request, response) => {
+  const context = await requireLabelTemplateContext(request, response)
+  if (!context) return
+  try {
+    const template = await context.repo.loadLabelTemplate(
+      context.db,
+      context.organizationId,
+    )
+    response.json({ ok: true, template })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Etiket şablonu okunamadı.' })
+  }
+})
+
+app.put('/api/labels/template', async (request, response) => {
+  const context = await requireLabelTemplateContext(request, response)
+  if (!context) return
+  try {
+    const { template, rejected } = await context.repo.saveLabelTemplate(
+      context.db,
+      context.organizationId,
+      request.body?.fields,
+      new Date().toISOString(),
+    )
+    // Kimlik/taşıyıcı blokları SESSİZCE atılmaz: hangi anahtarların
+    // reddedildiği operatöre açıkça bildirilir.
+    response.json({ ok: true, template, rejected })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Etiket şablonu kaydedilemedi.' })
   }
 })
 

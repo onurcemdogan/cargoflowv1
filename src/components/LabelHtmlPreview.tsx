@@ -22,7 +22,24 @@ import { resolveLabelLayout } from '../utils/labelLayoutResolver'
 // degiskenleri icin guvenli varsayilandir (etiket zaten basilmaz).
 const FALLBACK_PRODUCT_TIER = PRODUCT_FIT_TIERS[PRODUCT_FIT_TIERS.length - 1]
 const FALLBACK_ROUTE_TIER = ROUTE_FIT_TIERS[ROUTE_FIT_TIERS.length - 1]
+
+/**
+ * ZPL dot → önizleme px oranı.
+ *
+ * Etiket 799 dot genişliğindedir ve `.surat-common-label` onu 500 px'e
+ * yerleştirir. Oran BURADAN türetilir; kestirme bir 0,5 kullanmak blokları
+ * önizlemede baskıdakinden ~%20 KÜÇÜK gösterirdi ve operatör puntoyu
+ * gözüyle yanlış ayarlardı.
+ */
+const PREVIEW_LABEL_PX = 500
+const PREVIEW_LABEL_DOTS = 799
+const DOT_TO_PX = PREVIEW_LABEL_PX / PREVIEW_LABEL_DOTS
 import { QrCodeSvg } from './QrCodeSvg'
+import {
+  resolveProductLineParts,
+  resolveTenantBlocks,
+  resolveTenantBlockValues,
+} from '../utils/labelTenantBlocks'
 
 interface LabelHtmlPreviewProps {
   order?: CargoOrder
@@ -61,6 +78,16 @@ export function LabelHtmlPreview({
     )
   }
 
+  // Kiracının kodsuz düzenleyicide açtığı bloklar. ZPL tarafıyla AYNI
+  // çözümleyici kullanılır; ağ çağrısı YOKTUR.
+  const tenantBlocks = resolveTenantBlocks(
+    template,
+    resolveTenantBlockValues(order, data),
+  )
+  // Ürün satırının parçaları (adet / varyant / SKU) de şablondan gelir;
+  // önizleme baskıyla AYNI birleştiriciyi kullanır.
+  const productLineParts = resolveProductLineParts(template)
+
   const trackingText = data.tNo || '-'
   const leftReference =
     overrides?.leftReference ||
@@ -71,10 +98,10 @@ export function LabelHtmlPreview({
   const productTitle =
     overrides?.productTitle ||
     productName ||
-    formatProductTitle(primaryItem) ||
+    formatProductTitle(primaryItem, productLineParts) ||
     'Ürün bilgisi yok'
   const productMeta =
-    overrides?.productMeta ?? formatProductMeta(primaryItem)
+    overrides?.productMeta ?? formatProductMeta(primaryItem, productLineParts)
   const branchName = overrides?.branchName || data.branchName
   const recipientName = overrides?.recipientName || data.recipientName
   const barcodeValue = data.barcodeValue
@@ -237,20 +264,49 @@ export function LabelHtmlPreview({
               </strong>
             )}
           </footer>
+
+          {/* KİRACI BLOKLARI — kodsuz düzenleyicinin çıktısı.
+              Baskı ZPL'iyle AYNI saf fonksiyondan beslenir
+              (`resolveTenantBlocks`), bu yüzden önizleme ile etiket
+              ayrışamaz. Taşıyıcı kimliği burada ÜRETİLMEZ. */}
+          {tenantBlocks.length > 0 ? (
+            <section className="surat-section surat-tenant-section">
+              {tenantBlocks.map((block) => (
+                <span
+                  key={block.key}
+                  className={`surat-tenant-block surat-tenant-${block.placement}`}
+                  data-block={block.key}
+                  style={{
+                    fontSize: `${Math.round(block.fontHeight * DOT_TO_PX)}px`,
+                    fontWeight: block.bold ? 700 : 400,
+                  }}
+                >
+                  {block.text}
+                </span>
+              ))}
+            </section>
+          ) : null}
         </div>
       </article>
     </div>
   )
 }
 
-function formatProductTitle(item?: LabelDataItem): string {
+function formatProductTitle(
+  item?: LabelDataItem,
+  parts: { quantity: boolean } = { quantity: true },
+): string {
   if (!item) return ''
-  return `${item.quantity || 1} x ${item.productName}`.trim()
+  const name = String(item.productName ?? '').trim()
+  return parts.quantity ? `${item.quantity || 1} x ${name}`.trim() : name
 }
 
 // Önizleme ve baskı AYNI bicimlendiriciyi kullanir (kopya YOK): boylece
 // onizlemede gorunen renk/beden ile basilan etiket ASLA ayrisamaz.
-function formatProductMeta(item?: LabelDataItem): string {
+function formatProductMeta(
+  item?: LabelDataItem,
+  parts: { variant: boolean; sku: boolean } = { variant: true, sku: true },
+): string {
   if (!item) return ''
   return buildProductMetaText({
     productName: String(item.productName ?? ''),
@@ -258,7 +314,7 @@ function formatProductMeta(item?: LabelDataItem): string {
     color: item.color,
     size: item.size,
     sku: item.sku,
-  })
+  }, parts)
 }
 
 function splitAddress(address: string): string[] {

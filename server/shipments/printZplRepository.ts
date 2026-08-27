@@ -24,6 +24,8 @@ import {
   decryptShipmentPayload,
   encryptShipmentPayload,
 } from './shipmentEncryption.ts'
+import type { TenantBlock } from '../../src/utils/labelTenantBlocks.ts'
+import type { ProductLineParts } from '../../src/utils/suratZplProductLine.ts'
 import {
   deriveAugmentedSuratZplWithHashes,
   sha256Hex,
@@ -438,17 +440,23 @@ export function buildPrintZplArtifact(
   createdAt: string,
   compose?: { cargoTrackingNumber?: string; ozelKargoTakipNo?: string },
   productContext?: ProductDetailContext,
+  // Kodsuz düzenleyicinin bu org için açtığı bloklar. Verilmezse çıktı
+  // eskisiyle BİREBİR aynıdır.
+  tenantBlocks?: readonly TenantBlock[],
+  productLineParts?: ProductLineParts,
 ): { artifact: PersistedPrintZpl; augmentationStatus: AugmentationStatus } {
-  const derived = deriveAugmentedSuratZplWithHashes(
-    sourceZpl,
-    items,
-    compose ? { compose } : {},
-  )
+  const derived = deriveAugmentedSuratZplWithHashes(sourceZpl, items, {
+    ...(compose ? { compose } : {}),
+    ...(tenantBlocks && tenantBlocks.length > 0 ? { tenantBlocks } : {}),
+    ...(productLineParts ? { productLineParts } : {}),
+  })
   // ── EK ÜRÜN DETAY SAYFALARI ───────────────────────────────────────────
   // ATOMİKLİK: her şey ÖNCE bellekte üretilir ve doğrulanır; artefakt tek bir
   // JSON bloğu olarak TEK yazımda kalıcı olur. Yarım bundle YAZILAMAZ.
   // PNG YOKTUR: bu yol yalnız ZPL + hash üretir.
-  const plan = planProductDetailPages(items)
+  // Ek ürün detay sayfaları da KİRACI AYARINI izler: taşıyıcı etiketinde
+  // gizlenen SKU, ek sayfada basılmaz.
+  const plan = planProductDetailPages(items, productLineParts)
   const supplementalLabels: PersistedSupplementalLabel[] =
     plan.required && plan.reason === null && productContext
       ? buildProductDetailLabels(plan, productContext).map((label) => ({
@@ -722,6 +730,8 @@ export function attachPrintZplArtifact(
   carrierPayload: Record<string, unknown>,
   items: SuratProductLineItem[],
   now: string,
+  tenantBlocks?: readonly TenantBlock[],
+  productLineParts?: ProductLineParts,
 ): Record<string, unknown> {
   const sourceZpl = pickSourceZpl(carrierPayload)
   if (!sourceZpl.trim()) return carrierPayload
@@ -734,6 +744,8 @@ export function attachPrintZplArtifact(
     now,
     resolveComposeInput(carrierPayload),
     resolveProductDetailContext(carrierPayload),
+    tenantBlocks,
+    productLineParts,
   )
   return { ...carrierPayload, printZplArtifact: artifact }
 }

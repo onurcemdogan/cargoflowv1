@@ -4,6 +4,17 @@ import { ActionResult } from '../components/ActionResult'
 import { LabelHtmlPreview } from '../components/LabelHtmlPreview'
 import { PageHeader } from '../components/PageHeader'
 import { defaultLabelTypography } from '../services/integrationConfigService'
+import {
+  isProductLinePart,
+  isTenantRenderableBlock,
+  resolveTenantBlocks,
+  resolveTenantBlockValues,
+  tenantBlocksHeight,
+  TENANT_BAND_NOMINAL_HEIGHT,
+} from '../utils/labelTenantBlocks'
+import {
+  IDENTITY_LOCKED_LABEL_FIELDS,
+} from '../types/cargoflow'
 import type {
   CargoOrder,
   LabelFieldConfig,
@@ -48,16 +59,40 @@ const templateCards = [
   },
 ]
 
-const editorFields: Array<{ key: LabelFieldKey; label: string }> = [
-  { key: 'customerName', label: 'Alıcı Adı' },
-  { key: 'customerPhone', label: 'Telefon' },
-  { key: 'address', label: 'Adres' },
-  { key: 'productName', label: 'Ürün Adı' },
-  { key: 'trackingNumber', label: 'Takip No' },
-  { key: 'shipmentCode', label: 'Barkod' },
-  { key: 'shippingProvider', label: 'QR' },
-  { key: 'orderNumber', label: 'Sipariş No' },
-  { key: 'marketplace', label: 'Pazaryeri' },
+/**
+ * Düzenleyicide görünen blok kataloğu.
+ *
+ * `defaultVisible: false` olan bloklar YENİ eklenen bloklardır: mevcut
+ * kiracıların etiketi bir sürüm yükseltmesiyle KENDİLİĞİNDEN değişmesin
+ * diye kapalı doğarlar. Operatör açtığında kod değişikliği gerekmez.
+ */
+const editorFields: Array<{
+  key: LabelFieldKey
+  label: string
+  defaultVisible: boolean
+}> = [
+  { key: 'customerName', label: 'Alıcı Adı', defaultVisible: true },
+  // ── Ürün satırının parçaları — bugünkü çıktıyı korumak için AÇIK. ──
+  { key: 'productName', label: 'Ürün Adı', defaultVisible: true },
+  { key: 'quantity', label: 'Adet', defaultVisible: true },
+  { key: 'variant', label: 'Varyant', defaultVisible: true },
+  { key: 'sku', label: 'SKU', defaultVisible: true },
+  // ── Ayrı satır olarak basılan bloklar — KAPALI doğarlar. ──
+  // Bunlar bugüne kadar KOD DEĞİŞİKLİĞİ gerektiren alanlardır; açık
+  // doğsalardı mevcut kiracıların etiketi kendiliğinden değişirdi.
+  { key: 'buyerName', label: 'Satın Alan Adı', defaultVisible: false },
+  { key: 'orderDate', label: 'Sipariş Tarihi', defaultVisible: false },
+  { key: 'orderTime', label: 'Sipariş Saati', defaultVisible: false },
+  { key: 'packageId', label: 'Paket No', defaultVisible: false },
+  { key: 'orderNumber', label: 'Sipariş No', defaultVisible: false },
+  { key: 'marketplace', label: 'Pazaryeri', defaultVisible: false },
+  // ── Taşıyıcının bastığı metinler — bilgi amaçlı listelenir. ──
+  { key: 'customerPhone', label: 'Telefon', defaultVisible: true },
+  { key: 'address', label: 'Adres', defaultVisible: true },
+  { key: 'cityDistrict', label: 'İl / İlçe', defaultVisible: true },
+  { key: 'trackingNumber', label: 'Takip No', defaultVisible: true },
+  { key: 'shipmentCode', label: 'Barkod', defaultVisible: true },
+  { key: 'shippingProvider', label: 'QR', defaultVisible: true },
 ]
 
 const typographyFields: Array<{
@@ -93,6 +128,26 @@ export function LabelTemplatesPage({
   )
   const [draggedKey, setDraggedKey] = useState<LabelFieldKey>()
 
+  // ÖN UYARI: etikete gerçekten yazılacak blokların isteyeceği dikey alan.
+  // KESİN karar baskı anında verilir (bant etiketten etikete değişir); bu
+  // yalnız operatörü sığmayacak bir şablonu üretime almaktan alıkoyar.
+  const requestedBandHeight = useMemo(() => {
+    const resolved = resolveTenantBlocks(
+      { fields },
+      resolveTenantBlockValues(previewOrder, undefined),
+    )
+    // Değeri boş bloklar basılmaz; yine de operatörün AÇTIĞI her blok
+    // hesaba katılır, aksi halde uyarı canlı veride sürpriz olurdu.
+    const visibleCount = fields.filter(
+      (field) => field.visible && isTenantRenderableBlock(field.key),
+    ).length
+    if (resolved.length === 0) return visibleCount * 19
+    return Math.round(
+      (tenantBlocksHeight(resolved) / resolved.length) * visibleCount,
+    )
+  }, [fields, previewOrder])
+  const bandOverflow = requestedBandHeight > TENANT_BAND_NOMINAL_HEIGHT
+
   function applyTemplate(id: string, name: string) {
     const nextTemplate = buildTemplate(previewTemplate, id, name, fields)
     setPreviewTemplate(nextTemplate)
@@ -111,6 +166,12 @@ export function LabelTemplatesPage({
         [key]: value,
       },
     }))
+  }
+
+  /** Blok başına SUNUM ayarı. Kimlik bloklarının DEĞERİ değişmez. */
+  function updateField(key: LabelFieldKey, patch: Partial<LabelFieldConfig>) {
+    setFields((current) =>
+      current.map((item) => (item.key === key ? { ...item, ...patch } : item)))
   }
 
   function moveField(targetKey: LabelFieldKey) {
@@ -189,10 +250,13 @@ export function LabelTemplatesPage({
           <section className="typography-editor prominent">
             <div className="panel-heading compact">
               <div>
-                <h2>Yazı Boyutları</h2>
+                <h2>Yazı Boyutları (yalnız ekran önizlemesi)</h2>
                 <span>
-                  Teslimat bölgesi ve aktarma satırları artık etikete otomatik
-                  sığdırılır.
+                  Bu ayarlar ekrandaki önizlemeyi biçimlendirir. Sürat
+                  etiketinin adres, alıcı ve barkod metinlerini TAŞIYICI basar;
+                  o metinlerin puntosu buradan değiştirilemez. Etikete gerçekten
+                  yazdırmak istediğin bilgiler için aşağıdaki blok listesini
+                  kullan.
                 </span>
               </div>
             </div>
@@ -283,9 +347,87 @@ export function LabelTemplatesPage({
                   />
                   <span>{field.label}</span>
                 </label>
+                {/* SUNUM AYARLARI YALNIZ BİZİM BASTIĞIMIZ BLOKLARDA.
+                    Taşıyıcının bastığı metnin (adres, alıcı, barkod, takip no)
+                    puntosunu değiştiremeyiz; oraya düğme koymak operatöre
+                    YALAN bir yetki gösterirdi. */}
+                {isTenantRenderableBlock(field.key) ? (
+                  <>
+                <label className="field-style-control">
+                  <span>Punto</span>
+                  <input
+                    type="number"
+                    min={6}
+                    max={72}
+                    value={field.fontSize ?? ''}
+                    placeholder="oto"
+                    onChange={(event) =>
+                      updateField(field.key, {
+                        fontSize: event.target.value === ''
+                          ? undefined
+                          : Number(event.target.value),
+                      })
+                    }
+                  />
+                </label>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={field.bold === true}
+                    onChange={(event) =>
+                      updateField(field.key, { bold: event.target.checked })
+                    }
+                  />
+                  <span>Kalın</span>
+                </label>
+                <label className="field-style-control">
+                  <span>Konum</span>
+                  <select
+                    value={field.placement ?? 'body'}
+                    onChange={(event) =>
+                      updateField(field.key, {
+                        placement: event.target.value as LabelFieldConfig['placement'],
+                      })
+                    }
+                  >
+                    <option value="top">Üst</option>
+                    <option value="body">Orta</option>
+                    <option value="bottom">Alt</option>
+                  </select>
+                </label>
+                  </>
+                ) : isProductLinePart(field.key) ? (
+                  // Ürün satırı KENDİ punto merdivenine sahiptir (sığdırma
+                  // otomatiktir); ayrı bir punto düğmesi o merdiveni bozardı.
+                  <span className="field-locked-note" title="Ürün satırı parçası">
+                    ürün satırında
+                  </span>
+                ) : (
+                  <span
+                    className="field-locked-note"
+                    title={
+                      IDENTITY_LOCKED_LABEL_FIELDS.includes(field.key)
+                        ? 'Taşıyıcı kimliği'
+                        : 'Taşıyıcının bastığı metin'
+                    }
+                  >
+                    {IDENTITY_LOCKED_LABEL_FIELDS.includes(field.key)
+                      ? 'değeri kilitli — taşıyıcı basar'
+                      : 'taşıyıcı basar'}
+                  </span>
+                )}
               </div>
             ))}
           </div>
+          {bandOverflow ? (
+            <p className="template-band-warning" role="status">
+              Seçilen bloklar yaklaşık {requestedBandHeight} dot yer istiyor;
+              taşıyıcı etiketinde tipik olarak {TENANT_BAND_NOMINAL_HEIGHT} dot
+              boş alan kalır. Sığmayan bloklar BASILMAZ (kırpılmaz, küçültülmez)
+              ve baskı sonucunda açıkça bildirilir. Punto düşür veya blok sayısını
+              azalt.
+            </p>
+          ) : null}
           <div className="button-row">
             <button
               type="button"
@@ -306,21 +448,44 @@ export function LabelTemplatesPage({
             <h2>Canlı Etiket Önizleme</h2>
             <span>{previewTemplate.name}</span>
           </div>
-          <LabelHtmlPreview order={previewOrder} template={previewTemplate} />
+          {/* CANLI ÖNİZLEME: blok ayarları KAYDETMEDEN de görünür. Operatör
+              "kaydet → bak → geri al" döngüsüne zorlanmaz; ayrıca kaydetmeden
+              önce sonucu gördüğü için yanlış şablonu üretime almaz.
+              Bu görünüm YERELDİR: taşıyıcı veya pazaryeri çağrısı YOKTUR. */}
+          <LabelHtmlPreview
+            order={previewOrder}
+            template={{ ...previewTemplate, fields }}
+          />
         </div>
       </section>
     </>
   )
 }
 
+/**
+ * Kayıtlı şablonu düzenleyici kataloğuyla birleştirir.
+ *
+ * Kayıtlı şablon OTORİTERDİR: görünürlük, sunum ayarları (punto/kalın/konum)
+ * ve operatörün sürükleyerek verdiği SIRA korunur. Katalogda olup şablonda
+ * bulunmayan bloklar kendi varsayılanıyla, listenin sonunda eklenir.
+ */
 function normalizeEditorFields(fields: LabelFieldConfig[]): LabelFieldConfig[] {
   const byKey = new Map(fields.map((field) => [field.key, field]))
-  return editorFields.map((field, index) => ({
-    key: field.key,
-    label: field.label,
-    visible: byKey.get(field.key)?.visible ?? true,
-    order: index + 1,
-  }))
+  const merged = editorFields.map((field, index) => {
+    const stored = byKey.get(field.key)
+    return {
+      key: field.key,
+      label: field.label,
+      visible: stored?.visible ?? field.defaultVisible,
+      // Kayıtlı sıra yoksa katalog sırasının ARDINA düşer.
+      order: stored?.order ?? editorFields.length + index + 1,
+      fontSize: stored?.fontSize,
+      bold: stored?.bold,
+      placement: stored?.placement,
+    }
+  })
+  merged.sort((left, right) => left.order - right.order)
+  return reindexFields(merged)
 }
 
 function reindexFields(fields: LabelFieldConfig[]): LabelFieldConfig[] {

@@ -118,26 +118,61 @@ function clean(value: unknown): string {
 }
 
 /**
+ * Ürün satırının hangi parçalarının basılacağı — KİRACI AYARI.
+ *
+ * Bu parçalar kodsuz düzenleyicideki "Adet / Varyant / SKU" bloklarına
+ * karşılık gelir. Ürün ADI kapatılamaz: adı olmayan bir ürün satırı depoda
+ * hiçbir işe yaramaz ve satırın tamamı anlamsız olurdu.
+ *
+ * Varsayılan, bugünkü çıktının BİREBİR aynısıdır (üçü de açık); bu yüzden
+ * ayar verilmeyen kiracıların etiketi DEĞİŞMEZ.
+ */
+export interface ProductLineParts {
+  readonly quantity: boolean
+  readonly variant: boolean
+  readonly sku: boolean
+}
+
+export const DEFAULT_PRODUCT_LINE_PARTS: ProductLineParts = {
+  quantity: true,
+  variant: true,
+  sku: true,
+}
+
+/**
  * DuruSoft biçimi: `{adet} x {ürün adı} (Renk: X, Beden: Y) [SKU]`.
  * Renk/beden bulunamazsa "Belirtilmemiş" yazılır (TAHMİN YOK). SKU yoksa
  * köşeli parantez HİÇ basılmaz; boş "()", "[]" veya sarkan ayraç oluşmaz.
  */
-export function buildProductLineTitle(item: SuratProductLineItem): string {
+export function buildProductLineTitle(
+  item: SuratProductLineItem,
+  parts: ProductLineParts = DEFAULT_PRODUCT_LINE_PARTS,
+): string {
   const quantity = Math.max(1, Math.trunc(Number(item.quantity) || 1))
   const name = clean(item.productName) || 'Ürün'
-  return `${quantity} x ${name}`
+  return parts.quantity ? `${quantity} x ${name}` : name
 }
 
-export function buildProductLineMeta(item: SuratProductLineItem): string {
+export function buildProductLineMeta(
+  item: SuratProductLineItem,
+  parts: ProductLineParts = DEFAULT_PRODUCT_LINE_PARTS,
+): string {
   const color = clean(item.color) || PRODUCT_LINE_UNSPECIFIED
   const size = clean(item.size) || PRODUCT_LINE_UNSPECIFIED
   const sku = clean(item.sku)
-  const grouped = `(Renk: ${color}, Beden: ${size})`
-  return sku ? `${grouped} [${sku}]` : grouped
+  // Kapatılan parça HİÇ basılmaz: boş "()" veya sarkan "[]" oluşmaz.
+  const grouped = parts.variant ? `(Renk: ${color}, Beden: ${size})` : ''
+  const tail = parts.sku && sku ? `[${sku}]` : ''
+  return [grouped, tail].filter(Boolean).join(' ')
 }
 
-export function buildProductLineText(item: SuratProductLineItem): string {
-  return `${buildProductLineTitle(item)} ${buildProductLineMeta(item)}`
+export function buildProductLineText(
+  item: SuratProductLineItem,
+  parts: ProductLineParts = DEFAULT_PRODUCT_LINE_PARTS,
+): string {
+  return [buildProductLineTitle(item, parts), buildProductLineMeta(item, parts)]
+    .filter(Boolean)
+    .join(' ')
 }
 
 /**
@@ -346,6 +381,7 @@ export interface SuratFooterPlan {
 export function planSuratFooter(
   items: SuratProductLineItem[],
   geometry: ZplGeometry,
+  parts: ProductLineParts = DEFAULT_PRODUCT_LINE_PARTS,
 ): SuratFooterPlan {
   const area = resolveFooterArea(geometry)
   // Aynı ürünün tekrar eden satırları TEK satırda toplanır (yalnız sunum).
@@ -368,7 +404,7 @@ export function planSuratFooter(
     const blocks: SuratFooterBlockLine[][] = []
     let fits = true
     for (const item of source) {
-      const full = buildProductLineText(item)
+      const full = buildProductLineText(item, parts)
       const singleLines = estimateLines(full, profile.fontWidth, area.width)
       if (singleLines === 1) {
         // DuruSoft kanıtı: mümkün olduğunda TEK kompakt satır.

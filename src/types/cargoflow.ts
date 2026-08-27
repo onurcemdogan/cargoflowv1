@@ -1017,13 +1017,48 @@ export type LabelFieldKey =
   | 'quantity'
   | 'trackingNumber'
   | 'shipmentCode'
+  // ── KODSUZ ÖZELLEŞTİRME İÇİN EKLENEN BLOKLAR ────────────────────────
+  // Bunlar müşterinin sık istediği ve bugüne kadar KOD DEĞİŞİKLİĞİ
+  // gerektiren alanlardır (sipariş saati, satın alan adı, varyant, SKU).
+  | 'orderDate'
+  | 'orderTime'
+  | 'buyerName'
+  | 'variant'
+  | 'sku'
+  | 'packageId'
 
 export interface LabelFieldConfig {
   key: LabelFieldKey
   label: string
   visible: boolean
   order: number
+  /**
+   * Blok başına SUNUM ayarları — hepsi opsiyoneldir; verilmezse şablonun
+   * genel tipografisi geçerlidir.
+   *
+   * DİKKAT: bunlar YALNIZ sunumdur. Taşıyıcı kimliği (barkod/QR/takip no)
+   * DEĞERİ buradan DEĞİŞTİRİLEMEZ.
+   */
+  fontSize?: number
+  bold?: boolean
+  /** Etiket üzerinde kaba yerleşim bölgesi. */
+  placement?: 'top' | 'body' | 'bottom'
 }
+
+/**
+ * Taşıyıcı KİMLİĞİ taşıyan bloklar.
+ *
+ * DEĞERİ de SUNUMU da kiracı tarafından belirlenemez: bu metinleri taşıyıcı
+ * kendi ZPL'inde basar, biz üretmeyiz. Barkoda `packageId` yazdırmak, yanlış
+ * paketi taşıyan bir etiket demektir; puntosunu değiştirmeye çalışmak ise
+ * composer beyaz listesini ihlal ederdi.
+ *
+ * Düzenleyici bu satırlarda hiçbir kontrol GÖSTERMEZ — çalışmayan bir düğme,
+ * operatöre sahte bir yetki göstermek olurdu.
+ */
+export const IDENTITY_LOCKED_LABEL_FIELDS: readonly LabelFieldKey[] = [
+  'shipmentCode', 'trackingNumber', 'shippingProvider',
+]
 
 export interface LabelTemplate {
   id: string

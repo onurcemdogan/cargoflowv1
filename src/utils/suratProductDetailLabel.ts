@@ -30,6 +30,10 @@ import {
   type SuratProductLineItem,
 } from './suratZplProductLine.ts'
 import { estimateA0Width } from './suratDurusoftComposer.ts'
+import {
+  DEFAULT_PRODUCT_LINE_PARTS,
+  type ProductLineParts,
+} from './suratZplProductLine.ts'
 
 /** Ek etiket EŞİĞİ: bu sayıdan FAZLA görüntü satırı ek sayfa gerektirir. */
 export const PRODUCT_DETAIL_THRESHOLD = 2
@@ -126,9 +130,12 @@ export function wrapToWidth(
   return lines
 }
 
-function buildBlock(item: SuratProductLineItem): ProductDetailBlock {
-  const title = buildProductLineTitle(item)
-  const meta = buildProductLineMeta(item)
+function buildBlock(
+  item: SuratProductLineItem,
+  parts: ProductLineParts,
+): ProductDetailBlock {
+  const title = buildProductLineTitle(item, parts)
+  const meta = buildProductLineMeta(item, parts)
   const titleLines = wrapToWidth(title, TITLE_FONT.width, CONTENT_WIDTH)
   const metaLines = wrapToWidth(meta, META_FONT.width, CONTENT_WIDTH)
   const height =
@@ -157,6 +164,10 @@ function headerHeight(): number {
  */
 export function planProductDetailPages(
   items: readonly SuratProductLineItem[],
+  // KİRACI AYARI ek sayfalarda da geçerlidir. Aksi hâlde "SKU'yu gizle"
+  // diyen operatör, taşıyıcı etiketinde gizlenen SKU'yu ek sayfada
+  // basılmış bulurdu — ayar yarım uygulanmış olurdu.
+  parts: ProductLineParts = DEFAULT_PRODUCT_LINE_PARTS,
 ): ProductDetailPlan {
   const aggregated = aggregateProductLineItems(
     (Array.isArray(items) ? items : []).filter(
@@ -172,7 +183,7 @@ export function planProductDetailPages(
     return { required: false, aggregated, pages: [], quantityTotal, reason: null }
   }
 
-  const blocks = aggregated.map(buildBlock)
+  const blocks = aggregated.map((item) => buildBlock(item, parts))
   const available = SAFE_BOTTOM - headerHeight()
   const oversized = blocks.find((block) => block.height > available)
   if (oversized) {

@@ -125,9 +125,24 @@ async function withPrintZplArtifact(
   try {
     const { loadPrintLineItems } = await import('./printZplItems.ts')
     const { attachPrintZplArtifact } = await import('./printZplRepository.ts')
+    const { loadTenantLabelBlocks } = await import('../labels/tenantBlockLoader.ts')
     const items = await loadPrintLineItems(db, organizationId, marketplace, packageId)
-    if (items.length === 0) return record
-    return attachPrintZplArtifact(record, items, new Date().toISOString())
+    // Kiracı blokları ürün satırından BAĞIMSIZDIR: ürün satırı olmayan bir
+    // pakette bile operatörün açtığı bloklar basılmalıdır.
+    const tenant = await loadTenantLabelBlocks(
+      db,
+      organizationId,
+      marketplace,
+      packageId,
+    )
+    if (items.length === 0 && tenant.blocks.length === 0) return record
+    return attachPrintZplArtifact(
+      record,
+      items,
+      new Date().toISOString(),
+      tenant.blocks,
+      tenant.productLineParts,
+    )
   } catch {
     // Artifact üretilemedi: create AKIŞI BOZULMAZ, kaynak ZPL aynen persist
     // edilir ve kayıt legacy hydration yoluna düşer. Ham ZPL LOGLANMAZ.

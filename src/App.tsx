@@ -129,6 +129,17 @@ function App() {
   const [labelTemplate, setLabelTemplate] = useState<LabelTemplate>(() =>
     integrationConfigService.loadLabelTemplate(),
   )
+  // Sunucudaki şablon OTORİTERDİR: başka bir cihazda yapılan düzenleme bu
+  // oturumda da geçerli olur. Erişilemezse yerel şablon korunur.
+  useEffect(() => {
+    let cancelled = false
+    void integrationConfigService.fetchLabelTemplate().then((remote) => {
+      if (!cancelled && remote) setLabelTemplate(remote)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
   const [ordersState, setOrdersState] = useState<OrdersState>(() => ({
     orders: [],
     ordersLoading: true,
@@ -1465,6 +1476,30 @@ function App() {
   function handleSaveLabelTemplate(template: LabelTemplate) {
     const saved = integrationConfigService.saveLabelTemplate(template)
     setLabelTemplate(saved)
+    // KALICILIK: auth modda şablon SUNUCUYA yazılır; baskı yolu (arka plan
+    // etiketi dâhil) onu oradan okur. Yazım başarısızsa operatör UYARILIR —
+    // "kaydedildi" deyip sessizce yerelde bırakmak yanlış bilgi olurdu.
+    void integrationConfigService
+      .pushLabelTemplate(saved)
+      .then(({ ok, rejected }) => {
+        if (!ok) {
+          setLastResult({
+            level: 'warning',
+            message:
+              'Şablon bu cihazda kaydedildi ancak sunucuya yazılamadı; ' +
+              'diğer cihazlar ve arka plan etiketi eski şablonu kullanır.',
+          })
+          return
+        }
+        if (rejected.length > 0) {
+          setLastResult({
+            level: 'warning',
+            message:
+              'Şablon kaydedildi. Taşıyıcı kimliğine ait bloklar ' +
+              `düzenlenemez ve yok sayıldı: ${rejected.join(', ')}.`,
+          })
+        }
+      })
     const nextLogs = auditLogService.append({
       action: 'Etiket şablonu kaydedildi',
       level: 'success',
