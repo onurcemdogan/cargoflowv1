@@ -166,6 +166,12 @@ export function resolveAutoLabelEnqueue(params: {
    * karşılaştırılır; bilinmiyorsa paket otomatik sıraya GİRMEZ.
    */
   firstSeenAtMs?: number
+  /**
+   * YALNIZ tek seferlik yakalama (catch-up) için. Normal üretici bunu
+   * ASLA vermez; verilirse aktivasyon sınırı ATLANIR ama diğer hiçbir
+   * kapı gevşemez.
+   */
+  skipActivationBoundary?: boolean
 }): AutoLabelEnqueueDecision {
   const jobKey = autoLabelJobKey({ ...params.scope, packageId: params.packageId })
   const block = (
@@ -182,19 +188,28 @@ export function resolveAutoLabelEnqueue(params: {
   //
   // Paket, otomatik etiket AÇILMADAN ÖNCE görüldüyse otomatik sıraya
   // GİRMEZ. Operatör onu elle etiketleyebilir; karar insanındır.
-  const boundary = resolveActivationBoundary(params.settings)
-  if (boundary === null) {
-    return block(
-      'BEFORE_ACTIVATION_BOUNDARY',
-      'Aktivasyon sınırı yok; geçmiş yığın otomatik etiketlenmez.',
-    )
-  }
-  const firstSeen = Number(params.firstSeenAtMs)
-  if (!Number.isFinite(firstSeen) || firstSeen < boundary) {
-    return block(
-      'BEFORE_ACTIVATION_BOUNDARY',
-      'Paket aktivasyon sınırından önce görülmüş.',
-    )
+  //
+  // TEK İSTİSNA: açıkça çalıştırılan TEK SEFERLİK yakalama işlemi
+  // (`skipActivationBoundary`). Bu bayrak YALNIZ `autoLabelCatchup`
+  // tarafından ve YALNIZ operatörün elle verdiği komutla set edilir;
+  // normal üretici onu ASLA geçmez (POLICY-CATCHUP-1 bunu kilitler).
+  // Diğer TÜM kapılar (etiket/artefakt/ağ/uygunluk/faturalama/kimlik)
+  // yakalama yolunda da AYNEN uygulanır.
+  if (params.skipActivationBoundary !== true) {
+    const boundary = resolveActivationBoundary(params.settings)
+    if (boundary === null) {
+      return block(
+        'BEFORE_ACTIVATION_BOUNDARY',
+        'Aktivasyon sınırı yok; geçmiş yığın otomatik etiketlenmez.',
+      )
+    }
+    const firstSeen = Number(params.firstSeenAtMs)
+    if (!Number.isFinite(firstSeen) || firstSeen < boundary) {
+      return block(
+        'BEFORE_ACTIVATION_BOUNDARY',
+        'Paket aktivasyon sınırından önce görülmüş.',
+      )
+    }
   }
   // Zaten etiket varsa taşıyıcıya GİDİLMEZ.
   if (params.hasLabelArtifact) {

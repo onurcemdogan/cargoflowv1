@@ -55,7 +55,9 @@
     "surat:trace:inspect": "node --env-file-if-exists=.env server/shipments/suratTraceInspectCli.ts",
     "surat:create:eligibility:inspect": "node --env-file-if-exists=.env server/shipments/suratCreateEligibilityInspectCli.ts",
     "surat:canary:precheck": "node --env-file-if-exists=.env server/shipments/suratCanaryPrecheckCli.ts",
-    "surat:print-zpl:repair": "node server/shipments/repairPrintZplCli.ts"
+    "surat:print-zpl:repair": "node server/shipments/repairPrintZplCli.ts",
+    "auto-label:catchup:inspect": "tsx server/shipments/autoLabelCatchupCli.ts",
+    "auto-label:catchup:enqueue": "tsx server/shipments/autoLabelCatchupCli.ts --enqueue"
   },
   "dependencies": {
     "@types/jsbarcode": "^3.11.4",
