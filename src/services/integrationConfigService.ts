@@ -5,11 +5,11 @@ import type {
   LabelTypographyConfig,
   PrinterSettings,
 } from '../types/cargoflow'
-import { loadFromStorage, saveToStorage } from '../utils/storage'
+import { loadFromStorage, saveToStorage } from '../utils/storage.ts'
 import {
   DEFAULT_TENANT_DESI_CONFIG,
   normalizeTenantDesiConfig,
-} from '../utils/orderDesi'
+} from '../utils/orderDesi.ts'
 
 const INTEGRATION_KEY = 'cargoflow.integrationConfig'
 const PRINTER_KEY = 'cargoflow.printerSettings'

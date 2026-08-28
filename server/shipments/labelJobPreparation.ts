@@ -67,6 +67,15 @@ export const PREPARATION_BLOCKER_CODES = {
   SCHEMA_DRIFT: 'SURAT_PREFLIGHT_SCHEMA_DRIFT',
   /** Siparis PII'si sifreli saklanir; anahtar yoksa siparis OKUNAMAZ. */
   ENCRYPTION_KEY: 'SURAT_PREFLIGHT_ENCRYPTION_KEY_MISSING',
+  /**
+   * CALISMA ZAMANI MODUL COZUMLEMESI BASARISIZ.
+   *
+   * URETIMDE OLCULDU: uygulama `node server/index.mjs` ile calisir; Node ESM
+   * uzantisiz goreli import'lari COZMEZ. CLI araclari `tsx` altinda cozer.
+   * Bu yuzden ayni kod CLI'da calisip sunucuda PATLADI. Bu kod o sinifi
+   * GENEL hata olmaktan cikarir.
+   */
+  MODULE_LOAD: 'SURAT_PREFLIGHT_MODULE_LOAD_FAILED',
 } as const
 
 /**
@@ -78,6 +87,13 @@ export const PREPARATION_BLOCKER_CODES = {
  */
 function classifyPreparationFailure(message: string): string {
   const text = message.toLocaleLowerCase('en-US')
+  if (
+    text.includes('cannot find module') ||
+    text.includes('err_module_not_found') ||
+    text.includes('cannot find package')
+  ) {
+    return 'SURAT_PREFLIGHT_MODULE_LOAD_FAILED'
+  }
   if (
     text.includes('order_data_encryption_key') ||
     text.includes('credential_encryption_key') ||
@@ -102,6 +118,7 @@ function classifyPreparationFailure(message: string): string {
  * yazması ÜRETİMDE yaşandı ve teşhisi yanlış yöne çevirdi.
  */
 const BLOCKER_PRIORITY: readonly string[] = [
+  PREPARATION_BLOCKER_CODES.MODULE_LOAD,
   PREPARATION_BLOCKER_CODES.SCHEMA_DRIFT,
   PREPARATION_BLOCKER_CODES.ENCRYPTION_KEY,
   PREPARATION_BLOCKER_CODES.EXCEPTION,
@@ -145,7 +162,10 @@ export function summarizeBlocker(
       return 'Kod şeması ile veritabanı şeması ayrışmış; sipariş okunamadı.'
     case PREPARATION_BLOCKER_CODES.ENCRYPTION_KEY:
       return 'Sipariş şifreleme anahtarı bu süreçte tanımlı değil; sipariş okunamadı.'
+    case PREPARATION_BLOCKER_CODES.MODULE_LOAD:
+      return 'Çalışma zamanı modül çözümlemesi başarısız; hazırlık başlatılamadı.'
     default:
+      // GENEL cumle SON CARE'dir ve `failureDetail` her zaman ayrica tasinir.
       return 'Sürat gönderisi hazırlanamadı.'
   }
 }
@@ -187,6 +207,11 @@ export interface PreparedLabelJob {
   }
 
   readonly carrierArtifactExists: boolean
+  /** İstisna HANGİ adımda doğdu (yoksa null). */
+  readonly failureStage: PreparationStage | null
+  /** İstisna sınıfı (`Error`, `TypeError`, ...) — sır TAŞIMAZ. */
+  readonly failureType: string | null
+
   readonly blockers: readonly string[]
   /** İlk ve OTORİTER bloklayıcı kod (öncelik sırasına göre). */
   readonly blockerCode: string | null
@@ -198,17 +223,47 @@ export interface PreparedLabelJob {
   readonly carrierCalls: 0
 }
 
+/** HAZIRLIK AŞAMALARI — hata HANGİ adımda doğdu? */
+export const PREPARATION_STAGES = [
+  'LOAD_ORDER',
+  'LOAD_SETTINGS',
+  'DESI',
+  'ELIGIBILITY',
+  'BILLING',
+  'CREDENTIALS',
+  'ARTIFACT',
+] as const
+export type PreparationStage = (typeof PREPARATION_STAGES)[number]
+
+/**
+ * TEŞHİS METNİNİ TEMİZLER — sır ASLA günlüğe/DB'ye geçmez.
+ *
+ * Bağlantı dizesi, anahtar benzeri uzun hex/base64 diziler ve `password=`
+ * biçimli parçalar MASKELENİR. Kalan metin operatörün ihtiyaç duyduğu
+ * teknik sebeptir.
+ */
+export function sanitizeDiagnostic(message: string): string {
+  return String(message ?? '')
+    .replace(/postgres(?:ql)?:\/\/[^\s'"]+/gi, 'postgres://***')
+    .replace(/\b(password|passwd|pwd|sifre|secret|token|apikey|api_key)\b\s*[=:]\s*[^\s,;'"]+/gi,
+      '$1=***')
+    .replace(/\b[0-9a-fA-F]{32,}\b/g, '***')
+    .replace(/\b[A-Za-z0-9+/]{40,}={0,2}\b/g, '***')
+    .slice(0, 600)
+}
+
 function describeError(error: unknown): string {
   const parts: string[] = []
   const cause = (error as { cause?: unknown } | null)?.cause
   if (cause instanceof Error && cause.message) parts.push(cause.message)
   parts.push(error instanceof Error ? error.message : String(error))
   const parameterMarker = String.fromCharCode(10) + 'params:'
-  return parts
-    .map((part) => part.split(parameterMarker)[0].trim())
-    .filter(Boolean)
-    .join(' | ')
-    .slice(0, 600)
+  return sanitizeDiagnostic(
+    parts
+      .map((part) => part.split(parameterMarker)[0].trim())
+      .filter(Boolean)
+      .join(' | '),
+  )
 }
 
 /**
@@ -277,8 +332,13 @@ export async function prepareLabelJob(
     accountFingerprint: null as string | null,
   }
 
+  let failureStage: PreparationStage | null = null
+  let failureType: string | null = null
+  let stage: PreparationStage = 'LOAD_ORDER'
+
   try {
     // ── 1. SİPARİŞ ────────────────────────────────────────────────────
+    stage = 'LOAD_ORDER'
     order = await loadOrder(
       db, params.organizationId, marketplace, params.packageId,
     )
@@ -292,6 +352,7 @@ export async function prepareLabelJob(
         Number.isFinite(rawDesi) && rawDesi > 0 ? rawDesi : null
 
       // ── 2. KİRACI GÖNDERİ VARSAYILANLARI ──────────────────────────
+      stage = 'LOAD_SETTINGS'
       const { getShipmentDefaults } = await import(
         '../onboarding/shipmentDefaultsRepository.ts'
       )
@@ -301,6 +362,11 @@ export async function prepareLabelJob(
       multiplyByItemQuantity = defaults?.multiplyByItemQuantity ?? null
 
       // ── 3. DESİ — PAYLAŞILAN TEK ÇÖZÜCÜ ───────────────────────────
+      //
+      // ÜRETİMDE PATLAYAN ADIM BURASIYDI: bu dinamik import
+      // `src/utils/orderDesi.ts` → `./productImage` zincirine gider ve
+      // uzantısız import'u `node` ÇÖZEMEZ (`tsx` çözer).
+      stage = 'DESI'
       const { resolveShipmentDesi } = await import('./resolveShipmentDesi.ts')
       resolverCalled = true
       const resolution = await resolveShipmentDesi({
@@ -321,6 +387,7 @@ export async function prepareLabelJob(
       }
 
       // ── 4. TRENDYOL UYGUNLUĞU — AYNI KURAL ────────────────────────
+      stage = 'ELIGIBILITY'
       eligibility = buildTrendyolShipmentEligibility(order)
       marketplaceStatus = eligibility.marketplaceStatus || null
       eligibleForCreate = eligibility.canCallSurat
@@ -329,6 +396,7 @@ export async function prepareLabelJob(
       }
 
       // ── 5. FATURALAMA / WhoPays ───────────────────────────────────
+      stage = 'BILLING'
       const routing = await import('./suratRoutingModel.ts')
       const billing = routing.resolveBillingPartyV2(order.rawOrder ?? {})
       billingParty = billing.billingParty
@@ -343,6 +411,7 @@ export async function prepareLabelJob(
       }
 
       // ── 6. KİMLİK — KANONİK ANLIK GÖRÜNTÜ ─────────────────────────
+      stage = 'CREDENTIALS'
       const [{ loadOrganizationIntegrationConfig }, snapshotModule] =
         await Promise.all([
           import('../integrations/credentialService.ts'),
@@ -384,6 +453,11 @@ export async function prepareLabelJob(
       }
     }
   } catch (error) {
+    // GERÇEK SEBEP ASLA YUTULMAZ: aşama, sınıf ve temizlenmiş mesaj TAŞINIR.
+    failureStage = stage
+    failureType = (error as Error)?.constructor?.name
+      ?? (error as { name?: string })?.name
+      ?? 'Error'
     failureDetail = describeError(error)
     blockers.push(classifyPreparationFailure(failureDetail))
   }
@@ -428,6 +502,8 @@ export async function prepareLabelJob(
     credentialRole,
     credentialSnapshot: Object.freeze(credentialSnapshot),
     carrierArtifactExists,
+    failureStage,
+    failureType,
     blockers: Object.freeze([...new Set(blockers)]),
     blockerCode,
     errorSummary: blockerCode ? summarizeBlocker(blockerCode, eligibility) : null,

@@ -3483,13 +3483,41 @@ async function runLabelJobViaCreateHandler(job) {
     organizationId, packageId, marketplace,
   })
   if (!prepared.ok) {
-    // AĞDAN ÖNCE ve DETERMİNİSTİK: taşıyıcıya ÇIKILMAZ, kod KESİNDİR.
+    // ═══ GERÇEK SEBEP YUTULMAZ ═══════════════════════════════════════
+    //
+    // ÜRETİMDE ÖLÇÜLDÜ: iş `SURAT_PREFLIGHT_FAILED` +
+    // "Sürat gönderisi hazırlanamadı." yazdı ve GERÇEK istisna
+    // (`Cannot find module ... productImage`) HİÇBİR YERE ULAŞMADI.
+    // Genel özet TEK BAŞINA yazılmaz: hazırlığın taşıdığı ayrıntı
+    // ÖZETE eklenir ve operatör günlüğüne DÜŞER.
+    //
+    // SIR TAŞINMAZ: `failureDetail` yalnız istisna mesajıdır; kimlik
+    // alanları hazırlıkta zaten `resolved` bayrağına indirgenir.
+    const detail = prepared.failureDetail
+    if (detail) {
+      // SIR YOK: mesaj hazirlikta `sanitizeDiagnostic` ile temizlenir;
+      // kimlik alanlari zaten `resolved` bayragina indirgenmistir.
+      console.warn(
+        '[label-worker] PREPARATION_FAILED'
+        + ` packageId=${packageId}`
+        + ` stage=${prepared.failureStage ?? 'GATE'}`
+        + ` errorType=${prepared.failureType ?? '-'}`
+        + ` errorCode=${prepared.blockerCode}`
+        + ` message=${detail}`,
+      )
+    }
     return {
       labelReady: false,
       networkCrossed: false,
       blocked: true,
       errorCode: prepared.blockerCode,
-      errorSummary: prepared.errorSummary,
+      errorSummary: detail
+        ? `${prepared.errorSummary} · ${detail}`.slice(0, 500)
+        : prepared.errorSummary,
+      preparationFailureStage: prepared.failureStage,
+      preparationFailureType: prepared.failureType,
+      preparationFailureCode: prepared.blockerCode,
+      preparationFailureDetail: detail,
       carrierCalls: 0,
     }
   }

@@ -4,7 +4,7 @@ import type {
   OrderItem,
   TenantDesiConfig,
 } from '../types/cargoflow'
-import { resolveProductCacheMatch } from './productImage'
+import { resolveProductCacheMatch } from './productImage.ts'
 
 // Satır bazlı birim desi kaynak öncelikleri (yukarıdan aşağıya):
 // order_line → product_variant → product_cache → merchant_mapping

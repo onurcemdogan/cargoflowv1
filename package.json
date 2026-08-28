@@ -66,7 +66,8 @@
     "auto-label:job:run-once": "tsx server/shipments/singleLabelJobRunnerCli.ts",
     "auto-label:canary:candidates": "tsx server/shipments/canaryCandidateCli.ts",
     "auto-label:blocked:inspect": "tsx server/shipments/blockedJobRecoveryCli.ts",
-    "auto-label:blocked:reactivate": "tsx server/shipments/blockedJobRecoveryCli.ts --reactivate"
+    "auto-label:blocked:reactivate": "tsx server/shipments/blockedJobRecoveryCli.ts --reactivate",
+    "auto-label:worker:preflight": "node server/shipments/workerBootstrapPreflightCli.ts"
   },
   "dependencies": {
     "@types/jsbarcode": "^3.11.4",
