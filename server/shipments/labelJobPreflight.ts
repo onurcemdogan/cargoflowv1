@@ -20,10 +20,27 @@
 // Hazırlık taşıyıcı ağının HEMEN ÖNCESİNDE durur.
 
 import { and, eq } from 'drizzle-orm'
-import { labelJobs, shipments } from '../db/schema.ts'
+import { labelJobs } from '../db/schema.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
+
+/**
+ * ESKI BLOKLAYICI ETIKETLERI — mevcut cagiranlarin/testlerin sozlugu.
+ *
+ * Hazirlik KESIN kodlari uretir; rapor onlari mevcut etiketlere cevirir.
+ * Ikinci bir esleme tablosu DEGILDIR: tek yonlu, sunum amaclidir.
+ */
+const LEGACY_BLOCKER_LABELS: Record<string, string> = {
+  SURAT_PREFLIGHT_DESI_MISSING: 'DESI_COZULEMIYOR',
+  SURAT_CREDENTIAL_CONFIG_INVALID: 'KIMLIK_COZULEMIYOR',
+  SURAT_PREFLIGHT_ORDER_NOT_FOUND: 'SIPARIS_BULUNAMADI',
+  SURAT_PREFLIGHT_WHOPAYS_UNRESOLVED: 'WHOPAYS_COZULEMIYOR',
+  SURAT_PREFLIGHT_CARRIER_ARTIFACT_EXISTS: 'TASIYICI_ARTEFAKTI_VAR',
+  SURAT_PREFLIGHT_FAILED: 'HAZIRLIK_ISTISNASI',
+  SURAT_PREFLIGHT_SCHEMA_DRIFT: 'SEMA_SURUMU_ESKI',
+  SURAT_PREFLIGHT_ENCRYPTION_KEY_MISSING: 'ORTAM_SIFRELEME_ANAHTARI_YOK',
+}
 
 export interface LabelJobPreflight {
   readonly packageId: string
@@ -63,87 +80,19 @@ export interface LabelJobPreflight {
 }
 
 /**
- * İstisnanın GERÇEK sebebini okunur tek satıra indirir.
- *
- * Sürücü hataları asıl sebebi `cause` içinde taşır; üst mesaj yalnız
- * "Failed query: ..." der. Sebep BAŞA alınır, sorgu özeti arkaya konur.
- * `params:` bloğu ATILIR — teşhis çıktısına veri sızmaz.
- */
-function describeError(error: unknown): string {
-  const parts: string[] = []
-  const cause = (error as { cause?: unknown } | null)?.cause
-  if (cause instanceof Error && cause.message) parts.push(cause.message)
-  parts.push(error instanceof Error ? error.message : String(error))
-  // Yeni satir kacisi YAZILMAZ; sorgu parametreleri KESILIR.
-  const parameterMarker = String.fromCharCode(10) + 'params:'
-  return parts
-    .map((part) => part.split(parameterMarker)[0].trim())
-    .filter(Boolean)
-    .join(' | ')
-    .slice(0, 600)
-}
-
-/**
- * GERÇEK istisna mesajını AKSİYON ALINABİLİR bir koda EŞLER.
- *
- * Bu bir TAHMİN değildir: yalnız mesajın kendisi sınıflandırılır ve
- * `failureDetail` her hâlükârda AYNEN taşınır. Eşleşme yoksa genel
- * `HAZIRLIK_ISTISNASI` kalır — uydurma bir sebep YAZILMAZ.
- */
-function classifyPreparationFailure(message: string): string {
-  const text = message.toLocaleLowerCase('en-US')
-  if (
-    text.includes('order_data_encryption_key') ||
-    text.includes('credential_encryption_key') ||
-    text.includes('32 byte')
-  ) {
-    // Sipariş PII'si şifreli saklanır; anahtar yoksa sipariş OKUNAMAZ.
-    return 'ORTAM_SIFRELEME_ANAHTARI_YOK'
-  }
-  if (
-    /column .* does not exist/.test(text) ||
-    /relation .* does not exist/.test(text)
-  ) {
-    // Kod şeması ile veritabanı şeması AYRIŞMIŞ (migration uygulanmamış).
-    return 'SEMA_SURUMU_ESKI'
-  }
-  return 'HAZIRLIK_ISTISNASI'
-}
-
-/**
- * WORKER'IN GÖRDÜĞÜ sipariş nesnesini kurar.
- *
- * Worker `runLabelJobViaCreateHandler` içinde tam olarak bunu yapar:
- * paketten sipariş satırını bulur, sonra `getOrder` ile view-model'i alır.
- * Burada AYNI iki çağrı kullanılır; kopya bir yükleme yazılmaz.
- */
-async function loadWorkerOrder(
-  db: Db,
-  organizationId: string,
-  marketplace: string,
-  packageId: string,
-): Promise<Record<string, unknown> | null> {
-  const repository = await import('../orders/orderRepository.ts')
-  const row = await repository.findOrderByPackageId(
-    db, organizationId, marketplace, packageId,
-  )
-  if (!row) return null
-  const persistence = await import('../orders/orderPersistenceService.ts')
-  const order = await persistence.getOrder(
-    db, organizationId, String((row as { id: string }).id),
-  )
-  return (order ?? null) as Record<string, unknown> | null
-}
-
-/**
  * Worker'ın taşıyıcıdan HEMEN ÖNCEKİ durumunu SALT-OKUNUR üretir.
  */
 export async function preflightLabelJob(
   db: Db,
   params: { organizationId: string; packageId: string; marketplace?: string },
 ): Promise<LabelJobPreflight> {
-  const blockers: string[] = []
-  let failureDetail: string | null = null
+  // ═══ TEK HAZIRLIK BORU HATTI ═══════════════════════════════════════
+  //
+  // Bu fonksiyon artik KENDI hazirligini YAPMAZ. Ayni `prepareLabelJob`
+  // ciktisini worker, run-once ve aday secici de tuketir; boylece ayni
+  // paket icin dort farkli gercek olusamaz.
+  const { prepareLabelJob } = await import('./labelJobPreparation.ts')
+  const prepared = await prepareLabelJob(db, params)
 
   const jobRows = await db
     .select()
@@ -155,177 +104,35 @@ export async function preflightLabelJob(
       ),
     )
   const job = (jobRows as Record<string, unknown>[])[0] ?? null
-  const marketplace =
-    params.marketplace ?? String(job?.marketplace ?? 'Trendyol')
 
-  let tenantDesi: number | null = null
-  let multiplyByItemQuantity: boolean | null = null
-  let orderLinesCount = 0
-  let resolvedDesi: number | null = null
-  let desiSource: string | null = null
-  let orderNumber: string | null = null
-  let marketplaceStatus: string | null = null
-  let eligibleForCreate: boolean | null = null
-  let eligibilityReason: string | null = null
-  let billingParty: string | null = null
-  let expectedSuratWhoPays: number | null = null
-  let credentialRole: string | null = null
-  let credentialResolved = false
-
-  try {
-    const [{ getShipmentDefaults }, { resolveShipmentDesi }, routing] =
-      await Promise.all([
-        import('../onboarding/shipmentDefaultsRepository.ts'),
-        import('./resolveShipmentDesi.ts'),
-        import('./suratRoutingModel.ts'),
-      ])
-
-    const defaults = await getShipmentDefaults(db, params.organizationId)
-    tenantDesi = Number(defaults?.defaultUnitDesi ?? 0) || null
-    multiplyByItemQuantity = defaults?.multiplyByItemQuantity ?? null
-    if (tenantDesi == null) blockers.push('TENANT_DESI_AYARLI_DEGIL')
-
-    const order = await loadWorkerOrder(
-      db, params.organizationId, marketplace, params.packageId,
-    )
-    if (!order) {
-      blockers.push('SIPARIS_BULUNAMADI')
-    } else {
-      orderNumber = String(order.orderNumber ?? '') || null
-      orderLinesCount = Array.isArray(order.items) ? order.items.length : 0
-
-      // ── UYGUNLUK: CREATE HANDLER'IN KULLANDIĞI KURALIN KENDİSİ ─────
-      //
-      // ÜRETİMDE ÖLÇÜLDÜ (4110109345): ön kontrol `PREFLIGHT_VALID=true`
-      // derken create handler aynı paketi taşıyıcıya ÇIKMADAN reddediyordu
-      // (`TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS`). Sebep, uygunluk kuralının
-      // ön kontrolde HİÇ SORULMAMASIYDI. İkinci bir eşleme tablosu değil,
-      // AYNI fonksiyon çağrılır.
-      const { buildTrendyolShipmentEligibility, TRENDYOL_NOT_ELIGIBLE_CODE } =
-        await import('./trendyolShipmentEligibility.ts')
-      const eligibility = buildTrendyolShipmentEligibility(order)
-      marketplaceStatus = eligibility.marketplaceStatus || null
-      eligibleForCreate = eligibility.canCallSurat
-      eligibilityReason = eligibility.reason
-      if (!eligibility.canCallSurat) {
-        blockers.push(TRENDYOL_NOT_ELIGIBLE_CODE)
-        failureDetail = failureDetail ?? eligibility.reason
-      }
-
-      // ── DESİ: PAYLAŞILAN TEK ÇÖZÜCÜ ────────────────────────────────
-      const resolution = await resolveShipmentDesi({
-        db, organizationId: params.organizationId, order,
-      })
-      resolvedDesi = resolution.desi
-      desiSource = resolution.source
-      if (resolvedDesi == null) {
-        blockers.push('DESI_COZULEMIYOR')
-        if (resolution.reason) failureDetail = resolution.reason
-      }
-
-      // -- FATURALAMA / WhoPays -- mevcut kanonik cozucu ---------------
-      const billing = routing.resolveBillingPartyV2(order.rawOrder ?? {})
-      billingParty = billing.billingParty
-      // TRENDYOL_PAYS -> 3 (EntegrasyonFirmasiOder) - SELLER_PAYS -> 1.
-      expectedSuratWhoPays =
-        billing.billingParty === 'TRENDYOL_PAYS'
-          ? 3
-          : billing.billingParty === 'SELLER_PAYS'
-            ? 1
-            : null
-      if (billing.billingParty === 'UNKNOWN') blockers.push('WHOPAYS_COZULEMIYOR')
-
-      // -- KIMLIK ROLU VE COZUMU -- KANONIK MODULLERDEN -----------------
-      //
-      // IKINCI UYGULAMA YOK: rol `resolveSuratCredentialContext`,
-      // kimlik ise `normalizeAuthoritativeSuratStore` +
-      // `buildSuratCredentialSnapshot` ile cozulur -- create yolunun
-      // kullandigi AYNI fonksiyonlar. Taban `kullaniciAdi`/`sifre`
-      // alanlari BILEREK okunmaz; kanonik tureme `canonicalPrimary*`
-      // alanlarini uretir ve elle okunan bir kopya bunu KACIRIRDI.
-      //
-      // KREDENSIYEL DEGERI TASINMAZ: yalniz `resolved` bayragi ve rol.
-      const [{ loadOrganizationIntegrationConfig }, snapshotModule] =
-        await Promise.all([
-          import('../integrations/credentialService.ts'),
-          import('./suratCredentialSnapshot.ts'),
-        ])
-      const integration = await loadOrganizationIntegrationConfig(
-        db, params.organizationId,
-      )
-      const suratConfig = (integration?.surat ?? {}) as Record<string, unknown>
-
-      // COD, uretimde finansal kapinin `codEnabled` ciktisiyla belirlenir;
-      // o kapi istek baglamina bagli oldugu icin SALT-OKUNUR on kontrolde
-      // YENIDEN URETILEMEZ. Siparis kapida odemeye BENZIYORSA rol
-      // BILDIRILMEZ -- yanlis rol yazmaktansa "belirlenemedi" denir.
-      const codLikely = Number(order.cashOnDeliveryAmount ?? 0) > 0
-      if (codLikely) {
-        blockers.push('COD_ROLU_ON_KONTROLDE_BELIRLENEMEZ')
-      } else {
-        const context = routing.resolveSuratCredentialContext({
-          config: suratConfig,
-          billingParty: billing.billingParty,
-          cod: routing.resolveCodContext({ enabled: false }),
-          codPolicy: routing.resolveCodCredentialPolicy(
-            suratConfig.codCredentialPolicy,
-          ),
-          serviceMode: suratConfig.serviceMode,
-        })
-        credentialRole = context.role
-        const snapshot = snapshotModule.buildSuratCredentialSnapshot({
-          storedSuratConfig:
-            snapshotModule.normalizeAuthoritativeSuratStore(suratConfig),
-          role: context.role,
-        })
-        credentialResolved = snapshot.resolved
-      }
-      if (!credentialResolved) blockers.push('KIMLIK_COZULEMIYOR')
-    }
-  } catch (error) {
-    // GERÇEK sebep TAŞINIR; genel bir engele indirgenmez.
-    failureDetail = describeError(error)
-    blockers.push(classifyPreparationFailure(failureDetail))
-  }
-
-  // Taşıyıcı artefaktı zaten varsa create AÇILMAZ.
-  const shipmentRows = await db
-    .select({ id: shipments.id })
-    .from(shipments)
-    .where(
-      and(
-        eq(shipments.organizationId, params.organizationId),
-        eq(shipments.packageId, params.packageId),
-      ),
-    )
-  if (shipmentRows.length > 0) blockers.push('TASIYICI_ARTEFAKTI_VAR')
-
-  const preflightValid = blockers.length === 0
+  // Mevcut rapor sozlesmesi KORUNUR; alanlar hazirliktan turer.
+  const blockers = prepared.blockers.map((code) => LEGACY_BLOCKER_LABELS[code] ?? code)
+  // TESHIS AYRINTISI: desi cozulemedi mi, yoksa kiracida ayar hic yok mu?
+  if (prepared.tenantDesi == null) blockers.push('TENANT_DESI_AYARLI_DEGIL')
   return {
-    packageId: params.packageId,
-    orderNumber,
-    marketplace,
+    packageId: prepared.packageId,
+    orderNumber: prepared.orderNumber,
+    marketplace: prepared.marketplace,
     jobId: job ? String(job.id) : null,
     jobStatus: job ? String(job.status) : null,
     attemptCount: Number(job?.attemptCount ?? 0),
-    tenantDesi,
-    multiplyByItemQuantity,
-    orderLinesCount,
-    resolvedDesi,
-    desiSource,
-    // Sürat sözleşmesi: `BirimDesi: desi`.
-    suratBirimDesi: resolvedDesi,
-    marketplaceStatus,
-    eligibleForCreate,
-    eligibilityReason,
-    billingParty,
-    expectedSuratWhoPays,
-    credentialRole,
-    credentialResolved,
-    preflightValid,
-    wouldCallCarrier: preflightValid,
+    tenantDesi: prepared.tenantDesi,
+    multiplyByItemQuantity: prepared.multiplyByItemQuantity,
+    orderLinesCount: prepared.orderLinesCount,
+    resolvedDesi: prepared.resolvedDesi,
+    desiSource: prepared.desiSource,
+    suratBirimDesi: prepared.suratBirimDesi,
+    marketplaceStatus: prepared.marketplaceStatus,
+    eligibleForCreate: prepared.eligibleForCreate,
+    eligibilityReason: prepared.eligibility?.reason ?? null,
+    billingParty: prepared.billingParty,
+    expectedSuratWhoPays: prepared.expectedWhoPays,
+    credentialRole: prepared.credentialRole,
+    credentialResolved: prepared.credentialSnapshot.resolved,
+    preflightValid: prepared.ok,
+    wouldCallCarrier: prepared.ok,
     blockers,
-    failureDetail,
+    failureDetail: prepared.failureDetail ?? prepared.errorSummary,
     networkCalls: 0,
     dbWrites: 0,
     carrierCalls: 0,

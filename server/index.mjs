@@ -3464,25 +3464,37 @@ async function runLabelJobViaCreateHandler(job) {
       errorCode: 'JOB_IDENTITY_MISSING' }
   }
 
-  const [{ getDb }, persistence, repository] = await Promise.all([
+  // ═══ PAYLAŞILAN HAZIRLIK — İKİNCİ GERÇEK YOK ═══════════════════════
+  //
+  // ÜRETİM OLAYI: worker siparişi HAM veriyordu ve desinin çözülmesini
+  // create çekirdeğinin İÇİNDEKİ `ensureTenantResolvedDesi` kancasına
+  // bırakıyordu. Kanca sessizce çalışmayınca `order.desi` boş kaldı ve
+  // create, SOAP gövdesini kurarken AĞDAN ÖNCE "Desi bilgisi eksik" ile
+  // düştü — aday seçici AYNI paket için desi 2 diyordu.
+  //
+  // Artık worker da ön kontrol/seçici/run-once ile AYNI hazırlığı tüketir
+  // ve desiyi gövdeye AÇIKÇA yazar. Gizli yan etkiye güvenilmez.
+  const [{ getDb }, { prepareLabelJob }] = await Promise.all([
     import('./db/client.ts'),
-    import('./orders/orderPersistenceService.ts'),
-    import('./orders/orderRepository.ts'),
+    import('./shipments/labelJobPreparation.ts'),
   ])
   const db = getDb()
-  const row = await repository.findOrderByPackageId(
-    db, organizationId, marketplace, packageId,
-  )
-  if (!row) {
-    return { labelReady: false, networkCrossed: false, blocked: true,
-      errorCode: 'ORDER_NOT_FOUND' }
+  const prepared = await prepareLabelJob(db, {
+    organizationId, packageId, marketplace,
+  })
+  if (!prepared.ok) {
+    // AĞDAN ÖNCE ve DETERMİNİSTİK: taşıyıcıya ÇIKILMAZ, kod KESİNDİR.
+    return {
+      labelReady: false,
+      networkCrossed: false,
+      blocked: true,
+      errorCode: prepared.blockerCode,
+      errorSummary: prepared.errorSummary,
+      carrierCalls: 0,
+    }
   }
-  // Butonun gönderdiğiyle AYNI view-model.
-  const order = await persistence.getOrder(db, organizationId, String(row.id))
-  if (!order) {
-    return { labelReady: false, networkCrossed: false, blocked: true,
-      errorCode: 'ORDER_NOT_FOUND' }
-  }
+  // Desi ENJEKTE EDİLMİŞ sipariş — tarayıcının gönderdiğinin AYNISI.
+  const order = prepared.order
 
   // Kimlik istek gövdesinden DEĞİL, org kaydından gelir — tenantInject
   // ara katmanının yaptığının AYNISI.
