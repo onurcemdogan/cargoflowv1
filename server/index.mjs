@@ -3678,8 +3678,25 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     void import('./orders/staleOpenReconciler.ts')
       .then((scheduler) => scheduler.stopStaleReconcileScheduler())
       .catch(() => undefined)
+    // ═══ ETİKET WORKER'I ZARİFÇE BOŞALTILIR ══════════════════════════
+    //
+    // ÖLÇÜLDÜ: PM2 yeniden başlatması iş `PREPARING` iken geldi ve süreç
+    // taşıyıcı sınırına varmadan öldü. Basit `stop` çalışan turu BEKLEMEZ.
+    // Artık YENİ talep derhal durur ve çalışan tur sınırlı süre BİTİRİLİR.
+    // İkinci create ASLA başlatılmaz; süre dolarsa kalıcı taşıyıcı kanıtı
+    // bir sonraki açılışı güvenli kılar.
     void import('./shipments/labelJobWorker.ts')
-      .then((worker) => worker.stopLabelJobScheduler())
+      .then(async (worker) => {
+        console.log('[label-worker] DRAIN_START yeni talep DURDU')
+        const result = await worker.drainLabelJobScheduler(
+          Number(process.env.LABEL_WORKER_DRAIN_MS ?? 30_000),
+        )
+        console.log(
+          `[label-worker] DRAIN_DONE drained=${result.drained}`
+          + ` hadActiveCycle=${result.hadActiveCycle}`,
+        )
+        worker.stopLabelJobScheduler()
+      })
       .catch(() => undefined)
     void import('./marketplaces/trendyolStreamScheduler.ts')
       .then((scheduler) => scheduler.stopTrendyolStreamScheduler())
@@ -4659,10 +4676,36 @@ async function executeIdempotentSuratCreate(request, operation) {
     return buildSuratPreassignedReplayResponse(existing, operation)
   }
   if (existing && ['IN_PROGRESS', 'UNKNOWN'].includes(existing.status)) {
-    return buildSuratIdempotencyBlockedResponse(
-      existing,
-      operation,
-      'Önceki Sürat create çağrısının taşıyıcı sonucu kesinleşmedi. Yeni gönderi oluşturulmadı; mevcut adaylarla Serendip doğrulaması yapılmalıdır.',
+    if (existing.status === 'UNKNOWN' || existing.carrierCreateCalled === true
+      || existing.completedAt) {
+      return buildSuratIdempotencyBlockedResponse(
+        existing,
+        operation,
+        'Önceki Sürat create çağrısının taşıyıcı sonucu kesinleşmedi. Yeni gönderi oluşturulmadı; mevcut adaylarla Serendip doğrulaması yapılmalıdır.',
+      )
+    }
+    // ═══ AĞDAN ÖNCE ÖLMÜŞ REZERVASYON YENİDEN AÇILIR ═══════════════════
+    //
+    // Buraya YALNIZ `IN_PROGRESS` ve taşıyıcı kanıtı OLMAYAN kayıt düşer.
+    // `UNKNOWN` yukarıda KOŞULSUZ bloke edildi: o durum zaten "ağ geçildi,
+    // sonuç belirsiz" demektir ve ikinci create MÜKERRER gönderidir.
+    //
+    // ÖLÇÜLDÜ (paket 4111289850): süreç `PREPARING` sırasında öldürüldü ve
+    // geriye `IN_PROGRESS` bir rezervasyon kaldı:
+    //     create_call_count=1 · carrier_create_called=false · completed_at=NULL
+    //
+    // `create_call_count` AĞDAN ÖNCE artar; taşıyıcıya gidildiğinin kanıtı
+    // DEĞİLDİR. Bu satır kendi ön-rezervasyonu yüzünden SONSUZA DEK bloke
+    // kalırsa paket asla etiketlenemez.
+    //
+    // FAIL-CLOSED: aynı MANTIKSAL operasyon (AYNI idempotency anahtarı)
+    // yeniden açılır; yeni anahtar ÜRETİLMEZ → ikinci mantıksal operasyon
+    // doğmaz ve gerçek ağ çağrısı EN FAZLA BİR kez olur.
+    console.warn(
+      '[surat-create] STALE_PRE_NETWORK_RESERVATION_REOPENED'
+      + ` packageId=${String(operation.packageId ?? '')}`
+      + ` createCallCount=${Number(existing.createCallCount ?? 0)}`
+      + ' carrierCreateCalled=false',
     )
   }
   if (existing?.status === 'FAILED_SAFE' && !retryAuthorized) {

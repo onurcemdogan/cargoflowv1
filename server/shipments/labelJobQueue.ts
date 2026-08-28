@@ -166,20 +166,100 @@ export async function completeLabelJob(
     .where(eq(labelJobs.id, params.id))
 }
 
-/** Süresi geçmiş kilitleri serbest bırakır — worker çöktüyse iş kaybolmaz. */
+/**
+ * Süresi geçmiş kilitleri serbest bırakır — ANCAK TAŞIYICI KANITIYLA.
+ *
+ * ═══ ÖLÇÜLEN GÜVENLİK AÇIĞI ═══════════════════════════════════════════
+ * Bu fonksiyon YALNIZ SÜREYE bakıp `PREPARING → QUEUED` yapıyordu. Süreç
+ * taşıyıcı çağrısının TAM ORTASINDA öldüyse (`carrier_create_called=true`,
+ * sonuç bilinmiyor) satır sessizce kuyruğa dönüyor ve worker İKİNCİ bir
+ * fiziksel gönderi yaratabiliyordu. Geçen süre, taşıyıcıya yeniden çıkma
+ * İZNİ DEĞİLDİR; yalnız kilidin bayat olduğunu gösterir.
+ *
+ * Karar `classifyStalePreparing` ile verilir — bayat kurtarma CLI'ının
+ * kullandığı AYNI kural. İkinci bir yorum YOKTUR.
+ */
 export async function releaseStaleLocks(
-  db: Db, params: { olderThanMs: number },
+  db: Db, params: { olderThanMs: number; now?: () => number },
 ): Promise<number> {
-  const cutoff = new Date(Date.now() - Math.max(1_000, params.olderThanMs))
-  const released = await db
-    .update(labelJobs)
-    .set({ status: 'QUEUED', lockedAt: null, lockedBy: null, updatedAt: new Date() })
+  const now = params.now ?? (() => Date.now())
+  const staleAfterMs = Math.max(1_000, params.olderThanMs)
+  const cutoff = new Date(now() - staleAfterMs)
+
+  const stale = (await db
+    .select()
+    .from(labelJobs)
     .where(and(
       eq(labelJobs.status, 'PREPARING'),
       or(lte(labelJobs.lockedAt, cutoff), sql`${labelJobs.lockedAt} IS NULL`),
-    ))
-    .returning({ id: labelJobs.id })
-  return ((released ?? []) as unknown[]).length
+    ))) as Record<string, unknown>[]
+  if (stale.length === 0) return 0
+
+  const [{ classifyStalePreparing }, { shipmentOperations, shipments }] =
+    await Promise.all([
+      import('./stalePreparingClassifier.ts'),
+      import('../db/schema.ts'),
+    ])
+
+  let released = 0
+  for (const job of stale) {
+    const organizationId = String(job.organizationId ?? '')
+    const packageId = String(job.packageId ?? '')
+
+    const operations = (await db
+      .select({ carrierCreateCalled: shipmentOperations.carrierCreateCalled })
+      .from(shipmentOperations)
+      .where(and(
+        eq(shipmentOperations.organizationId, organizationId),
+        eq(shipmentOperations.packageId, packageId),
+      ))) as Record<string, unknown>[]
+    const carrierCreateCalled = operations.some(
+      (operation) => operation.carrierCreateCalled === true,
+    )
+    const artifacts = (await db
+      .select({ id: shipments.id })
+      .from(shipments)
+      .where(and(
+        eq(shipments.organizationId, organizationId),
+        eq(shipments.packageId, packageId),
+      ))) as unknown[]
+
+    const lockedAt = job.lockedAt ? new Date(String(job.lockedAt)) : null
+    const classification = classifyStalePreparing({
+      status: 'PREPARING',
+      lockedAt,
+      // Kilit alanı boşsa kilit sahipsizdir; bayat sayılır.
+      lockAgeMs: lockedAt ? now() - lockedAt.getTime() : staleAfterMs,
+      staleAfterMs,
+      carrierCreateCalled,
+      createCallCount: 0,
+      carrierArtifactExists: artifacts.length > 0,
+      readyLabelExists: false,
+      unknownAfterNetworkEvidence: false,
+      // Otomatik turda bağımlılık YENİDEN ÖLÇÜLMEZ: iş kuyruğa döner ve
+      // hazırlık kapıları normal akışta zaten uygulanır.
+      preparationValid: true,
+    })
+    if (!classification.targetStatus) continue
+    // Ağ geçilmiş OLABİLİYORSA satır kuyruğa DÖNMEZ; belirsiz işaretlenir.
+    const updated = await db
+      .update(labelJobs)
+      .set({
+        status: classification.targetStatus,
+        lockedAt: null,
+        lockedBy: null,
+        updatedAt: new Date(),
+      })
+      .where(and(
+        eq(labelJobs.id, String(job.id)),
+        eq(labelJobs.status, 'PREPARING'),
+      ))
+      .returning({ id: labelJobs.id })
+    if ((updated as unknown[]).length === 1 && classification.targetStatus === 'QUEUED') {
+      released += 1
+    }
+  }
+  return released
 }
 
 /** Operasyonel sayaçlar — PII/sır YOK. */

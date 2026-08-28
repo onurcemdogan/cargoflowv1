@@ -67,7 +67,10 @@
     "auto-label:canary:candidates": "tsx server/shipments/canaryCandidateCli.ts",
     "auto-label:blocked:inspect": "tsx server/shipments/blockedJobRecoveryCli.ts",
     "auto-label:blocked:reactivate": "tsx server/shipments/blockedJobRecoveryCli.ts --reactivate",
-    "auto-label:worker:preflight": "node server/shipments/workerBootstrapPreflightCli.ts"
+    "auto-label:worker:preflight": "node server/shipments/workerBootstrapPreflightCli.ts",
+    "auto-label:stale:inspect": "node server/shipments/staleJobRecoveryCli.ts",
+    "auto-label:stale:recover": "node server/shipments/staleJobRecoveryCli.ts --recover",
+    "auto-label:canary:observe": "node server/shipments/canaryObserverCli.ts"
   },
   "dependencies": {
     "@types/jsbarcode": "^3.11.4",

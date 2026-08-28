@@ -165,6 +165,56 @@ export function isLabelWorkerEnabled(
   return raw === 'true' || raw === '1'
 }
 
+// ═══ ZARİF BOŞALTMA (DRAIN) ══════════════════════════════════════════════
+//
+// ÜRETİMDE ÖLÇÜLDÜ: kanarya betiği `sleep 90` sonrası PM2'yi KOŞULSUZ
+// yeniden başlattı ve iş `PREPARING` iken süreç öldü. Geriye kilitli bir
+// satır ve ağdan önce ölmüş bir rezervasyon kaldı.
+//
+// Kapanış sinyalinde:
+//   • YENİ talep DERHAL durur (bir sonraki tur açılmaz),
+//   • ÇALIŞAN tur sınırlı bir süre boyunca BİTİRİLİR,
+//   • İKİNCİ create ASLA başlatılmaz,
+//   • süre dolarsa kalıcı taşıyıcı kanıtı bir sonraki açılışı GÜVENLİ kılar
+//     (`releaseStaleLocks` kanıta bakar, süreye değil).
+let draining = false
+let activeCycle: Promise<unknown> | null = null
+
+/** Kapanış başladı mı? Yeni talep AÇILMAZ. */
+export function isDraining(): boolean {
+  return draining
+}
+
+/**
+ * Kapanış sinyali: yeni tur açma, çalışanı sınırlı süre bekle.
+ *
+ * `graceMs` dolsa bile süreç ZORLA bekletilmez; kanıt kalıcıdır.
+ */
+export async function drainLabelJobScheduler(
+  graceMs = 30_000,
+): Promise<{ drained: boolean; hadActiveCycle: boolean }> {
+  draining = true
+  if (timer) clearInterval(timer)
+  timer = null
+  const hadActiveCycle = Boolean(activeCycle)
+  if (!activeCycle) {
+    cycleRunning = false
+    return { drained: true, hadActiveCycle }
+  }
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+  const expired = new Promise<'expired'>((resolve) => {
+    timeoutHandle = setTimeout(() => resolve('expired'), Math.max(0, graceMs))
+    timeoutHandle.unref?.()
+  })
+  const finished = await Promise.race([
+    activeCycle.then(() => 'finished' as const).catch(() => 'finished' as const),
+    expired,
+  ])
+  if (timeoutHandle) clearTimeout(timeoutHandle)
+  cycleRunning = false
+  return { drained: finished === 'finished', hadActiveCycle }
+}
+
 export function startLabelJobScheduler(params: {
   runCycle: () => Promise<unknown>
   intervalMs?: number
@@ -172,16 +222,25 @@ export function startLabelJobScheduler(params: {
 }): boolean {
   if (timer) return true
   if (!isLabelWorkerEnabled(params.env)) return false
+  // Boşaltma başladıysa yeniden kurulmaz.
+  if (draining) return false
   const intervalMs = Math.max(
     5_000, Number(params.intervalMs ?? LABEL_WORKER_DEFAULT_INTERVAL_MS),
   )
   timer = setInterval(() => {
     // Turlar ÜST ÜSTE BİNMEZ: yavaş bir tur ikinci bir talep dalgası açmaz.
     if (cycleRunning) return
+    // Kapanış başladıysa YENİ tur AÇILMAZ.
+    if (draining) return
     cycleRunning = true
-    void Promise.resolve(params.runCycle())
+    const cycle = Promise.resolve(params.runCycle())
       .catch(() => undefined)
-      .finally(() => { cycleRunning = false })
+      .finally(() => {
+        cycleRunning = false
+        activeCycle = null
+      })
+    activeCycle = cycle
+    void cycle
   }, intervalMs)
   timer.unref?.()
   return true
@@ -191,4 +250,6 @@ export function stopLabelJobScheduler(): void {
   if (timer) clearInterval(timer)
   timer = null
   cycleRunning = false
+  draining = false
+  activeCycle = null
 }

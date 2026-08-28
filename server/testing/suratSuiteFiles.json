@@ -200,5 +200,6 @@
   "server/blocked-job-recovery-flow.test.mjs",
   "server/production-runtime-worker-flow.test.mjs",
   "server/worker-bootstrap-dependency-flow.test.mjs",
+  "server/stale-preparing-recovery-flow.test.mjs",
   "server/canary-candidate-selector-flow.test.mjs"
 ]
