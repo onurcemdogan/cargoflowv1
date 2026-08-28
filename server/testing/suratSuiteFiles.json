@@ -189,5 +189,6 @@
   "server/dashboard-sql-aggregate-flow.test.mjs",
   "server/auto-label-activation-boundary-flow.test.mjs",
   "server/label-address-styling-flow.test.mjs",
-  "server/auto-label-catchup-flow.test.mjs"
+  "server/auto-label-catchup-flow.test.mjs",
+  "server/desi-tenant-resolution-flow.test.mjs"
 ]

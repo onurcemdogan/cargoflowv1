@@ -3481,22 +3481,35 @@ async function runLabelJobViaCreateHandler(job) {
     json(body) { if (payload === null) payload = body; return this },
   }
 
-  // AĞ SINIRI: handler çağrıldıktan sonra sonuç belirsizse iş bir daha
-  // TALEP EDİLMEZ. Bu yüzden `networkCrossed` iyimser değil, ihtiyatlı
-  // işaretlenir: handler'a girildiyse ağ geçilmiş SAYILIR.
-  let networkCrossed = false
+  // ═══ AĞ SINIRI — KANITLA, VARSAYIMLA DEĞİL ═════════════════════════
+  //
+  // Handler İSTİSNA atarsa sonuç BİLİNMEZ: ihtiyatlı davranılır, ağ
+  // geçilmiş sayılır ve iş bir daha TALEP EDİLMEZ.
+  //
+  // Handler bir YANIT döndürdüyse taşıyıcıya çıkılıp çıkılmadığı TAHMİN
+  // EDİLMEZ: `carrierCreateCalled` alanı bunun kanıtıdır.
+  //
+  // KÖK NEDEN (paket 4109804198): desi eksikliği gibi AĞDAN ÖNCEKİ bir ret
+  // de "ağ geçildi" sayılıyordu; iş UNKNOWN_AFTER_NETWORK olup KALICI
+  // OLARAK bloke oluyordu. Oysa taşıyıcı hiç çağrılmamıştı ve ayar
+  // düzeltilince paket güvenle yeniden işlenebilirdi.
+  let networkCrossed = true
   try {
-    networkCrossed = true
     await withSuratTracePersistence(createSuratShipment)(
       syntheticRequest, syntheticResponse,
     )
   } catch (error) {
     return {
       labelReady: false,
-      networkCrossed,
+      networkCrossed: true,
       errorCode: 'CREATE_HANDLER_EXCEPTION',
       errorSummary: error instanceof Error ? error.message : String(error),
     }
+  }
+  if (payload && payload.carrierCreateCalled === false) {
+    // Taşıyıcı ÇAĞRILMADI → ağ geçilmedi → iş bloke edilir ama
+    // yeniden denenebilir kalır.
+    networkCrossed = false
   }
 
   // ═══ KANONİK ALAN OKUNUR, TÜREV ALAN DEĞİL ═════════════════════════
@@ -3711,7 +3724,54 @@ async function persistSuratTraceAttempt(request, result) {
   }
 }
 
+/**
+ * İstek gövdesindeki siparişe kiracı desisini ÇÖZER (yalnız eksikse).
+ *
+ * Auth modu dışında veya organizasyon yoksa hiçbir şey yapmaz: eski
+ * davranış BİREBİR korunur.
+ */
+async function ensureTenantResolvedDesi(request) {
+  const order = request?.body?.order
+  if (!order || typeof order !== 'object') return
+  // Gövde zaten çözmüşse DOKUNULMAZ.
+  if (Number(order.desi) > 0) return
+  const organizationId = request?.auth?.organizationId
+  if (!isTenantAuthMode() || !organizationId) return
+  try {
+    const [{ getDb }, { resolveShipmentDesi }] = await Promise.all([
+      import('./db/client.ts'),
+      import('./shipments/resolveShipmentDesi.ts'),
+    ])
+    const resolution = await resolveShipmentDesi({
+      db: getDb(),
+      organizationId,
+      order,
+    })
+    if (resolution.desi != null) {
+      order.desi = resolution.desi
+      order.desiSource = resolution.source
+    }
+  } catch {
+    // Çözülemedi: create kendi "Desi bilgisi eksik" kapısında ve
+    // TAŞIYICIYA ÇIKMADAN durur. Uydurma desi ASLA yazılmaz.
+  }
+}
+
 async function createSuratShipmentCore(request, response) {
+  // ═══ DESİ ORKESTRASYON SINIRINDA ÇÖZÜLÜR ══════════════════════════════
+  //
+  // KÖK NEDEN (paket 4109804198): desi YALNIZ istek gövdesinden okunuyordu.
+  // Değeri tarayıcı, hydrate edilmiş kiracı ayarlarıyla hesaplayıp
+  // gönderiyordu; arka plan worker'ının tarayıcısı olmadığı için create
+  // taşıyıcıya HİÇ ÇIKMADAN "Desi bilgisi eksik" ile düşüyordu
+  // (carrierCalled = false).
+  //
+  // Düzeltme worker'ın gövdesine desi enjekte etmek DEĞİL, orkestrasyonun
+  // kendisinin çözebilmesidir: elle yol, arka plan worker'ı, yakalama
+  // worker'ı ve gelecekteki her çağıran AYNI değeri alır.
+  //
+  // İSTEMCİNİN KARARI EZİLMEZ: gövdede desi varsa AYNEN kullanılır.
+  await ensureTenantResolvedDesi(request)
   const order = request.body?.order
   const fullConfig = request.body?.config ?? {}
   const baseConfig = normalizeSuratConfig(
