@@ -57,7 +57,11 @@
     "surat:canary:precheck": "node --env-file-if-exists=.env server/shipments/suratCanaryPrecheckCli.ts",
     "surat:print-zpl:repair": "node server/shipments/repairPrintZplCli.ts",
     "auto-label:catchup:inspect": "tsx server/shipments/autoLabelCatchupCli.ts",
-    "auto-label:catchup:enqueue": "tsx server/shipments/autoLabelCatchupCli.ts --enqueue"
+    "auto-label:catchup:enqueue": "tsx server/shipments/autoLabelCatchupCli.ts --enqueue",
+    "auto-label:legacy-retry:inspect": "tsx server/shipments/legacyRetryQuarantineCli.ts",
+    "auto-label:legacy-retry:quarantine": "tsx server/shipments/legacyRetryQuarantineCli.ts --quarantine",
+    "auto-label:job:inspect": "tsx server/shipments/legacyRetryQuarantineCli.ts --job",
+    "auto-label:job:reactivate": "tsx server/shipments/legacyRetryQuarantineCli.ts --reactivate"
   },
   "dependencies": {
     "@types/jsbarcode": "^3.11.4",

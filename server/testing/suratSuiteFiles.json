@@ -191,5 +191,6 @@
   "server/label-address-styling-flow.test.mjs",
   "server/auto-label-catchup-flow.test.mjs",
   "server/desi-tenant-resolution-flow.test.mjs",
-  "server/desi-runtime-flow.test.mjs"
+  "server/desi-runtime-flow.test.mjs",
+  "server/legacy-retry-quarantine-flow.test.mjs"
 ]
