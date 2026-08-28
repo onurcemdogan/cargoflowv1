@@ -41,6 +41,11 @@ export interface LabelJobPreflight {
   /** Sürat alan adı — `BirimDesi` çözülen desiyle AYNIDIR. */
   readonly suratBirimDesi: number | null
 
+  /** Trendyol paket statusu create'e izin veriyor mu? */
+  readonly marketplaceStatus: string | null
+  readonly eligibleForCreate: boolean | null
+  readonly eligibilityReason: string | null
+
   readonly billingParty: string | null
   readonly expectedSuratWhoPays: number | null
   readonly credentialRole: string | null
@@ -159,6 +164,9 @@ export async function preflightLabelJob(
   let resolvedDesi: number | null = null
   let desiSource: string | null = null
   let orderNumber: string | null = null
+  let marketplaceStatus: string | null = null
+  let eligibleForCreate: boolean | null = null
+  let eligibilityReason: string | null = null
   let billingParty: string | null = null
   let expectedSuratWhoPays: number | null = null
   let credentialRole: string | null = null
@@ -185,6 +193,24 @@ export async function preflightLabelJob(
     } else {
       orderNumber = String(order.orderNumber ?? '') || null
       orderLinesCount = Array.isArray(order.items) ? order.items.length : 0
+
+      // ── UYGUNLUK: CREATE HANDLER'IN KULLANDIĞI KURALIN KENDİSİ ─────
+      //
+      // ÜRETİMDE ÖLÇÜLDÜ (4110109345): ön kontrol `PREFLIGHT_VALID=true`
+      // derken create handler aynı paketi taşıyıcıya ÇIKMADAN reddediyordu
+      // (`TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS`). Sebep, uygunluk kuralının
+      // ön kontrolde HİÇ SORULMAMASIYDI. İkinci bir eşleme tablosu değil,
+      // AYNI fonksiyon çağrılır.
+      const { buildTrendyolShipmentEligibility, TRENDYOL_NOT_ELIGIBLE_CODE } =
+        await import('./trendyolShipmentEligibility.ts')
+      const eligibility = buildTrendyolShipmentEligibility(order)
+      marketplaceStatus = eligibility.marketplaceStatus || null
+      eligibleForCreate = eligibility.canCallSurat
+      eligibilityReason = eligibility.reason
+      if (!eligibility.canCallSurat) {
+        blockers.push(TRENDYOL_NOT_ELIGIBLE_CODE)
+        failureDetail = failureDetail ?? eligibility.reason
+      }
 
       // ── DESİ: PAYLAŞILAN TEK ÇÖZÜCÜ ────────────────────────────────
       const resolution = await resolveShipmentDesi({
@@ -289,6 +315,9 @@ export async function preflightLabelJob(
     desiSource,
     // Sürat sözleşmesi: `BirimDesi: desi`.
     suratBirimDesi: resolvedDesi,
+    marketplaceStatus,
+    eligibleForCreate,
+    eligibilityReason,
     billingParty,
     expectedSuratWhoPays,
     credentialRole,

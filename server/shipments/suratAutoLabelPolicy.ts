@@ -265,6 +265,13 @@ export const DETERMINISTIC_PRE_NETWORK_BLOCKERS: readonly string[] = [
   'SURAT_CREDENTIAL_CONFIG_INVALID',
   'SURAT_PREFLIGHT_FAILED',
   'PRIMARY_CREDENTIAL_NOT_CONFIGURED',
+  // Trendyol paket statusu uygun degil: create handler taşıyıcıya
+  // CIKMADAN reddeder. Statu degismeden tekrar denemek AYNI reddi uretir;
+  // sonsuz `attempt_count` artisi olur. Statu degistiginde is
+  // `reactivateBlockedLabelJobs` ile ACIKCA canlandirilir.
+  'TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS',
+  // Pazaryeri Picking guncellemesi basarisiz: Surat'a CIKILMADI.
+  'TRENDYOL_PICKING_UPDATE_FAILED',
 ]
 
 export function isDeterministicPreNetworkBlocker(code: unknown): boolean {

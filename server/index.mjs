@@ -23,6 +23,7 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
+import { buildTrendyolShipmentEligibility } from './shipments/trendyolShipmentEligibility.ts'
 import {
   SURAT_CANONICAL_SERVICE_MODE,
   deriveCanonicalPrimaryAccount,
@@ -5579,162 +5580,14 @@ function resolveSuratLabelRegistrationState(
     : 'LABEL_CREATED_UNVERIFIED'
 }
 
+// TRENDYOL UYGUNLUK KURALI ARTIK BURADA DEGIL.
+//
+// Kural `server/shipments/trendyolShipmentEligibility.ts` icindedir ve
+// etiket isi on kontrolu de AYNI fonksiyonu cagirir. Ayni karari iki yerde
+// yazmak, uretimde olculen "on kontrol YES derken create handler HAYIR
+// diyor" ayrismasini yeniden dogururdu.
 function buildTrendyolShipmentPreflight(order = {}) {
-  const rawOrder = firstObjectCandidate(
-    order.rawOrder,
-    order.rawPackage,
-    order.rawResponse,
-  )
-  const rawLineSource = Array.isArray(order.items)
-    ? order.items.map((item) => item?.rawLine).filter(Boolean)
-    : []
-  const sources = [order, rawOrder, ...rawLineSource]
-  const orderNumber = firstNonEmpty(
-    order.orderNumber,
-    readSuratField(sources, ['orderNumber']),
-  )
-  const packageId = firstNonEmpty(
-    order.packageId,
-    readSuratField(sources, ['packageId', 'id']),
-  )
-  const shipmentPackageId = firstNonEmpty(
-    order.shipmentPackageId,
-    readSuratField(sources, ['shipmentPackageId']),
-    packageId,
-  )
-  const cargoTrackingNumber = firstNonEmpty(
-    order.cargoTrackingNumber,
-    readSuratField(sources, ['cargoTrackingNumber', 'existingCargoTrackingNumber']),
-  )
-  const cargoProviderName = firstNonEmpty(
-    order.cargoProviderName,
-    readSuratField(sources, [
-      'cargoProviderName',
-      'cargoProvider',
-      'cargoCompanyName',
-      'cargoSenderNumber',
-    ]),
-  )
-  const cargoProviderId = firstNonEmpty(
-    order.cargoProviderId,
-    readSuratField(sources, ['cargoProviderId']),
-  )
-  const cargoCompanyId = firstNonEmpty(
-    order.cargoCompanyId,
-    readSuratField(sources, ['cargoCompanyId', 'cargoProviderId']),
-  )
-  const marketplaceStatus = firstNonEmpty(
-    order.marketplaceStatus,
-    readSuratField(sources, ['marketplaceStatus', 'status']),
-  )
-  const packageStatus = firstNonEmpty(
-    order.packageStatus,
-    readSuratField(sources, ['packageStatus', 'status']),
-  )
-  const orderLineItemStatusName = firstNonEmpty(
-    readSuratField(sources, ['orderLineItemStatusName', 'lineStatusName']),
-    packageStatus,
-  )
-  const cargoTrackingLink = firstNonEmpty(
-    order.cargoTrackingLink,
-    readSuratField(sources, ['cargoTrackingLink', 'trackingUrl']),
-  )
-  const existingCargoTrackingNumber = firstNonEmpty(
-    readSuratField(sources, ['existingCargoTrackingNumber']),
-    cargoTrackingNumber,
-  )
-  const shipmentStatus = firstNonEmpty(
-    order.shipmentStatusName,
-    readSuratField(sources, ['shipmentStatus', 'shipmentStatusName']),
-  )
-  const isReadyToShip = readOptionalBoolean(
-    firstNonEmpty(order.isReadyToShip, readSuratField(sources, ['isReadyToShip'])),
-  )
-  const statusText = [
-    marketplaceStatus,
-    packageStatus,
-    orderLineItemStatusName,
-    shipmentStatus,
-  ]
-    .join(' ')
-    .toLocaleLowerCase('tr-TR')
-  const isCancelled =
-    ['Cancelled', 'Returned', 'UnDelivered', 'UnSupplied'].includes(
-      marketplaceStatus,
-    ) || /cancel|iptal|return|iade|refund|un.?supplied/i.test(statusText)
-  const isDelivered =
-    marketplaceStatus === 'Delivered' || /delivered|teslim/i.test(statusText)
-  const isShipped =
-    ['Shipped', 'AtCollectionPoint'].includes(marketplaceStatus) ||
-    /shipped|kargoda|ta[sş][iı]mada|at.?collection/i.test(statusText)
-  const hasCargoTrackingNumber = Boolean(cargoTrackingNumber)
-  const normalizedCargoProviderName = normalizeSearchText(cargoProviderName)
-  const suratAssigned = cargoProviderName
-    ? isSuratCargoProviderName(cargoProviderName)
-    : null
-  const existingShipmentDetected = Boolean(
-    cargoTrackingLink &&
-      (isShipped || isDelivered || /kargo.?takip|tracking/i.test(cargoTrackingLink)),
-  )
-  const requiresPickingUpdate = isTrendyolCreatedPackageStatus({
-    marketplaceStatus,
-    packageStatus,
-    orderLineItemStatusName,
-    shipmentStatus,
-  })
-  const diagnostics = []
-  if (requiresPickingUpdate) diagnostics.push('Trendyol paketi Yeni/Created statüsünde; Sürat öncesi Picking/İşleme Al yapılmalı.')
-  if (!hasCargoTrackingNumber) diagnostics.push('Trendyol cargoTrackingNumber bulunamadı.')
-  if (isCancelled) diagnostics.push('Trendyol paketi iptal/iade statüsünde.')
-  if (isDelivered) diagnostics.push('Trendyol paketi teslim edilmiş görünüyor.')
-  if (isShipped) diagnostics.push('Trendyol paketi kargoda/teslim sürecinde görünüyor.')
-  if (isReadyToShip === false) diagnostics.push('Trendyol isReadyToShip=false döndü.')
-  if (suratAssigned === false) diagnostics.push('Sipariş Sürat Kargo’ya atanmış görünmüyor.')
-  if (existingShipmentDetected) diagnostics.push('Mevcut cargoTrackingLink/gönderi izi var.')
-  const canCallGonderiyiKargoyaGonder = Boolean(
-    hasCargoTrackingNumber &&
-      !requiresPickingUpdate &&
-      !isCancelled &&
-      !isDelivered &&
-      !isShipped &&
-      isReadyToShip !== false &&
-      suratAssigned !== false,
-  )
-
-  return {
-    ok: canCallGonderiyiKargoyaGonder,
-    canCallSurat: canCallGonderiyiKargoyaGonder,
-    reason: canCallGonderiyiKargoyaGonder
-      ? 'Trendyol preflight engeli bulunmadı.'
-      : diagnostics[0] ||
-        'Bu sipariş Trendyol tarafında kargo oluşturma için uygun statüde değil.',
-    orderNumber,
-    packageId,
-    shipmentPackageId,
-    cargoTrackingNumber,
-    cargoProviderName,
-    normalizedCargoProviderName,
-    cargoProviderId,
-    cargoCompanyId,
-    marketplaceStatus,
-    packageStatus,
-    orderLineItemStatusName,
-    cargoTrackingLink,
-    existingCargoTrackingNumber,
-    shipmentStatus,
-    isCancelled,
-    isDelivered,
-    isShipped,
-    isReadyToShip,
-    suratAssigned,
-    hasCargoTrackingNumber,
-    existingShipmentDetected,
-    canCallGonderiyiKargoyaGonder,
-    requiresPickingUpdate,
-    pickingUpdatePerformed: Boolean(order.trendyolPickingUpdate?.ok),
-    pickingUpdate: order.trendyolPickingUpdate,
-    diagnostics,
-  }
+  return buildTrendyolShipmentEligibility(order)
 }
 
 function buildSuratCommonBarcodeLoopDiagnostic({
@@ -6263,6 +6116,9 @@ function buildTrendyolPreflightBlockedResponse({
     message,
     errorCode: 'TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS',
     errorSource: 'Trendyol',
+    // AGDAN ONCE: Surat'e istek KURULMADI bile. Kanit YAZILIR.
+    carrierCreateCalled: false,
+    requestSent: false,
     endpoint,
     statusCode: 0,
     contentType: 'application/json',
@@ -6482,6 +6338,9 @@ function buildTrendyolPickingUpdateBlockedResponse({
     errorCode: 'TRENDYOL_PICKING_UPDATE_FAILED',
     errorCategory: 'TRENDYOL_PICKING_UPDATE_FAILED',
     errorSource: 'Trendyol',
+    // Pazaryeri cagrisi basarisiz oldu; SURAT taşıyıcısına CIKILMADI.
+    carrierCreateCalled: false,
+    requestSent: false,
     endpoint,
     statusCode: Number(pickingUpdate.statusCode ?? 0),
     contentType: 'application/json',
@@ -11159,6 +11018,12 @@ function buildSuratDispatchRejectedFailure({
   addressNormalization,
   trendyolPreflight,
   requestSent = true,
+  // TASIYICI KANITI — worker bu alani OKUR.
+  //
+  // Varsayilan `undefined` BILEREK birakildi: bilmeyen cagiran icin
+  // davranis DEGISMEZ (ihtiyatli "ag gecildi" varsayimi surer). Yalniz
+  // AGDAN ONCE donduren cagiranlar `false` gecerek kaniti YAZAR.
+  carrierCreateCalled = undefined,
 }) {
   const serviceMode = resolveSuratServiceMode(serviceType)
   const operationName =
@@ -11199,6 +11064,8 @@ function buildSuratDispatchRejectedFailure({
     errorCode,
     errorCategory,
     errorSource,
+    // Alan YAZILMAZSA worker onu OKUYAMAZ ve ihtiyatli varsayima duser.
+    ...(carrierCreateCalled === undefined ? {} : { carrierCreateCalled }),
     operationType: 'CREATE_SHIPMENT',
     buttonName: 'Sürat Gönderisi Oluştur',
     providerMethod: 'SuratKargoProvider.createShipment',

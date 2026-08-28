@@ -104,6 +104,10 @@ async function seed(db, options = {}) {
     orderDate: new Date('2026-08-20T00:00:00.000Z'),
     cargoTrackingNumber: '7279999999',
     operationStatus: 'NEW',
+    // UYGUN STATU: create handler'in uygunluk kapisi bu paketi gecirir.
+    // (Created/Yeni statusu Picking guncellemesi ister ve KAPIDA DURUR.)
+    marketplaceStatus: options.marketplaceStatus ?? 'Picking',
+    cargoProviderName: options.cargoProviderName ?? 'Surat Kargo',
     firstSeenAt: new Date('2026-08-20T00:00:00.000Z'),
     rawPayloadEncrypted: encryption.encryptOrderPayload(raw),
   })

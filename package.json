@@ -63,7 +63,8 @@
     "auto-label:job:inspect": "tsx server/shipments/legacyRetryQuarantineCli.ts --job",
     "auto-label:job:reactivate": "tsx server/shipments/legacyRetryQuarantineCli.ts --reactivate",
     "auto-label:job:preflight": "tsx server/shipments/legacyRetryQuarantineCli.ts --preflight",
-    "auto-label:job:run-once": "tsx server/shipments/singleLabelJobRunnerCli.ts"
+    "auto-label:job:run-once": "tsx server/shipments/singleLabelJobRunnerCli.ts",
+    "auto-label:canary:candidates": "tsx server/shipments/canaryCandidateCli.ts"
   },
   "dependencies": {
     "@types/jsbarcode": "^3.11.4",

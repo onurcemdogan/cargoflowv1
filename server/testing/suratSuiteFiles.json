@@ -194,5 +194,7 @@
   "server/desi-runtime-flow.test.mjs",
   "server/legacy-retry-quarantine-flow.test.mjs",
   "server/label-job-preflight-flow.test.mjs",
-  "server/single-label-job-runner-flow.test.mjs"
+  "server/single-label-job-runner-flow.test.mjs",
+  "server/trendyol-eligibility-classification-flow.test.mjs",
+  "server/canary-candidate-selector-flow.test.mjs"
 ]

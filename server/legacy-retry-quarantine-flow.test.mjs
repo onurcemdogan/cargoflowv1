@@ -236,7 +236,11 @@ test('LEGACY-6/7/8: tek paket yeniden etkinlestirme — TEK satir, mukerrer YOK'
   await db.insert(schema.orders).values({
     ...mapper.toOrderInsertValues(organizationId, {
       marketplace: 'Trendyol', packageId: '4110109345',
-      orderNumber: '11545965908', marketplaceStatus: 'Created',
+      orderNumber: '11545965908',
+      // UYGUN STATU: 'Created' once Picking guncellemesi ister ve create
+      // handler taşıyıcıya CIKMADAN reddeder (uygunluk kapisi).
+      marketplaceStatus: 'Picking',
+      cargoProviderName: 'Surat Kargo',
       cargoTrackingNumber: '7279999999',
       orderDate: new Date('2026-08-28T00:00:00.000Z').toISOString(),
       totalAmount: '100.00', rawOrder: { status: 'Created' },

@@ -8,6 +8,8 @@
 //   • Organizasyon ve paket AÇIKÇA verilmelidir; varsayılan YOKTUR.
 //   • Genel `claimLabelJobs` toplu sorgusu KULLANILMAZ.
 //   • Yalnız `BLOCKED` durumdaki TEK satır, kimliğiyle talep edilir.
+//   • `--allow-queued-canary` AÇIKÇA verilmedikçe `QUEUED` iş REDDEDİLİR;
+//     verildiğinde bile yalnız `attempt_count=0` olan TEK satır alınır.
 //   • Kapılardan biri kapalıysa `CARRIER_CALLS=0` ve HİÇBİR yazım yapılmaz.
 //   • Taşıyıcı en fazla BİR KEZ çağrılır; ikinci create İMKÂNSIZDIR.
 //   • Worker BAŞLATILMAZ; zamanlayıcı KURULMAZ.
@@ -54,11 +56,15 @@ const resolved = await catchup.resolveOrganizationByName(db, name)
 if (!resolved) fail(`Organizasyon bulunamadi: ${name}`)
 const org = resolved
 
+// Zımnî gevşetme YOK: bayrak yoksa QUEUED iş kapıda durur.
+const allowQueuedCanary = process.argv.includes('--allow-queued-canary')
+
 const report = await runner.runSingleLabelJob(db, {
   organizationId: org.id,
   packageId,
   workerId: `run-once@${process.pid}`,
   expectedDesi,
+  allowQueuedCanary,
   // WORKER İLE AYNI create orkestrasyonu — ikinci uygulama YOK.
   runLabel: appModule.runLabelJobViaCreateHandler as never,
 })

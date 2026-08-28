@@ -121,6 +121,14 @@ export async function runSingleLabelJob(
     runLabel: (job: LabelJobRow) => Promise<LabelRunOutcome>
     /** Verilirse çözülen desi BUNA EŞİT olmalıdır; değilse kapı kapanır. */
     expectedDesi?: number | null
+    /**
+     * AÇIKÇA verilmedikçe `QUEUED` iş İŞLENMEZ.
+     *
+     * Zımnî bir gevşetme DEĞİLDİR: bayrak yoksa davranış aynen korunur.
+     * Bayrak verildiğinde bile YALNIZ istenen tek satır, `status='QUEUED'`
+     * VE `attempt_count=0` koşullarıyla, kimliğiyle talep edilir.
+     */
+    allowQueuedCanary?: boolean
   },
 ): Promise<SingleJobRunReport> {
   const blockers: string[] = []
@@ -138,8 +146,20 @@ export async function runSingleLabelJob(
   // worker kapalıyken sıraya girmiş ilgisiz işler bu komutla İŞLENMEZ.
   // `READY` ve `UNKNOWN_AFTER_NETWORK` zaten taşıyıcı tarafında sonuç
   // doğurmuş olabilir; onlara ikinci create YAPILMAZ.
-  if (target && target.status !== 'BLOCKED') {
+  const queuedCanary = params.allowQueuedCanary === true
+  const acceptedStatuses = queuedCanary ? ['BLOCKED', 'QUEUED'] : ['BLOCKED']
+  if (target && !acceptedStatuses.includes(target.status)) {
     blockers.push(`IS_DURUMU_UYGUN_DEGIL(${target.status})`)
+  }
+  // Kuyruk kanaryası YALNIZ HİÇ DENENMEMİŞ işte açılır. Denenmiş bir
+  // QUEUED satır, taşıyıcıya gidilmiş olabileceği anlamına gelir.
+  if (
+    target &&
+    target.status === 'QUEUED' &&
+    queuedCanary &&
+    target.attemptCount !== 0
+  ) {
+    blockers.push(`KUYRUK_KANARYASI_DENENMIS(${target.attemptCount})`)
   }
 
   // ── KAPI: TAŞIYICI ARTEFAKTI VE KAYITLI ÇAĞRI ──────────────────────
@@ -240,7 +260,28 @@ export async function runSingleLabelJob(
   // Toplu sorgu DEĞİL: satır KİMLİĞİYLE hedeflenir ve durum koşulu
   // güncellemenin İÇİNDEDİR. Bu komut başka hiçbir satıra dokunamaz;
   // yarış durumunda ikinci çalıştırma 0 satır döner ve durur.
-  const claimed = await db.execute(sql`
+  //
+  // KUYRUK KANARYASI: koşul `status='QUEUED' AND attempt_count=0` olarak
+  // DARALTILIR. `LIMIT` yoktur, `IN` listesi yoktur, sıra taraması yoktur —
+  // yalnız BU satır. Bayrak verilmediyse koşul `BLOCKED` olarak kalır.
+  const claimed =
+    target.status === 'QUEUED'
+      ? await db.execute(sql`
+    UPDATE ${labelJobs} AS j
+       SET status = 'PREPARING',
+           locked_at = now(),
+           locked_by = ${params.workerId},
+           attempt_count = j.attempt_count + 1,
+           updated_at = now()
+     WHERE j.id = ${target.id}
+       AND j.organization_id = ${params.organizationId}
+       AND j.package_id = ${params.packageId}
+       AND j.status = 'QUEUED'
+       AND j.attempt_count = 0
+    RETURNING j.id, j.organization_id, j.marketplace, j.carrier,
+              j.package_id, j.status, j.attempt_count
+  `)
+      : await db.execute(sql`
     UPDATE ${labelJobs} AS j
        SET status = 'PREPARING',
            locked_at = now(),

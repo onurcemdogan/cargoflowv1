@@ -21,6 +21,9 @@ const read = (...parts) =>
   readFileSync(join(here, ...parts), 'utf8').split('\r\n').join('\n')
 
 const SOURCE = read('index.mjs')
+// UYGUNLUK KURALI ARTIK PAYLASILAN MODULDE. `index.mjs` kendi kopyasini
+// TUTMAZ, DELEGE eder; boylece tasiyici-notrlugu TEK YERDE olculur.
+const ELIGIBILITY = read('shipments', 'trendyolShipmentEligibility.ts')
 const PROVIDER = await import('./shipments/suratProvider.ts')
 const PLAN = read('..', 'src', 'utils', 'suratCreatePrintPlan.ts')
 const REGISTRY = read('..', 'src', 'dashboard', 'providerRegistry.ts')
@@ -50,12 +53,18 @@ test('CN-2: gorunen ad dogrulamasi DB anahtari olarak KULLANILMAZ', () => {
 
 test('CN-3: create on kontrolu YABANCI tasiyiciyi ENGELLER', () => {
   // `suratAssigned === false` create'i kapatan kosullardan BIRIDIR.
-  assert.match(SOURCE, /suratAssigned !== false,/)
-  const gateAt = SOURCE.indexOf('const canCallGonderiyiKargoyaGonder = Boolean(')
-  const end = SOURCE.indexOf(')', SOURCE.indexOf('suratAssigned !== false,'))
+  assert.match(ELIGIBILITY, /suratAssigned !== false,/)
+  const gateAt = ELIGIBILITY.indexOf('const canCallGonderiyiKargoyaGonder = Boolean(')
+  const end = ELIGIBILITY.indexOf(')', ELIGIBILITY.indexOf('suratAssigned !== false,'))
   assert.ok(gateAt > 0 && end > gateAt, 'create on kontrolu bulunamadi')
   // canCallSurat AYNI degerden turer; ayri/gevsek bir yol OLMAMALI.
-  assert.match(SOURCE, /canCallSurat: canCallGonderiyiKargoyaGonder,/)
+  assert.match(ELIGIBILITY, /canCallSurat: canCallGonderiyiKargoyaGonder,/)
+  // `index.mjs` IKINCI bir kopya TUTMAZ: kural tek yerde kalmali.
+  assert.ok(
+    !/const canCallGonderiyiKargoyaGonder = Boolean\(/.test(SOURCE),
+    'index.mjs uygunluk kuralinin IKINCI kopyasini tutuyor',
+  )
+  assert.match(SOURCE, /return buildTrendyolShipmentEligibility\(order\)/)
   // Route bu bayrak dusukse DERHAL doner.
   assert.match(SOURCE, /if \(!trendyolPreflight\.canCallSurat\) \{/)
 })
@@ -103,7 +112,7 @@ test('CN-6: tasiyici adi YOKSA Surat varsayilir — BILINCLI ve TEK YERDE', () =
   // siparis Surat yoluna girmeye devam eder ve YANLIS tasiyiciya gidebilir.
   // Bu test o gunun sessizce gelmesini ENGELLER: davranis degistiginde burasi
   // duser ve karar BILINCLI verilir.
-  assert.match(SOURCE, /const suratAssigned = cargoProviderName\n\s*\? isSuratCargoProviderName\(cargoProviderName\)\n\s*: null/)
+  assert.match(ELIGIBILITY, /const suratAssigned = cargoProviderName\n\s*\? isSuratCargoProviderName\(cargoProviderName\)\n\s*: null/)
   assert.match(PLAN, /isSuratOrder: \(order: CargoOrder\) => boolean/)
   const app = read('..', 'src', 'App.tsx')
   assert.match(app, /!order\.cargoProviderName \|\|/)
