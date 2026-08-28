@@ -567,6 +567,26 @@ app.put('/api/local-config/integration', async (request, response) => {
             incoming.desi.labelPrintTemplate ??
             shipmentDefaults.labelPrintTemplate,
         })
+        // ═══ BAGIMLILIK DEGISTI → BLOKE ISLER YENIDEN ETKINLESIR ═══════
+        //
+        // Desi eksikligi yuzunden BLOKE edilmis etiket isleri, ayar
+        // girildiginde AYNI mantiksal is olarak yeniden kuyruga alinir.
+        // YENI is yaratilmaz; mukerrer gonderi imkansiz kalir.
+        try {
+          const { reactivateBlockedLabelJobs } = await import(
+            './shipments/labelJobQueue.ts'
+          )
+          const revived = await reactivateBlockedLabelJobs(db, {
+            organizationId,
+            errorCodes: ['SURAT_PREFLIGHT_DESI_MISSING'],
+          })
+          if (revived > 0) {
+            console.log(`[label-worker] desi ayari sonrasi ${revived} is yeniden kuyruga alindi`)
+          }
+        } catch {
+          // BEST-EFFORT: ayar kaydi BOZULMAZ. Isler bir sonraki acik
+          // yeniden degerlendirmede de canlandirilabilir.
+        }
       }
       const status = await getMaskedIntegrationStatus(db, organizationId)
       response.json({

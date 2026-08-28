@@ -148,6 +148,34 @@ export async function resolveShipmentDesi(params: {
     : []
 
   if (resolved == null) {
+    // ═══ SATIRSIZ GÖNDERİ — KİRACI VARSAYILANI PAKET DÜZEYİNDE ═════════
+    //
+    // ÜRETİMDE KANITLANDI (paket 4110109345): `calculateOrderDesi` desiyi
+    // SATIR BAŞINA toplar. Siparişin hiç `order_lines` kaydı yoksa toplam
+    // 0 çıkar ve desi "çözülemedi" sayılırdı — kiracıda `defaultUnitDesi`
+    // ayarlı olmasına rağmen create taşıyıcıya çıkmadan reddediliyordu.
+    //
+    // Ayarın anlamı "bu müşterinin GÖNDERİLERİ için varsayılan desi"dir;
+    // satır başına bir kural değildir. Bağlanacak satır yoksa varsayılan
+    // PAKET için BİR KEZ uygulanır — `multiplyByItemQuantity: false`
+    // durumunun zaten ifade ettiği davranışın aynısı.
+    //
+    // İKİNCİ HESAP DEĞİLDİR: satırlar VARSA yukarıdaki kanonik sonuç
+    // aynen kullanılır; bu dal yalnız bağlanacak satır olmadığında girer.
+    const lineCount = Array.isArray((params.order ?? {}).items)
+      ? ((params.order ?? {}).items as unknown[]).length
+      : 0
+    const packageDefault = lineCount === 0 ? positive(defaults.defaultUnitDesi) : null
+    if (packageDefault != null) {
+      return {
+        desi: packageDefault,
+        source: 'tenant_settings',
+        tenantSettingPresent,
+        tenantSettingValue,
+        lineSources: ['tenant_default_package'],
+        reason: null,
+      }
+    }
     return {
       desi: null,
       source: 'unresolved',

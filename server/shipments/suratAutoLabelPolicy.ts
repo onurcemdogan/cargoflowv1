@@ -247,13 +247,43 @@ export function resolveAutoLabelEnqueue(params: {
  * `networkCrossed && !labelReady` → `UNKNOWN_AFTER_NETWORK`. Bu durumdan
  * otomatik çıkış YOKTUR; yalnız salt-okunur mutabakat çözer.
  */
+/**
+ * AGDAN ONCEKI DETERMINISTIK ENGELLER.
+ *
+ * Bu kodlar "ayni veri + ayni yapilandirma → ayni sonuc" anlamina gelir.
+ * Otomatik tekrar denemek SONSUZ bir dongudur: her worker turunda
+ * `attempt_count` artar, hicbir sey degismez ve taşıyıcıya da gidilmez.
+ *
+ * URETIMDE GORULDU (paket 4110109345): desi eksikligi `FAILED_SAFE_TO_RETRY`
+ * olarak yaziliyor ve is her turda yeniden talep ediliyordu.
+ *
+ * Bu yuzden BLOKE edilirler ve ancak bir BAGIMLILIK degistiginde
+ * (kiracı ayarı/paket verisi) yeniden etkinlestirilirler.
+ */
+export const DETERMINISTIC_PRE_NETWORK_BLOCKERS: readonly string[] = [
+  'SURAT_PREFLIGHT_DESI_MISSING',
+  'SURAT_CREDENTIAL_CONFIG_INVALID',
+  'SURAT_PREFLIGHT_FAILED',
+  'PRIMARY_CREDENTIAL_NOT_CONFIGURED',
+]
+
+export function isDeterministicPreNetworkBlocker(code: unknown): boolean {
+  return DETERMINISTIC_PRE_NETWORK_BLOCKERS.includes(String(code ?? ''))
+}
+
 export function resolveAutoLabelJobState(params: {
   networkCrossed: boolean
   labelReady: boolean
   blocked?: boolean
+  /** Ağdan önceki ret kodu — deterministik engelleri bloke etmek için. */
+  errorCode?: string | null
 }): { state: AutoLabelJobState; retryAllowed: boolean } {
   if (params.blocked) return { state: 'BLOCKED', retryAllowed: false }
   if (params.labelReady) return { state: 'READY', retryAllowed: false }
+  // Ağa çıkılmadı VE sebep deterministik: tekrar denemek anlamsızdır.
+  if (!params.networkCrossed && isDeterministicPreNetworkBlocker(params.errorCode)) {
+    return { state: 'BLOCKED', retryAllowed: false }
+  }
   if (params.networkCrossed) {
     // Taşıyıcı durumu değişmiş OLABİLİR: ikinci create MÜKERRER gönderidir.
     return { state: 'UNKNOWN_AFTER_NETWORK', retryAllowed: false }

@@ -121,6 +121,38 @@ const zplLengthOf = (value: unknown): number =>
  * Kimlik ÇÖZÜLMEMİŞSE ya da parite tutmuyorsa AĞA ÇIKILMAZ. Yanlış cariye
  * açılan gönderi geri alınamaz; bu yüzden şüphede DURULUR.
  */
+/**
+ * AGDAN ONCEKI (pre-network) basarisizligi KESIN bir kodla siniflandirir.
+ *
+ * Bu dala YALNIZ zarf hic kurulmadiginda girilir: tasiyiciya tek bayt
+ * gitmemistir. Bu yuzden bir "transport" kodu KULLANILMAZ.
+ *
+ * Kodlar DETERMINISTIKTIR: ayni veri ve ayni yapilandirmayla tekrar
+ * denemek AYNI sonucu verir. Worker bunlari otomatik tekrar KUYRUGA
+ * ALMAZ; ilgili ayar degisene kadar is bloke kalir.
+ */
+export const PRE_NETWORK_FAILURE_CODES = [
+  'SURAT_PREFLIGHT_DESI_MISSING',
+  'SURAT_CREDENTIAL_CONFIG_INVALID',
+  'SURAT_PREFLIGHT_FAILED',
+] as const
+
+export type PreNetworkFailureCode = (typeof PRE_NETWORK_FAILURE_CODES)[number]
+
+export function classifyPreNetworkFailure(error: unknown): PreNetworkFailureCode {
+  const message = String((error as Error)?.message ?? '').toLocaleLowerCase('tr-TR')
+  if (message.includes('desi')) return 'SURAT_PREFLIGHT_DESI_MISSING'
+  if (
+    message.includes('kimlik') ||
+    message.includes('kullanici') ||
+    message.includes('sifre') ||
+    message.includes('credential')
+  ) {
+    return 'SURAT_CREDENTIAL_CONFIG_INVALID'
+  }
+  return 'SURAT_PREFLIGHT_FAILED'
+}
+
 export async function createSuratSoapPrimaryShipment(
   params: SoapPrimaryCreateParams,
 ): Promise<SoapPrimaryCreateOutcome> {
@@ -339,7 +371,19 @@ export async function createSuratSoapPrimaryShipment(
         ? (error as SuratSoapWireBlockedError).errorCode
         : alreadyExists
           ? 'SURAT_SHIPMENT_ALREADY_EXISTS'
-          : 'SURAT_SOAP_TRANSPORT_FAILED',
+          // ═══ TASIMA HATASI ANCAK TASIMA DENENDIYSE ═══════════════════
+          //
+          // URETIMDE KANITLANDI (paket 4110109345): desi eksikligi gibi
+          // AGDAN ONCEKI bir ret `SURAT_SOAP_TRANSPORT_FAILED` olarak
+          // etiketleniyordu. Zarf hic kurulmamisti (`wire === null`),
+          // yani tasima DENENMEMISTI; kod operatore yanlis katmani
+          // gosteriyordu.
+          //
+          // Zarf kurulduysa (crossedNetwork) tasima gercekten denendi ve
+          // eski kod AYNEN korunur.
+          : crossedNetwork
+            ? 'SURAT_SOAP_TRANSPORT_FAILED'
+            : classifyPreNetworkFailure(error),
       classification: alreadyExists
         ? classifySuratCreateResponse({
             httpSuccess: true,

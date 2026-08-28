@@ -123,6 +123,8 @@ export async function runLabelJobCycle(params: {
         networkCrossed: outcome.networkCrossed === true,
         labelReady: outcome.labelReady === true,
         blocked: outcome.blocked === true,
+        // Deterministik ağ-öncesi engeller BLOKE edilir; sonsuz tekrar yok.
+        errorCode: outcome.errorCode ?? null,
       })
       if (state.state === 'READY') report.ready += 1
       else if (state.state === 'BLOCKED') report.blocked += 1

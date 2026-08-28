@@ -12,7 +12,7 @@
 // Taşıyıcı etiketi GERİ ALINAMAZ. "Uygulama zaten kontrol ediyor" yeterli
 // değildir: iki süreç, yeniden başlatma ya da webhook+stream aynı paketi
 // aynı anda bulabilir. Tekillik VERİTABANINDA durur.
-import { and, eq, lte, or, sql } from 'drizzle-orm'
+import { and, eq, inArray, lte, or, sql } from 'drizzle-orm'
 import { labelJobs } from '../db/schema.ts'
 
 // Drizzle'ın akıcı sorgu kurucusu (`.from().where().limit()`) her adımda
@@ -183,6 +183,45 @@ export async function releaseStaleLocks(
 }
 
 /** Operasyonel sayaçlar — PII/sır YOK. */
+/**
+ * BLOKE isleri yeniden etkinlestirir — BAGIMLILIK DEGISTIGINDE.
+ *
+ * Deterministik agdan-onceki engeller (desi eksik, kimlik yapilandirmasi
+ * gecersiz) otomatik tekrar DENENMEZ; aksi halde her worker turunda
+ * `attempt_count` artar ve hicbir sey degismez.
+ *
+ * Ilgili kiracı ayarı degistiginde bu fonksiyon cagrilir: AYNI mantiksal is
+ * yeniden kuyruga alinir. YENI is YARATILMAZ → mukerrer gonderi imkansiz.
+ *
+ * Yalniz BLOCKED isler ve yalniz verilen kod kumesi hedeflenir; taşıyıcıya
+ * gidilmis (UNKNOWN_AFTER_NETWORK) veya biten (READY) isler DOKUNULMAZ.
+ */
+export async function reactivateBlockedLabelJobs(
+  db: Db,
+  params: { organizationId: string; errorCodes: readonly string[] },
+): Promise<number> {
+  const codes = params.errorCodes.filter(Boolean)
+  if (codes.length === 0) return 0
+  const updated = await db
+    .update(labelJobs)
+    .set({
+      status: 'QUEUED',
+      availableAt: new Date(),
+      lockedAt: null,
+      lockedBy: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(labelJobs.organizationId, params.organizationId),
+        eq(labelJobs.status, 'BLOCKED'),
+        inArray(labelJobs.lastErrorCode, [...codes]),
+      ),
+    )
+    .returning({ id: labelJobs.id })
+  return Array.isArray(updated) ? updated.length : 0
+}
+
 export async function labelJobStats(
   db: Db, organizationId?: string,
 ): Promise<Record<string, number>> {
