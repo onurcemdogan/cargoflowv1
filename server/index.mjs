@@ -3593,7 +3593,19 @@ async function startTrendyolStreamSyncOnBoot() {
   }
 }
 
-app.listen(port, host, () => {
+// ═══ İÇE AKTARILABİLİRLİK — DİNLEYİCİ VARSAYILAN OLARAK AÇILIR ═══════════
+//
+// Kontrollü kanarya (`auto-label:job:run-once`) worker'ın kullandığı AYNI
+// create orkestrasyonunu çağırmak zorundadır; ikinci bir create yolu
+// yazmak, zamanla ayrışan iki gerçek demektir.
+//
+// Bu yüzden modül İÇE AKTARILABİLİR olmalı ama içe aktarma HTTP dinleyicisi
+// AÇMAMALIDIR. Koşul BİLEREK "aksi belirtilmedikçe dinle" biçimindedir:
+// giriş noktası tahmini (argv[1]) süreç yöneticisine göre değişebilir ve
+// yanlış tahmin ÜRETİMİ SESSİZCE BAŞLATMAZDI. Varsayılan davranış AYNI.
+const listenSuppressed = String(process.env.CF_IMPORT_ONLY ?? '') === '1'
+
+if (!listenSuppressed) app.listen(port, host, () => {
   console.log(`CargoFlow API listening on http://${host}:${port}`)
   void reconcileLabelBundlesOnBoot()
   void startRetentionHousekeepingOnBoot()
@@ -3604,6 +3616,11 @@ app.listen(port, host, () => {
   void startLabelJobWorkerOnBoot()
   void startTrendyolStreamSyncOnBoot()
 })
+
+// KANARYA İÇİN PAYLAŞILAN ÇALIŞTIRMA YOLU — İKİNCİ CREATE UYGULAMASI YOK.
+// Tek iş çalıştırıcısı bu fonksiyonu ENJEKTE alır; böylece worker ile
+// kanarya YAPISAL OLARAK ayrışamaz.
+export { runLabelJobViaCreateHandler }
 
 // Kapanışta yeni tur başlatılmaz (mevcut zamanlayıcı temizlenir).
 for (const signal of ['SIGTERM', 'SIGINT']) {
