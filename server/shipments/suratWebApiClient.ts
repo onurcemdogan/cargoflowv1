@@ -284,6 +284,11 @@ export async function createOrtakBarkodShipment(
       // Gözlemlenebilirlik create sonucunu ASLA etkilemez.
     }
   }
+  // ═══ GERI ALINAMAZ SINIR ═════════════════════════════════════════════
+  // Kanonik REST yolu da Surat agidir. Kanit istekten ONCE kalicilasir;
+  // create baglami yoksa (test/tekil cagrilar) sessizce gecer.
+  const { markCarrierBoundaryEntered } = await import('./carrierBoundarySink.ts')
+  await markCarrierBoundaryEntered()
   const doFetch = params.fetchImpl ?? (globalThis.fetch as unknown as FetchLike)
   const controller = new AbortController()
   const timeoutMs = params.timeoutMs ?? SURAT_CANONICAL_TIMEOUT_MS

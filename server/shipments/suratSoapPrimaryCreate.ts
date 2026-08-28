@@ -88,7 +88,9 @@ export interface SoapPrimaryCreateParams {
    * çağrılmalıdır — sonradan yeniden kurgulanan zarf GERÇEK tel değildir.
    */
   executeCreate: (args: {
-    onWireReady: (envelope: string) => void
+    // BEKLENEBILIR: cagiran tasiyici sinirina cikmadan ONCE kalici kanit
+    // yazar; hook BEKLENMEDEN fetch YAPILMAMALIDIR.
+    onWireReady: (envelope: string, edge?: string) => void | Promise<void>
   }) => Promise<SoapCreateExecutionResult>
 }
 
@@ -272,6 +274,17 @@ export async function createSuratSoapPrimaryShipment(
   // alani tasir; oraya ayni kapiyi uygulamak calisan create'leri BLOKLARDI.
   // Bu yuzden REST kenari YAKALANIR (gorunurluk) ama SOAP paritesine
   // SOKULMAZ; parmak izi yine de ize yazilir ve fark GORUNUR kalir.
+  // ═══ SENKRON KALIR — BİLEREK ═════════════════════════════════════════
+  //
+  // Bu kanca `async` yapılırsa parite ihlali SENKRON fırlatmaz, REDDEDİLMİŞ
+  // BİR SÖZ döner. `await` etmeyen bir çağıran o reddi GÖRMEZ ve zarf
+  // parite ihlaline rağmen GÖNDERİLİR. Ölçüldü: `SOAP-PRIMARY-4b` bu
+  // regresyonu yakaladı (beklenen `SURAT_CREDENTIAL_WIRE_MISMATCH`,
+  // gelen `UNKNOWN`).
+  //
+  // Taşıyıcı sınırı kanıtı burada YAZILMAZ; o iş `callSuratSoap` içinde,
+  // `fetch`'ten hemen önce ve BEKLENEREK yapılır. Bu yüzden bu kancanın
+  // asenkron olması GEREKMEZ.
   const onWireReady = (envelope: string, edge: string = 'SOAP'): void => {
     wire = captureSoapActualWire({
       envelope,

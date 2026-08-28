@@ -262,6 +262,69 @@ export async function releaseStaleLocks(
   return released
 }
 
+/**
+ * BAĞIMLILIK SINIFI ENGELLER — otomatik canlanmaya UYGUN kodlar.
+ *
+ * Bu kodların ortak özelliği: engelin sebebi İŞİN DIŞINDA bir durumdur ve
+ * o durum değişince iş aynen geçerlidir. Taşıyıcıya çıkılmış olma ihtimali
+ * TAŞIMAZLAR (hepsi ağdan öncedir).
+ */
+export const DEPENDENCY_BLOCKED_CODES: readonly string[] = [
+  'SURAT_PREFLIGHT_DESI_MISSING',
+  'SURAT_CREDENTIAL_CONFIG_INVALID',
+  'PRIMARY_CREDENTIAL_NOT_CONFIGURED',
+  // Trendyol paketi Created iken bloke edildi; Picking'e geçince iş
+  // yeniden geçerlidir. Bu kod olmadan paket KALICI OLARAK sıkışırdı.
+  'TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS',
+  'TRENDYOL_PICKING_UPDATE_FAILED',
+]
+
+/**
+ * TEK PAKET İÇİN bağımlılık engelini kaldırır — AYNI iş satırı.
+ *
+ * ═══ ÖLÇÜLEN OPERASYONEL ÇIKMAZ ═══════════════════════════════════════
+ * `Created` statüsündeki paket `TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS` ile
+ * BLOKE ediliyordu. Paket sonra `Picking`e geçtiğinde üretici yeniden
+ * çalışıyor, ama `enqueueLabelJob` benzersizlik çakışmasıyla
+ * `ALREADY_QUEUED` dönüyordu ve BLOKE satır hiç uyanmıyordu. Paket
+ * KALICI OLARAK sıkışıyordu — operatörün elle müdahalesi olmadan çıkış YOK.
+ *
+ * FAIL-CLOSED: yalnız `BLOCKED` ve yalnız bağımlılık sınıfı kodlar. READY,
+ * UNKNOWN_AFTER_NETWORK ve PREPARING satırlar DOKUNULMAZ. Yeni iş
+ * YARATILMAZ; `attempt_count` KORUNUR.
+ */
+export async function reactivateDependencyBlockedJob(
+  db: Db,
+  params: {
+    organizationId: string
+    marketplace: string
+    carrier: string
+    packageId: string
+  },
+): Promise<boolean> {
+  const updated = await db
+    .update(labelJobs)
+    .set({
+      status: 'QUEUED',
+      availableAt: new Date(),
+      lockedAt: null,
+      lockedBy: null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(labelJobs.organizationId, params.organizationId),
+        eq(labelJobs.marketplace, params.marketplace),
+        eq(labelJobs.carrier, params.carrier),
+        eq(labelJobs.packageId, params.packageId),
+        eq(labelJobs.status, 'BLOCKED'),
+        inArray(labelJobs.lastErrorCode, [...DEPENDENCY_BLOCKED_CODES]),
+      ),
+    )
+    .returning({ id: labelJobs.id })
+  return ((updated ?? []) as unknown[]).length === 1
+}
+
 /** Operasyonel sayaçlar — PII/sır YOK. */
 /**
  * BLOKE isleri yeniden etkinlestirir — BAGIMLILIK DEGISTIGINDE.

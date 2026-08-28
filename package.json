@@ -70,7 +70,8 @@
     "auto-label:worker:preflight": "node server/shipments/workerBootstrapPreflightCli.ts",
     "auto-label:stale:inspect": "node server/shipments/staleJobRecoveryCli.ts",
     "auto-label:stale:recover": "node server/shipments/staleJobRecoveryCli.ts --recover",
-    "auto-label:canary:observe": "node server/shipments/canaryObserverCli.ts"
+    "auto-label:canary:observe": "node server/shipments/canaryObserverCli.ts",
+    "test:auto-label:acceptance": "node --test server/auto-label-acceptance-flow.test.mjs server/carrier-boundary-crash-matrix-flow.test.mjs server/stale-preparing-recovery-flow.test.mjs server/worker-bootstrap-dependency-flow.test.mjs server/production-runtime-worker-flow.test.mjs server/worker-preparation-parity-flow.test.mjs"
   },
   "dependencies": {
     "@types/jsbarcode": "^3.11.4",

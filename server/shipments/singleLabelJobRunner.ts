@@ -69,6 +69,8 @@ export interface SingleJobRunReport {
   readonly barcodePresent: boolean
   readonly zplPresent: boolean
   readonly zplLength: number
+  /** Etiket OKUNAMADIYSA sebebi; "yok" ile karıştırılmaz. */
+  readonly zplReadFailure: string | null
 
   readonly otherQueuedJobsTouched: number
   readonly totalCarrierCalls: 0 | 1
@@ -244,6 +246,7 @@ export async function runSingleLabelJob(
     barcodePresent: false,
     zplPresent: false,
     zplLength: 0,
+    zplReadFailure: null,
     otherQueuedJobsTouched: 0,
     totalCarrierCalls: 0,
     gatesPassed: false,
@@ -383,6 +386,7 @@ export async function runSingleLabelJob(
   const shipment = (shipmentRows as Record<string, unknown>[])[0] ?? null
 
   let zpl = ''
+  let zplReadFailure: string | null = null
   try {
     const [repository, persistence] = await Promise.all([
       import('../orders/orderRepository.ts'),
@@ -397,9 +401,12 @@ export async function runSingleLabelJob(
       )
       zpl = String(label?.zpl ?? '')
     }
-  } catch {
+  } catch (error) {
     // Etiket okunamadıysa RAPOR eksik kalır; iş durumu DEĞİŞMEZ.
+    // SEBEP YUTULMAZ: rapora taşınır, yoksa "ZPL yok" ile "ZPL okunamadı"
+    // ayırt edilemez ve teşhis yanlış yöne gider.
     zpl = ''
+    zplReadFailure = error instanceof Error ? error.message : String(error)
   }
 
   const after = await snapshotJobs(db, params.organizationId)
@@ -440,6 +447,7 @@ export async function runSingleLabelJob(
     barcodePresent: Boolean(String(shipment?.barcode ?? '').trim()),
     zplPresent: zpl.length > 0,
     zplLength: zpl.length,
+    zplReadFailure,
     otherQueuedJobsTouched,
     totalCarrierCalls,
     gatesPassed: true,

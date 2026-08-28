@@ -15,6 +15,14 @@
 //   • Worker BAŞLATILMAZ; zamanlayıcı KURULMAZ.
 import process from 'node:process'
 
+// ═══ ORTAM PARİTESİ — SUNUCUYLA AYNI `.env` ══════════════════════════════
+// Sunucu açılışta depo kökündeki `.env`'i yükler. Bu araç yüklemezse
+// üretimde SAĞLIKLI bir sistemi "ENV MISSING" diye raporlar ve operatörü
+// yanlış yönlendirir. Tanımlı değerler EZİLMEZ.
+import { loadRepositoryEnv } from '../runtime/localEnv.ts'
+
+loadRepositoryEnv()
+
 // Uygulama modülü create orkestrasyonu için içe aktarılır; HTTP dinleyicisi
 // AÇILMAMALIDIR. Bayrak içe aktarmadan ÖNCE kurulur.
 process.env.CF_IMPORT_ONLY = '1'

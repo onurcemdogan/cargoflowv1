@@ -23,7 +23,12 @@ import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
+import { loadLocalEnvFile as sharedLoadLocalEnvFile } from './runtime/localEnv.ts'
 import { buildTrendyolShipmentEligibility } from './shipments/trendyolShipmentEligibility.ts'
+import {
+  markCarrierBoundaryEntered,
+  runWithCarrierBoundary,
+} from './shipments/carrierBoundarySink.ts'
 import {
   SURAT_CANONICAL_SERVICE_MODE,
   deriveCanonicalPrimaryAccount,
@@ -584,9 +589,14 @@ app.put('/api/local-config/integration', async (request, response) => {
           if (revived > 0) {
             console.log(`[label-worker] desi ayari sonrasi ${revived} is yeniden kuyruga alindi`)
           }
-        } catch {
-          // BEST-EFFORT: ayar kaydi BOZULMAZ. Isler bir sonraki acik
-          // yeniden degerlendirmede de canlandirilabilir.
+        } catch (error) {
+          // BEST-EFFORT: ayar kaydi BOZULMAZ. Ama SEBEP YUTULMAZ: sessiz
+          // bir yutma tam olarak bu alt sistemde iki uretim olayina yol
+          // acti. Isler bir sonraki acik degerlendirmede canlandirilabilir.
+          console.warn(
+            '[label-worker] BLOKE_IS_CANLANDIRMA_BASARISIZ '
+            + String(error instanceof Error ? error.message : error).slice(0, 200),
+          )
         }
       }
       const status = await getMaskedIntegrationStatus(db, organizationId)
@@ -3524,6 +3534,24 @@ async function runLabelJobViaCreateHandler(job) {
   // Desi ENJEKTE EDİLMİŞ sipariş — tarayıcının gönderdiğinin AYNISI.
   const order = prepared.order
 
+  // ═══ GÖZLEMLENEBİLİRLİK — SIR YOK ═════════════════════════════════
+  //
+  // Bir sonraki üretim olayında tahmin yürütmek ZORUNDA kalmayalım.
+  // Kimlik yalnız ROL olarak görünür; parola/anahtar/adres YAZILMAZ.
+  console.log(
+    '[label-worker] ATTEMPT'
+    + ` jobId=${String(job.id ?? '-')}`
+    + ` packageId=${packageId}`
+    + ` attempt=${Number(job.attemptCount ?? 0)}`
+    + ` marketplaceStatus=${prepared.marketplaceStatus ?? '-'}`
+    + ` resolvedDesi=${String(prepared.resolvedDesi)}`
+    + ` eligible=${String(prepared.eligibleForCreate)}`
+    + ` billingParty=${prepared.billingParty ?? '-'}`
+    + ` whoPays=${String(prepared.expectedWhoPays)}`
+    + ` credentialRole=${prepared.credentialRole ?? '-'}`
+    + ` credentialResolved=${prepared.credentialSnapshot.resolved}`,
+  )
+
   // Kimlik istek gövdesinden DEĞİL, org kaydından gelir — tenantInject
   // ara katmanının yaptığının AYNISI.
   const syntheticRequest = {
@@ -3582,6 +3610,15 @@ async function runLabelJobViaCreateHandler(job) {
   // YAZILIR ama OKUNMAZ kusurunun aynısı.
   const ok = payload?.ok === true && statusCode < 400
   const labelState = payload?.labelState ?? null
+  console.log(
+    '[label-worker] OUTCOME'
+    + ` packageId=${packageId}`
+    + ` labelState=${String(labelState)}`
+    + ` networkBoundaryEntered=${networkCrossed ? 'YES' : 'NO'}`
+    + ` carrierCreateCalled=${String(payload?.carrierCreateCalled)}`
+    + ` carrierCreateAttempts=${String(payload?.carrierCreateAttempts ?? 0)}`
+    + ` errorCode=${String(payload?.errorCode ?? '-')}`,
+  )
   return {
     labelReady: labelState ? labelState === 'READY' : ok,
     networkCrossed,
@@ -4754,11 +4791,39 @@ async function executeIdempotentSuratCreate(request, operation) {
 
   let result
   try {
-    result = await executeSuratCreateCoreAsValue(request)
+    // ═══ SINIR KANITI BU DENEMEYE BAĞLANIR ═════════════════════════════
+    //
+    // `callSuratSoap`, `fetch`'ten HEMEN ÖNCE `markCarrierBoundaryEntered()`
+    // çağırır. Aşağıdaki sink o çağrıyı BU denemenin operasyon satırına
+    // bağlar ve `carrier_create_called=true`'yu AĞA ÇIKMADAN ÖNCE
+    // kalıcılaştırır. Süreç `fetch` sırasında ölse bile kanıt DİSKTEDİR;
+    // bir sonraki açılış "belirsiz" der ve İKİNCİ create YAPMAZ.
+    //
+    // Eşzamanlılık: bağlam `AsyncLocalStorage` ile taşınır, modül düzeyinde
+    // paylaşılan değişken YOKTUR.
+    result = await runWithCarrierBoundary(
+      {
+        entered: false,
+        persistBoundaryEntered: async () => {
+          await writeSuratCreateOperation({
+            ...inProgressRecord,
+            carrierCreateCalled: true,
+            carrierBoundaryEnteredAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          })
+        },
+      },
+      () => executeSuratCreateCoreAsValue(request),
+    )
   } catch (error) {
+    // Sınır kanıtı YAZILDIYSA istisna onu SİLEMEZ: kalıcı kanıt otoriterdir.
+    const boundaryPersisted = await readSuratCreateOperation(
+      operation.idempotencyKey, operation.organizationId,
+    ).then((row) => row?.carrierCreateCalled === true).catch(() => false)
     const unknownRecord = {
       ...inProgressRecord,
       status: 'UNKNOWN',
+      ...(boundaryPersisted ? { carrierCreateCalled: true } : {}),
       updatedAt: new Date().toISOString(),
       errorCode: 'SURAT_CREATE_TRANSPORT_UNKNOWN',
     }
@@ -4772,7 +4837,13 @@ async function executeIdempotentSuratCreate(request, operation) {
     )
   }
 
-  const carrierCreateCalled = didSuratCreateReachCarrier(result)
+  // KALICI SINIR KANITI OTORİTERDİR. Sonuç nesnesi "gidilmedi" dese bile
+  // diskte `carrier_create_called=true` varsa ağ sınırına GİRİLMİŞTİR ve
+  // satır SİLİNEMEZ; silmek kilidi açıp ikinci create riskini doğururdu.
+  const persistedBoundary = await readSuratCreateOperation(
+    operation.idempotencyKey, operation.organizationId,
+  ).then((row) => row?.carrierCreateCalled === true).catch(() => false)
+  const carrierCreateCalled = didSuratCreateReachCarrier(result) || persistedBoundary
   if (!carrierCreateCalled) {
     await deleteSuratCreateOperation(
       operation.idempotencyKey,
@@ -8399,8 +8470,11 @@ async function createSuratLegacyRestJson(
     // KAYBOLUR (uretim izi CF-4102563548).
     // REST kenari: YAKALAMA evet, SOAP paritesi hayir (farkli kimlik alani).
     if (typeof onWireReady === 'function') {
-      onWireReady(JSON.stringify(payload), 'REST')
+      await onWireReady(JSON.stringify(payload), 'REST')
     }
+    // REST kenari da SURAT AGIDIR: geri alinamaz. Kanit istekten ONCE
+    // kalicilastirilir; baglam icinde IDEMPOTENT'tir (ikinci kez yazmaz).
+    await markCarrierBoundaryEntered()
     const apiResponse = await fetch(endpoint, {
       method: 'POST',
       headers: {
@@ -9540,6 +9614,8 @@ async function createSuratRestShipment(config, order, reference) {
   }
 
   try {
+    // GERI ALINAMAZ SURAT CREATE KENARI — kanit istekten ONCE.
+    await markCarrierBoundaryEntered()
     const apiResponse = await fetch(`${baseUrl}${path}`, {
       method: 'POST',
       headers: {
@@ -11483,7 +11559,16 @@ async function callSuratSoap(operation, innerXml, soapOptions = {}) {
   // GERÇEK TEL — serileşen zarfın KENDİSİ, fetch'ten HEMEN ÖNCE.
   // Sonradan yeniden kurgulanan zarf gerçek tel DEĞİLDİR; kanonik yolda
   // ölçülen körlük tam olarak buydu. Geri çağrı FIRLATIRSA istek GİTMEZ.
-  if (typeof onWireReady === 'function') onWireReady(body)
+  // BEKLENİR: kanıt yazımı asenkron olabilir ve YAZILMADAN çıkılmamalıdır.
+  if (typeof onWireReady === 'function') await onWireReady(body)
+
+  // ═══ GERİ ALINAMAZ SINIR — KANIT ÖNCE, İSTEK SONRA ═══════════════════
+  //
+  // Bir alttaki `fetch` GERİ ALINAMAZ. Kanıt ondan SONRA yazılırsa, arada
+  // ölen bir süreç DB'de "taşıyıcıya gidilmedi" bırakır ve kurtarma İKİNCİ
+  // gönderi yaratabilir. Bu yüzden kanıt BURADA, beklenerek yazılır.
+  // Yazım başarısızsa istisna yükselir ve istek GÖNDERİLMEZ.
+  await markCarrierBoundaryEntered()
 
   const startedAt = Date.now()
   try {
@@ -15106,23 +15191,11 @@ async function resolveBuildRevision() {
   }
 }
 
+// ORTAM YUKLEYICI ARTIK PAYLASILAN MODULDE.
+// Operator CLI'lari AYNI fonksiyonu cagirir; aksi halde teshis araci
+// sunucudan FARKLI bir ortam gorur ve saglikli sistemi bozuk raporlar.
 function loadLocalEnvFile(path) {
-  try {
-    if (!existsSync(path)) return
-    const content = readFileSync(path, 'utf8')
-    for (const line of content.split(/\r?\n/)) {
-      const trimmed = line.trim()
-      if (!trimmed || trimmed.startsWith('#')) continue
-      const separatorIndex = trimmed.indexOf('=')
-      if (separatorIndex <= 0) continue
-      const key = trimmed.slice(0, separatorIndex).trim()
-      const rawValue = trimmed.slice(separatorIndex + 1).trim()
-      if (!key || process.env[key] != null) continue
-      process.env[key] = rawValue.replace(/^['"]|['"]$/g, '')
-    }
-  } catch {
-    // .env opsiyonel; yoksa process.env değerleri kullanılmaya devam eder.
-  }
+  sharedLoadLocalEnvFile(path)
 }
 
 function preview(value) {

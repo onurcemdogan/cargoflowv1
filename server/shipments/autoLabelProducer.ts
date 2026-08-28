@@ -28,7 +28,10 @@ import {
   type AutoLabelSettings,
 } from './suratAutoLabelPolicy.ts'
 import { resolveSuratCreateEligibility } from './suratCreateEligibility.ts'
-import { enqueueLabelJob } from './labelJobQueue.ts'
+import {
+  enqueueLabelJob,
+  reactivateDependencyBlockedJob,
+} from './labelJobQueue.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -201,8 +204,32 @@ export async function enqueueEligibleAutoLabelJobs(
       carrier: 'surat',
       packageId,
     })
-    if (result.enqueued) enqueued += 1
-    else bump('ALREADY_QUEUED')
+    if (result.enqueued) {
+      enqueued += 1
+      continue
+    }
+    // ═══ BAĞIMLILIK ÇIKMAZI AÇILIR ════════════════════════════════════
+    //
+    // Benzersizlik çakışması "iş zaten var" demektir; "iş çalışabilir"
+    // DEMEZ. `Created` iken bloke edilmiş bir paket `Picking`e geçtiğinde
+    // burada uyandırılmazsa KALICI OLARAK sıkışırdı: üretici hep
+    // `ALREADY_QUEUED` der, bloke satır hiç uyanmaz.
+    //
+    // Buraya gelen paket üreticinin TÜM kapılarından geçmiştir (uygunluk
+    // dahil). Yalnız BAĞIMLILIK sınıfı bloke satır uyandırılır; READY,
+    // UNKNOWN_AFTER_NETWORK ve PREPARING DOKUNULMAZ.
+    const revived = await reactivateDependencyBlockedJob(db, {
+      organizationId,
+      marketplace: scope.marketplace,
+      carrier: 'surat',
+      packageId,
+    })
+    if (revived) {
+      enqueued += 1
+      bump('DEPENDENCY_BLOCK_CLEARED')
+    } else {
+      bump('ALREADY_QUEUED')
+    }
   }
 
   return {

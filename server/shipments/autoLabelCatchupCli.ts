@@ -11,6 +11,14 @@
 //   • Gerçek create'i üretimdeki AYNI worker yapar (paket başına 1 SOAP).
 import process from 'node:process'
 
+// ═══ ORTAM PARİTESİ — SUNUCUYLA AYNI `.env` ══════════════════════════════
+// Sunucu açılışta depo kökündeki `.env`'i yükler. Bu araç yüklemezse
+// üretimde SAĞLIKLI bir sistemi "ENV MISSING" diye raporlar ve operatörü
+// yanlış yönlendirir. Tanımlı değerler EZİLMEZ.
+import { loadRepositoryEnv } from '../runtime/localEnv.ts'
+
+loadRepositoryEnv()
+
 function readFlag(name: string): string | null {
   const index = process.argv.indexOf(`--${name}`)
   if (index < 0) return null

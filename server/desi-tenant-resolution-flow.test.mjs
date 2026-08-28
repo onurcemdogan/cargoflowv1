@@ -355,10 +355,20 @@ test('DESI-TENANT-9: desi ORKESTRASYON SINIRINDA cozulur (worker yamasi DEGIL)',
     .split(String.fromCharCode(10))
     .filter((line) => !line.trim().startsWith('//'))
     .join(String.fromCharCode(10))
+  // DESENLER REGEX LITERALIDIR — string kacislari DEGIL.
+  //
+  // Eski hali `new RegExp('\.desi\s*=', 'i')` idi. JS string literalinde
+  // `\.` → `.` (HERHANGI karakter) ve `\s` → `s` olur; yani gercek desen
+  // `.desis*=` idi ve `resolvedDesi=` gibi MASUM metinlere de uyuyordu.
+  // Ayni sekilde `\s` kayboldugu icin bosluklu atamalari KACIRIYORDU.
+  //
+  // Amaclanan degismez: worker GOVDESINDE desi ATAMASI olmamalidir.
+  // Asagidaki literaller o degismezi DOGRU ifade eder ve eskisinden
+  // DAHA SIKIDIR (bosluklu `desi = 2` artik yakalanir).
   const FORBIDDEN = [
-    new RegExp('\bdesi\s*:', 'i'),
-    new RegExp('\.desi\s*=', 'i'),
-    new RegExp('defaultUnitDesi', 'i'),
+    /\bdesi\s*:/i,
+    /\.desi\s*=/i,
+    /\bdefaultUnitDesi\b/i,
   ]
   for (const pattern of FORBIDDEN) {
     assert.ok(!pattern.test(workerCode), 'worker govdesinde desi atamasi: ' + pattern)
