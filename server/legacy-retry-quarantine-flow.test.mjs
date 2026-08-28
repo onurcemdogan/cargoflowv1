@@ -221,6 +221,13 @@ test('LEGACY-6/7/8: tek paket yeniden etkinlestirme — TEK satir, mukerrer YOK'
   const organizationId = await seed(db)
   await legacy.quarantineLegacyRetryJobs(db, { organizationId })
 
+  // Kimlik: kanonik hesap `live*` alanlarından TÜRER.
+  const credentials = await load('/server/integrations/credentialService.ts')
+  await credentials.saveIntegrationCredential(db, organizationId, 'surat', {
+    liveKullaniciAdi: 'CF-TEST-USER',
+    liveSifre: 'CF-TEST-PASS',
+  })
+
   // Kiracı ayarı ve sipariş: 4110109345.
   await defaults.saveShipmentDefaults(db, organizationId, {
     defaultUnitDesi: 2, multiplyByItemQuantity: false,

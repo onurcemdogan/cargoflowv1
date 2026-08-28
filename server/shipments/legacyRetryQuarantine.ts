@@ -182,8 +182,9 @@ export async function inspectLegacyRetryJobs(
     const artifact = hasArtifact.has(packageId)
     const signal = desiSignal(job)
 
-    let verdict: LegacyVerdict = 'NOT_LEGACY_CANDIDATE'
-    let reason = ''
+    // Aşağıdaki dalların HEPSİ atama yapar; ölü başlangıç değeri YOK.
+    let verdict: LegacyVerdict
+    let reason: string
     if (called) {
       // Taşıyıcıya gidilmiş: bu satır kalıntı DEĞİLDİR ve DOKUNULMAZ.
       verdict = 'HISTORY_UNPROVEN'
@@ -354,45 +355,31 @@ export async function inspectSingleJobReactivation(
   const carrierArtifactExists = shipmentRows.length > 0
   if (carrierArtifactExists) blockers.push('TASIYICI_ARTEFAKTI_VAR')
 
-  // Desi ayarı ve GÜNCEL çözücü çıktısı.
-  let tenantDesiValue: number | null = null
-  let multiplyByItemQuantity: boolean | null = null
-  let resolverDesi: number | null = null
-  try {
-    const [{ getShipmentDefaults }, { resolveShipmentDesi }, orderRepo] =
-      await Promise.all([
-        import('../onboarding/shipmentDefaultsRepository.ts'),
-        import('./resolveShipmentDesi.ts'),
-        import('../orders/orderRepository.ts'),
-      ])
-    const defaults = await getShipmentDefaults(db, params.organizationId)
-    tenantDesiValue = Number(defaults?.defaultUnitDesi ?? 0) || null
-    multiplyByItemQuantity = defaults?.multiplyByItemQuantity ?? null
-
-    const orderRow = await orderRepo.findOrderByPackageId(
-      db,
-      params.organizationId,
-      params.marketplace ?? String(job?.marketplace ?? 'Trendyol'),
-      params.packageId,
-    )
-    if (orderRow) {
-      const { getOrder } = await import('../orders/orderPersistenceService.ts')
-      const order = await getOrder(
-        db, params.organizationId, String((orderRow as { id: string }).id),
-      )
-      const resolution = await resolveShipmentDesi({
-        db,
-        organizationId: params.organizationId,
-        order: (order ?? {}) as Record<string, unknown>,
-      })
-      resolverDesi = resolution.desi
-    } else {
-      blockers.push('SIPARIS_BULUNAMADI')
-    }
-  } catch {
-    blockers.push('DESI_COZUMU_OKUNAMADI')
+  // ═══ DESİ / FATURALAMA — PAYLAŞILAN HAZIRLIKTAN ════════════════════
+  //
+  // ÜRETİMDE KANITLANDI: bu inceleme siparişi ve desiyi KENDİ yolundan
+  // yüklüyordu ve bir istisnayı `DESI_COZUMU_OKUNAMADI` genel engeline
+  // çevirip GERÇEK sebebi yutuyordu. `SAFE_TO_REACTIVATE` ASLA ikinci bir
+  // uygulamaya dayanmamalıdır.
+  //
+  // Artık worker'ın gördüğü AYNI hazırlık (`preflightLabelJob`) çağrılır.
+  const { preflightLabelJob } = await import('./labelJobPreflight.ts')
+  const preflight = await preflightLabelJob(db, {
+    organizationId: params.organizationId,
+    packageId: params.packageId,
+    marketplace: params.marketplace,
+  })
+  const tenantDesiValue = preflight.tenantDesi
+  const multiplyByItemQuantity = preflight.multiplyByItemQuantity
+  const resolverDesi = preflight.resolvedDesi
+  if (preflight.failureDetail) {
+    // Sebep AYNEN taşınır; genel bir etikete indirgenmez.
+    blockers.push(`HAZIRLIK: ${preflight.failureDetail}`)
   }
-  if (resolverDesi == null) blockers.push('DESI_COZULEMIYOR')
+  for (const blocker of preflight.blockers) {
+    if (blocker === 'TASIYICI_ARTEFAKTI_VAR') continue
+    blockers.push(blocker)
+  }
   if (
     tenantDesiValue != null &&
     resolverDesi != null &&

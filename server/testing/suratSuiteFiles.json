@@ -192,5 +192,6 @@
   "server/auto-label-catchup-flow.test.mjs",
   "server/desi-tenant-resolution-flow.test.mjs",
   "server/desi-runtime-flow.test.mjs",
-  "server/legacy-retry-quarantine-flow.test.mjs"
+  "server/legacy-retry-quarantine-flow.test.mjs",
+  "server/label-job-preflight-flow.test.mjs"
 ]

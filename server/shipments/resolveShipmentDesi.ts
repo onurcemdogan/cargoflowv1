@@ -80,8 +80,8 @@ export async function resolveShipmentDesi(params: {
 
   let tenantSettingPresent = false
   let tenantSettingValue: number | null = null
-  let defaults: { defaultUnitDesi: number | null; multiplyByItemQuantity: boolean } | null =
-    null
+  // Her iki dal da atama yapar; kullanılmayan bir başlangıç değeri VERİLMEZ.
+  let defaults: { defaultUnitDesi: number | null; multiplyByItemQuantity: boolean } | null
   try {
     const loaded = await getShipmentDefaults(params.db, params.organizationId)
     defaults = loaded

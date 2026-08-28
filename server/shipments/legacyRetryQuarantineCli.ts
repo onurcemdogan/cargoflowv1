@@ -3,6 +3,7 @@
 //   npm run auto-label:legacy-retry:inspect    -- --name TarzimTuba
 //   npm run auto-label:legacy-retry:quarantine -- --name TarzimTuba
 //   npm run auto-label:job:inspect             -- --name TarzimTuba --package 4110109345
+//   npm run auto-label:job:preflight           -- --name TarzimTuba --package 4110109345
 //   npm run auto-label:job:reactivate          -- --name TarzimTuba --package 4110109345
 //
 // ═══ GÜVENLİK ════════════════════════════════════════════════════════════
@@ -29,14 +30,19 @@ const mode = process.argv.includes('--quarantine')
   ? 'quarantine'
   : process.argv.includes('--reactivate')
     ? 'reactivate'
-    : process.argv.includes('--job')
-      ? 'job-inspect'
-      : 'inspect'
+    : process.argv.includes('--preflight')
+      ? 'preflight'
+      : process.argv.includes('--job')
+        ? 'job-inspect'
+        : 'inspect'
 
 const name = readFlag('name')
 if (!name) fail('Organizasyon ZORUNLU: --name "TarzimTuba"')
 const packageId = readFlag('package')
-if ((mode === 'reactivate' || mode === 'job-inspect') && !packageId) {
+if (
+  (mode === 'reactivate' || mode === 'job-inspect' || mode === 'preflight') &&
+  !packageId
+) {
   fail('Paket ZORUNLU: --package 4110109345')
 }
 
@@ -97,7 +103,42 @@ function printCheck(check: Awaited<ReturnType<typeof legacy.inspectSingleJobReac
   console.log('CARRIER_CALLS=0')
 }
 
-if (mode === 'inspect') {
+if (mode === 'preflight') {
+  const { preflightLabelJob } = await import('./labelJobPreflight.ts')
+  const pf = await preflightLabelJob(db, {
+    organizationId: org.id, packageId: packageId as string,
+  })
+  console.log('')
+  console.log(`PACKAGE_ID                  ${pf.packageId}`)
+  console.log(`ORDER_NUMBER                ${pf.orderNumber ?? '-'}`)
+  console.log(`JOB_STATUS                  ${pf.jobStatus ?? '-'}`)
+  console.log(`ATTEMPT_COUNT               ${pf.attemptCount}`)
+  console.log('')
+  console.log(`TENANT_DESI                 ${String(pf.tenantDesi)}`)
+  console.log(`MULTIPLY_BY_ITEM_QUANTITY   ${String(pf.multiplyByItemQuantity)}`)
+  console.log(`ORDER_LINES_COUNT           ${pf.orderLinesCount}`)
+  console.log(`RESOLVED_DESI               ${String(pf.resolvedDesi)}`)
+  console.log(`DESI_SOURCE                 ${pf.desiSource ?? '-'}`)
+  console.log(`SURAT_BIRIM_DESI            ${String(pf.suratBirimDesi)}`)
+  console.log('')
+  console.log(`BILLING_PARTY               ${pf.billingParty ?? '-'}`)
+  console.log(`EXPECTED_SURAT_WHO_PAYS     ${String(pf.expectedSuratWhoPays)}`)
+  console.log(`CREDENTIAL_ROLE             ${pf.credentialRole ?? '-'}`)
+  console.log(`CREDENTIAL_RESOLVED         ${pf.credentialResolved}`)
+  console.log('')
+  console.log(`PREFLIGHT_VALID             ${pf.preflightValid}`)
+  console.log(`WOULD_CALL_CARRIER          ${pf.wouldCallCarrier ? 'YES' : 'NO'}`)
+  console.log(`BLOCKERS                    ${pf.blockers.join(', ') || '-'}`)
+  if (pf.failureDetail) {
+    console.log(`FAILURE_DETAIL              ${pf.failureDetail}`)
+  }
+  console.log('')
+  console.log(`NETWORK_CALLS=${pf.networkCalls}`)
+  console.log(`DB_WRITES=${pf.dbWrites}`)
+  console.log(`CARRIER_CALLS=${pf.carrierCalls}`)
+  console.log('')
+  console.log('SALT-OKUNUR. Tasiyici agindan HEMEN ONCE durdu.')
+} else if (mode === 'inspect') {
   printInspect(await legacy.inspectLegacyRetryJobs(db, { organizationId: org.id }))
   console.log('')
   console.log('SALT-OKUNUR inceleme. Hicbir satir yazilmadi.')
