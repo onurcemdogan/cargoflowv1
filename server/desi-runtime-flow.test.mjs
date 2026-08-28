@@ -231,6 +231,30 @@ test('DESI-RUNTIME-6: desi ayarlaninca AYNI is canlanir, TEK create olur', async
   const defaults = await load('/server/onboarding/shipmentDefaultsRepository.ts')
   const organizationId = await makeTenant(db, 'LateDesi', null)
 
+  // ═══ FIXTURE TAMAMLANDI — GERCEKCI KALICI DURUM ════════════════════
+  //
+  // Canlandirma artik GUNCEL paylasilan hazirligin GECERLI olmasini
+  // sartlar (uretimde `Shipped`/`Created` paketlerin korlemesine
+  // uyandirilmasi bu yuzden yasandi). Eski fixture'da kalici SIPARIS
+  // YOKTU; boyle bir is zaten hazirlanamaz ve create edilemezdi.
+  // Iddialar AYNEN korunur; yalnizca durum gercekci hale getirildi.
+  const credentials = await load('/server/integrations/credentialService.ts')
+  await credentials.saveIntegrationCredential(db, organizationId, 'surat', {
+    liveKullaniciAdi: 'CF-TEST-USER', liveSifre: 'CF-TEST-PASS',
+  })
+  const encryption = await load('/server/orders/orderEncryption.ts')
+  await db.insert(schema.orders).values({
+    organizationId, marketplace: 'Trendyol', packageId: '4110109345',
+    orderNumber: '11545965908',
+    orderDate: new Date('2026-08-20T00:00:00.000Z'),
+    cargoTrackingNumber: '7279999999', operationStatus: 'NEW',
+    marketplaceStatus: 'Picking', cargoProviderName: 'Surat Kargo',
+    firstSeenAt: new Date('2026-08-20T00:00:00.000Z'),
+    rawPayloadEncrypted: encryption.encryptOrderPayload({
+      orderNumber: '11545965908', id: '4110109345',
+    }),
+  })
+
   await queue.enqueueLabelJob(db, {
     organizationId, marketplace: 'Trendyol', carrier: 'surat',
     packageId: '4110109345',

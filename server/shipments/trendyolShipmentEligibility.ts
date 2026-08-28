@@ -61,6 +61,81 @@ export interface TrendyolShipmentEligibility {
 /** Uygunsuz statü için KESİN kod — yenisi uydurulmaz. */
 export const TRENDYOL_NOT_ELIGIBLE_CODE = 'TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS'
 
+/**
+ * PAZARYERİ YAŞAM DÖNGÜSÜ SINIFI — TEK LİSTE.
+ *
+ * ═══ ÖLÇÜLEN KUSUR ═══════════════════════════════════════════════════════
+ * Üretici (`autoLabelProducer`) uygunluğu `resolveSuratCreateEligibility`
+ * ile ölçüyordu; o fonksiyon KİMLİK ve DENEME kapısıdır ve
+ * `marketplaceStatus` alanını HİÇ OKUMAZ (repoda 0 geçiş). Yani üreticinin
+ * pazaryeri yaşam döngüsü kapısı YOKTU:
+ *   • `Shipped` paketler (4110043440 · attempt 37) BLOKE'den QUEUED'e
+ *     canlandırıldı,
+ *   • `Created` paketler (4111338022, 4111412351, 4111508763) sıraya alındı,
+ * ve worker onları hemen yeniden BLOKE etti → durum çalkantısı.
+ *
+ * ═══ İKİNCİ LİSTE YOK ════════════════════════════════════════════════════
+ * Sınıflandırma, create kapısının kullandığı AYNI yüklemlerden türer
+ * (`buildTrendyolShipmentEligibility`). Statü dizeleri burada BİR KEZ
+ * yorumlanır; üretici, yakalama ve canlandırma buraya sorar.
+ */
+export type MarketplaceLifecycle =
+  /** Sürat create'i için uygun. */
+  | 'ELIGIBLE'
+  /** Henüz değil — durum değişirse uygun olabilir (ör. Created). */
+  | 'NOT_YET'
+  /** Kapanmış/ilerlemiş — yeni create ASLA açılmaz. */
+  | 'TERMINAL'
+  /** Statü okunamadı; ihtiyatlı davranılır. */
+  | 'UNKNOWN'
+
+export interface MarketplaceLifecycleVerdict {
+  readonly lifecycle: MarketplaceLifecycle
+  readonly reason: string
+}
+
+/**
+ * Kalıcı sipariş kaydından yaşam döngüsü sınıfı.
+ *
+ * `TERMINAL` olan hiçbir paket için yeni create AÇILMAZ: gönderi zaten
+ * yola çıkmış, teslim edilmiş, iade edilmiş veya iptal olmuştur. İkinci
+ * bir Sürat gönderisi GERİ ALINAMAZ bir hatadır.
+ */
+export function classifyMarketplaceLifecycle(
+  order: Record<string, any> = {},
+): MarketplaceLifecycleVerdict {
+  const eligibility = buildTrendyolShipmentEligibility(order)
+  if (eligibility.isCancelled) {
+    return { lifecycle: 'TERMINAL', reason: 'Paket iptal/iade statüsünde.' }
+  }
+  if (eligibility.isDelivered) {
+    return { lifecycle: 'TERMINAL', reason: 'Paket teslim edilmiş.' }
+  }
+  if (eligibility.isShipped) {
+    return { lifecycle: 'TERMINAL', reason: 'Paket kargoya verilmiş/taşımada.' }
+  }
+  if (eligibility.existingShipmentDetected) {
+    return { lifecycle: 'TERMINAL', reason: 'Mevcut gönderi izi var.' }
+  }
+  if (eligibility.requiresPickingUpdate) {
+    return {
+      lifecycle: 'NOT_YET',
+      reason: 'Paket Yeni/Created; Picking statüsüne geçmeden create açılmaz.',
+    }
+  }
+  if (eligibility.canCallSurat) {
+    return { lifecycle: 'ELIGIBLE', reason: 'Trendyol engeli bulunmadı.' }
+  }
+  return { lifecycle: 'UNKNOWN', reason: eligibility.reason }
+}
+
+/** Yeni create ASLA açılmayacak sınıflar. */
+export function isTerminalMarketplaceLifecycle(
+  order: Record<string, any> = {},
+): boolean {
+  return classifyMarketplaceLifecycle(order).lifecycle === 'TERMINAL'
+}
+
 function escapeRegExp(value: unknown): string {
   return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

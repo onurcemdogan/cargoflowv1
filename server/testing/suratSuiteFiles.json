@@ -203,5 +203,6 @@
   "server/stale-preparing-recovery-flow.test.mjs",
   "server/carrier-boundary-crash-matrix-flow.test.mjs",
   "server/auto-label-acceptance-flow.test.mjs",
+  "server/blocked-revival-policy-flow.test.mjs",
   "server/canary-candidate-selector-flow.test.mjs"
 ]

@@ -302,6 +302,33 @@ export async function reactivateDependencyBlockedJob(
     packageId: string
   },
 ): Promise<boolean> {
+  // ═══ DERİNLEMESİNE SAVUNMA — TAŞIYICI KANITI BURADA DA SORULUR ═══════
+  //
+  // Çağıranın kapıları doğru olsa bile bu ilkel fonksiyon KENDİ BAŞINA
+  // güvenli olmalıdır: taşıyıcıya gidilmiş ya da artefaktı olan bir paket
+  // hiçbir çağırandan canlandırılamaz.
+  const { shipmentOperations, shipments } = await import('../db/schema.ts')
+  const operations = (await db
+    .select({ carrierCreateCalled: shipmentOperations.carrierCreateCalled })
+    .from(shipmentOperations)
+    .where(and(
+      eq(shipmentOperations.organizationId, params.organizationId),
+      eq(shipmentOperations.packageId, params.packageId),
+    ))) as Record<string, unknown>[]
+  if (operations.some((operation) => operation.carrierCreateCalled === true)) {
+    return false
+  }
+  const artifacts = (await db
+    .select({ id: shipments.id })
+    .from(shipments)
+    .where(and(
+      eq(shipments.organizationId, params.organizationId),
+      eq(shipments.packageId, params.packageId),
+    ))) as unknown[]
+  if (artifacts.length > 0) return false
+
+  // Koşul GÜNCELLEMENİN İÇİNDEDİR: eşzamanlı iki kaynak aynı satırı
+  // görse bile YALNIZ BİRİ geçiş yapar (diğeri 0 satır döner).
   const updated = await db
     .update(labelJobs)
     .set({
@@ -345,24 +372,53 @@ export async function reactivateBlockedLabelJobs(
 ): Promise<number> {
   const codes = params.errorCodes.filter(Boolean)
   if (codes.length === 0) return 0
-  const updated = await db
-    .update(labelJobs)
-    .set({
-      status: 'QUEUED',
-      availableAt: new Date(),
-      lockedAt: null,
-      lockedBy: null,
-      updatedAt: new Date(),
+
+  // ═══ TOPLU KOŞULSUZ GÜNCELLEME KALDIRILDI ══════════════════════════
+  //
+  // ÖLÇÜLEN KUSUR: bu fonksiyon YALNIZ `status=BLOCKED` ve hata koduna
+  // bakıp TEK BİR `UPDATE` ile hepsini kuyruğa alıyordu. Taşıyıcı kanıtı,
+  // artefakt ve GÜNCEL pazaryeri yaşam döngüsü SORULMUYORDU. Bu, üreticide
+  // ölçülen çalkantının kardeşidir: kiracı ayar kaydettiğinde `Shipped`
+  // ya da `Created` bir paket de uyanabilirdi.
+  //
+  // Artık her satır TEK canlandırma ilkelinden geçer ve ancak GÜNCEL
+  // paylaşılan hazırlık GEÇERLİYSE uyanır. Hazırlık geçersizse HİÇBİR
+  // yazım olmaz: `updated_at` bile değişmez, `attempt_count` sabit kalır.
+  const candidates = (await db
+    .select({
+      marketplace: labelJobs.marketplace,
+      carrier: labelJobs.carrier,
+      packageId: labelJobs.packageId,
     })
+    .from(labelJobs)
     .where(
       and(
         eq(labelJobs.organizationId, params.organizationId),
         eq(labelJobs.status, 'BLOCKED'),
         inArray(labelJobs.lastErrorCode, [...codes]),
       ),
-    )
-    .returning({ id: labelJobs.id })
-  return Array.isArray(updated) ? updated.length : 0
+    )) as Record<string, unknown>[]
+  if (candidates.length === 0) return 0
+
+  const { prepareLabelJob } = await import('./labelJobPreparation.ts')
+  let revived = 0
+  for (const candidate of candidates) {
+    const packageId = String(candidate.packageId ?? '')
+    const marketplace = String(candidate.marketplace ?? 'Trendyol')
+    const prepared = await prepareLabelJob(db, {
+      organizationId: params.organizationId, packageId, marketplace,
+    })
+    // BAĞIMLILIK HÂLÂ ÇÖZÜLMEDİYSE SATIR BLOKE KALIR.
+    if (!prepared.ok) continue
+    const ok = await reactivateDependencyBlockedJob(db, {
+      organizationId: params.organizationId,
+      marketplace,
+      carrier: String(candidate.carrier ?? 'surat'),
+      packageId,
+    })
+    if (ok) revived += 1
+  }
+  return revived
 }
 
 export async function labelJobStats(

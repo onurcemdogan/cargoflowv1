@@ -20,7 +20,7 @@
 // gelir; burada kopyalanmaz. Kuyruğa ekleme tekilliği VERİTABANINDADIR.
 
 import { and, eq, gte, isNull, sql } from 'drizzle-orm'
-import { orders, organizationSettings, shipments } from '../db/schema.ts'
+import { labelJobs, orders, organizationSettings, shipments } from '../db/schema.ts'
 import {
   resolveActivationBoundary,
   resolveAutoLabelEnqueue,
@@ -29,9 +29,11 @@ import {
 } from './suratAutoLabelPolicy.ts'
 import { resolveSuratCreateEligibility } from './suratCreateEligibility.ts'
 import {
+  DEPENDENCY_BLOCKED_CODES,
   enqueueLabelJob,
   reactivateDependencyBlockedJob,
 } from './labelJobQueue.ts'
+import { classifyMarketplaceLifecycle } from './trendyolShipmentEligibility.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -169,6 +171,23 @@ export async function enqueueEligibleAutoLabelJobs(
       .limit(1)
     const hasCarrierArtifact = existing.length > 0
 
+    // ═══ PAZARYERİ YAŞAM DÖNGÜSÜ KAPISI ══════════════════════════════
+    //
+    // ÜRETİMDE ÖLÇÜLDÜ: üretici `resolveSuratCreateEligibility` kullanıyordu
+    // ve o fonksiyon `marketplaceStatus`'u HİÇ OKUMAZ. Sonuç: `Shipped`
+    // paketler (4110043440 · attempt 37) BLOKE'den QUEUED'e canlandırıldı,
+    // `Created` paketler sıraya alındı ve worker onları hemen yeniden
+    // BLOKE etti — sonsuz durum çalkantısı.
+    //
+    // Kapı artık PAYLAŞILAN yaşam döngüsü sınıfına sorar. `TERMINAL`
+    // (Shipped/Delivered/Cancelled/Returned/mevcut gönderi izi) için yeni
+    // create ASLA açılmaz; `NOT_YET` (Created) beklemede kalır.
+    const lifecycle = classifyMarketplaceLifecycle(row)
+    if (lifecycle.lifecycle !== 'ELIGIBLE') {
+      bump(`MARKETPLACE_LIFECYCLE_${lifecycle.lifecycle}`)
+      continue
+    }
+
     // UYGUNLUK GERÇEK KAPIDAN. Deneme geçmişi bilinmiyorsa kapı zaten
     // "uygun değil" der; burada 0 VARSAYILMAZ.
     const eligibility = resolveSuratCreateEligibility({
@@ -208,15 +227,61 @@ export async function enqueueEligibleAutoLabelJobs(
       enqueued += 1
       continue
     }
-    // ═══ BAĞIMLILIK ÇIKMAZI AÇILIR ════════════════════════════════════
+    // ═══ BAĞIMLILIK ÇIKMAZI AÇILIR — AMA YALNIZ GERÇEKTEN AÇILDIYSA ═══
     //
     // Benzersizlik çakışması "iş zaten var" demektir; "iş çalışabilir"
     // DEMEZ. `Created` iken bloke edilmiş bir paket `Picking`e geçtiğinde
-    // burada uyandırılmazsa KALICI OLARAK sıkışırdı: üretici hep
-    // `ALREADY_QUEUED` der, bloke satır hiç uyanmaz.
+    // burada uyandırılmazsa KALICI OLARAK sıkışırdı.
     //
-    // Buraya gelen paket üreticinin TÜM kapılarından geçmiştir (uygunluk
-    // dahil). Yalnız BAĞIMLILIK sınıfı bloke satır uyandırılır; READY,
+    // ÜRETİMDE ÖLÇÜLDÜ: ilk hâli YALNIZ "satır var + paket yeniden
+    // görüldü" koşuluna bakıyordu ve `Shipped`/`Created` paketleri
+    // uyandırıyordu. Canlandırmanın koşulu ARTIK "BLOKE'ye yol açan
+    // bağımlılık GERÇEKTEN çözüldü mü?"dur ve bunun OTORİTESİ paylaşılan
+    // hazırlığın GÜNCEL çıktısıdır.
+    //
+    // Hazırlık hâlâ geçersizse satır BLOKE KALIR: hiçbir yazım yapılmaz,
+    // `updated_at` bile değişmez, `attempt_count` sabit kalır.
+    //
+    // ÖNCE DURUM: canlandırma YALNIZ `BLOCKED` satırlar içindir. Satır
+    // zaten `QUEUED`/`PREPARING`/`READY`/`UNKNOWN_AFTER_NETWORK` ise
+    // yapılacak bir şey YOKTUR — hazırlık bile ÇALIŞTIRILMAZ (her üretici
+    // turunda her aday için gereksiz sorgu demek olurdu).
+    const existingJob = (await db
+      .select({
+        status: labelJobs.status,
+        lastErrorCode: labelJobs.lastErrorCode,
+      })
+      .from(labelJobs)
+      .where(
+        and(
+          eq(labelJobs.organizationId, organizationId),
+          eq(labelJobs.marketplace, scope.marketplace),
+          eq(labelJobs.carrier, 'surat'),
+          eq(labelJobs.packageId, packageId),
+        ),
+      )
+      .limit(1)) as Record<string, unknown>[]
+    const currentStatus = String(existingJob[0]?.status ?? '')
+    const currentCode = String(existingJob[0]?.lastErrorCode ?? '')
+    if (
+      currentStatus !== 'BLOCKED'
+      || !DEPENDENCY_BLOCKED_CODES.includes(currentCode)
+    ) {
+      bump('ALREADY_QUEUED')
+      continue
+    }
+
+    const { prepareLabelJob } = await import('./labelJobPreparation.ts')
+    const prepared = await prepareLabelJob(db, {
+      organizationId,
+      packageId,
+      marketplace: scope.marketplace,
+    })
+    if (!prepared.ok) {
+      bump(`DEPENDENCY_STILL_BLOCKED_${prepared.blockerCode}`)
+      continue
+    }
+    // Yalnız BAĞIMLILIK sınıfı bloke satır uyandırılır; READY,
     // UNKNOWN_AFTER_NETWORK ve PREPARING DOKUNULMAZ.
     const revived = await reactivateDependencyBlockedJob(db, {
       organizationId,
