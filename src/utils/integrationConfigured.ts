@@ -1,5 +1,5 @@
-import type { IntegrationConfig } from '../types/cargoflow'
-import type { MaskedIntegrationStatus } from '../services/integrationConfigService'
+import type { IntegrationConfig } from '../types/cargoflow.ts'
+import type { MaskedIntegrationStatus } from '../services/integrationConfigService.ts'
 
 // Provider "configured" durumunu MERKEZİ olarak hesaplar (tek kaynak; Dashboard
 // health ve Entegrasyon sayfası aynı mantığı kullanır — kopya YOK).

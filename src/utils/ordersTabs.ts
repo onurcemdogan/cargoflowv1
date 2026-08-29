@@ -1,8 +1,8 @@
-import type { MarketplaceStatus } from '../types/cargoflow'
+import type { MarketplaceStatus } from '../types/cargoflow.ts'
 import {
   ACTIVE_MARKETPLACE_STATUSES,
   ARCHIVE_MARKETPLACE_STATUSES,
-} from './orderStatus'
+} from './orderStatus.ts'
 
 export type QuickTab =
   // Sadeleştirilmiş görünür sekmeler (mevcut classifier'ların birleşimi):

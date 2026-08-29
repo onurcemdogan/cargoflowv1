@@ -4,30 +4,30 @@ import type {
   CargoProduct,
   IntegrationConfig,
   PrinterSettings,
-} from '../types/cargoflow'
+} from '../types/cargoflow.ts'
 import {
   isActiveMarketplaceStatus,
   isCancelledOrReturnedStatus,
-} from '../utils/orderStatus'
-import { classifyOrderForTabs } from '../utils/orderClassification'
-import { resolveProductImageCandidates } from '../utils/productImage'
-import { resolveOrderStatus } from '../utils/shipmentStatus'
+} from '../utils/orderStatus.ts'
+import { classifyOrderForTabs } from '../utils/orderClassification.ts'
+import { resolveProductImageCandidates } from '../utils/productImage.ts'
+import { resolveOrderStatus } from '../utils/shipmentStatus.ts'
 import {
   isPreassignedAwaitingAcceptance,
   resolveSuratPrintEligibility,
-} from '../utils/suratPrintEligibility'
-import { verifySuratShipment } from '../utils/suratVerification'
+} from '../utils/suratPrintEligibility.ts'
+import { verifySuratShipment } from '../utils/suratVerification.ts'
 import {
   carrierProviderRegistry,
   marketplaceProviderRegistry,
   resolveCarrierProvider,
   resolveMarketplaceProvider,
-} from './providerRegistry'
+} from './providerRegistry.ts'
 import {
   resolveSuratConfigured,
   resolveTrendyolConfigured,
-} from '../utils/integrationConfigured'
-import type { MaskedIntegrationStatus } from '../services/integrationConfigService'
+} from '../utils/integrationConfigured.ts'
+import type { MaskedIntegrationStatus } from '../services/integrationConfigService.ts'
 
 // 'needs_check': credential kayıtlı (configured) ama son gerçek bağlantı testi
 // başarılı değil/yok → "bağlantı kontrol edilmeli" (kayıt kaybı DEĞİL).
@@ -347,17 +347,58 @@ function resolveProviderHealthStatus(
   return 'needs_check'
 }
 
+/**
+ * SAĞLAYICI SAYAÇLARI — tam sipariş kümesinden türer.
+ *
+ * `buildDashboardProviderHealth` iki yerde sipariş sayar: pazaryeri başına
+ * "N kalıcı sipariş" metni ve taşıyıcı başına doğrulanmış gönderi sayısı
+ * (bağlantı sağlık sinyali). Tarayıcı artık tam listeye sahip olmadığından
+ * bu sayılar SUNUCUDA, aynı çözümleyicilerle hesaplanır ve buraya verilir.
+ * Verilmezse (legacy mod) eskisi gibi yerel listeden hesaplanır.
+ */
+export interface DashboardProviderCounts {
+  marketplaceOrderCounts: Record<string, number>
+  carrierVerifiedShipmentCounts: Record<string, number>
+}
+
+export function buildDashboardProviderCounts(
+  orders: CargoOrder[],
+): DashboardProviderCounts {
+  const marketplaceOrderCounts: Record<string, number> = {}
+  const carrierVerifiedShipmentCounts: Record<string, number> = {}
+  for (const provider of Object.values(marketplaceProviderRegistry)) {
+    marketplaceOrderCounts[provider.providerKey] = orders.filter(
+      (order) =>
+        resolveMarketplaceProvider(order.marketplace).providerKey ===
+        provider.providerKey,
+    ).length
+  }
+  for (const provider of Object.values(carrierProviderRegistry)) {
+    carrierVerifiedShipmentCounts[provider.providerKey] = orders.filter(
+      (order) =>
+        Boolean(order.shipment?.verifiedShipment) &&
+        resolveCarrierProvider(
+          order.shipment?.provider || order.cargoProviderName,
+        ).providerKey === provider.providerKey,
+    ).length
+  }
+  return { marketplaceOrderCounts, carrierVerifiedShipmentCounts }
+}
+
 export function buildDashboardProviderHealth({
   config,
   maskedStatus,
   apiDebugLogs,
   orders,
+  providerCounts,
   lastSyncedAt,
 }: {
   config: IntegrationConfig
   maskedStatus?: MaskedIntegrationStatus | null
   apiDebugLogs: ApiDebugLog[]
   orders: CargoOrder[]
+  /** Sunucuda tam küme üzerinden hesaplanmış sayaçlar (varsa ÖNCELİKLİ). */
+  providerCounts?: DashboardProviderCounts
   lastSyncedAt?: string
 }): {
   marketplaceIntegrations: DashboardProviderHealth[]
@@ -408,11 +449,14 @@ export function buildDashboardProviderHealth({
           : last?.timestamp,
       errorCount: logs.filter((log) => log.status === 'ERROR').length,
       detail: configured
-        ? `${orders.filter(
-            (order) =>
-              resolveMarketplaceProvider(order.marketplace).providerKey ===
-              provider.providerKey,
-          ).length} kalıcı sipariş`
+        ? `${
+            providerCounts?.marketplaceOrderCounts[provider.providerKey] ??
+            orders.filter(
+              (order) =>
+                resolveMarketplaceProvider(order.marketplace).providerKey ===
+                provider.providerKey,
+            ).length
+          } kalıcı sipariş`
         : 'Ayarlanmadı',
     }
   })
@@ -430,13 +474,15 @@ export function buildDashboardProviderHealth({
         provider.providerKey,
     )
     const last = logs[0]
-    const shipmentCount = orders.filter(
-      (order) =>
-        Boolean(order.shipment?.verifiedShipment) &&
-        resolveCarrierProvider(
-          order.shipment?.provider || order.cargoProviderName,
-        ).providerKey === provider.providerKey,
-    ).length
+    const shipmentCount =
+      providerCounts?.carrierVerifiedShipmentCounts[provider.providerKey] ??
+      orders.filter(
+        (order) =>
+          Boolean(order.shipment?.verifiedShipment) &&
+          resolveCarrierProvider(
+            order.shipment?.provider || order.cargoProviderName,
+          ).providerKey === provider.providerKey,
+      ).length
     const hasSuccessSignal =
       Boolean(last && last.status !== 'ERROR') || shipmentCount > 0
     const status = resolveProviderHealthStatus(

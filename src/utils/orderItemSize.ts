@@ -1,4 +1,4 @@
-import type { CargoOrder, OrderItem } from '../types/cargoflow'
+import type { CargoOrder, OrderItem } from '../types/cargoflow.ts'
 
 // ═══ BEDEN ÇÖZÜMLEYİCİ — YALNIZ SUNUM ═════════════════════════════════════
 //

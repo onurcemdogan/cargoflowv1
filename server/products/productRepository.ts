@@ -73,6 +73,34 @@ function buildWhere(
   return and(...clauses)
 }
 
+/**
+ * Kapsamdaki TÜM varyantlar — sayfalama YOK.
+ *
+ * Tarayıcı bugüne kadar bu kataloğu 100'erlik ~60 istekle indiriyordu
+ * (`loadProductsFromServer`). Dashboard toplama listesi ve ürün görseli
+ * çözümü tam katalog ister. Sıralama istemcinin gördüğüyle AYNI tutulur
+ * (`asc(title)`): görsel eşleşmesi ilk uyan kayda bağlı olduğundan farklı
+ * sıra FARKLI görsel demek olurdu.
+ */
+export async function findAllProductVariants(
+  db: Db,
+  organizationId: string,
+  marketplaceAccountId?: string | null,
+): Promise<{ product: Record<string, unknown>; variant: Record<string, unknown> }[]> {
+  return db
+    .select({ variant: productVariants, product: products })
+    .from(productVariants)
+    .innerJoin(
+      products,
+      and(
+        eq(products.id, productVariants.productId),
+        eq(products.organizationId, productVariants.organizationId),
+      ),
+    )
+    .where(buildWhere(organizationId, {}, marketplaceAccountId))
+    .orderBy(asc(products.title))
+}
+
 export async function findProducts(
   db: Db,
   organizationId: string,

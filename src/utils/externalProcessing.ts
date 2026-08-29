@@ -8,8 +8,8 @@
 //
 // Bu YEREL bir görünüm durumudur. Pazaryeri statüsü, provider durumu,
 // tracking numarası, barkod, labelStatus ve printCount ETKİLENMEZ.
-import type { CargoOrder } from '../types/cargoflow'
-import { orderPackageIdentity } from './orderCounts'
+import type { CargoOrder } from '../types/cargoflow.ts'
+import { orderPackageIdentity } from './orderCounts.ts'
 
 /** Sunucudan gelen ham arşiv sözleşmesi. */
 export interface ExternalProcessingEntry {

@@ -1,5 +1,15 @@
 import type { CargoOrder } from '../types/cargoflow'
 import type { AnalyticsClaim } from '../dashboard/analyticsClaims'
+import type {
+  DashboardOperationalSnapshot,
+  DashboardPeriodSelection,
+} from '../dashboard/dashboardViewModel'
+import type { DashboardProviderCounts } from '../dashboard/dashboardSummary'
+
+export interface DashboardOperationalResult {
+  snapshot: DashboardOperationalSnapshot
+  providerCounts?: DashboardProviderCounts
+}
 
 // Dashboard SATIŞ analitiği için read-only veri kaynağı. Operational
 // ordersState'ten TAMAMEN bağımsızdır: persistOrders çağırmaz, storage'a
@@ -48,6 +58,15 @@ let claimsCache: ClaimsCache | null = null
 let claimsInFlight: Promise<DashboardClaimsResult> | null = null
 let claimsInFlightKey = ''
 
+// OPERASYON ANLIK GÖRÜNTÜSÜ — istek tekilleştirme (dedupe).
+//
+// Aynı dönem için eşzamanlı iki istek TEK ağ çağrısına indirgenir; sayfa
+// geçişlerinde (Panoya dön → Siparişler → Panoya dön) API fırtınası olmaz.
+let operationalInFlight: Promise<DashboardOperationalResult> | null = null
+let operationalInFlightKey = ''
+let operationalCache: { key: string; result: DashboardOperationalResult } | null =
+  null
+
 export function resetDashboardAnalyticsCache(): void {
   cache = null
   inFlight = null
@@ -55,6 +74,62 @@ export function resetDashboardAnalyticsCache(): void {
   claimsCache = null
   claimsInFlight = null
   claimsInFlightKey = ''
+  operationalInFlight = null
+  operationalInFlightKey = ''
+  operationalCache = null
+}
+
+function operationalKey(period: DashboardPeriodSelection): string {
+  return [period.key, period.startDate ?? '', period.endDate ?? ''].join('|')
+}
+
+/**
+ * SUNUCUDA hesaplanmış operasyon anlık görüntüsü.
+ *
+ * Bu çağrı, eski mimarinin TÜM sipariş tablosunu indirmesinin YERİNE geçer.
+ * Değerler tarayıcının hesaplayacağının birebir aynısıdır (aynı fonksiyon,
+ * sunucuda çalışır); parite `dashboard-operational-parity-flow` ile
+ * kanıtlanır.
+ */
+export async function fetchDashboardOperationalSnapshot(
+  period: DashboardPeriodSelection,
+  options: { refresh?: boolean } = {},
+): Promise<DashboardOperationalResult> {
+  const key = operationalKey(period)
+  if (!options.refresh && operationalCache && operationalCache.key === key) {
+    return operationalCache.result
+  }
+  if (operationalInFlight && operationalInFlightKey === key && !options.refresh) {
+    return operationalInFlight
+  }
+  const params = new URLSearchParams({ periodKey: period.key })
+  if (period.startDate) params.set('periodStartDate', period.startDate)
+  if (period.endDate) params.set('periodEndDate', period.endDate)
+  operationalInFlightKey = key
+  operationalInFlight = fetch(`/api/dashboard/operational?${params}`, {
+    credentials: 'include',
+  })
+    .then(async (response) => {
+      const payload = await response.json()
+      if (!response.ok || payload?.ok === false || !payload?.operational) {
+        throw new Error(
+          String(payload?.message ?? 'Operasyon özeti yüklenemedi.'),
+        )
+      }
+      const result: DashboardOperationalResult = {
+        snapshot: payload.operational as DashboardOperationalSnapshot,
+        providerCounts: payload.providerCounts as
+          | DashboardProviderCounts
+          | undefined,
+      }
+      operationalCache = { key, result }
+      return result
+    })
+    .finally(() => {
+      operationalInFlight = null
+      operationalInFlightKey = ''
+    })
+  return operationalInFlight
 }
 
 export async function fetchDashboardAnalyticsOrders(

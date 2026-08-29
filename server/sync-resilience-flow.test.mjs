@@ -98,6 +98,30 @@ test('RES-6: frontend — tek-uçuş kilidi + buton finally ile açılır', () =
 test('RES-7: Dashboard Yenile /api/orders/sync ÇAĞIRMAZ (yalnız yerel reload)', () => {
   const app = readSrc('src/App.tsx')
   const block = sliceBlock(app, 'async function handleReloadOrders()', 2000)
+  // KORUNAN DEĞİŞMEZ: "Yenile" pazaryerine ÇIKMAZ.
   assert.doesNotMatch(block, /\/api\/orders\/sync/)
-  assert.match(block, /loadOrdersFromServer\(\)/)
+  assert.doesNotMatch(block, /handleFetchOrders/)
+  // Yerel yeniden okuma YOLU: auth modunda sunucu tarafı çalışma alanı
+  // sorgusu (`loadOrdersWorkspace`), legacy modda localStorage (`loadOrders`).
+  // Eskiden burada `loadOrdersFromServer()` (TÜM tabloyu indiren yol) vardı;
+  // o yol kaldırıldı, DEĞİŞMEZ aynı kaldı: yalnız yerel DB okunur.
+  assert.match(block, /loadOrdersWorkspace\(/)
+  assert.match(block, /workflowService\.loadOrders\(\)/)
+})
+
+test('RES-7b: hiçbir açılış/gezinme yolu TÜM sipariş tablosunu indirmez', () => {
+  // Bu, RES-7 ile birlikte gerçek regresyonu kapatır: eski `loadOrdersFromServer`
+  // 100'erlik sayfalarla tam tabloyu çekiyordu ve 20k üstünde AÇIK hata
+  // veriyordu. Uygulama kabuğunda o yola HİÇBİR çağrı kalmamalıdır.
+  // Yorum satırları çıkarılır: tarihçeyi ANLATAN bir yorum ("eskiden burada
+  // loadOrdersFromServer vardı") bir ÇAĞRI değildir ve testi kırmamalıdır.
+  const code = readSrc('src/App.tsx')
+    .split('\n')
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n')
+  assert.doesNotMatch(
+    code,
+    /loadOrdersFromServer\(/,
+    'App.tsx tam koleksiyon yükleyicisini ÇAĞIRMAMALI',
+  )
 })

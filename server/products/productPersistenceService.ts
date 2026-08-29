@@ -6,6 +6,7 @@ import {
   archiveMissingProducts,
   countProducts,
   findProductById,
+  findAllProductVariants,
   findProducts,
   findVariantByBarcode,
   findVariantByMerchantSku,
@@ -91,6 +92,19 @@ export async function listProducts(
     page,
     pageSize,
   }
+}
+
+/**
+ * Kapsamdaki TÜM katalog varyantları (view-model). Sunucu tarafı dashboard
+ * toplama listesi ve görsel çözümü için; istemciye GÖNDERİLMEZ.
+ */
+export async function listAllProducts(
+  db: Db,
+  organizationId: string,
+  marketplaceAccountId?: string | null,
+): Promise<Record<string, unknown>[]> {
+  const rows = await findAllProductVariants(db, organizationId, marketplaceAccountId)
+  return rows.map((row) => rowToProduct(row.product, row.variant))
 }
 
 export async function getProduct(

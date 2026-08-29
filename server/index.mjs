@@ -341,6 +341,10 @@ const TENANT_AUTH_PATHS = [
   '/api/analytics/orders',
   '/api/analytics/claims',
   '/api/orders',
+  // Dashboard operasyon anlık görüntüsü org kapsamlıdır: AYNI auth kapısının
+  // arkasında durur. (Bu listeye eklenmeyen org-kapsamlı uç `request.auth`
+  // boş kalır ve 404 döner — bu hata daha önce iki kez yaşandı.)
+  '/api/dashboard',
   '/api/products',
   '/api/onboarding',
   '/api/shipments/surat',
@@ -822,6 +826,157 @@ app.get('/api/orders', async (request, response) => {
     })
   } catch {
     response.status(500).json({ ok: false, message: 'Siparişler yüklenemedi.' })
+  }
+})
+
+// GET /api/orders/workspace — Siparişler ekranının TEK okuma yolu.
+//
+// ═══ NEDEN AYRI BİR ENDPOINT ═════════════════════════════════════════════
+// `/api/orders` ham, SQL-filtrelenebilir bir sayfadır. Siparişler ekranının
+// GÖRÜNÜR listesi ise sekme sınıflandırıcıları, Sürat doğrulaması ve ürün
+// ailesi gruplaması ile belirlenir — SQL'de ifade edilemez. Eskiden bu iş
+// tarayıcıda yapılıyor ve TÜM tablo ~100 HTTP turuyla indiriliyordu.
+//
+// Burada AYNI saf projeksiyon sunucuda çalışır; yanıt YALNIZ istenen sayfayı,
+// sekme sayaçlarını ve filtre seçeneklerini taşır. Tam koleksiyon tarayıcıya
+// HİÇBİR ZAMAN inmez.
+//
+// SALT OKUNUR: hiçbir satır yazılmaz, pazaryeri/taşıyıcı çağrısı YAPILMAZ.
+app.get('/api/orders/workspace', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const query = request.query ?? {}
+    const num = (value, fallback) => {
+      const parsed = Number(value)
+      return Number.isFinite(parsed) ? parsed : fallback
+    }
+    const text = (value, fallback = '') => {
+      const asText = String(value ?? '').trim()
+      return asText === '' ? fallback : asText
+    }
+    // Sayfa boyutu `/api/orders` ile AYNI sözleşmeye tabidir (1..100).
+    const requestedPageSize = Math.trunc(num(query.pageSize, 25))
+    const pageSize = Math.min(
+      100,
+      Math.max(1, Number.isFinite(requestedPageSize) && requestedPageSize > 0
+        ? requestedPageSize
+        : 25),
+    )
+    const startTime = query.startTime === undefined ? undefined : num(query.startTime, undefined)
+    const endTime = query.endTime === undefined ? undefined : num(query.endTime, undefined)
+    const workspaceQuery = {
+      tab: text(query.tab, 'newOrders'),
+      operationTab: text(query.operationTab, 'all'),
+      marketplace: text(query.marketplace, 'all'),
+      status: text(query.status, 'all'),
+      cargo: text(query.cargo, 'all'),
+      city: text(query.city, 'all'),
+      district: text(query.district, 'all'),
+      multiProduct: text(query.multiProduct, 'all'),
+      sameProduct: text(query.sameProduct, 'all'),
+      action: text(query.action, 'all'),
+      date: {
+        preset: text(query.datePreset, 'all'),
+        startTime,
+        endTime,
+        timezone: strOrUndef(query.timezone),
+      },
+      search: text(query.search, ''),
+      customerQuery: text(query.customerQuery, ''),
+      productQuery: text(query.productQuery, ''),
+      orderNumberQuery: text(query.orderNumberQuery, ''),
+      cargoSlipQuery: text(query.cargoSlipQuery, ''),
+      sortKey: text(query.sortKey, 'orderDate'),
+      sortDirection: query.sortDirection === 'asc' ? 'asc' : 'desc',
+      page: Math.max(1, Math.trunc(num(query.page, 1)) || 1),
+      pageSize,
+    }
+    const { buildOrdersWorkspacePage } = await import(
+      './orders/ordersWorkspaceService.ts'
+    )
+    const startedAt = Date.now()
+    const result = await buildOrdersWorkspacePage(
+      context.db,
+      context.organizationId,
+      workspaceQuery,
+      context.marketplaceAccountId,
+    )
+    response.json({
+      ok: true,
+      workspace: {
+        items: result.items,
+        page: result.page,
+        pageSize: result.pageSize,
+        pageCount: result.pageCount,
+        totalItems: result.totalItems,
+        startIndex: result.startIndex,
+        endIndex: result.endIndex,
+        tabCounts: result.tabCounts,
+        cityOptions: result.cityOptions,
+        districtOptions: result.districtOptions,
+        listedCounts: result.listedCounts,
+        groupHeaders: result.groupHeaders,
+      },
+      externalProcessing: result.externalProcessing,
+      // Ölçüm/tanı: gizli değer taşımaz (yalnız sayaç ve süre).
+      diagnostics: {
+        scannedOrders: result.scannedOrders,
+        cacheHit: result.cacheHit,
+        durationMs: Date.now() - startedAt,
+      },
+    })
+  } catch {
+    response
+      .status(500)
+      .json({ ok: false, message: 'Siparişler yüklenemedi.' })
+  }
+})
+
+// GET /api/dashboard/operational — Dashboard operasyon anlık görüntüsü.
+//
+// Dashboard'ın operasyon sayaçları TÜM tenant siparişlerini ister. Eskiden
+// bunun için tarayıcı sipariş tablosunun TAMAMINI indiriyordu. Burada AYNI
+// `buildDashboardViewModel` sunucuda çalışır ve yalnız operasyon alanları
+// (birkaç KB) döner. SATIŞ metrikleri bu endpoint'te YOKTUR; onlar mevcut
+// analitik yolundan gelmeye DEVAM EDER (semantik değişmedi).
+//
+// SALT OKUNUR: satır yazmaz, pazaryeri/taşıyıcı çağrısı YAPMAZ.
+app.get('/api/dashboard/operational', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const query = request.query ?? {}
+    const selectedPeriod = {
+      key: strOrUndef(query.periodKey) ?? 'today',
+      startDate: strOrUndef(query.periodStartDate),
+      endDate: strOrUndef(query.periodEndDate),
+    }
+    const { buildDashboardOperationalSnapshot } = await import(
+      './dashboard/dashboardOperationalService.ts'
+    )
+    const startedAt = Date.now()
+    const result = await buildDashboardOperationalSnapshot(
+      context.db,
+      context.organizationId,
+      selectedPeriod,
+      context.marketplaceAccountId,
+    )
+    response.json({
+      ok: true,
+      operational: result.snapshot,
+      providerCounts: result.providerCounts,
+      diagnostics: {
+        scannedOrders: result.scannedOrders,
+        scannedProducts: result.scannedProducts,
+        cacheHit: result.cacheHit,
+        durationMs: Date.now() - startedAt,
+      },
+    })
+  } catch {
+    response
+      .status(500)
+      .json({ ok: false, message: 'Operasyon özeti yüklenemedi.' })
   }
 })
 

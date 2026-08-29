@@ -1,6 +1,6 @@
-import type { CargoOrder } from '../types/cargoflow'
-import { getOrderOperationStatus, isOrderOperationallyActive } from './orderStatus'
-import { resolveSuratPrintEligibility } from './suratPrintEligibility'
+import type { CargoOrder } from '../types/cargoflow.ts'
+import { getOrderOperationStatus, isOrderOperationallyActive } from './orderStatus.ts'
+import { resolveSuratPrintEligibility } from './suratPrintEligibility.ts'
 
 // Dashboard "Son Operasyonlar" aksiyon yetkileri (görüntüle/yazdır/indir).
 //

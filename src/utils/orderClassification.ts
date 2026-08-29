@@ -1,32 +1,32 @@
-import type { CargoOrder } from '../types/cargoflow'
-import type { QuickTab } from './ordersTabs'
+import type { CargoOrder } from '../types/cargoflow.ts'
+import type { QuickTab } from './ordersTabs.ts'
 import {
   canCreateShipment,
   canMarkPrinted,
   hasCarrierTracking,
-} from './orderStatus'
-import type { OrdersActionFilter } from './ordersNavigation'
-import { resolveOrderStatus } from './shipmentStatus'
+} from './orderStatus.ts'
+import type { OrdersActionFilter } from './ordersNavigation.ts'
+import { resolveOrderStatus } from './shipmentStatus.ts'
 import {
   isPreassignedAwaitingAcceptance,
   resolveSuratPrintEligibility,
-} from './suratPrintEligibility'
-import { verifySuratShipment } from './suratVerification'
-import { isExternallyProcessed } from './externalProcessing'
+} from './suratPrintEligibility.ts'
+import { verifySuratShipment } from './suratVerification.ts'
+import { isExternallyProcessed } from './externalProcessing.ts'
 import {
   buildRepeatedProductOrderIds,
   type SameProductFilter,
-} from './orderProductFamily'
+} from './orderProductFamily.ts'
 import {
   buildOrderCountSummary,
   dedupeOrdersByPackageIdentity,
   orderPackageIdentity,
-} from './orderCounts'
+} from './orderCounts.ts'
 import {
   buildOrdersDateRange,
   isOrderWithinDateRange,
   ORDERS_TIME_ZONE,
-} from './orderDateRange'
+} from './orderDateRange.ts'
 
 export interface OrderTabClassification {
   isOpenOperation: boolean

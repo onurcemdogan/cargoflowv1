@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto'
 import {
   archiveMissingOrders,
   countOrdersByOrganization,
+  findAllOrdersForWorkspace,
   findLinesForOrders,
   findOrderById,
   findOrders,
@@ -343,6 +344,89 @@ export async function listOrders(
     viewModels.push(await attachShipment(db, organizationId, base, preloaded))
   }
   return { orders: viewModels, total, page, pageSize }
+}
+
+/** IN (...) parametre patlamasını önlemek için toplu okuma dilim boyu. */
+const WORKSPACE_LOOKUP_CHUNK = 1000
+
+async function chunkedMerge<T>(
+  ids: string[],
+  load: (slice: string[]) => Promise<Map<string, T>>,
+): Promise<Map<string, T>> {
+  const merged = new Map<string, T>()
+  for (let index = 0; index < ids.length; index += WORKSPACE_LOOKUP_CHUNK) {
+    const slice = ids.slice(index, index + WORKSPACE_LOOKUP_CHUNK)
+    for (const [key, value] of await load(slice)) {
+      // İLK kazanır — tekil okuyucuyla AYNI seçim kuralı.
+      if (!merged.has(key)) merged.set(key, value)
+    }
+  }
+  return merged
+}
+
+/**
+ * Çalışma alanı için TÜM hesap-kapsamlı siparişler, view-model olarak.
+ *
+ * `listOrders` ile AYNI zenginleştirmeyi (satırlar + shipment + son
+ * operasyon) uygular — çünkü sekme sınıflandırıcıları labelStatus,
+ * suratVerificationStatus ve shipment alanlarını OKUR. Zenginleştirme
+ * eksik olsaydı sunucu tarafı liste, tarayıcıdakinden FARKLI çıkardı.
+ *
+ * Sorgu sayısı sipariş sayısından BAĞIMSIZDIR (N+1 yok): satırlar tek
+ * sorgu, gönderi ve operasyonlar 1000'lik dilimlerle okunur.
+ */
+export async function listOrdersForWorkspace(
+  db: Db,
+  organizationId: string,
+  marketplaceAccountId?: string | null,
+): Promise<Record<string, unknown>[]> {
+  const orderRows = await findAllOrdersForWorkspace(
+    db,
+    organizationId,
+    marketplaceAccountId,
+  )
+  if (orderRows.length === 0) return []
+  const orderIds = orderRows.map((row) => String(row.id))
+  const lineRows = await chunkedLines(db, organizationId, orderIds)
+  const linesByOrder = new Map<string, Record<string, unknown>[]>()
+  for (const line of lineRows) {
+    const key = String(line.orderId)
+    if (!linesByOrder.has(key)) linesByOrder.set(key, [])
+    linesByOrder.get(key)!.push(line)
+  }
+  const bases = orderRows.map((row) =>
+    rowToOrder(row, linesByOrder.get(String(row.id)) ?? []),
+  )
+  const packageIds = bases.map((base) => String(base.packageId ?? ''))
+  const marketplace = String(bases[0]?.marketplace ?? 'Trendyol')
+  const preloaded = {
+    shipments: await chunkedMerge(packageIds, (slice) =>
+      findShipmentsForPackages(
+        db, organizationId, marketplace, slice, SURAT_PERSISTENCE_PROVIDER,
+      ),
+    ),
+    operations: await chunkedMerge(packageIds, (slice) =>
+      findLatestOperationsForPackages(db, organizationId, slice),
+    ),
+  }
+  const viewModels: Record<string, unknown>[] = []
+  for (const base of bases) {
+    viewModels.push(await attachShipment(db, organizationId, base, preloaded))
+  }
+  return viewModels
+}
+
+async function chunkedLines(
+  db: Db,
+  organizationId: string,
+  orderIds: string[],
+): Promise<Record<string, unknown>[]> {
+  const all: Record<string, unknown>[] = []
+  for (let index = 0; index < orderIds.length; index += WORKSPACE_LOOKUP_CHUNK) {
+    const slice = orderIds.slice(index, index + WORKSPACE_LOOKUP_CHUNK)
+    all.push(...(await findLinesForOrders(db, organizationId, slice)))
+  }
+  return all
 }
 
 // Dashboard SATIŞ analitiği: bir tarih aralığındaki TÜM hesap-kapsamlı

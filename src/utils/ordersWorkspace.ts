@@ -1,4 +1,4 @@
-import type { CargoOrder } from '../types/cargoflow'
+import type { CargoOrder } from '../types/cargoflow.ts'
 
 export type OrdersSortKey =
   | 'orderDate'

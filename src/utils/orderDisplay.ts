@@ -1,4 +1,4 @@
-import type { CargoOrder } from '../types/cargoflow'
+import type { CargoOrder } from '../types/cargoflow.ts'
 
 function firstNonEmpty(...values: Array<string | undefined | null>): string {
   return values.map((value) => String(value ?? '').trim()).find(Boolean) ?? ''

@@ -1,4 +1,12 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { AppShell } from './components/AppShell'
 import { RouteSkeleton } from './components/RouteSkeleton'
 import type { PrintPreviewMode } from './components/PrintPreviewModal'
@@ -19,6 +27,10 @@ const PrintPreviewModal = lazy(async () => ({
 // gorunur bir bosluk yaratirdi). Geri kalan rotalar TALEP UZERINE gelir.
 import { DashboardPage } from './pages/DashboardPage'
 import { OrdersPage, type OrdersFetchOptions } from './pages/OrdersPage'
+import type {
+  OrdersWorkspaceQuery,
+  OrdersWorkspaceResult,
+} from './utils/ordersWorkspaceQuery'
 
 const AuditLogsPage = lazy(async () => ({
   default: (await import('./pages/AuditLogsPage')).AuditLogsPage,
@@ -260,6 +272,91 @@ function App() {
   )
   const products = productsState.products
 
+  // ═══ SUNUCU TARAFI SİPARİŞ ÇALIŞMA ALANI ═══════════════════════════════
+  //
+  // Auth modunda tarayıcı ARTIK tüm sipariş tablosunu indirmez. Siparişler
+  // ekranı filtre/sıralama/sayfa sorgusunu YUKARI bildirir; sunucu AYNI saf
+  // projeksiyonu çalıştırır ve yalnız o sayfayı döner.
+  //
+  // `ordersState.orders` bu modda KANONİK HAVUZ'dur: görülen tüm siparişler.
+  // Seçim, sipariş detayı ve baskı önizlemesi bu havuzdan çözülür; sayfa
+  // değiştirmek seçimi KAYBETTİRMEZ.
+  const [ordersWorkspace, setOrdersWorkspace] = useState<OrdersWorkspaceResult>()
+  const workspaceQueryRef = useRef<OrdersWorkspaceQuery | null>(null)
+  const workspaceLoadInFlight = useRef(false)
+
+  const loadOrdersWorkspace = useCallback(
+    async (query: OrdersWorkspaceQuery) => {
+      if (!integrationConfigService.isAuthMode()) return
+      const accountGeneration = workflowService.getMarketplaceAccountGeneration()
+      setOrdersState((current) => ({
+        ...current,
+        ordersLoading: true,
+        ordersError: undefined,
+      }))
+      workspaceLoadInFlight.current = true
+      try {
+        const { workspace, stale } =
+          await workflowService.fetchOrdersWorkspace(query)
+        // BAYAT YANIT KORUMASI: daha yeni bir istek başladıysa (hızlı filtre
+        // yazımı) veya hesap değiştiyse bu sonuç YAZILMAZ.
+        if (stale) return
+        if (
+          accountGeneration !== workflowService.getMarketplaceAccountGeneration()
+        ) {
+          return
+        }
+        setOrdersWorkspace(workspace)
+        setOrdersState((current) => ({
+          ...current,
+          orders: workflowService.enrichOrderImages(
+            workflowService.getCanonicalOrderPool(),
+            catalogProductsRef.current,
+          ),
+          ordersLoading: false,
+          ordersError: undefined,
+        }))
+      } catch {
+        setOrdersState((current) => ({
+          ...current,
+          ordersLoading: false,
+          ordersError:
+            'Sipariş verileri yüklenemedi. Bağlantıyı kontrol edip tekrar deneyin.',
+        }))
+      } finally {
+        workspaceLoadInFlight.current = false
+      }
+    },
+    [],
+  )
+
+  const handleWorkspaceQueryChange = useCallback(
+    (query: OrdersWorkspaceQuery) => {
+      workspaceQueryRef.current = query
+      void loadOrdersWorkspace(query)
+    },
+    [loadOrdersWorkspace],
+  )
+
+  // Tablo satırları KANONİK havuzdan çözülür. Böylece bir create/print sonrası
+  // yerel durum güncellemesi (LABEL_READY → LABEL_PRINTED) sunucuya yeniden
+  // gitmeden ANINDA listede görünür; sayfa metadata'sı (sayaçlar, toplam)
+  // sunucudan gelmeye devam eder.
+  const ordersById = useMemo(() => {
+    const map = new Map<string, CargoOrder>()
+    for (const order of orders) map.set(String(order.id), order)
+    return map
+  }, [orders])
+  const workspaceView = useMemo(() => {
+    if (!ordersWorkspace) return undefined
+    return {
+      ...ordersWorkspace,
+      items: ordersWorkspace.items.map(
+        (item) => ordersById.get(String(item.id)) ?? item,
+      ),
+    }
+  }, [ordersById, ordersWorkspace])
+
   // Yazıcı Ayarları sayfası kaldırıldı; eski route'a düşen kullanıcı boş
   // ekran görmesin diye Dashboard'a yönlendirilir (yazdırma ALTYAPISI
   // korunur; yalnız ayar SAYFASI kapatıldı).
@@ -312,15 +409,17 @@ function App() {
       })
       setProductsState((current) => ({ ...current, productsLoading: true }))
 
-      // LOCAL-FIRST + PARALEL: siparişler ürün kataloğunu (auth modda ~binlerce
-      // varyant, çok sayfalı) BEKLEMEZ. İkisi bağımsız yüklenir; hangisi önce
-      // gelirse görseller doğru zenginleşir. Provider sync bu yolu bloklamaz.
-      // KISMI BASARI YASAK: sayfalardan biri bile gelmezse null doner ve
-      // mevcut (basarili) siparis listesi BOSALTILMAZ.
+      // ═══ AÇILIŞTA TAM SİPARİŞ TABLOSU ÇEKİLMEZ ═════════════════════════
+      //
+      // Eski davranış: `loadOrdersFromServer()` 100'erlik sayfalarla TÜM
+      // tabloyu indirirdi (10k siparişte ~100 HTTP turu; 20k üstünde AÇIK
+      // hata). Panel'in operasyon sayaçları artık sunucudan tek çağrıyla
+      // gelir; Siparişler ekranı da sayfasını sunucudan ister.
+      //
+      // Auth modunda açılış bu yüzden HİÇBİR sipariş listesi çekmez: havuz
+      // boş başlar ve yalnız görüntülenen sayfalarla dolar.
       const ordersPromise = authMode
-        ? workflowService
-            .loadOrdersFromServer()
-            .catch(() => null as CargoOrder[] | null)
+        ? Promise.resolve([] as CargoOrder[])
         : Promise.resolve(workflowService.loadOrders())
       const catalogPromise = workflowService
         .hydrateProductCatalog()
@@ -374,48 +473,13 @@ function App() {
     if (ordersReloadInFlight.current) return
     ordersReloadInFlight.current = true
     if (integrationConfigService.isAuthMode()) {
-      const generation = workflowService.getMarketplaceAccountGeneration()
-      // SWR: aktif hesap için taze cache varsa ANINDA göster (loading'e düşmeden);
-      // yoksa loading. Her iki durumda da arkada DB'den revalidate edilir.
-      const cached = workflowService.peekCachedOrders()
-      if (cached) {
-        setOrdersState((current) => ({
-          ...current,
-          orders: workflowService.enrichOrderImages(cached, productsState.products),
-          ordersError: undefined,
-        }))
-      } else {
-        setOrdersState((current) => ({
-          ...current,
-          ordersLoading: true,
-          ordersError: undefined,
-        }))
-      }
       try {
-        const baseOrders = await workflowService.loadOrdersFromServer()
-        // Hesap bu istek sırasında değiştiyse sonucu ATLA (stale — yanlış hesaba
-        // yazma önlenir).
-        if (generation !== workflowService.getMarketplaceAccountGeneration()) {
-          return
-        }
-        setOrdersState((current) => ({
-          ...current,
-          orders: workflowService.enrichOrderImages(
-            baseOrders,
-            productsState.products,
-          ),
-          ordersLoading: false,
-          ordersError: undefined,
-        }))
-      } catch {
-        // Ağ/yükleme hatasında mevcut liste KORUNUR (silinmez). Banner'da yalnız
-        // güvenli, yükleme kapsamlı mesaj gösterilir (etiket/desi metni değil).
-        setOrdersState((current) => ({
-          ...current,
-          ordersLoading: false,
-          ordersError:
-            'Sipariş verileri yüklenemedi. Bağlantıyı kontrol edip tekrar deneyin.',
-        }))
+        // Auth modunda "yeniden yükle" = GEÇERLİ çalışma alanı sorgusunu
+        // sunucuda yeniden çalıştır. Tam tablo İNDİRİLMEZ. Siparişler ekranı
+        // henüz açılmadıysa (sorgu yok) yapılacak bir şey yoktur: Panel kendi
+        // operasyon anlık görüntüsünü ayrıca tazeler.
+        const query = workspaceQueryRef.current
+        if (query) await loadOrdersWorkspace(query)
       } finally {
         ordersReloadInFlight.current = false
       }
@@ -670,12 +734,14 @@ function App() {
 
       // LOCAL-FIRST + PARALEL: yeni hesabın siparişleri ürün kataloğunu BEKLEMEZ.
       const authMode = integrationConfigService.isAuthMode()
-      // KISMI BASARI YASAK: sayfalardan biri bile gelmezse null doner ve
-      // mevcut (basarili) siparis listesi BOSALTILMAZ.
+      // HESAP DEĞİŞTİ: kanonik havuz TAMAMEN boşaltılır — eski hesabın
+      // siparişi bir kare bile yeni hesapta görünemez.
+      workflowService.resetCanonicalOrderPool()
+      setOrdersWorkspace(undefined)
+      // Auth modunda TAM tablo İNDİRİLMEZ: yeni hesabın sayfası, Siparişler
+      // ekranı sorgusunu bildirdiğinde sunucudan gelir.
       const ordersPromise = authMode
-        ? workflowService
-            .loadOrdersFromServer()
-            .catch(() => null as CargoOrder[] | null)
+        ? Promise.resolve([] as CargoOrder[])
         : Promise.resolve(workflowService.loadOrders())
       void ordersPromise.then((baseOrders) => {
         if (!isFresh()) return
@@ -1579,6 +1645,7 @@ function App() {
       {effectivePage === 'dashboard' ? (
         <DashboardPage
           orders={orders}
+          useServerOperationalSnapshot={integrationConfigService.isAuthMode()}
           products={products}
           integrationConfig={integrationConfig}
           maskedIntegrationStatus={maskedIntegrationStatus}
@@ -1608,6 +1675,8 @@ function App() {
         <OrdersPage
           key={ordersNavigationRequest?.id ?? 'orders-default'}
           orders={orders}
+          workspace={workspaceView}
+          onWorkspaceQueryChange={handleWorkspaceQueryChange}
           products={products}
           selectedIds={selectedIds}
           lastResult={ordersState.ordersMessage}

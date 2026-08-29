@@ -1,4 +1,4 @@
-import type { CargoProduct, OrderItem } from '../types/cargoflow'
+import type { CargoProduct, OrderItem } from '../types/cargoflow.ts'
 
 export type ProductImageMatchKey =
   | 'orderLine'

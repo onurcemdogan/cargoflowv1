@@ -1,4 +1,4 @@
-import type { CargoOrder } from '../types/cargoflow'
+import type { CargoOrder } from '../types/cargoflow.ts'
 
 export const ORDERS_TIME_ZONE = 'Europe/Istanbul'
 

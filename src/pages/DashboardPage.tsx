@@ -17,7 +17,10 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ProductImageThumb } from '../components/ProductImageThumb'
 import { OrderDetailDrawer } from '../components/OrderDetailDrawer'
 import { PickingProductsCard } from '../components/PickingProductsCard'
-import { buildDashboardProviderHealth } from '../dashboard/dashboardSummary'
+import {
+  buildDashboardProviderHealth,
+  type DashboardProviderCounts,
+} from '../dashboard/dashboardSummary'
 import {
   buildDashboardViewModel,
   resolveDashboardOrder,
@@ -26,6 +29,7 @@ import {
   type DashboardDistributionRow,
   type DashboardPeriodKey,
   type DashboardPeriodSelection,
+  type DashboardOperationalSnapshot,
   type DashboardSalesPeriodCard,
   type DashboardTimeBucket,
 } from '../dashboard/dashboardViewModel'
@@ -44,12 +48,25 @@ import type { QuickTab } from '../utils/ordersTabs'
 import {
   fetchDashboardAnalyticsClaims,
   fetchDashboardAnalyticsOrders,
+  fetchDashboardOperationalSnapshot,
 } from '../services/dashboardAnalyticsService'
 import type { MaskedIntegrationStatus } from '../services/integrationConfigService'
 import type { AnalyticsClaim } from '../dashboard/analyticsClaims'
 
 interface DashboardPageProps {
+  /**
+   * KANONİK HAVUZ — tam sipariş tablosu DEĞİL.
+   *
+   * Auth modunda tarayıcı artık tüm siparişleri indirmez; operasyon
+   * sayaçları `serverOperational` anlık görüntüsünden gelir. Bu dizi yalnız
+   * satış geri-dönüşü ve sipariş detayı çözümü için kullanılır.
+   */
   orders: CargoOrder[]
+  /**
+   * Sunucudan operasyon anlık görüntüsü İSTENSİN Mİ? Auth modunda true;
+   * legacy (localStorage) modda false — orada tam liste zaten yereldedir.
+   */
+  useServerOperationalSnapshot?: boolean
   products?: CargoProduct[]
   integrationConfig: IntegrationConfig
   maskedIntegrationStatus?: MaskedIntegrationStatus | null
@@ -94,6 +111,7 @@ const marketplaceColors = ['#2563eb', '#14b8a6', '#f59e0b', '#8b5cf6', '#64748b'
 
 export function DashboardPage({
   orders,
+  useServerOperationalSnapshot = false,
   products = [],
   integrationConfig,
   maskedIntegrationStatus,
@@ -133,6 +151,46 @@ export function DashboardPage({
     }),
     [customEndDate, customStartDate, periodKey],
   )
+  // Operasyon anlık görüntüsünü YENİLE tetiklemesi. Sayfa geçişi/mount bunu
+  // ARTIRMAZ (gezinme API fırtınası üretmez); yalnız açık Yenile aksiyonu.
+  const [operationalRefreshTick, setOperationalRefreshTick] = useState(0)
+  // SUNUCU OPERASYON ANLIK GÖRÜNTÜSÜ.
+  //
+  // Auth modunda operasyon sayaçları, aksiyon listesi, toplama listesi ve
+  // son operasyonlar buradan gelir. Tarayıcı tam sipariş tablosunu ARTIK
+  // İNDİRMEZ; değerler aynı fonksiyonun sunucudaki çalışmasından türer.
+  const [operationalSnapshot, setOperationalSnapshot] =
+    useState<DashboardOperationalSnapshot | null>(null)
+  const [providerCounts, setProviderCounts] =
+    useState<DashboardProviderCounts | null>(null)
+  const [operationalError, setOperationalError] = useState<string>()
+  useEffect(() => {
+    // Legacy (localStorage) modda anlık görüntü İSTENMEZ: tam liste zaten
+    // yereldedir. Efekt içinde senkron setState YAPILMAZ; `viewModel` zaten
+    // `useServerOperationalSnapshot` false iken anlık görüntüyü YOK SAYAR.
+    if (!useServerOperationalSnapshot) return
+    let active = true
+    fetchDashboardOperationalSnapshot(selectedPeriod, {
+      refresh: operationalRefreshTick > 0,
+    })
+      .then((result) => {
+        if (!active) return
+        setOperationalSnapshot(result.snapshot)
+        setProviderCounts(result.providerCounts ?? null)
+        setOperationalError(undefined)
+      })
+      .catch((error) => {
+        if (!active) return
+        // Anlık görüntü alınamazsa MEVCUT değer korunur; yanlış (kısmi
+        // havuzdan hesaplanmış) sayaç GÖSTERİLMEZ.
+        setOperationalError(
+          error instanceof Error ? error.message : 'Operasyon özeti yüklenemedi.',
+        )
+      })
+    return () => {
+      active = false
+    }
+  }, [operationalRefreshTick, selectedPeriod, useServerOperationalSnapshot])
   // SATIŞ analitiği: operational ordersState'ten bağımsız, cap'siz dönemsel
   // veri (analytics endpoint'i). Operasyon panelleri ordersState'i kullanmaya
   // devam eder. Loading/error render'da TÜRETİLİR (effect'te senkron setState
@@ -169,6 +227,9 @@ export function DashboardPage({
     () =>
       buildDashboardViewModel({
         orders,
+        operationalSnapshot: useServerOperationalSnapshot
+          ? (operationalSnapshot ?? undefined)
+          : undefined,
         analyticsOrders: analyticsOrders ?? undefined,
         analyticsClaims: analyticsClaims ?? undefined,
         claimsAvailable,
@@ -181,9 +242,11 @@ export function DashboardPage({
       analyticsClaims,
       claimsAvailable,
       lastSyncedAt,
+      operationalSnapshot,
       orders,
       products,
       selectedPeriod,
+      useServerOperationalSnapshot,
     ],
   )
   // İlk açılışta kartların tamamını (Geçen Ay başı → Bugün sonu) kapsayan
@@ -284,6 +347,7 @@ export function DashboardPage({
   // cache bypass, refresh=true). Yalnız açık Yenile aksiyonunda çağrılır.
   const handleRefresh = () => {
     setAnalyticsRefreshTick((tick) => tick + 1)
+    setOperationalRefreshTick((tick) => tick + 1)
     onRefresh()
   }
   const providerHealth = useMemo(
@@ -293,9 +357,17 @@ export function DashboardPage({
         maskedStatus: maskedIntegrationStatus,
         apiDebugLogs,
         orders,
+        providerCounts: providerCounts ?? undefined,
         lastSyncedAt,
       }),
-    [apiDebugLogs, integrationConfig, maskedIntegrationStatus, lastSyncedAt, orders],
+    [
+      apiDebugLogs,
+      integrationConfig,
+      maskedIntegrationStatus,
+      lastSyncedAt,
+      orders,
+      providerCounts,
+    ],
   )
   // configured: kayıtlı (maskeli metadata). connected: son gerçek test/sync başarılı.
   // "bağlantı bulunamadı" YALNIZ hiç configured pazaryeri yoksa gösterilir; kayıtlı
@@ -544,6 +616,20 @@ export function DashboardPage({
           Rapor günü UTC bazında hesaplanır.
         </p>
       </section>
+
+      {operationalError ? (
+        <section className="dashboard-analytics-error" role="alert">
+          <p>Operasyon özeti yüklenemedi.</p>
+          <small>{operationalError}</small>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setOperationalRefreshTick((tick) => tick + 1)}
+          >
+            Tekrar dene
+          </button>
+        </section>
+      ) : null}
 
       {analyticsError ? (
         <section className="dashboard-analytics-error" role="alert">

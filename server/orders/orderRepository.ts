@@ -133,6 +133,36 @@ export async function findOrders(
   }
 }
 
+// Çalışma alanı (Siparişler ekranı + Dashboard operasyon sayaçları) için:
+// hesap-kapsamlı TÜM siparişler, SAYFALAMA YOK.
+//
+// ═══ NEDEN CAP YOK ═══════════════════════════════════════════════════════
+// Görünür liste; sekme sınıflandırıcıları, Sürat doğrulama durumu ve ürün
+// ailesi gruplaması ile belirlenir. Bunların hiçbiri SQL'de İFADE EDİLEMEZ.
+// Önceden bu iş TARAYICIDA yapılıyordu ve tüm tablo ~100 HTTP turuyla
+// indiriliyordu. Şimdi AYNI hesap DB'nin yanında, tek turda yapılır ve
+// tarayıcıya YALNIZ istenen sayfa iner.
+//
+// Deterministik sıralama korunur: projeksiyon yeniden sıralasa da eşit
+// timestamp'li kayıtların sırası istekten isteğe DEĞİŞMEZ.
+export async function findAllOrdersForWorkspace(
+  db: Db,
+  organizationId: string,
+  marketplaceAccountId?: string | null,
+): Promise<Record<string, unknown>[]> {
+  const scope = accountClause(marketplaceAccountId)
+  return db
+    .select()
+    .from(orders)
+    .where(
+      and(
+        eq(orders.organizationId, organizationId),
+        ...(scope ? [scope] : []),
+      ),
+    )
+    .orderBy(desc(orders.orderDate), desc(orders.id))
+}
+
 // Dashboard SATIŞ analitiği için: bir tarih aralığındaki (orderDate) TÜM
 // hesap-kapsamlı siparişleri CAP'SİZ döner (sayfalama YOK). Analitik dönemsel
 // satış hesabı olduğundan arşivli/aktif ayrımı yapmaz (Cancelled/Returned dahil

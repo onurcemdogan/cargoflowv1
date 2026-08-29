@@ -6,7 +6,7 @@ import {
   Filter,
   RefreshCcw,
 } from 'lucide-react'
-import { Fragment, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { ActionResult } from '../components/ActionResult'
 import { OrderDetailDrawer } from '../components/OrderDetailDrawer'
 import { OrdersTable } from '../components/OrdersTable'
@@ -29,11 +29,13 @@ import {
   canMarkHandedToCargo,
   canMarkPrinted,
 } from '../utils/orderStatus'
-import { buildVisibleOrders } from '../utils/orderClassification'
+import { type SameProductFilter } from '../utils/orderProductFamily'
 import {
-  groupOrdersBySameProductFamily,
-  type SameProductFilter,
-} from '../utils/orderProductFamily'
+  buildOrdersWorkspaceResult,
+  ORDERS_QUICK_TABS,
+  type OrdersWorkspaceQuery,
+  type OrdersWorkspaceResult,
+} from '../utils/ordersWorkspaceQuery'
 import {
   resolveLegacyTab,
   statusesForFetch,
@@ -43,8 +45,6 @@ import {
 import { mapMarketplaceStatus } from '../utils/statusPresentation'
 import { formatDisplayDate } from '../utils/formatters'
 import {
-  paginateOrders,
-  sortOrdersForWorkspace,
   visiblePageNumbers,
   type OrdersSortDirection,
   type OrdersSortKey,
@@ -54,7 +54,7 @@ import type {
   OrdersDatePreset,
   OrdersNavigationFilters,
 } from '../utils/ordersNavigation'
-import { buildOrderCountSummary } from '../utils/orderCounts'
+
 import { buildOrdersDateRange } from '../utils/orderDateRange'
 import { SuratCreatePrintControls } from '../components/SuratCreatePrintControls'
 import type { LabelPrintTemplate } from '../utils/labelPrintTemplateRouting'
@@ -64,7 +64,22 @@ import {
 } from '../utils/externalProcessing'
 
 interface OrdersPageProps {
+  /**
+   * KANONİK HAVUZ — görünen sayfa DEĞİL.
+   *
+   * Sunucu modunda bu, kullanıcının bu oturumda GÖRDÜĞÜ siparişlerin
+   * kaydıdır (ziyaret edilen sayfalar). Seçim çözümü ve sipariş detayı
+   * buradan yapılır; tablo `workspace.items` ile çizilir. Legacy modda
+   * tüm localStorage listesidir.
+   */
   orders: CargoOrder[]
+  /**
+   * Sunucuda hesaplanmış çalışma alanı sonucu. VERİLİRSE tam koleksiyon
+   * tarayıcıya inmez; verilmezse (legacy) aynı projeksiyon yerelde çalışır.
+   */
+  workspace?: OrdersWorkspaceResult
+  /** Filtre/sıralama/sayfa değiştiğinde sunucu sorgusunu bildirir. */
+  onWorkspaceQueryChange?: (query: OrdersWorkspaceQuery) => void
   products: CargoProduct[]
   selectedIds: string[]
   onSuratCreateAndPrint?: () => void
@@ -167,14 +182,10 @@ const cargoOptions: CargoFilter[] = ['all', 'Sürat Kargo', 'Bekliyor', 'Hatalı
 // Görünür ana sekmeler: yalnız temel iş akışı. Teknik durumlar "İşlem
 // Durumu" filtresiyle, "Bugün Gelenler" ise tarih filtresiyle erişilir.
 // Mevcut tab key'leri, classifier'ları ve sayaç hesapları korunur.
-const quickTabs: Array<{ key: QuickTab; label: string }> = [
-  { key: 'newOrders', label: 'Yeni Siparişler' },
-  { key: 'labelStage', label: 'Etiket Hazır' },
-  { key: 'handedToCargo', label: 'Kargoya Verildi' },
-  { key: 'delivered', label: 'Teslim Edildi' },
-  { key: 'cancelReturn', label: 'İptal / İade' },
-  { key: 'all', label: 'Tümü' },
-]
+//
+// TEK KAYNAK: liste `ordersWorkspaceQuery` modülünden gelir; sayaçlar da
+// oradan hesaplanır. İki ayrı tanım olsaydı sekme sayacı ile liste kayardı.
+const quickTabs = ORDERS_QUICK_TABS
 
 // "İşlem Durumu" filtresi seçenekleri: teknik yaşam-döngüsü durumlarına
 // (mevcut classifier'lar) kullanıcı dostu etiketlerle erişim.
@@ -203,6 +214,8 @@ const dateRangeOptions: Array<{ key: OrdersDatePreset; label: string }> = [
 
 export function OrdersPage({
   orders,
+  workspace,
+  onWorkspaceQueryChange,
   products,
   selectedIds,
   onSuratCreateAndPrint,
@@ -292,32 +305,41 @@ export function OrdersPage({
     [customEndDate, customStartDate, datePreset],
   )
 
-  const visibleOrdersResult = useMemo(
-    () =>
-      buildVisibleOrders({
-        persistentOrders: orders,
-        selectedTab: activeQuickTab,
-        marketplaceFilter: marketplace,
-        operationStatusFilter: status,
-        cargoFilter: cargo,
-        cityFilter: city,
-        districtFilter: district,
-        multiProductFilter,
-        sameProductFilter,
-        actionFilter,
-        operationTabFilter: operationTab,
-        dateFilter: {
-          preset: datePreset,
-          startTime: dateRange.startTime,
-          endTime: dateRange.endTime,
-          timezone: dateRange.timezone,
-        },
-        searchQuery: query,
-        customerQuery,
-        productQuery,
-        orderNumberQuery,
-        cargoSlipQuery,
-      }),
+  // TEK SORGU NESNESİ. Hem yerel (legacy) projeksiyon hem sunucu isteği
+  // BUNDAN türer; iki tarafın filtre kümesi ayrışamaz.
+  const workspaceQuery = useMemo<OrdersWorkspaceQuery>(
+    () => ({
+      tab: activeQuickTab,
+      operationTab,
+      marketplace,
+      status,
+      cargo,
+      city,
+      district,
+      multiProduct: multiProductFilter,
+      sameProduct: sameProductFilter,
+      action: actionFilter,
+      date: {
+        preset: datePreset,
+        // JSON `Infinity` taşıyamaz: sınırsız uçlar ALAN OLARAK YOK gönderilir.
+        startTime: Number.isFinite(dateRange.startTime)
+          ? dateRange.startTime
+          : undefined,
+        endTime: Number.isFinite(dateRange.endTime)
+          ? dateRange.endTime
+          : undefined,
+        timezone: dateRange.timezone,
+      },
+      search: query,
+      customerQuery,
+      productQuery,
+      orderNumberQuery,
+      cargoSlipQuery,
+      sortKey,
+      sortDirection,
+      page: currentPage,
+      pageSize,
+    }),
     [
       activeQuickTab,
       actionFilter,
@@ -325,6 +347,7 @@ export function OrdersPage({
       cargo,
       cargoSlipQuery,
       city,
+      currentPage,
       customerQuery,
       datePreset,
       dateRange.endTime,
@@ -335,13 +358,40 @@ export function OrdersPage({
       multiProductFilter,
       sameProductFilter,
       orderNumberQuery,
-      orders,
+      pageSize,
       productQuery,
       query,
+      sortDirection,
+      sortKey,
       status,
     ],
   )
-  const filteredOrders = visibleOrdersResult.visibleOrders
+
+  // Sunucu modunda sorgu YUKARI bildirilir; App sayfayı çeker ve `workspace`
+  // prop'u olarak geri verir. Tam koleksiyon tarayıcıya İNMEZ.
+  useEffect(() => {
+    onWorkspaceQueryChange?.(workspaceQuery)
+  }, [onWorkspaceQueryChange, workspaceQuery])
+
+  // Legacy (localStorage) modunda AYNI saf projeksiyon yerelde çalışır.
+  // Sunucu sonucu varken yerel hesap YAPILMAZ (çift iş yok).
+  const localWorkspace = useMemo(
+    () => (workspace ? null : buildOrdersWorkspaceResult(orders, workspaceQuery)),
+    [orders, workspace, workspaceQuery],
+  )
+  const view: OrdersWorkspaceResult = workspace ?? localWorkspace!
+  const pagination = view
+  const tabCounts = view.tabCounts
+  const cityOptions = view.cityOptions
+  const districtOptions = view.districtOptions
+  const listedCounts = view.listedCounts
+  const groupHeaders = useMemo(
+    () =>
+      view.groupHeaders
+        ? new Map(Object.entries(view.groupHeaders))
+        : undefined,
+    [view.groupHeaders],
+  )
 
   const selectedOrders = useMemo(
     () => orders.filter((order) => selectedIds.includes(order.id)),
@@ -382,111 +432,12 @@ export function OrdersPage({
     hasHandedToCargoSelection,
     'Seçimde kargoya verildi yapılabilecek sipariş yok.',
   )
-  const tabCounts = useMemo(
-    () =>
-      Object.fromEntries(
-        quickTabs.map((tab) => [
-          tab.key,
-          buildVisibleOrders({
-            persistentOrders: orders,
-            selectedTab: tab.key,
-            marketplaceFilter: marketplace,
-            operationStatusFilter: status,
-            cargoFilter: cargo,
-            cityFilter: city,
-            districtFilter: district,
-            multiProductFilter,
-            actionFilter,
-            // operationTab (İşlem Durumu) SAYAÇLARA uygulanmaz: ana sekme
-            // sayaçları aşama toplamını gösterir, teknik alt-filtre yalnız
-            // görünür listeyi daraltır.
-            dateFilter: {
-              preset: datePreset,
-              startTime: dateRange.startTime,
-              endTime: dateRange.endTime,
-              timezone: dateRange.timezone,
-            },
-            searchQuery: query,
-            customerQuery,
-            productQuery,
-            orderNumberQuery,
-            cargoSlipQuery,
-          }).visibleOrders.length,
-        ]),
-      ) as Record<QuickTab, number>,
-    [
-      actionFilter,
-      cargo,
-      cargoSlipQuery,
-      city,
-      customerQuery,
-      datePreset,
-      dateRange.endTime,
-      dateRange.startTime,
-      dateRange.timezone,
-      marketplace,
-      district,
-      multiProductFilter,
-      orderNumberQuery,
-      orders,
-      productQuery,
-      query,
-      status,
-    ],
-  )
-  const cityOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(orders.map((order) => String(order.city || '').trim()).filter(Boolean)),
-      ).sort((left, right) => left.localeCompare(right, 'tr-TR')),
-    [orders],
-  )
-  const districtOptions = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          orders
-            .filter(
-              (order) => city === 'all' || String(order.city || '') === city,
-            )
-            .map((order) => String(order.district || '').trim())
-            .filter(Boolean),
-        ),
-      ).sort((left, right) => left.localeCompare(right, 'tr-TR')),
-    [city, orders],
-  )
-  const sortedOrders = useMemo(
-    () => sortOrdersForWorkspace(filteredOrders, sortKey, sortDirection),
-    [filteredOrders, sortDirection, sortKey],
-  )
-  // AYNI ÜRÜN SİPARİŞİ görünümü: filtre AÇIKKEN aynı ürün ailesinin farklı
-  // bedenleri yan yana gelsin diye YENİDEN SIRALANIR. Filtre kapsamı ve
-  // hangi siparişlerin göründüğü DEĞİŞMEZ (yalnız sunum sırası). Gruplama
-  // sayfalamadan ÖNCE yapılır → aile sayfa içinde bölünmez.
-  const sameProductGrouping = useMemo(
-    () =>
-      sameProductFilter === 'all'
-        ? undefined
-        : groupOrdersBySameProductFamily(sortedOrders),
-    [sameProductFilter, sortedOrders],
-  )
-  const displayOrders = sameProductGrouping?.orders ?? sortedOrders
-  const pagination = useMemo(
-    () => paginateOrders(displayOrders, currentPage, pageSize),
-    [currentPage, pageSize, displayOrders],
-  )
   const pageNumbers = useMemo(
     () => visiblePageNumbers(pagination.page, pagination.pageCount),
     [pagination.page, pagination.pageCount],
   )
 
 
-  // Seçim özeti + tek-buton bölümü SuratCreatePrintControls'e taşındı
-  // (davranış aynı). listedCounts burada KALIR: alt sayfalama metni de kullanır.
-  const listedCounts = useMemo(
-    () => buildOrderCountSummary(filteredOrders),
-    [filteredOrders],
-  )
   const activeTabLabel =
     quickTabs.find((tab) => tab.key === activeQuickTab)?.label ?? 'başka'
 
@@ -851,7 +802,7 @@ export function OrdersPage({
 
       <SuratCreatePrintControls
         orders={orders}
-        visibleOrders={filteredOrders}
+        visibleOrders={view.items}
         selectedIds={selectedIds}
         listedCounts={listedCounts}
         activeTabLabel={activeTabLabel}
@@ -910,7 +861,7 @@ export function OrdersPage({
         sortDirection={sortDirection}
         onSortChange={changeSort}
         onDesiChange={onDesiChange}
-        groupHeaders={sameProductGrouping?.headerByOrderId}
+        groupHeaders={groupHeaders}
         emptyMessage={
           orders.length > 0
             ? 'Bu filtreye uygun sipariş bulunamadı.'

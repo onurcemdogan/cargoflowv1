@@ -1,4 +1,4 @@
-import type { CargoOrder, CargoProduct, OrderItem } from '../types/cargoflow'
+import type { CargoOrder, CargoProduct, OrderItem } from '../types/cargoflow.ts'
 import {
   classifyOrderForTabs,
   dashboardOperationStageLabel,
@@ -7,26 +7,26 @@ import {
   resolveDashboardOperationStage,
   resolvePickingStage,
   type DashboardOperationStage,
-} from '../utils/orderClassification'
+} from '../utils/orderClassification.ts'
 import {
   buildProductFamilyIndex,
   type ProductFamilyGroup,
-} from '../utils/orderProductFamily'
-import { resolveOrderActionCapabilities } from '../utils/orderActionCapabilities'
-import { displayOrderNumber } from '../utils/orderDisplay'
-import { resolveProductImageCandidates } from '../utils/productImage'
-import type { OrdersActionFilter } from '../utils/ordersNavigation'
+} from '../utils/orderProductFamily.ts'
+import { resolveOrderActionCapabilities } from '../utils/orderActionCapabilities.ts'
+import { displayOrderNumber } from '../utils/orderDisplay.ts'
+import { resolveProductImageCandidates } from '../utils/productImage.ts'
+import type { OrdersActionFilter } from '../utils/ordersNavigation.ts'
 import {
   DASHBOARD_SALES_REPORTING_TIME_ZONE,
   resolveReportingComparisonRange,
   resolveReportingRange,
   type ReportingPeriodKey,
-} from './reportingRange'
+} from './reportingRange.ts'
 import {
   summarizeAcceptedClaimsForPeriod,
   type AnalyticsClaim,
   type ClaimPeriodAdjustment,
-} from './analyticsClaims'
+} from './analyticsClaims.ts'
 import {
   describeSalesMetric,
   orderDedupeKey,
@@ -37,7 +37,7 @@ import {
   type SalesDateBasis,
   type SalesDisposition,
   type SalesMetricDefinition,
-} from './dashboardSalesMetricDefinition'
+} from './dashboardSalesMetricDefinition.ts'
 
 // Yalnız SATIŞ analitiği rapor günü UTC'dir (Durusoft mutabakatı);
 // operasyon sayaçları ve tarih GÖSTERİMLERİ yerel (Europe/Istanbul)
@@ -304,8 +304,52 @@ export interface DashboardViewModel {
   latestSyncAt?: string
 }
 
+/**
+ * SUNUCUDA HESAPLANMIŞ OPERASYON ANLIK GÖRÜNTÜSÜ.
+ *
+ * ═══ NEDEN VAR ═══════════════════════════════════════════════════════════
+ * Operasyon sayaçları TÜM tenant siparişlerini ister (dönem daraltması yok).
+ * Bu yüzden Dashboard bugüne kadar tarayıcıya tam sipariş tablosunu
+ * indirtiyordu — 10k'da onlarca MB, 20k üstünde AÇIK hata.
+ *
+ * ═══ NEDEN CEVAPLAR DEĞİŞMEZ ═════════════════════════════════════════════
+ * Bu alanlar SQL'de yeniden yazılmadı. Sunucu, AYNI `buildDashboardViewModel`
+ * fonksiyonunu tam sipariş kümesiyle çalıştırır ve YALNIZ bu beş alanı
+ * gönderir. Yani değer, tarayıcının hesaplayacağının BİREBİR aynısıdır;
+ * parite testle de doğrulanır.
+ *
+ * `operationFlow` BURADA YOKTUR: o zaten `operationalSummary`den türetilir,
+ * dolayısıyla otomatik olarak tutarlı kalır.
+ */
+export interface DashboardOperationalSnapshot {
+  operationalSummary: DashboardViewModel['operationalSummary']
+  actionRequired: DashboardActionRequired[]
+  pickingLists: DashboardViewModel['pickingLists']
+  recentOperations: DashboardRecentOperation[]
+  latestSyncAt?: string
+}
+
+/** Tam view-model'den operasyon alanlarını ayıklar (sunucu tarafı üretim). */
+export function extractDashboardOperationalSnapshot(
+  viewModel: DashboardViewModel,
+): DashboardOperationalSnapshot {
+  return {
+    operationalSummary: viewModel.operationalSummary,
+    actionRequired: viewModel.actionRequired,
+    pickingLists: viewModel.pickingLists,
+    recentOperations: viewModel.recentOperations,
+    latestSyncAt: viewModel.latestSyncAt,
+  }
+}
+
 interface BuildDashboardViewModelInput {
   orders: CargoOrder[]
+  /**
+   * Verilirse operasyon alanları BU KAYNAKTAN alınır ve `orders` yalnız
+   * satış/geri-dönük yollar için kullanılır. Böylece tam sipariş tablosu
+   * tarayıcıya İNMEK ZORUNDA KALMAZ.
+   */
+  operationalSnapshot?: DashboardOperationalSnapshot
   // SATIŞ analitiği için cap'siz dönemsel veri (analytics endpoint'i);
   // verilmezse satış alanları da operational orders'tan hesaplanır
   // (geriye dönük davranış). Operasyon sayaçları HER ZAMAN orders'tan.
@@ -344,6 +388,7 @@ interface PeriodTotals {
 
 export function buildDashboardViewModel({
   orders,
+  operationalSnapshot,
   analyticsOrders,
   analyticsClaims,
   claimsAvailable,
@@ -471,7 +516,9 @@ export function buildDashboardViewModel({
   // siparişleri DIŞARIDA BIRAKMIYORDU (processClosed'da yok) → basılmış
   // siparişler toplama listesinde kalıyordu. Yeni kapsam kanonik
   // `isPickingEligible` ile tanımlıdır (bkz. buildPickingLists).
-  const operationalSummary = {
+  // Sunucu anlık görüntüsü VARSA sayaçlar ONDAN gelir. `operationFlow` de
+  // bu nesneden türediği için huni ile kartlar ASLA ayrışamaz.
+  const operationalSummary = operationalSnapshot?.operationalSummary ?? {
     openOperations,
     barcodeWaiting: stageCounts.barcodeWaiting,
     labelReady: stageCounts.labelReady,
@@ -546,7 +593,8 @@ export function buildDashboardViewModel({
       (order) => String(order.marketplace || 'Bilinmeyen').trim() || 'Bilinmeyen',
     ),
     topProducts: buildTopProducts(periodOrders, products).slice(0, 10),
-    actionRequired: buildActionRequired(classified),
+    actionRequired:
+      operationalSnapshot?.actionRequired ?? buildActionRequired(classified),
     operationFlow: [
       {
         key: 'open',
@@ -585,9 +633,15 @@ export function buildDashboardViewModel({
         filterTarget: 'delivered',
       },
     ],
-    pickingLists: buildPickingLists(uniqueOrders, products),
-    recentOperations: buildRecentOperations(uniqueOrders, products).slice(0, 10),
-    latestSyncAt: latestSyncAt ?? resolveLatestSyncAt(uniqueOrders),
+    pickingLists:
+      operationalSnapshot?.pickingLists ?? buildPickingLists(uniqueOrders, products),
+    recentOperations:
+      operationalSnapshot?.recentOperations ??
+      buildRecentOperations(uniqueOrders, products).slice(0, 10),
+    latestSyncAt:
+      latestSyncAt ??
+      operationalSnapshot?.latestSyncAt ??
+      resolveLatestSyncAt(uniqueOrders),
   }
 }
 

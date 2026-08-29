@@ -1,5 +1,5 @@
-import type { SuratZplAnalysis } from '../types/cargoflow'
-import { normalizeSuratBarcodeRawZpl } from './zpl'
+import type { SuratZplAnalysis } from '../types/cargoflow.ts'
+import { normalizeSuratBarcodeRawZpl } from './zpl.ts'
 
 export function analyzeSuratZpl(value: unknown): SuratZplAnalysis {
   const zpl = normalizeSuratBarcodeRawZpl(value)

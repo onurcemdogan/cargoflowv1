@@ -1,10 +1,10 @@
-import type { CargoOrder, MarketplaceStatus, OperationStatus } from '../types/cargoflow'
-import { verifySuratShipment } from './suratVerification'
+import type { CargoOrder, MarketplaceStatus, OperationStatus } from '../types/cargoflow.ts'
+import { verifySuratShipment } from './suratVerification.ts'
 import {
   isPreassignedAwaitingAcceptance,
   resolveSuratPrintEligibility,
-} from './suratPrintEligibility'
-import { resolveOrderStatus } from './shipmentStatus'
+} from './suratPrintEligibility.ts'
+import { resolveOrderStatus } from './shipmentStatus.ts'
 
 export const ACTIVE_MARKETPLACE_STATUSES: MarketplaceStatus[] = [
   'Created',

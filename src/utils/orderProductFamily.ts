@@ -1,9 +1,9 @@
-import type { CargoOrder, OrderItem } from '../types/cargoflow'
+import type { CargoOrder, OrderItem } from '../types/cargoflow.ts'
 import {
   buildRawLineIndex,
   findRawLineForItem,
   resolveOrderItemSize,
-} from './orderItemSize'
+} from './orderItemSize.ts'
 
 /**
  * "Aynı Ürün Siparişi" filtre değeri.

@@ -121,6 +121,10 @@ import {
 import type { AuditLogService } from './auditLogService'
 import { apiDebugService } from './apiDebugService'
 import { dedupeOrdersByPackageIdentity } from '../utils/orderCounts'
+import type {
+  OrdersWorkspaceQuery,
+  OrdersWorkspaceResult,
+} from '../utils/ordersWorkspaceQuery'
 import {
   resolveTotalPages,
   validateOrderPageMeta,
@@ -306,6 +310,11 @@ export class OrderWorkflowService {
   private externalProcessingState: ExternalProcessingState = { entries: {} }
   // Escszamanli siparis yuklemelerinde son yazan kazanir (stale yanit ezmesin).
   private ordersLoadGeneration = 0
+  // Calisma alani istegi nesli — bayat yanit yeni sonucu EZEMEZ.
+  private ordersWorkspaceGeneration = 0
+  // Kanonik havuz: gorulen siparisler id -> kayit. Secim cozumu ve siparis
+  // detayi buradan yapilir; sayfa degisimi secimi KAYBETTIRMEZ.
+  private canonicalOrderPool = new Map<string, CargoOrder>()
 
   private authOrdersMeta: { total: number; page: number; pageSize: number } = {
     total: 0,
@@ -604,6 +613,94 @@ export class OrderWorkflowService {
       })
     }
     return orders
+  }
+
+  /**
+   * SUNUCU TARAFI CALISMA ALANI SAYFASI — Siparisler ekraninin tek yolu.
+   *
+   * ═══ NEDEN ═════════════════════════════════════════════════════════════
+   * `loadOrdersFromServer()` TUM tabloyu ~100 HTTP turuyla indiriyordu ve
+   * 20k'nin uzerinde ACIKCA hata veriyordu. Bu metod YALNIZ istenen sayfayi,
+   * sekme sayaclarini ve filtre seceneklerini ceker; tam koleksiyon
+   * tarayiciya INMEZ.
+   *
+   * ═══ BAYAT YANIT KORUMASI ══════════════════════════════════════════════
+   * Her istek bir nesil damgasi alir. Hizli yazilan bir filtre dizisinde
+   * ONCE baslayip SONRA biten istek, daha yeni istegin sonucunu EZEMEZ:
+   * `stale` bayragiyla doner ve cagiran onu ATAR.
+   */
+  async fetchOrdersWorkspace(
+    query: OrdersWorkspaceQuery,
+  ): Promise<{ workspace: OrdersWorkspaceResult; stale: boolean }> {
+    this.ordersWorkspaceGeneration += 1
+    const generation = this.ordersWorkspaceGeneration
+    const params = new URLSearchParams()
+    params.set('tab', query.tab)
+    params.set('operationTab', query.operationTab)
+    params.set('marketplace', String(query.marketplace))
+    params.set('status', String(query.status))
+    params.set('cargo', String(query.cargo))
+    params.set('city', query.city)
+    params.set('district', query.district)
+    params.set('multiProduct', query.multiProduct)
+    params.set('sameProduct', query.sameProduct)
+    params.set('action', query.action)
+    params.set('datePreset', query.date.preset)
+    if (Number.isFinite(query.date.startTime)) {
+      params.set('startTime', String(query.date.startTime))
+    }
+    if (Number.isFinite(query.date.endTime)) {
+      params.set('endTime', String(query.date.endTime))
+    }
+    if (query.date.timezone) params.set('timezone', query.date.timezone)
+    if (query.search) params.set('search', query.search)
+    if (query.customerQuery) params.set('customerQuery', query.customerQuery)
+    if (query.productQuery) params.set('productQuery', query.productQuery)
+    if (query.orderNumberQuery) {
+      params.set('orderNumberQuery', query.orderNumberQuery)
+    }
+    if (query.cargoSlipQuery) params.set('cargoSlipQuery', query.cargoSlipQuery)
+    params.set('sortKey', query.sortKey)
+    params.set('sortDirection', query.sortDirection)
+    params.set('page', String(query.page))
+    params.set('pageSize', String(query.pageSize))
+
+    const response = await fetch(`/api/orders/workspace?${params.toString()}`, {
+      credentials: 'include',
+    })
+    if (!response.ok) {
+      throw new Error(`Siparisler yuklenemedi (HTTP ${response.status}).`)
+    }
+    const payload = (await response.json()) as {
+      workspace?: OrdersWorkspaceResult
+      externalProcessing?: ExternalProcessingState
+    }
+    if (payload.externalProcessing) {
+      this.externalProcessingState = payload.externalProcessing
+    }
+    const workspace = payload.workspace
+    if (!workspace || !Array.isArray(workspace.items)) {
+      throw new Error('Siparisler yuklenemedi: gecersiz calisma alani yaniti.')
+    }
+    // Sayfadaki kayitlar KANONIK havuza yazilir: baska sayfada secilen bir
+    // siparis, sayfa degisse bile toplu islemde COZULEBILIR kalir.
+    for (const order of workspace.items) {
+      this.canonicalOrderPool.set(String(order.id), order)
+    }
+    return {
+      workspace,
+      stale: generation !== this.ordersWorkspaceGeneration,
+    }
+  }
+
+  /** Bu oturumda GORULEN tum siparisler (ziyaret edilen sayfalarin birlesimi). */
+  getCanonicalOrderPool(): CargoOrder[] {
+    return [...this.canonicalOrderPool.values()]
+  }
+
+  /** Hesap degisiminde havuz TAMAMEN bosaltilir (capraz hesap sizintisi YOK). */
+  resetCanonicalOrderPool(): void {
+    this.canonicalOrderPool.clear()
   }
 
   // TEK sayfa ceker. Hesap/organization kapsami BACKEND'de cozulur; istemci
