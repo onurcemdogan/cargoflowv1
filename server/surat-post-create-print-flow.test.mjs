@@ -241,7 +241,21 @@ test('PCP-10: PRINTED sipariş → create YOK, reprint VAR', async () => {
 
 // ---------------------------------------------------------------- 11 + 12
 test('PCP-11/12: baskı motoru KALICI iframe\'i yeniden kullanır; window.open YOK', () => {
-  const src = readFileSync(join(here, '..', 'src/utils/browserLabelPrint.ts'), 'utf8')
+  // ═══ BASKI YIĞINI İKİ MODÜLE AYRILDI ═════════════════════════════════
+  //
+  // `prepareSuratPrintHostSynchronously` kullanıcı jestinde SENKRON çalışmak
+  // zorundadır, bu yüzden `App` onu STATİK import eder. Aynı dosyada kalınca
+  // JsBarcode + qrcode-generator + tüm render yığını da ilk yüke giriyordu
+  // (ölçüldü: 685 kB → 575 kB fark). Host yaşam döngüsü `suratPrintHost`e
+  // taşındı; render `browserLabelPrint`te kaldı.
+  //
+  // DEĞİŞMEZLER AYNEN GEÇERLİDİR ve artık İKİ dosyanın BİRLEŞİMİ üzerinde
+  // ölçülür: böylece kod ileride tekrar bölünse bile bu kontrol kör kalmaz.
+  const renderer = readFileSync(
+    join(here, '..', 'src/utils/browserLabelPrint.ts'), 'utf8',
+  )
+  const host = readFileSync(join(here, '..', 'src/utils/suratPrintHost.ts'), 'utf8')
+  const src = `${renderer}\n${host}`
   assert.equal(/window\.open\(/.test(src), false, 'window.open kullanılmaz')
   // Tek host: ensurePersistentPrintFrame hem hazırlıkta hem baskıda çağrılır ve
   // mevcut frame'i YENİDEN KULLANIR.
@@ -255,6 +269,15 @@ test('PCP-11/12: baskı motoru KALICI iframe\'i yeniden kullanır; window.open Y
   assert.equal(
     (src.match(/document\.createElement\('iframe'\)/g) ?? []).length, 1,
     'iframe YALNIZ tek yerde oluşturulur',
+  )
+  // Tekil frame durumu TEK sahibe aittir: renderer kendi kopyasını TUTMAZ.
+  assert.equal(
+    (renderer.match(/let persistentPrintFrame/g) ?? []).length, 0,
+    'renderer ikinci bir iframe durumu tutuyor',
+  )
+  assert.equal(
+    (host.match(/let persistentPrintFrame/g) ?? []).length, 1,
+    'host tekil iframe durumunun TEK sahibi olmalı',
   )
 })
 

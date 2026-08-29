@@ -1,10 +1,18 @@
 import type { PrintInput, PrintProvider, PrintResult } from './PrintProvider'
 import { defaultLabelTemplate } from '../../services/integrationConfigService'
-import {
-  BrowserLabelPrintError,
-  printCleanLabelDocument,
-} from '../../utils/browserLabelPrint'
-import { printOfficialSuratLabels } from '../../services/officialSuratPrintRunner'
+// ═══ RENDER YIGINI TALEP UZERINE ════════════════════════════════════════
+//
+// OLCULDU: `App` → `appServices` → bu saglayici → `officialSuratPrintRunner`
+// → `browserLabelPrint` zinciri, JsBarcode + qrcode-generator + ~62 kB
+// etiket kodunu ILK YUKE sokuyordu. Panoyu acan kullanici hic basmayacagi
+// yigini indiriyordu.
+//
+// Tip bilgisi statik kalir (silinir, calisma zamanina TASINMAZ); gercek
+// moduller YALNIZ baski aninda yuklenir.
+import type { BrowserLabelPrintError as BrowserLabelPrintErrorType } from '../../utils/browserLabelPrint'
+
+const loadLabelRenderer = () => import('../../utils/browserLabelPrint')
+const loadOfficialRunner = () => import('../../services/officialSuratPrintRunner')
 import { buildBatchPrintableJob } from '../../utils/printableLabelJob'
 import { NOT_IN_PRINT_DOCUMENT_MESSAGE } from '../../utils/suratPrintFailureReasons'
 
@@ -125,6 +133,13 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
       try {
         // ŞABLON SEÇİMİ: iki yol YAN YANA yaşar. Varsayılan (ve seçim
         // verilmediğinde) mevcut CargoFlow HTML yoludur — davranış değişmez.
+        //
+        // Moduller BURADA cozulur; cagri ifadeleri SADE kalir. Cagriyi
+        // `(await loadX()).fn(...)` biciminde yazmak, yollarin birbirine
+        // sizmadigini olcen kontrolleri (LIVE-21/22) korlestiriyordu:
+        // dal sinirlari cagri ifadesinden bulunuyor.
+        const { printOfficialSuratLabels } = await loadOfficialRunner()
+        const { printCleanLabelDocument } = await loadLabelRenderer()
         const browserPrintDebug =
           input.labelPrintTemplate === 'surat_official_zpl'
             ? (await printOfficialSuratLabels(printableOrders)).debug
@@ -151,7 +166,11 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
         }
       } catch (error) {
         const browserPrintDebug =
-          error instanceof BrowserLabelPrintError ? error.debug : undefined
+          // Sinif calisma zamaninda gerekir; modul zaten yuklenmistir
+          // (hata ancak baski denendikten sonra olusabilir).
+          error instanceof (await loadLabelRenderer()).BrowserLabelPrintError
+            ? (error as BrowserLabelPrintErrorType).debug
+            : undefined
         const reason =
           error instanceof Error
             ? error.message

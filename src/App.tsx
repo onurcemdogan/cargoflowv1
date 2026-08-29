@@ -1,17 +1,43 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { AppShell } from './components/AppShell'
-import {
-  PrintPreviewModal,
-  type PrintPreviewMode,
-} from './components/PrintPreviewModal'
-import { AuditLogsPage } from './pages/AuditLogsPage'
-import { CargoOperationsPage } from './pages/CargoOperationsPage'
+import { RouteSkeleton } from './components/RouteSkeleton'
+import type { PrintPreviewMode } from './components/PrintPreviewModal'
+
+// Baski onizlemesi YALNIZ kullanici baski/onizleme actiginda gerekir.
+// Ilk yukte tasimak, Panoyu acan herkese barkod/QR/ZPL yiginini indirtirdi.
+const PrintPreviewModal = lazy(async () => ({
+  default: (await import('./components/PrintPreviewModal')).PrintPreviewModal,
+}))
+// ═══ ROTA BAZLI KOD BOLME ════════════════════════════════════════════════
+//
+// OLCULDU (once): tek parca `index.js` = 815.26 kB / 232.21 kB gzip.
+// Butun sayfalar — nadiren acilan Entegrasyonlar (1437 satir) ve Hata
+// Ayiklama (929 satir) dahil — ILK YUKTEYDI. Kullanici Panoyu acmak icin
+// hicbir zaman gormeyecegi ekranlarin kodunu indirip ayristiriyordu.
+//
+// Panel ve Siparisler ILK EKRANLARDIR; onlar statik kalir (lazy yapmak
+// gorunur bir bosluk yaratirdi). Geri kalan rotalar TALEP UZERINE gelir.
 import { DashboardPage } from './pages/DashboardPage'
-import { IntegrationsPage } from './pages/IntegrationsPage'
-import { IntegrationDebugPage } from './pages/IntegrationDebugPage'
-import { LabelTemplatesPage } from './pages/LabelTemplatesPage'
 import { OrdersPage, type OrdersFetchOptions } from './pages/OrdersPage'
-import { ProductsPage } from './pages/ProductsPage'
+
+const AuditLogsPage = lazy(async () => ({
+  default: (await import('./pages/AuditLogsPage')).AuditLogsPage,
+}))
+const CargoOperationsPage = lazy(async () => ({
+  default: (await import('./pages/CargoOperationsPage')).CargoOperationsPage,
+}))
+const IntegrationsPage = lazy(async () => ({
+  default: (await import('./pages/IntegrationsPage')).IntegrationsPage,
+}))
+const IntegrationDebugPage = lazy(async () => ({
+  default: (await import('./pages/IntegrationDebugPage')).IntegrationDebugPage,
+}))
+const LabelTemplatesPage = lazy(async () => ({
+  default: (await import('./pages/LabelTemplatesPage')).LabelTemplatesPage,
+}))
+const ProductsPage = lazy(async () => ({
+  default: (await import('./pages/ProductsPage')).ProductsPage,
+}))
 import { apiDebugService } from './services/apiDebugService'
 import {
   auditLogService,
@@ -19,10 +45,19 @@ import {
   workflowService,
 } from './services/appServices'
 import type { MaskedIntegrationStatus } from './services/integrationConfigService'
-import {
-  buildSuratZplDownload,
-  suratPrintTrace,
-} from './utils/browserLabelPrint'
+// ═══ BASKI YIGINI TALEP UZERINE ══════════════════════════════════════════
+// `browserLabelPrint` JsBarcode ve qrcode-generator'i cekiyor ve YALNIZ
+// baski/indirme eylemlerinde gerekiyor. Statik import, Panoyu acan her
+// kullaniciya bu yigini indirtiyordu.
+//
+// `suratPrintTrace` teshis kaydidir: modul henuz yuklenmediyse cagri
+// SESSIZCE dusmez, modul yuklenip kayit YAZILIR (sira korunur).
+const loadPrintStack = () => import('./utils/browserLabelPrint')
+function suratPrintTrace(...args: Parameters<
+  Awaited<ReturnType<typeof loadPrintStack>>['suratPrintTrace']
+>): void {
+  void loadPrintStack().then((module) => module.suratPrintTrace(...args))
+}
 import { resolveSuratPrintEligibility } from './utils/suratPrintEligibility'
 import { runSuratCreateAndPrint } from './services/suratCreateAndPrintOrchestrator'
 import {
@@ -39,7 +74,9 @@ import {
   buildPrintAdapter,
 } from './services/suratOrchestratorDeps'
 import { resolveSelectionAfterBatch } from './utils/selectedOrderSnapshot'
-import { prepareSuratPrintHostSynchronously } from './utils/browserLabelPrint'
+// Host SENKRON olmak zorunda; ama artik AGIR renderer'i getirmeyen
+// kucuk modulden gelir (JsBarcode/qrcode ilk yukte DEGIL).
+import { prepareSuratPrintHostSynchronously } from './utils/suratPrintHost'
 import { resolveSuratPhaseText } from './utils/suratPhaseText'
 import { PRINT_HOST_UNAVAILABLE_MESSAGE } from './utils/suratPrintFailureReasons'
 import {
@@ -821,6 +858,7 @@ function App() {
     const selectedDownloadOrders = effectiveOrders.filter((order) =>
       ids.includes(order.id),
     )
+    const { buildSuratZplDownload } = await loadPrintStack()
     const download = buildSuratZplDownload(
       selectedDownloadOrders,
       productsState.products,
@@ -1624,6 +1662,7 @@ function App() {
       ) : null}
 
       {activePage === 'products' ? (
+        <Suspense fallback={<RouteSkeleton />}>
         <ProductsPage
           products={products}
           orders={orders}
@@ -1633,9 +1672,11 @@ function App() {
           busy={productsState.productsLoading}
           onFetchProducts={() => handleFetchProducts()}
         />
+        </Suspense>
       ) : null}
 
       {activePage === 'cargo' ? (
+        <Suspense fallback={<RouteSkeleton />}>
         <CargoOperationsPage
           orders={orders}
           selectedIds={selectedIds}
@@ -1647,18 +1688,22 @@ function App() {
           onPrintLabels={handleMarkPrinted}
           onDownloadZpl={handleDownloadZpl}
         />
+        </Suspense>
       ) : null}
 
       {activePage === 'labelTemplates' ? (
+        <Suspense fallback={<RouteSkeleton />}>
         <LabelTemplatesPage
           template={labelTemplate}
           result={pageResult}
           orders={orders}
           onSave={handleSaveLabelTemplate}
         />
+        </Suspense>
       ) : null}
 
       {activePage === 'integrations' ? (
+        <Suspense fallback={<RouteSkeleton />}>
         <IntegrationsPage
           key={`integrations-${integrationConfigRevision}`}
           config={integrationConfig}
@@ -1673,21 +1718,27 @@ function App() {
           onFetchOrders={handleIntegrationFetchOrders}
           onFetchProducts={handleIntegrationFetchProducts}
         />
+        </Suspense>
       ) : null}
 
       {activePage === 'debug' ? (
+        <Suspense fallback={<RouteSkeleton />}>
         <IntegrationDebugPage
           logs={apiDebugLogs}
           orders={orders}
           onClear={handleClearApiDebugLogs}
         />
+        </Suspense>
       ) : null}
 
       {activePage === 'logs' ? (
+        <Suspense fallback={<RouteSkeleton />}>
         <AuditLogsPage logs={logs} onClearLogs={handleClearLogs} />
+        </Suspense>
       ) : null}
 
       {printPreview ? (
+        <Suspense fallback={null}>
         <PrintPreviewModal
           key={`${printPreview.mode}:${printPreview.orderIds.join(',')}`}
           orders={printPreview.orderIds
@@ -1711,6 +1762,7 @@ function App() {
             )
           }
         />
+        </Suspense>
       ) : null}
     </AppShell>
   )

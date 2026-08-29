@@ -6894,3 +6894,50 @@ button:disabled {
   font-size: 10px;
 }
 .orders-group-header small { color: var(--muted); font-size: 8.5px; }
+
+/* ═══ ROTA İSKELETİ — talep üzerine gelen rota kodu için yerel bekleme ══ */
+.route-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 0;
+}
+.route-skeleton-bar {
+  height: 18px;
+  border-radius: 8px;
+  background: linear-gradient(
+    90deg,
+    var(--surface-2, #eef1f5) 25%,
+    var(--surface-3, #e3e8ef) 37%,
+    var(--surface-2, #eef1f5) 63%
+  );
+  background-size: 400% 100%;
+  animation: route-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+.route-skeleton-title { height: 28px; width: 42%; }
+.route-skeleton-short { width: 60%; }
+.route-skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 16px;
+}
+.route-skeleton-card {
+  height: 96px;
+  border-radius: 12px;
+  background: linear-gradient(
+    90deg,
+    var(--surface-2, #eef1f5) 25%,
+    var(--surface-3, #e3e8ef) 37%,
+    var(--surface-2, #eef1f5) 63%
+  );
+  background-size: 400% 100%;
+  animation: route-skeleton-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes route-skeleton-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-skeleton-bar,
+  .route-skeleton-card { animation: none; }
+}

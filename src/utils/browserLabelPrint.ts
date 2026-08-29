@@ -1,5 +1,10 @@
 import JsBarcode from 'jsbarcode'
 import {
+  ensurePersistentPrintFrame,
+  suratPrintTrace,
+  writePrintDocument,
+} from './suratPrintHost'
+import {
   applyScalableQuietZone,
   CODE128_QUIET_ZONE_MODULES,
 } from './barcodeQuietZone'
@@ -21,7 +26,6 @@ import {
   resolveSuratPrintEligibility,
 } from './suratPrintEligibility'
 import { formatDesi } from './desi'
-import { PRINT_HOST_UNAVAILABLE_MESSAGE } from './suratPrintFailureReasons'
 import {
   buildProductMetaText,
   buildProductTitleText,
@@ -435,144 +439,23 @@ export class BrowserLabelPrintError extends Error {
 
 let printExecutionCounter = 0
 let activePrintExecution: string | null = null
-let persistentPrintFrame: HTMLIFrameElement | null = null
-
-export function suratPrintTrace(
-  event: string,
-  details: Record<string, unknown> = {},
-): void {
-  try {
-    // Ayrıntılı baskı izleri (PRINT_BUTTON_CLICK / PRINT_ELIGIBILITY_RESULT vb.)
-    // YALNIZ non-production'da konsola yazılır. Bu izler yalnız güvenli status/
-    // boolean/tanımlayıcı metadata taşır; ham ZPL, müşteri adı/adres/telefon/
-    // e-posta veya secret HİÇBİR ortamda loglanmaz.
-    const isProduction =
-      typeof import.meta !== 'undefined' &&
-      (import.meta as { env?: { PROD?: boolean } }).env?.PROD === true
-    if (isProduction) return
-    console.info(`[surat-print] ${new Date().toISOString()} ${event}`, details)
-  } catch {
-    // console erişilemiyorsa akışı bozma
-  }
-}
-
-function ensurePersistentPrintFrame(executionId: string): HTMLIFrameElement {
-  if (
-    persistentPrintFrame &&
-    persistentPrintFrame.isConnected !== false &&
-    persistentPrintFrame.contentWindow
-  ) {
-    suratPrintTrace('IFRAME_REUSED', { executionId })
-    return persistentPrintFrame
-  }
-  const iframe = document.createElement('iframe')
-  iframe.setAttribute('aria-hidden', 'true')
-  iframe.setAttribute('data-surat-print-frame', 'persistent')
-  iframe.style.position = 'fixed'
-  iframe.style.left = '0'
-  iframe.style.bottom = '0'
-  iframe.style.width = '0'
-  iframe.style.height = '0'
-  iframe.style.border = '0'
-  iframe.style.visibility = 'hidden'
-  document.body.appendChild(iframe)
-  persistentPrintFrame = iframe
-  suratPrintTrace('WINDOW_REFERENCE_CREATED', {
-    executionId,
-    mode: 'persistent-iframe',
-  })
-  return iframe
-}
-
-// ---------------------------------------------------------------------------
-// PRINT HOST'U İLK CLICK STACK'İNDE HAZIRLA
+// ═══ HOST YAŞAM DÖNGÜSÜ AYRI MODÜLDE ════════════════════════════════════
 //
-// Bu projede baskı motoru KALICI GİZLİ IFRAME'dir; window.open KULLANILMAZ,
-// bu yüzden klasik popup engeli SÖZ KONUSU DEĞİLDİR. Yine de host'un gerçekten
-// oluşturulabildiği, create mutasyonuna BAŞLAMADAN ÖNCE ve ilk await'ten ÖNCE
-// senkron olarak doğrulanır: host kurulamıyorsa Sürat gönderisi OLUŞTURULMAZ,
-// hiçbir statü/sayaç değişmez.
-//
-// Aynı iframe daha sonra printCleanLabelDocument tarafından YENİDEN KULLANILIR;
-// ikinci bir pencere/iframe AÇILMAZ.
-// ---------------------------------------------------------------------------
-export interface SuratPrintHost {
-  /** Host hazır mı? false ise create BAŞLATILMAMALIDIR. */
-  ready: boolean
-  /** Güvenli kullanıcı mesajı (PII/ZPL içermez). */
-  reason?: string
-  /** Baskı yapılmadan çıkılırsa host içeriğini temizler. */
-  release: () => void
-}
+// `prepareSuratPrintHostSynchronously` kullanıcı jestinde SENKRON çalışmak
+// zorundadır ve bu yüzden `App` tarafından STATİK import edilir. Aynı
+// dosyada kalsaydı JsBarcode + qrcode-generator + tüm render yığını da ilk
+// yüke girerdi. Tekil iframe durumu ARTIK `suratPrintHost` içindedir;
+// buradan yeniden dışa aktarılır, ikinci bir kopya YOKTUR.
+export {
+  cancelReservedCleanLabelPrintWindow,
+  ensurePersistentPrintFrame,
+  prepareSuratPrintHostSynchronously,
+  reserveCleanLabelPrintWindow,
+  suratPrintTrace,
+  writePrintDocument,
+  type SuratPrintHost,
+} from './suratPrintHost'
 
-const PRINT_HOST_PLACEHOLDER =
-  '<!doctype html><html lang="tr"><head><meta charset="utf-8">' +
-  '<title>Etiketler hazırlanıyor…</title></head>' +
-  '<body><p>Etiketler hazırlanıyor…</p></body></html>'
-
-export function prepareSuratPrintHostSynchronously(): SuratPrintHost {
-  const noop = () => {}
-  if (typeof document === 'undefined') {
-    suratPrintTrace('PRINT_HOST_UNAVAILABLE', { reason: 'no-document' })
-    return {
-      ready: false,
-      reason: PRINT_HOST_UNAVAILABLE_MESSAGE,
-      release: noop,
-    }
-  }
-  try {
-    const iframe = ensurePersistentPrintFrame('host-prepare')
-    const frameDocument = iframe.contentDocument
-    if (!frameDocument) {
-      suratPrintTrace('PRINT_HOST_UNAVAILABLE', { reason: 'no-content-document' })
-      return {
-        ready: false,
-        reason: PRINT_HOST_UNAVAILABLE_MESSAGE,
-        release: noop,
-      }
-    }
-    writePrintDocument(frameDocument, PRINT_HOST_PLACEHOLDER)
-    suratPrintTrace('PRINT_HOST_READY', { mode: 'persistent-iframe' })
-    return {
-      ready: true,
-      release: () => {
-        try {
-          const target = iframe.contentDocument
-          if (target) writePrintDocument(target, PRINT_HOST_PLACEHOLDER)
-          suratPrintTrace('PRINT_HOST_RELEASED', { printed: false })
-        } catch {
-          // temizlenemezse akışı bozma
-        }
-      },
-    }
-  } catch {
-    suratPrintTrace('PRINT_HOST_UNAVAILABLE', { reason: 'iframe-create-failed' })
-    return {
-      ready: false,
-      reason: PRINT_HOST_UNAVAILABLE_MESSAGE,
-      release: noop,
-    }
-  }
-}
-
-// Geriye dönük uyumluluk: popup rezervasyonu kaldırıldı. Bu fonksiyonlar
-// artık pencere AÇMAZ ve KAPATMAZ; yalnız tanı logu üretir.
-export function reserveCleanLabelPrintWindow(): Window | null {
-  suratPrintTrace('WINDOW_RESERVED', {
-    deprecated: true,
-    mode: 'persistent-iframe',
-    note: 'Popup rezervasyonu kaldırıldı; kalıcı iframe kullanılıyor.',
-  })
-  return null
-}
-
-export function cancelReservedCleanLabelPrintWindow(): void {
-  suratPrintTrace('CANCEL_RESERVED_CALLED', {
-    deprecated: true,
-    action: 'none',
-    note: 'Kapatılacak popup yok; kalıcı iframe DOM\'da bırakılır.',
-  })
-}
 
 export async function printCleanLabelDocument(
   orders: CargoOrder[],
@@ -1552,11 +1435,6 @@ function maskPhone(phone: string): string {
   return `${normalized.slice(0, 3)}*****${normalized.slice(-2)}`
 }
 
-function writePrintDocument(targetDocument: Document, html: string): void {
-  targetDocument.open()
-  targetDocument.write(html)
-  targetDocument.close()
-}
 
 /**
  * BASKI ÖNCESİ SAYFA KARDİNALİTE KİLİDİ + GÖRÜNTÜ YÜKLEME BEKLEMESİ.

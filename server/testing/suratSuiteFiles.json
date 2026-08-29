@@ -205,5 +205,6 @@
   "server/auto-label-acceptance-flow.test.mjs",
   "server/blocked-revival-policy-flow.test.mjs",
   "server/queue-normalization-flow.test.mjs",
+  "server/performance-acceptance-flow.test.mjs",
   "server/canary-candidate-selector-flow.test.mjs"
 ]
