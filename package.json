@@ -71,8 +71,10 @@
     "auto-label:stale:inspect": "node server/shipments/staleJobRecoveryCli.ts",
     "auto-label:stale:recover": "node server/shipments/staleJobRecoveryCli.ts --recover",
     "auto-label:canary:observe": "node server/shipments/canaryObserverCli.ts",
-    "test:auto-label:acceptance": "node --test server/auto-label-acceptance-flow.test.mjs server/blocked-revival-policy-flow.test.mjs server/carrier-boundary-crash-matrix-flow.test.mjs server/stale-preparing-recovery-flow.test.mjs server/worker-bootstrap-dependency-flow.test.mjs server/production-runtime-worker-flow.test.mjs server/worker-preparation-parity-flow.test.mjs",
-    "auto-label:revival:inspect": "node server/shipments/revivalInspectorCli.ts"
+    "test:auto-label:acceptance": "node --test server/auto-label-acceptance-flow.test.mjs server/blocked-revival-policy-flow.test.mjs server/queue-normalization-flow.test.mjs server/carrier-boundary-crash-matrix-flow.test.mjs server/stale-preparing-recovery-flow.test.mjs server/worker-bootstrap-dependency-flow.test.mjs server/production-runtime-worker-flow.test.mjs server/worker-preparation-parity-flow.test.mjs",
+    "auto-label:revival:inspect": "node server/shipments/revivalInspectorCli.ts",
+    "auto-label:queue-normalize:inspect": "node server/shipments/queueNormalizerCli.ts",
+    "auto-label:queue-normalize:apply": "node server/shipments/queueNormalizerCli.ts --apply"
   },
   "dependencies": {
     "@types/jsbarcode": "^3.11.4",
