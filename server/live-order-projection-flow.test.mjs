@@ -208,11 +208,11 @@ test('frontend: reconstructed order → 727 display, arama, capability, projecti
 test('Dashboard Yenile: sync yok, indirekt useEffect sync yok, analytics local', () => {
   const appSrc = readFileSync(join(root, 'src/App.tsx'), 'utf8')
   assert.match(appSrc, /onRefresh=\{handleReloadOrders\}/, 'Dashboard onRefresh = DB reload')
-  // handleReloadOrders + tüm useEffect'ler yalnız loadOrdersFromServer (GET) kullanır;
-  // hiçbir effect handleFetchOrders/sync tetiklemez.
+  // handleReloadOrders + tüm useEffect'ler yalnız YEREL okuma yolunu (GET)
+  // kullanır; hiçbir effect handleFetchOrders/sync tetiklemez.
   const reloadIdx = appSrc.indexOf('async function handleReloadOrders')
   const reloadWindow = appSrc.slice(reloadIdx, reloadIdx + 1500)
-  assert.match(reloadWindow, /loadOrdersFromServer/)
+  assert.match(reloadWindow, /loadOrdersWorkspace\(/)
   assert.equal(/orders\/sync/.test(reloadWindow), false)
   // handleFetchOrders (sync) yalnız config-save ve OrdersPage onFetchOrders'ta.
   assert.match(appSrc, /onFetchOrders=\{\(options\) => handleFetchOrders/)

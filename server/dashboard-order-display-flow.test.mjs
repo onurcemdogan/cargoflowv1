@@ -153,21 +153,24 @@ test('Faz 2: Dashboard Yenile /api/orders/sync çağırmaz; Siparişler Şimdi Y
   // Dashboard onRefresh yerel DB reload'a bağlı (marketplace sync değil).
   assert.match(appSrc, /onRefresh=\{handleReloadOrders\}/, 'Dashboard onRefresh = handleReloadOrders (DB reload)')
 
-  // handleReloadOrders yalnız DB'den okur (loadOrdersFromServer), sync yapmaz.
+  // handleReloadOrders yalnız DB'den okur (sunucu tarafı çalışma alanı
+  // sorgusu / legacy localStorage), sync YAPMAZ.
   const reloadIdx = appSrc.indexOf('async function handleReloadOrders')
   assert.ok(reloadIdx >= 0, 'handleReloadOrders tanımı bulunur')
   const reloadWindow = appSrc.slice(reloadIdx, reloadIdx + 1500)
-  assert.match(reloadWindow, /loadOrdersFromServer/, 'handleReloadOrders DB reload kullanır')
+  assert.match(reloadWindow, /loadOrdersWorkspace\(/, 'handleReloadOrders DB reload kullanır')
   assert.equal(/orders\/sync/.test(reloadWindow), false, 'handleReloadOrders sync ÇAĞIRMAZ')
 
   // Siparişler "Şimdi Yenile" (onFetchOrders) hâlâ handleFetchOrders (sync) kullanır.
   assert.match(appSrc, /onFetchOrders=\{\(options\) => handleFetchOrders/, 'Orders Şimdi Yenile = handleFetchOrders')
 
-  // workflow servisi: loadOrdersFromServer GET /api/orders; sync yalnız fetchOrders'ta.
+  // workflow servisi: çalışma alanı okuması GET /api/orders/workspace;
+  // sync yalnız fetchOrders'ta.
   const wfSrc = readFileSync(join(root, 'src/services/orderWorkflowService.ts'), 'utf8')
-  const loadIdx = wfSrc.indexOf('async loadOrdersFromServer')
-  const loadWindow = wfSrc.slice(loadIdx, loadIdx + 1500)
-  assert.match(loadWindow, /\/api\/orders/, 'loadOrdersFromServer GET /api/orders')
-  assert.equal(/orders\/sync/.test(loadWindow), false, 'loadOrdersFromServer sync yolunu çağırmaz')
+  const loadIdx = wfSrc.indexOf('async fetchOrdersWorkspace(')
+  assert.ok(loadIdx >= 0, 'fetchOrdersWorkspace tanımı bulunur')
+  const loadWindow = wfSrc.slice(loadIdx, loadIdx + 2600)
+  assert.match(loadWindow, /\/api\/orders\/workspace/, 'GET /api/orders/workspace')
+  assert.equal(/orders\/sync/.test(loadWindow), false, 'okuma yolu sync çağırmaz')
   assert.match(wfSrc, /fetch\('\/api\/orders\/sync'/, 'sync yalnız fetchOrders (Şimdi Yenile) yolunda')
 })

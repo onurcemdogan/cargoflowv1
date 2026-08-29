@@ -80,9 +80,16 @@ async function makeCountingDb() {
 }
 
 async function seedOrders(db, organizationId, count) {
+  return seedOrdersOffset(db, organizationId, count, 0)
+}
+
+// Ikinci kez tohumlarken paket kimlikleri CAKISMAMALIDIR: ayni packageId
+// projeksiyonda tekillestirilir ve sayilar sessizce yanlis cikardi.
+async function seedOrdersOffset(db, organizationId, count, offset) {
   const encryption = await import('./orders/orderEncryption.ts')
   const rows = []
-  for (let index = 0; index < count; index += 1) {
+  for (let step = 0; step < count; step += 1) {
+    const index = offset + step
     const packageId = `PERF-${String(index).padStart(7, '0')}`
     rows.push({
       organizationId, marketplace: 'Trendyol', packageId,
@@ -342,4 +349,256 @@ test('PERF-REG: performans paketi kayitli ve komut mevcut', async () => {
   )
   const list = Array.isArray(files) ? files : files.files
   assert.ok(list.includes('server/performance-acceptance-flow.test.mjs'))
+})
+
+/* ═══ PERF-8..18 — SUNUCU TARAFI ÇALIŞMA ALANI ══════════════════════ */
+
+const WORKSPACE_QUERY = {
+  tab: 'all', operationTab: 'all', marketplace: 'all', status: 'all',
+  cargo: 'all', city: 'all', district: 'all', multiProduct: 'all',
+  sameProduct: 'all', action: 'all', date: { preset: 'all' },
+  search: '', customerQuery: '', productQuery: '', orderNumberQuery: '',
+  cargoSlipQuery: '', sortKey: 'orderDate', sortDirection: 'desc',
+  page: 1, pageSize: 25,
+}
+const WORKSPACE_NOW = new Date('2026-08-20T09:00:00.000Z')
+
+async function seededWorkspace(count) {
+  const { pglite, db, stats } = await makeCountingDb()
+  const [org] = await db
+    .insert(schema.organizations)
+    .values({ name: 'Perf', slug: `perf-${randomBytes(4).toString('hex')}` })
+    .returning()
+  await seedOrders(db, org.id, count)
+  const workspace = await import('./orders/ordersWorkspaceService.ts')
+  workspace.resetOrdersWorkspaceCache()
+  return { pglite, db, stats, orgId: org.id, workspace }
+}
+
+test('PERF-8: Siparisler ekrani sunucu sayfasini KULLANIR (istemci tam dizi sayfalamaz)', async () => {
+  const source = readFileSync(join(root, 'src', 'pages', 'OrdersPage.tsx'), 'utf8')
+  // Istemci tarafi tam-dizi sayfalama KALDIRILDI.
+  assert.ok(
+    !/paginateOrders\(/.test(source),
+    'OrdersPage hala istemci tarafinda tam diziyi sayfaliyor',
+  )
+  // Sunucu sonucu ONCELIKLIDIR; yerel projeksiyon yalniz legacy yedegidir.
+  assert.match(source, /workspace \?\? localWorkspace/)
+  assert.match(source, /onWorkspaceQueryChange\?\.\(workspaceQuery\)/)
+})
+
+test('PERF-9: Siparisler yolu TAM koleksiyon CEKMEZ', async () => {
+  const app = readFileSync(join(root, 'src', 'App.tsx'), 'utf8')
+    .split(String.fromCharCode(10))
+    .filter((line) => !line.trim().startsWith('//'))
+    .join(String.fromCharCode(10))
+  assert.ok(
+    !/loadOrdersFromServer\(/.test(app),
+    'App.tsx tam koleksiyon yukleyicisini cagiriyor',
+  )
+  assert.match(app, /fetchOrdersWorkspace/)
+})
+
+test('PERF-10: Dashboard operasyon sayaclari icin TAM koleksiyon CEKMEZ', async () => {
+  const page = readFileSync(join(root, 'src', 'pages', 'DashboardPage.tsx'), 'utf8')
+  assert.match(page, /fetchDashboardOperationalSnapshot/)
+  assert.match(page, /operationalSnapshot/)
+  // Endpoint kayitli ve auth kapisinin ARKASINDA.
+  const server = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.match(server, /app\.get\('\/api\/dashboard\/operational'/)
+  const authList = server.slice(
+    server.indexOf('const TENANT_AUTH_PATHS'),
+    server.indexOf('const TENANT_INJECT_PATHS'),
+  )
+  assert.match(authList, /'\/api\/dashboard'/, 'dashboard ucu auth kapisi disinda')
+})
+
+test('PERF-11: filtreler SUNUCUDA uygulanir (istemciye tam liste inmez)', async (t) => {
+  const ctx = await seededWorkspace(120)
+  t.after(() => ctx.pglite.close())
+  const all = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, WORKSPACE_QUERY, undefined, WORKSPACE_NOW,
+  )
+  const filtered = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, { ...WORKSPACE_QUERY, status: 'Picking' },
+    undefined, WORKSPACE_NOW,
+  )
+  assert.ok(filtered.totalItems > 0, 'filtre sonucu bos olmamali')
+  assert.ok(
+    filtered.totalItems < all.totalItems,
+    'filtre SUNUCUDA daraltmiyor',
+  )
+  assert.ok(filtered.items.length <= 25)
+})
+
+test('PERF-12: siralama SUNUCUDA uygulanir', async (t) => {
+  const ctx = await seededWorkspace(120)
+  t.after(() => ctx.pglite.close())
+  const desc = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, WORKSPACE_QUERY, undefined, WORKSPACE_NOW,
+  )
+  const asc = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, { ...WORKSPACE_QUERY, sortDirection: 'asc' },
+    undefined, WORKSPACE_NOW,
+  )
+  assert.notDeepEqual(
+    desc.items.map((order) => order.id),
+    asc.items.map((order) => order.id),
+    'siralama SUNUCUDA uygulanmiyor',
+  )
+})
+
+test('PERF-13: toplam sayi DOGRU ve sayfalar AYRISIK', async (t) => {
+  const ctx = await seededWorkspace(120)
+  t.after(() => ctx.pglite.close())
+  const seen = new Set()
+  let collected = 0
+  for (let page = 1; page <= 5; page += 1) {
+    const result = await ctx.workspace.buildOrdersWorkspacePage(
+      ctx.db, ctx.orgId, { ...WORKSPACE_QUERY, page }, undefined, WORKSPACE_NOW,
+    )
+    assert.equal(result.totalItems, 120, 'toplam her sayfada AYNI olmali')
+    for (const order of result.items) {
+      assert.ok(!seen.has(order.id), 'ayni kayit iki sayfada')
+      seen.add(order.id)
+    }
+    collected += result.items.length
+  }
+  assert.equal(collected, 120, 'sayfalarin birlesimi toplami vermeli')
+})
+
+test('PERF-14: Dashboard anlik goruntusu SABIT sorgu sayisi (N+1 YOK)', async (t) => {
+  const ctx = await seededWorkspace(60)
+  t.after(() => ctx.pglite.close())
+  const operational = await import('./dashboard/dashboardOperationalService.ts')
+
+  const measure = async () => {
+    ctx.workspace.resetOrdersWorkspaceCache()
+    operational.resetDashboardProductCache()
+    ctx.stats.queries = 0
+    await operational.buildDashboardOperationalSnapshot(
+      ctx.db, ctx.orgId, { key: 'last30' }, undefined, WORKSPACE_NOW,
+    )
+    return ctx.stats.queries
+  }
+
+  const before = await measure()
+  await seedOrdersOffset(ctx.db, ctx.orgId, 60, 60)
+  const after = await measure()
+  assert.equal(
+    before, after,
+    `sorgu sayisi kayit sayisindan BAGIMSIZ olmali (${before} vs ${after})`,
+  )
+})
+
+test('PERF-15: 10k siparis — sorgu sayisi ve yanit boyutu SABIT kalir', async (t) => {
+  const ctx = await seededWorkspace(10000)
+  t.after(() => ctx.pglite.close())
+  ctx.stats.queries = 0
+  const page = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, WORKSPACE_QUERY, undefined, WORKSPACE_NOW,
+  )
+  const queries = ctx.stats.queries
+  assert.equal(page.totalItems, 10000)
+  assert.equal(page.items.length, 25, 'yanit yalniz sayfayi tasir')
+  assert.equal(page.scannedOrders, 10000, 'tarama SUNUCUDA yapilir')
+  // ESKI mimari burada ~100 HTTP turu yapardi. Yeni yol TEK istektir ve
+  // DB sorgu sayisi kayit sayisindan bagimsizdir (sabit sayida toplu okuma).
+  assert.ok(queries <= 60, `sorgu sayisi cok yuksek: ${queries}`)
+})
+
+test('PERF-16: 25k siparis — eski mimarinin ACIK hatasi ARTIK YOK', async (t) => {
+  // ═══ NEDEN BU TEST VAR ═════════════════════════════════════════════
+  // Eski `loadOrdersFromServer()` 200 sayfa sinirini (MAX_ORDER_PAGES)
+  // asinca ACIKCA hata firlatiyordu: 20.001 siparisli bir kiraci icin
+  // Siparisler ekrani HIC ACILMIYORDU. Yeni yol sayfa basina calisir.
+  const ctx = await seededWorkspace(25000)
+  t.after(() => ctx.pglite.close())
+  const page = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, WORKSPACE_QUERY, undefined, WORKSPACE_NOW,
+  )
+  assert.equal(page.totalItems, 25000)
+  assert.equal(page.items.length, 25)
+  const lastPage = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, { ...WORKSPACE_QUERY, page: page.pageCount },
+    undefined, WORKSPACE_NOW,
+  )
+  assert.ok(lastPage.items.length > 0, 'son sayfa erisilebilir olmali')
+})
+
+test('PERF-17: BAYAT yanit YENI sonucu EZEMEZ', async (t) => {
+  // Hizli filtre yaziminda once baslayip sonra biten istek, daha yeni
+  // istegin sonucunu EZMEMELIDIR.
+  const { createServer } = await import('vite')
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+    optimizeDeps: { noDiscovery: true, include: [] },
+  })
+  t.after(() => vite.close())
+  const module = await vite.ssrLoadModule('/src/services/orderWorkflowService.ts')
+  const service = new module.OrderWorkflowService({
+    append: () => {}, list: () => [], clear: () => {},
+  })
+
+  const workspacePayload = (marker) => ({
+    items: [{ id: marker, orderNumber: marker, items: [] }],
+    page: 1, pageSize: 25, pageCount: 1, totalItems: 1,
+    startIndex: 0, endIndex: 1,
+    tabCounts: {}, cityOptions: [], districtOptions: [],
+    listedCounts: { packageCount: 1, orderCount: 1, lineCount: 0, quantityTotal: 0 },
+    groupHeaders: null,
+  })
+
+  let releaseSlow = () => {}
+  const slowGate = new Promise((resolve) => { releaseSlow = resolve })
+  let call = 0
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => {
+    call += 1
+    const marker = call === 1 ? 'SLOW' : 'FAST'
+    if (call === 1) await slowGate
+    return {
+      ok: true,
+      json: async () => ({ ok: true, workspace: workspacePayload(marker) }),
+    }
+  }
+  try {
+    const slow = service.fetchOrdersWorkspace({ ...WORKSPACE_QUERY, search: 'a' })
+    const fast = await service.fetchOrdersWorkspace({
+      ...WORKSPACE_QUERY, search: 'ab',
+    })
+    releaseSlow()
+    const slowResult = await slow
+    assert.equal(fast.stale, false, 'en son istek taze olmali')
+    assert.equal(slowResult.stale, true, 'gec gelen ESKI istek BAYAT olmali')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test('PERF-18: sicak gezinme cache DOGRU sonucu verir (bayat veri YOK)', async (t) => {
+  const ctx = await seededWorkspace(120)
+  t.after(() => ctx.pglite.close())
+  const cold = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, WORKSPACE_QUERY, undefined, WORKSPACE_NOW,
+  )
+  assert.equal(cold.cacheHit, false)
+  const warm = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, WORKSPACE_QUERY, undefined, WORKSPACE_NOW,
+  )
+  assert.equal(warm.cacheHit, true, 'ikinci istek cache HIT olmali')
+  assert.deepEqual(
+    warm.items.map((order) => order.id),
+    cold.items.map((order) => order.id),
+    'sicak sonuc soguk sonucla AYNI olmali',
+  )
+
+  // Veri degisti → cache GECERSIZ olmali (bayat liste gostermek YASAK).
+  await seedOrdersOffset(ctx.db, ctx.orgId, 5, 500)
+  const afterWrite = await ctx.workspace.buildOrdersWorkspacePage(
+    ctx.db, ctx.orgId, WORKSPACE_QUERY, undefined, WORKSPACE_NOW,
+  )
+  assert.equal(afterWrite.cacheHit, false, 'yazimdan sonra cache MISS olmali')
+  assert.equal(afterWrite.totalItems, 125)
 })

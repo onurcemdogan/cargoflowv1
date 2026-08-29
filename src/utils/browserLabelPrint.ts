@@ -1,4 +1,10 @@
 import JsBarcode from 'jsbarcode'
+import type { LabelDocument } from '../labels/labelDocument'
+import {
+  renderLabelDocument,
+  type LabelRenderSource,
+} from '../labels/labelDocumentRenderer'
+import { primitivesToPrintHtml } from '../labels/labelPrintHtml'
 import {
   ensurePersistentPrintFrame,
   suratPrintTrace,
@@ -462,6 +468,7 @@ export async function printCleanLabelDocument(
   template: LabelTemplate,
   mappingConfig: SuratLabelMappingConfig = {},
   products: CargoProduct[] = [],
+  labelDocument?: LabelDocument,
 ): Promise<BrowserLabelPrintDebug> {
   const executionId = `print-${++printExecutionCounter}`
   const orderNumbers = orders.map((order) => String(order.orderNumber ?? ''))
@@ -517,6 +524,7 @@ export async function printCleanLabelDocument(
       template,
       mappingConfig,
       products,
+      labelDocument,
     )
     const printHtml = document_.html
     debug.skipped = document_.skipped
@@ -787,6 +795,27 @@ export interface CleanLabelDocument {
   skipped: SuratPrintSkip[]
 }
 
+/**
+ * KIRACI YERLESIM BELGESINDEN sayfa uretir.
+ *
+ * ONIZLEME PARITESI: sayfa, duzenleyici tuvalinin kullandigi AYNI
+ * `renderLabelDocument` ciktisindan uretilir. Ikinci bir yerlesim yolu YOKTUR;
+ * bu yuzden tuvalde gorulen ile basilan ayrisamaz.
+ *
+ * KIMLIK DEGISMEZ: barkod/QR degerleri ilkellerden gelir ve ilkeller etiket
+ * verisinden; sablon bu degerleri YAZAMAZ.
+ */
+export function renderDocumentLabelHtml(
+  labelDocument: LabelDocument,
+  source: LabelRenderSource,
+): string {
+  const rendered = renderLabelDocument(labelDocument, source)
+  return primitivesToPrintHtml(rendered.primitives, {
+    barcode: (value) => renderBarcodeSvg(value),
+    qr: (value) => renderQrSvg(value, 'lp-qr-svg'),
+  })
+}
+
 export function buildCleanLabelDocument(
   orders: CargoOrder[],
   template: LabelTemplate,
@@ -795,6 +824,10 @@ export function buildCleanLabelDocument(
   // renk/beden YALNIZ kesin kod eslesmesiyle buradan tamamlanir; onizleme ve
   // baski AYNI veriyi gorur.
   products: CargoProduct[] = [],
+  // Kiracinin YAYINLADIGI yerlesim belgesi. Verilmezse yerlesik (sabit)
+  // yerlesim kullanilir: surum yukseltmesi hicbir kiracinin etiketini
+  // KENDILIGINDEN degistirmez.
+  labelDocument?: LabelDocument,
 ): CleanLabelDocument {
   const widthMm = template.widthMm || 100
   const heightMm = template.heightMm || 100
@@ -813,17 +846,23 @@ export function buildCleanLabelDocument(
         mappingConfig,
         products,
       )
+      const printData = {
+        ...data,
+        tNo: model.trackingNumber,
+        trackingNumber: model.trackingNumber,
+        kargoTakipNo: model.trackingNumber,
+        barcodeValue: model.barcodeNumber,
+        mainBarcodeValue: model.barcodeNumber,
+        barcode: model.barcodeNumber,
+        qrPayload: model.ozelKargoTakipNo,
+      }
       pages.push(
-        renderPrintableLabelHtml({
-          ...data,
-          tNo: model.trackingNumber,
-          trackingNumber: model.trackingNumber,
-          kargoTakipNo: model.trackingNumber,
-          barcodeValue: model.barcodeNumber,
-          mainBarcodeValue: model.barcodeNumber,
-          barcode: model.barcodeNumber,
-          qrPayload: model.ozelKargoTakipNo,
-        }),
+        labelDocument
+          ? renderDocumentLabelHtml(labelDocument, {
+              data: printData,
+              order,
+            })
+          : renderPrintableLabelHtml(printData),
       )
       printable.push(entry)
     } catch (error) {

@@ -29,8 +29,12 @@ test('PERF-1: App mount siparişleri ve katalogu paralel yükler (orders katalog
   assert.match(block, /const catalogPromise =/)
   assert.match(block, /ordersPromise\.then/)
   assert.match(block, /catalogPromise\.then/)
-  // Siparişler katalog gelmeden (ordersLoading:false) render edilir.
-  assert.match(block, /LOCAL-FIRST \+ PARALEL/)
+  // Siparişler katalog gelmeden render edilir: sipariş yolu katalog
+  // promise'ini HİÇBİR yerde AWAIT ETMEZ. (Eskiden bu, bir yorum
+  // etiketiyle doğrulanıyordu; yorum yeniden yazılınca test anlamsız
+  // kalıyordu. Artık YAPI kontrol ediliyor.)
+  assert.doesNotMatch(block, /await catalogPromise/)
+  assert.doesNotMatch(block, /await workflowService\s*\.\s*hydrateProductCatalog/)
   // Eski seri kalıp (katalogu awaitleyip sonra orders) KALDIRILDI.
   assert.doesNotMatch(
     block,
@@ -44,9 +48,20 @@ test('PERF-2: mount/reload/account-switch nesil ile stale sonucu DISCARD eder', 
   // Mount: isFresh() nesil kontrolü.
   assert.match(app, /const generation = workflowService\.getMarketplaceAccountGeneration\(\)/)
   assert.match(app, /generation === workflowService\.getMarketplaceAccountGeneration\(\)/)
-  // Reload: nesil değiştiyse sonucu atla.
-  const reload = sliceBlock(app, 'async function handleReloadOrders()', 1600)
-  assert.match(reload, /if \(generation !== workflowService\.getMarketplaceAccountGeneration\(\)\)/)
+  // Yeniden yükleme artık sunucu tarafı çalışma alanı sorgusundan geçer;
+  // koruma İKİ katmanlıdır ve HER İKİSİ de aranır:
+  //   1. istek nesli  — daha yeni bir istek başladıysa yanıt BAYAT sayılır
+  //   2. hesap nesli  — hesap değiştiyse sonuç HİÇ yazılmaz
+  const load = sliceBlock(app, 'const loadOrdersWorkspace = useCallback(', 2400)
+  assert.match(load, /if \(stale\) return/)
+  assert.match(
+    load,
+    /accountGeneration !== workflowService\.getMarketplaceAccountGeneration\(\)/,
+  )
+  // Servis tarafında nesil damgası GERÇEKTEN üretiliyor mu?
+  const svc = readSrc('src/services/orderWorkflowService.ts')
+  assert.match(svc, /this\.ordersWorkspaceGeneration \+= 1/)
+  assert.match(svc, /stale: generation !== this\.ordersWorkspaceGeneration/)
 })
 
 // ── 3: workflowService — account-scoped SWR cache + TTL + nesil + clear ─────
@@ -75,13 +90,19 @@ test('PERF-4: setMarketplaceAccount değişimde nesil artar + cache temizler', (
   assert.match(block, /this\.authProductsCache = \[\]/)
 })
 
-// ── 5: reload SWR — taze cache anında gösterilir, arkada revalidate ─────────
-test('PERF-5: handleReloadOrders SWR (taze cache anında) + revalidate', () => {
+// ── 5: reload SWR — mevcut sayfa görünür kalır, arkada revalidate ──────────
+test('PERF-5: yeniden yükleme mevcut sayfayı EKRANDAN SİLMEZ (stale-while-revalidate)', () => {
+  // Eskiden SWR, tam listeyi tutan bir istemci cache'iyle sağlanıyordu.
+  // Artık liste sunucudan sayfa sayfa gelir; DEĞİŞMEZ aynı kaldı:
+  // yeniden yükleme sırasında kullanıcı BOŞ EKRAN görmez.
   const app = readSrc('src/App.tsx')
-  const reload = sliceBlock(app, 'async function handleReloadOrders()', 1600)
-  assert.match(reload, /const cached = workflowService\.peekCachedOrders\(\)/)
-  // Taze cache varsa loading'e düşmeden gösterilir; yoksa loading.
-  assert.match(reload, /if \(cached\)/)
+  const load = sliceBlock(app, 'const loadOrdersWorkspace = useCallback(', 2400)
+  // Gösterilebilir sonuç varsa tam yükleme durumuna DÜŞÜLMEZ.
+  assert.match(load, /const revalidating = shownWorkspaceRef\.current/)
+  assert.match(load, /ordersLoading: revalidating \? current\.ordersLoading : true/)
+  assert.match(load, /ordersRefreshing: revalidating/)
+  // Hata durumunda da liste BOŞALTILMAZ (yalnız mesaj gösterilir).
+  assert.doesNotMatch(load, /orders: \[\]/)
 })
 
 // ── 6: hesap değişiminde eski veri bir kare bile kalmaz (paralel yeni yükleme)

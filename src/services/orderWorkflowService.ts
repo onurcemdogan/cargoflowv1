@@ -125,6 +125,7 @@ import type {
   OrdersWorkspaceQuery,
   OrdersWorkspaceResult,
 } from '../utils/ordersWorkspaceQuery'
+import type { LabelDocument } from '../labels/labelDocument'
 import {
   resolveTotalPages,
   validateOrderPageMeta,
@@ -691,6 +692,23 @@ export class OrderWorkflowService {
       workspace,
       stale: generation !== this.ordersWorkspaceGeneration,
     }
+  }
+
+  /**
+   * KALICI KAYIT SAYISI — tek sayfa, tek istek.
+   *
+   * Yalnizca sayi gerektiginde tum tabloyu indirmek israftir; `/api/orders`
+   * zaten `total` doner. pageSize=1 ile agirlik neredeyse sifirdir.
+   */
+  private async fetchOrdersTotal(): Promise<number> {
+    const response = await fetch('/api/orders?page=1&pageSize=1', {
+      credentials: 'include',
+    })
+    if (!response.ok) {
+      throw new Error(`Siparis sayisi okunamadi (HTTP ${response.status}).`)
+    }
+    const payload = (await response.json()) as { total?: number }
+    return Number(payload.total ?? 0)
   }
 
   /** Bu oturumda GORULEN tum siparisler (ziyaret edilen sayfalarin birlesimi). */
@@ -1288,23 +1306,36 @@ export class OrderWorkflowService {
       }
     }
 
-    // Sync başarılı olsun ya da olmasın, sunucudaki güncel (korunmuş) listeyi
-    // yükle. Başarısız sync veri kaybettirmez; mevcut kayıtlar sunucuda durur.
-    const orders = await this.loadOrdersFromServer().catch(() => this.authOrdersCache)
+    // ═══ SYNC SONRASI TAM LİSTE İNDİRİLMEZ ══════════════════════════════
+    //
+    // Eskiden burada `loadOrdersFromServer()` çağrılır ve TÜM sipariş tablosu
+    // 100'erlik sayfalarla tarayıcıya indirilirdi. Kullanıcı "Şimdi Yenile"ye
+    // her bastığında ~100 HTTP turu oluşuyor, 20k üstünde ise sync başarılı
+    // olsa bile ekran AÇIK hata veriyordu.
+    //
+    // Mesajlarda gösterilen tek şey KALICI KAYIT SAYISIDIR; onu öğrenmek için
+    // tek bir sayfa (pageSize=1) yeterlidir. Görünür liste zaten sunucu
+    // tarafı çalışma alanı sorgusuyla tazelenir.
+    const total = await this
+      .fetchOrdersTotal()
+      .catch(() => this.authOrdersCache.length)
+    // Geriye dönük sözleşme: `orders` alanı korunur. Auth modunda çağıran
+    // (App) bu diziyi KULLANMAZ; çalışma alanı sayfasını yeniden çeker.
+    const orders = this.authOrdersCache
 
     if (syncInProgress) {
       // Zaten çalışan sync veri silmez; kullanıcıya beklemesini bildir.
       this.auditLogService.append({
         action: 'Siparişler çekildi',
         level: 'info',
-        details: `Senkronizasyon zaten sürüyor; ${orders.length} sipariş listelendi.`,
+        details: `Senkronizasyon zaten sürüyor; ${total} sipariş kayıtlı.`,
       })
       return {
         orders,
         result: {
           level: 'info',
           source: 'real',
-          message: `Bu hesap için bir senkronizasyon zaten çalışıyor. Mevcut ${orders.length} sipariş gösteriliyor; tamamlanınca "Yenile" ile listeyi güncelleyin.`,
+          message: `Bu hesap için bir senkronizasyon zaten çalışıyor. Kayıtlı ${total} sipariş korunuyor; tamamlanınca "Yenile" ile listeyi güncelleyin.`,
         },
       }
     }
@@ -1329,7 +1360,7 @@ export class OrderWorkflowService {
       this.auditLogService.append({
         action: 'Siparişler çekildi',
         level: 'warning',
-        details: `${syncPayload.message ?? 'Senkron tamamlanamadı.'}${statusSummary} Mevcut ${orders.length} sipariş korunuyor.`,
+        details: `${syncPayload.message ?? 'Senkron tamamlanamadı.'}${statusSummary} Kayıtlı ${total} sipariş korunuyor.`,
       })
       return {
         orders,
@@ -1338,7 +1369,7 @@ export class OrderWorkflowService {
           source: 'real',
           message: `${
             partial ? 'Senkron kısmi kaldı.' : syncPayload.message ?? 'Senkron tamamlanamadı.'
-          }${statusSummary} Sunucu kaydı silinmedi; ${orders.length} sipariş korundu.`,
+          }${statusSummary} Sunucu kaydı silinmedi; ${total} sipariş korundu.`,
         },
       }
     }
@@ -1346,14 +1377,14 @@ export class OrderWorkflowService {
     this.auditLogService.append({
       action: 'Siparişler çekildi',
       level: 'success',
-      details: `Sunucu senkronu tamamlandı: ${syncPayload.insertedCount ?? 0} yeni, ${syncPayload.updatedCount ?? 0} güncellendi. Toplam ${orders.length} sipariş.`,
+      details: `Sunucu senkronu tamamlandı: ${syncPayload.insertedCount ?? 0} yeni, ${syncPayload.updatedCount ?? 0} güncellendi. Toplam ${total} sipariş.`,
     })
     return {
       orders,
       result: {
-        level: orders.length > 0 ? 'success' : 'warning',
+        level: total > 0 ? 'success' : 'warning',
         source: 'real',
-        message: `Sunucu senkronu tamamlandı (${syncPayload.persistedCount ?? 0} kaydedildi, ${syncPayload.failedCount ?? 0} başarısız). Kalıcı operasyon listesi: ${orders.length}.`,
+        message: `Sunucu senkronu tamamlandı (${syncPayload.persistedCount ?? 0} kaydedildi, ${syncPayload.failedCount ?? 0} başarısız). Kalıcı operasyon listesi: ${total}.`,
       },
     }
   }
@@ -2426,6 +2457,8 @@ export class OrderWorkflowService {
       confirmedAt: string
       printedBy?: string
       includePreviouslyPrinted?: boolean
+      // Kiracinin YAYINLADIGI yerlesim belgesi (CargoFlow HTML etiketi).
+      labelDocument?: LabelDocument
       // Bu çalışmada kullanılacak şablon; karar UI'daki TEK çözümleyiciden
       // (resolveLabelPrintTemplateDecision) gelir.
       labelPrintTemplate?: LabelPrintTemplate
@@ -2560,6 +2593,8 @@ export class OrderWorkflowService {
       labelTemplate: template,
       mappingConfig,
       labelPrintTemplate: options.labelPrintTemplate,
+      // Kiracinin YAYINLADIGI yerlesim belgesi (varsa).
+      labelDocument: options.labelDocument,
       // Etiket renk/beden tamamlama icin organizasyon kapsamli katalog.
       products: this.loadProducts(),
     })

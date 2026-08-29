@@ -349,13 +349,22 @@ test('PAG-14: sabit büyük limit (1000 vb.) KULLANILMAZ; sayfa döngüsü vard�
 
 test('PAG-15: kısmi hata UI listesini boşaltmaz (App çağrı yerleri)', () => {
   const app = readFileSync(join(here, '..', 'src/App.tsx'), 'utf8')
+  // DEĞİŞMEZ: yükleme hatası listeyi BOŞ DİZİYE çevirmez.
   assert.equal(
     /\.catch\(\(\) => \[\] as CargoOrder\[\]\)/.test(app), false,
-    'hata artık boş listeye çevrilmiyor',
+    'hata boş listeye çevrilmiyor',
   )
-  assert.match(app, /catch\(\(\) => null as CargoOrder\[\] \| null\)/)
-  assert.match(app, /if \(baseOrders === null\)/)
-  assert.match(app, /ordersLoading: false/)
+  // Sunucu tarafı çalışma alanı yolunda hata: yalnız yükleme durumu biter ve
+  // güvenli bir mesaj gösterilir; `orders` alanına DOKUNULMAZ.
+  const loadIdx = app.indexOf('const loadOrdersWorkspace = useCallback(')
+  assert.notEqual(loadIdx, -1, 'çalışma alanı yükleyicisi bulunamadı')
+  const loadBlock = app.slice(loadIdx, loadIdx + 2400)
+  const catchIdx = loadBlock.indexOf('} catch {')
+  assert.notEqual(catchIdx, -1, 'hata yolu bulunamadı')
+  const catchBlock = loadBlock.slice(catchIdx, catchIdx + 500)
+  assert.doesNotMatch(catchBlock, /orders:/, 'hata yolu listeyi DEĞİŞTİRMEZ')
+  assert.match(catchBlock, /ordersLoading: false/)
+  assert.match(catchBlock, /ordersError:/)
   // Race koruması yerinde.
   assert.match(app, /getMarketplaceAccountGeneration\(\)/)
   assert.match(app, /if \(!isFresh\(\)\) return/)

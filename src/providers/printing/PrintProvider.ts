@@ -7,6 +7,7 @@ import type {
 } from '../../types/cargoflow'
 import type { BrowserLabelPrintDebug } from '../../utils/browserLabelPrint'
 import type { LabelPrintTemplate } from '../../utils/labelPrintTemplateRouting'
+import type { LabelDocument } from '../../labels/labelDocument'
 
 export interface PrintInput {
   orders: CargoOrder[]
@@ -19,6 +20,14 @@ export interface PrintInput {
   // Bu çalışmada kullanılacak baskı şablonu. Verilmezse mevcut davranış:
   // CargoFlow HTML. Yalnız browser-print modunda anlamlıdır.
   labelPrintTemplate?: LabelPrintTemplate
+  /**
+   * Kiracının YAYINLADIĞI yerleşim belgesi (CargoFlow HTML etiketi).
+   *
+   * Verilmezse yerleşik sabit yerleşim kullanılır — bir sürüm yükseltmesi
+   * hiçbir kiracının etiketini kendiliğinden değiştirmez. Resmî Sürat ZPL
+   * yolunu ETKİLEMEZ: onun gövdesini taşıyıcı basar.
+   */
+  labelDocument?: LabelDocument
   // Organizasyon kapsamli urun katalogu (etiket renk/beden tamamlama icin).
   // Saglanmazsa davranis eskisi gibidir: yalniz siparis satiri verisi kullanilir.
   products?: CargoProduct[]

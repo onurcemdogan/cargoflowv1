@@ -351,6 +351,8 @@ const TENANT_AUTH_PATHS = [
   '/api/labels/zpl',
   // Kodsuz etiket şablonu org kapsamlıdır; auth kapısının ARKASINDA durur.
   '/api/labels/template',
+  // Görsel etiket şablonu (belge) uçları — AYNI auth kapısının arkasında.
+  '/api/labels/documents',
   // KÖK NEDEN (canlı): resmî Sürat render ucu bu listede YOKTU. Express
   // `app.use(path, mw)` ÖN EK eşleşmesi yapar ve '/api/labels/zpl',
   // '/api/labels/render/surat' ile EŞLEŞMEZ. Bu yüzden tenantAuth hiç
@@ -2443,6 +2445,193 @@ async function requireLabelTemplateContext(request, response) {
     return null
   }
 }
+
+
+// ═══ ETİKET BELGESİ UÇLARI (görsel şablon düzenleyici) ═══════════════════
+//
+// Bu uçlar YALNIZ yerleşim belgesini okur/yazar. TAŞIYICI ÇAĞRISI YAPMAZ,
+// ham Sürat artefaktına DOKUNMAZ, takip numarası/barkod DEĞİŞTİRMEZ.
+// Kapsam her zaman auth bağlamındaki organizasyondur; istek gövdesindeki
+// hiçbir organizasyon alanı otorite DEĞİLDİR.
+
+async function requireLabelDocumentContext(request, response) {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) {
+    response.status(404).json({
+      ok: false,
+      message: 'Etiket şablonu yalnız auth modda kullanılabilir.',
+    })
+    return null
+  }
+  try {
+    const [{ getDb }, repo, system] = await Promise.all([
+      import('./db/client.ts'),
+      import('./labels/labelDocumentRepository.ts'),
+      import('../src/labels/labelSystemTemplates.ts'),
+    ])
+    return {
+      db: getDb(),
+      repo,
+      system,
+      organizationId: request.auth.organizationId,
+    }
+  } catch {
+    response.status(503).json({
+      ok: false,
+      message:
+        'Etiket şablonu katmanı yüklenemedi; PostgreSQL yapılandırmasını kontrol edin.',
+    })
+    return null
+  }
+}
+
+function sendLabelDocumentError(response, error) {
+  const code = error?.code
+  const status =
+    code === 'NOT_FOUND'
+      ? 404
+      : code === 'VERSION_CONFLICT'
+        ? 409
+        : code === 'INVALID_DOCUMENT' ||
+            code === 'LIMIT_REACHED' ||
+            code === 'NO_DRAFT' ||
+            code === 'SYSTEM_TEMPLATE_IMMUTABLE'
+          ? 400
+          : 500
+  response.status(status).json({
+    ok: false,
+    code: code ?? 'UNKNOWN',
+    message:
+      status === 500
+        ? 'Etiket şablonu işlenemedi.'
+        : String(error?.message ?? 'Etiket şablonu işlenemedi.'),
+    // `detail` YALNIZ doğrulama kodlarını taşır (secret/PII YOK).
+    detail: code === 'INVALID_DOCUMENT' ? (error?.detail ?? null) : null,
+  })
+}
+
+app.get('/api/labels/documents', async (request, response) => {
+  const context = await requireLabelDocumentContext(request, response)
+  if (!context) return
+  try {
+    const state = await context.repo.loadLabelDocuments(
+      context.db,
+      context.organizationId,
+    )
+    response.json({
+      ok: true,
+      // Sistem şablonları SALT OKUNUR olarak listelenir; kiracı deposunda
+      // saklanmazlar ve kiracı tarafından değiştirilemezler.
+      system: context.system.SYSTEM_LABEL_TEMPLATES,
+      templates: Object.values(state.templates),
+      activeTemplateId: state.activeTemplateId,
+    })
+  } catch {
+    response
+      .status(500)
+      .json({ ok: false, message: 'Etiket şablonları okunamadı.' })
+  }
+})
+
+app.post('/api/labels/documents', async (request, response) => {
+  const context = await requireLabelDocumentContext(request, response)
+  if (!context) return
+  try {
+    const body = request.body ?? {}
+    const now = new Date().toISOString()
+    const newId = `tpl_${randomUUID()}`
+    const name = String(body.name ?? '')
+    const record = body.fromTemplateId
+      ? await context.repo.duplicateLabelDocument(
+          context.db,
+          context.organizationId,
+          String(body.fromTemplateId),
+          name,
+          now,
+          newId,
+        )
+      : await context.repo.createLabelDocumentFromSystem(
+          context.db,
+          context.organizationId,
+          String(body.fromSystemId ?? ''),
+          name,
+          now,
+          newId,
+        )
+    response.json({ ok: true, template: record })
+  } catch (error) {
+    sendLabelDocumentError(response, error)
+  }
+})
+
+app.put('/api/labels/documents/:id/draft', async (request, response) => {
+  const context = await requireLabelDocumentContext(request, response)
+  if (!context) return
+  try {
+    const record = await context.repo.saveLabelDocumentDraft(
+      context.db,
+      context.organizationId,
+      String(request.params.id),
+      request.body?.document,
+      request.body?.baseVersion,
+      new Date().toISOString(),
+    )
+    // TASLAK KAYDI YAYINLAMAZ: yanıt bunu açıkça bildirir.
+    response.json({ ok: true, template: record, activated: false })
+  } catch (error) {
+    sendLabelDocumentError(response, error)
+  }
+})
+
+app.post('/api/labels/documents/:id/activate', async (request, response) => {
+  const context = await requireLabelDocumentContext(request, response)
+  if (!context) return
+  try {
+    const record = await context.repo.activateLabelDocument(
+      context.db,
+      context.organizationId,
+      String(request.params.id),
+      request.body?.baseVersion,
+      new Date().toISOString(),
+    )
+    response.json({ ok: true, template: record, activated: true })
+  } catch (error) {
+    sendLabelDocumentError(response, error)
+  }
+})
+
+app.patch('/api/labels/documents/:id', async (request, response) => {
+  const context = await requireLabelDocumentContext(request, response)
+  if (!context) return
+  try {
+    const record = await context.repo.renameLabelDocument(
+      context.db,
+      context.organizationId,
+      String(request.params.id),
+      String(request.body?.name ?? ''),
+      request.body?.baseVersion,
+      new Date().toISOString(),
+    )
+    response.json({ ok: true, template: record })
+  } catch (error) {
+    sendLabelDocumentError(response, error)
+  }
+})
+
+app.delete('/api/labels/documents/:id', async (request, response) => {
+  const context = await requireLabelDocumentContext(request, response)
+  if (!context) return
+  try {
+    await context.repo.deleteLabelDocument(
+      context.db,
+      context.organizationId,
+      String(request.params.id),
+      new Date().toISOString(),
+    )
+    response.json({ ok: true })
+  } catch (error) {
+    sendLabelDocumentError(response, error)
+  }
+})
 
 app.get('/api/labels/template', async (request, response) => {
   const context = await requireLabelTemplateContext(request, response)

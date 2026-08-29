@@ -31,6 +31,7 @@ import type {
   OrdersWorkspaceQuery,
   OrdersWorkspaceResult,
 } from './utils/ordersWorkspaceQuery'
+import type { LabelDocument } from './labels/labelDocument'
 
 const AuditLogsPage = lazy(async () => ({
   default: (await import('./pages/AuditLogsPage')).AuditLogsPage,
@@ -46,6 +47,10 @@ const IntegrationDebugPage = lazy(async () => ({
 }))
 const LabelTemplatesPage = lazy(async () => ({
   default: (await import('./pages/LabelTemplatesPage')).LabelTemplatesPage,
+}))
+const LabelTemplateEditorPage = lazy(async () => ({
+  default: (await import('./pages/LabelTemplateEditorPage'))
+    .LabelTemplateEditorPage,
 }))
 const ProductsPage = lazy(async () => ({
   default: (await import('./pages/ProductsPage')).ProductsPage,
@@ -126,6 +131,14 @@ import type { OrdersNavigationFilters } from './utils/ordersNavigation'
 interface OrdersState {
   orders: CargoOrder[]
   ordersLoading: boolean
+  /**
+   * ARKA PLANDA tazeleniyor (stale-while-revalidate).
+   *
+   * `ordersLoading` ile AYNI ŞEY DEĞİLDİR: yükleme, gösterilecek hiçbir şey
+   * olmadığı durumdur ve iskelet gösterir. Tazeleme ise mevcut sayfa
+   * EKRANDA DURURKEN yapılan sessiz güncellemedir.
+   */
+  ordersRefreshing?: boolean
   ordersMessage?: WorkflowResult
   ordersError?: string
   ordersDebug?: WorkflowResult['debug']
@@ -281,17 +294,39 @@ function App() {
   // `ordersState.orders` bu modda KANONİK HAVUZ'dur: görülen tüm siparişler.
   // Seçim, sipariş detayı ve baskı önizlemesi bu havuzdan çözülür; sayfa
   // değiştirmek seçimi KAYBETTİRMEZ.
+  // ═══ YAYINDAKİ ETİKET YERLEŞİMİ ════════════════════════════════════════
+  //
+  // Kiracı düzenleyicide bir yerleşim YAYINLADIYSA, CargoFlow HTML etiketi o
+  // yerleşimle basılır. Yayınlanmış belge YOKSA yerleşik (sabit) yerleşim
+  // kullanılır: bir sürüm yükseltmesi hiçbir kiracının etiketini
+  // KENDİLİĞİNDEN değiştirmez.
+  //
+  // Resmî Sürat ZPL yolunu ETKİLEMEZ — onun gövdesini taşıyıcı basar.
+  const [activeLabelDocument, setActiveLabelDocument] =
+    useState<LabelDocument | null>(null)
+  const handleActiveLabelDocumentChange = useCallback(
+    (next: LabelDocument | null) => setActiveLabelDocument(next),
+    [],
+  )
   const [ordersWorkspace, setOrdersWorkspace] = useState<OrdersWorkspaceResult>()
   const workspaceQueryRef = useRef<OrdersWorkspaceQuery | null>(null)
   const workspaceLoadInFlight = useRef(false)
+  // STALE-WHILE-REVALIDATE: elde gösterilebilir bir sayfa varsa yeniden
+  // yükleme onu EKRANDAN SİLMEZ; liste görünür kalır ve arkada tazelenir.
+  // "Yenile" veya sekmeye dönüş BOŞ EKRAN gibi hissettirmez.
+  const shownWorkspaceRef = useRef(false)
 
   const loadOrdersWorkspace = useCallback(
     async (query: OrdersWorkspaceQuery) => {
       if (!integrationConfigService.isAuthMode()) return
       const accountGeneration = workflowService.getMarketplaceAccountGeneration()
+      // Gösterilecek bir sonuç ZATEN varsa tam yükleme durumuna DÜŞÜLMEZ:
+      // mevcut sayfa görünür kalır, yalnız arka plan tazeleme işareti yanar.
+      const revalidating = shownWorkspaceRef.current
       setOrdersState((current) => ({
         ...current,
-        ordersLoading: true,
+        ordersLoading: revalidating ? current.ordersLoading : true,
+        ordersRefreshing: revalidating,
         ordersError: undefined,
       }))
       workspaceLoadInFlight.current = true
@@ -307,6 +342,7 @@ function App() {
           return
         }
         setOrdersWorkspace(workspace)
+        shownWorkspaceRef.current = true
         setOrdersState((current) => ({
           ...current,
           orders: workflowService.enrichOrderImages(
@@ -314,12 +350,16 @@ function App() {
             catalogProductsRef.current,
           ),
           ordersLoading: false,
+          ordersRefreshing: false,
           ordersError: undefined,
         }))
       } catch {
+        // Hata durumunda MEVCUT liste KORUNUR (silinmez); yalnız güvenli,
+        // yükleme kapsamlı bir mesaj gösterilir.
         setOrdersState((current) => ({
           ...current,
           ordersLoading: false,
+          ordersRefreshing: false,
           ordersError:
             'Sipariş verileri yüklenemedi. Bağlantıyı kontrol edip tekrar deneyin.',
         }))
@@ -424,6 +464,25 @@ function App() {
       const catalogPromise = workflowService
         .hydrateProductCatalog()
         .catch(() => ({ products: [] as CargoProduct[], metadata: undefined }))
+
+      // Yayındaki yerleşim belgesi (birkaç KB). Baskı KULLANICI JESTİ
+      // içinde çalışır ve o anda ağa çıkamaz; bu yüzden açılışta okunur.
+      if (authMode) {
+        void import('./services/labelDocumentService')
+          .then((module) => module.fetchLabelDocuments())
+          .then((payload) => {
+            if (!isFresh()) return
+            const activeRecord = payload.activeTemplateId
+              ? payload.templates.find(
+                  (item) => item.id === payload.activeTemplateId,
+                )
+              : undefined
+            setActiveLabelDocument(activeRecord?.active ?? null)
+          })
+          .catch(() => {
+            // Belge okunamazsa YERLEŞİK yerleşim kullanılır; baskı DURMAZ.
+          })
+      }
 
       void ordersPromise.then((baseOrders) => {
         if (!isFresh()) return
@@ -645,9 +704,13 @@ function App() {
         }
       }
       if (requestId !== ordersFetchRequestId.current) return
+      // AUTH MODU: sync yanıtı TAM listeyi taşımaz (taşımamalıdır da).
+      // Görünür sayfa, sunucu tarafı çalışma alanı sorgusuyla tazelenir;
+      // kanonik havuz o sayfadan güncellenir.
+      const authMode = integrationConfigService.isAuthMode()
       setOrdersState((current) => ({
         ...current,
-        orders: nextOrders,
+        orders: authMode ? current.orders : nextOrders,
         ordersLoading: false,
         ordersMessage: options.silent ? current.ordersMessage : response.result,
         ordersError:
@@ -655,6 +718,10 @@ function App() {
         ordersDebug: response.result.debug,
         lastSyncedAt: new Date().toISOString(),
       }))
+      if (authMode) {
+        const query = workspaceQueryRef.current
+        if (query) await loadOrdersWorkspace(query)
+      }
       if (!options.silent) setSelectedIds([])
     } finally {
       ordersSyncInFlight.current = false
@@ -738,6 +805,7 @@ function App() {
       // siparişi bir kare bile yeni hesapta görünemez.
       workflowService.resetCanonicalOrderPool()
       setOrdersWorkspace(undefined)
+      shownWorkspaceRef.current = false
       // Auth modunda TAM tablo İNDİRİLMEZ: yeni hesabın sayfası, Siparişler
       // ekranı sorgusunu bildirdiğinde sunucudan gelir.
       const ordersPromise = authMode
@@ -1206,6 +1274,7 @@ function App() {
                 printedBy: 'local user',
                 // TEK yönlendirme: CargoFlow HTML mi, resmî Sürat PNG mi.
                 labelPrintTemplate: templateDecision.template,
+                labelDocument: activeLabelDocument ?? undefined,
               },
             )
           },
@@ -1403,6 +1472,7 @@ function App() {
           printedBy: 'local user',
           includePreviouslyPrinted: allPreviouslyPrinted,
           labelPrintTemplate: printTemplateDecision.template,
+          labelDocument: activeLabelDocument ?? undefined,
         },
       )
       const unresolvedNote =
@@ -1762,11 +1832,18 @@ function App() {
 
       {activePage === 'labelTemplates' ? (
         <Suspense fallback={<RouteSkeleton />}>
-        <LabelTemplatesPage
-          template={labelTemplate}
-          result={pageResult}
+        <LabelTemplateEditorPage
           orders={orders}
-          onSave={handleSaveLabelTemplate}
+          products={products}
+          onActiveDocumentChange={handleActiveLabelDocumentChange}
+          legacyBandPanel={
+            <LabelTemplatesPage
+              template={labelTemplate}
+              result={pageResult}
+              orders={orders}
+              onSave={handleSaveLabelTemplate}
+            />
+          }
         />
         </Suspense>
       ) : null}

@@ -258,7 +258,10 @@ test('SSC-6: /api/orders/sync — PARTIAL 207 (reconcile YOK) / TOTAL 502 / COMP
 // ── 7) Frontend: PARTIAL warning (throw değil) + statü kırılımı ──────────────
 test('SSC-7: orderWorkflowService — 207 PARTIAL warning; başarılı/başarısız statüler; liste korunur', () => {
   const svc = readSrc('src/services/orderWorkflowService.ts')
-  const block = sliceBlock(svc, 'private async fetchOrdersAuthMode(', 4200)
+  // Pencere, senkron-sonrası davranışı ANLATAN yorum bloğu eklendiğinde
+  // uyarı dalını kapsayacak biçimde genişletildi. Daha geniş pencere
+  // `doesNotMatch(throw new Error)` kontrolünü de GÜÇLENDİRİR.
+  const block = sliceBlock(svc, 'private async fetchOrdersAuthMode(', 5600)
   // 207 (2xx) → response.ok true ama payload.ok=false → syncOk=false → warning.
   assert.match(block, /syncOk = response\.ok && syncPayload\.ok === true/)
   // Kısmi statü kırılımı yüzeye çıkar.
@@ -286,7 +289,8 @@ test('SSC-8: App.tsx — çift-tık tek sync (single-flight) + Dashboard Yenile 
   // Dashboard Yenile yalnız DB okur; /api/orders/sync ÇAĞIRMAZ.
   const reload = sliceBlock(app, 'async function handleReloadOrders()', 2000)
   assert.doesNotMatch(reload, /\/api\/orders\/sync/)
-  assert.match(reload, /loadOrdersFromServer\(\)/)
+  assert.doesNotMatch(reload, /handleFetchOrders/)
+  assert.match(reload, /loadOrdersWorkspace\(/)
 })
 
 // ── DB destekli sözleşme testleri ───────────────────────────────────────────

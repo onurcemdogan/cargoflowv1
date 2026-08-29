@@ -148,6 +148,7 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
                 input.labelTemplate ?? defaultLabelTemplate,
                 input.mappingConfig,
                 input.products ?? [],
+                input.labelDocument,
               )
         const orderNumbers = printableOrders.map((order) => order.orderNumber)
         // Kullanıcıya AYRICA doğrulama sorulmaz: baskı yoluna teknik olarak

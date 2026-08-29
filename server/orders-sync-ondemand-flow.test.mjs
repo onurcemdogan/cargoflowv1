@@ -242,10 +242,14 @@ test('1-3) App.tsx: sayfa açılışı/route/dashboard geçişi DB okur, Trendyo
   // Görsel eksikliğinde otomatik ürün sync efekti KALDIRILDI.
   assert.doesNotMatch(app, /productsAutoRefreshAttempted/, 'otomatik ürün sync efekti kaldırıldı')
 
-  // handleReloadOrders yalnız DB okuma yolunu (loadOrdersFromServer) kullanır.
+  // handleReloadOrders yalnız YEREL DB okuma yolunu kullanır: auth modunda
+  // sunucu tarafı çalışma alanı sorgusu, legacy modda localStorage.
+  // Pazaryerine (sync) HİÇBİR koşulda çıkmaz.
   const reloadBlock = sliceBlock(app, 'async function handleReloadOrders() {', 2000)
-  assert.match(reloadBlock, /loadOrdersFromServer\(\)/, 'reload DB\'den okur')
+  assert.match(reloadBlock, /loadOrdersWorkspace\(/, 'reload DB\'den okur')
+  assert.match(reloadBlock, /workflowService\.loadOrders\(\)/, 'legacy yol korunur')
   assert.doesNotMatch(reloadBlock, /\/api\/orders\/sync/, 'reload sync endpoint\'i çağırmaz')
+  assert.doesNotMatch(reloadBlock, /handleFetchOrders/, 'reload sync tetiklemez')
 })
 
 test('4-5) App.tsx: Yenile tek-uçuş korumalı (eşzamanlı/çift-tık tek sync)', () => {
