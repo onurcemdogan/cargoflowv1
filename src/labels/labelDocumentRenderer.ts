@@ -93,13 +93,30 @@ export interface LabelGuardViolation {
   code: LabelGuardCode
   elementId: string
   detail: string
+  /**
+   * YAYINLAMAYI ENGELLER Mİ?
+   *
+   * ═══ NEDEN İKİ SINIF ═══════════════════════════════════════════════════
+   * İhlallerin bir kısmı VERİDEN BAĞIMSIZ yerleşim hatasıdır: öğe tuvalin
+   * dışına taşmış ya da barkodun/QR'ın üzerine binmiş. Bunlar HANGİ sipariş
+   * basılırsa basılsın bozuktur — okunmayan kimlik, kaybolmuş pakettir. Bu
+   * yüzden YAYINLAMA ENGELLENİR.
+   *
+   * Diğerleri VERİYE BAĞLIDIR: çok uzun bir adres ya da sekiz kalemlik bir
+   * sipariş kutuya sığmaz. Bunlar uç örneklerdir; yerleşimin kendisi bozuk
+   * değildir. Operatöre AÇIKÇA bildirilir (sessiz kırpma YOK) ama yayınlama
+   * engellenmez — aksi halde tek bir aykırı sipariş tüm şablonu kilitlerdi.
+   */
+  blocking: boolean
 }
 
 export interface RenderedLabel {
   primitives: LabelPrimitive[]
   violations: LabelGuardViolation[]
-  /** Hiçbir ihlal yoksa etiket basılabilir. */
+  /** Hiçbir ihlal yoksa etiket olduğu gibi basılabilir. */
   printable: boolean
+  /** Yerleşim hatası (veriden bağımsız) var mı? Yayınlama buna bakar. */
+  hasBlockingViolation: boolean
 }
 
 /**
@@ -302,10 +319,12 @@ export function renderLabelDocument(
   // ═══ MUHAFIZLAR ════════════════════════════════════════════════════════
   for (const primitive of primitives) {
     if (!rectWithinCanvas(primitive.rect)) {
+      // YERLEŞİM hatası: veriden bağımsız, her baskıda bozuk.
       violations.push({
         code: 'PRINT_BOUNDS_GUARD',
         elementId: primitive.elementId,
         detail: 'Öğe etiket alanının dışına taşıyor; baskıda kesilir.',
+        blocking: true,
       })
     }
     if (
@@ -316,6 +335,7 @@ export function renderLabelDocument(
         code: 'PRINT_BOUNDS_GUARD',
         elementId: primitive.elementId,
         detail: 'Metin kutu yüksekliğini aşıyor.',
+        blocking: false,
       })
     }
     if (primitive.kind === 'text' && primitive.truncated) {
@@ -327,7 +347,8 @@ export function renderLabelDocument(
         elementId: primitive.elementId,
         detail:
           'İçerik kutuya sığmıyor. Kutuyu büyütün veya puntoyu düşürün — ' +
-          'otomatik küçültme UYGULANMAZ (okunmayan etiket basılmaz).',
+          'otomatik küçültme UYGULANMAZ (sessiz kırpma yok).',
+        blocking: false,
       })
     }
   }
@@ -345,11 +366,18 @@ export function renderLabelDocument(
             : 'QR_OVERLAP_GUARD',
         elementId: primitive.elementId,
         detail: `Başka bir öğe (${other.elementId}) kimlik alanının üzerine biniyor.`,
+        // Okunamayan kimlik = kaybolmuş paket. YAYINLANAMAZ.
+        blocking: true,
       })
     }
   }
 
-  return { primitives, violations, printable: violations.length === 0 }
+  return {
+    primitives,
+    violations,
+    printable: violations.length === 0,
+    hasBlockingViolation: violations.some((violation) => violation.blocking),
+  }
 }
 
 /** Kilitli öğe mi? Düzenleyici bunu içerik alanlarını kapatmak için kullanır. */

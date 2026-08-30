@@ -51,6 +51,7 @@ import {
   activateLabelDocument,
   createLabelDocument,
   fetchLabelDocuments,
+  fetchPreviewOrder,
   renameLabelDocument,
   saveLabelDocumentDraft,
   type LabelTemplateRecord,
@@ -186,13 +187,34 @@ export function LabelTemplateEditorPage({
     [selectedTemplateId],
   )
 
+  // GERÇEK SİPARİŞ ÖNCELİKLİ ÖNİZLEME.
+  //
+  // Kanonik havuz doluysa (kullanıcı Siparişler ekranını açmışsa) oradan
+  // seçilir. Doğrudan bu sayfaya gelindiyse havuz BOŞTUR; o durumda TEK
+  // sipariş çekilir. Uydurma veriyle yapılan yerleşim gerçek Türkçe ad ve
+  // adreslerde taşar — bu yüzden demo son çaredir.
+  const [fetchedPreviewOrder, setFetchedPreviewOrder] = useState<CargoOrder[]>([])
+  useEffect(() => {
+    if (orders.length > 0) return
+    let active = true
+    void (async () => {
+      const order = await fetchPreviewOrder()
+      if (!active || !order) return
+      setFetchedPreviewOrder([order as CargoOrder])
+    })()
+    return () => {
+      active = false
+    }
+  }, [orders.length])
+
   const document = slot?.state.present
+  const previewOrders = orders.length > 0 ? orders : fetchedPreviewOrder
   const preview = useMemo(
     () =>
       previewMode === 'stress'
         ? buildStressPreviewSource()
-        : buildEditorPreviewSource(orders, products),
-    [orders, previewMode, products],
+        : buildEditorPreviewSource(previewOrders, products),
+    [previewOrders, previewMode, products],
   )
 
   const rendered = useMemo(
@@ -620,7 +642,12 @@ export function LabelTemplateEditorPage({
               type="button"
               className="primary-button"
               data-testid="editor-activate"
-              disabled={!slot || busy || !validation?.valid}
+              // YAYINLAMA, yerleşim hatası varken KAPALIDIR. Taslak kaydetmek
+              // serbesttir (yarım kalmış iş kaybolmasın); üretime çıkan sürüm
+              // ise barkodu/QR'ı kapatılmış ya da tuvali taşmış olamaz.
+              disabled={
+                !slot || busy || !validation?.valid || rendered?.hasBlockingViolation === true
+              }
               onClick={() => void handleActivate()}
             >
               <UploadCloud size={14} aria-hidden="true" /> Yayınla
@@ -664,15 +691,33 @@ export function LabelTemplateEditorPage({
                 Tüm kontroller geçti. Bu yerleşim basılabilir.
               </p>
             ) : null}
+            {rendered?.hasBlockingViolation ? (
+              <p
+                className="label-editor-guard-block"
+                role="alert"
+                data-testid="guards-blocking"
+              >
+                Bu yerleşim YAYINLANAMAZ: aşağıdaki hatalar hangi sipariş
+                basılırsa basılsın bozuk etiket üretir.
+              </p>
+            ) : null}
             <ul data-testid="guard-violations">
               {validation?.errors.map((error, index) => (
-                <li key={`v-${index}`} data-code={error.code}>
+                <li key={`v-${index}`} data-code={error.code} data-blocking="true">
                   {labelElementLabel(String(error.type ?? ''))} — {error.detail}
                 </li>
               ))}
               {rendered?.violations.map((violation, index) => (
-                <li key={`g-${index}`} data-code={violation.code}>
-                  {violation.code}: {violation.detail}
+                <li
+                  key={`g-${index}`}
+                  data-code={violation.code}
+                  data-blocking={violation.blocking ? 'true' : 'false'}
+                  className={
+                    violation.blocking ? undefined : 'label-guard-warning'
+                  }
+                >
+                  {violation.blocking ? 'HATA' : 'UYARI'} — {violation.code}:{' '}
+                  {violation.detail}
                 </li>
               ))}
             </ul>

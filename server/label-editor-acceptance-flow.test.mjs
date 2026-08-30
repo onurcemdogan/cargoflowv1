@@ -68,6 +68,15 @@ async function makeDb() {
   return { pglite, db, schema, organizationId: org.id }
 }
 
+/** Yorumları kaldırır: kaynak taraması KODU ölçmelidir, düzyazıyı değil. */
+function stripComments(source) {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split(String.fromCharCode(10))
+    .filter((line) => !line.trim().startsWith('//'))
+    .join(String.fromCharCode(10))
+}
+
 /* ═══ EDITOR-01..06 — BELGE MODELİ VE KİMLİK KİLİDİ ═════════════════ */
 
 test('EDITOR-01: sistem şablonlarının HEPSİ geçerlidir', async () => {
@@ -698,15 +707,28 @@ test('EDITOR-27: TEMPLATE_EDITOR_CARRIER_CALLS=0 — düzenleyici taşıyıcıya
 })
 
 test('EDITOR-28: düzenleyici istemcisi YALNIZ şablon uçlarına gider', async () => {
-  const service = readFileSync(
-    join(root, 'src/services/labelDocumentService.ts'), 'utf8',
+  // YORUMLAR ÇIKARILIR: bir uç adını AÇIKLAYAN yorum, o uca yapılan bir
+  // ÇAĞRI değildir. (Aksi halde test, kodu değil düzyazıyı ölçerdi.)
+  const service = stripComments(
+    readFileSync(join(root, 'src/services/labelDocumentService.ts'), 'utf8'),
   )
   const urls = [...service.matchAll(/['"`](\/api\/[^'"`$]*)/g)].map((match) => match[1])
   assert.ok(urls.length > 0, 'en az bir uç bulunmalı')
+  // AÇIK BEYAZ LİSTE. Sipariş ucu YALNIZ önizleme için TEK kayıt okur
+  // (sayfa boyutu 1); yerel, salt okunur ve taşıyıcıya çıkmaz.
+  const ALLOWED = ['/api/labels/documents', '/api/orders?page=1&pageSize=1']
   for (const url of urls) {
     assert.ok(
-      url.startsWith('/api/labels/documents'),
+      ALLOWED.some((prefix) => url.startsWith(prefix)),
       `beklenmeyen uç: ${url}`,
+    )
+  }
+  // Taşıyıcı/pazaryeri uçları HİÇBİR koşulda geçemez.
+  for (const forbidden of ['/api/orders/sync', '/api/shipments', '/api/trendyol']) {
+    assert.equal(
+      service.includes(forbidden),
+      false,
+      `yasak uç: ${forbidden}`,
     )
   }
 })
@@ -919,4 +941,100 @@ test('EDITOR-38: yayınlanan belge baskı yoluna UÇTAN UCA bağlanır', async (
     provider,
     /input\.labelPrintTemplate === 'surat_official_zpl'/,
   )
+})
+
+/* ═══ EDITOR-39..42 — ENGELLEYİCİ İHLAL YAYINLAMAYI DURDURUR ═════════ */
+
+test('EDITOR-39: kimlik üstüne binme ENGELLEYİCİ, içerik taşması UYARIDIR', async () => {
+  // ═══ NEDEN AYRIM ═══════════════════════════════════════════════════
+  // Barkodun üstüne bir metin bindiyse etiket HANGİ sipariş basılırsa
+  // basılsın bozuktur → yayınlama DURDURULUR. Uzun bir adres tek bir uç
+  // siparişte taşıyorsa yerleşimin kendisi bozuk değildir → UYARI verilir,
+  // ama tek aykırı kayıt tüm şablonu kilitlemez.
+  const renderer = await load('/src/labels/labelDocumentRenderer.ts')
+  const system = await load('/src/labels/labelSystemTemplates.ts')
+  const previewSource = await load('/src/labels/labelPreviewSource.ts')
+
+  // (a) Kimlik üstüne binme → ENGELLEYİCİ
+  const overlap = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const barcode = overlap.elements.find((element) => element.type === 'barcode')
+  const recipient = overlap.elements.find(
+    (element) => element.type === 'recipientName',
+  )
+  recipient.x = barcode.x
+  recipient.y = barcode.y
+  const overlapRendered = renderer.renderLabelDocument(
+    overlap,
+    previewSource.buildEditorPreviewSource([]).source,
+  )
+  assert.equal(overlapRendered.hasBlockingViolation, true)
+  assert.ok(
+    overlapRendered.violations
+      .filter((violation) => violation.code === 'BARCODE_OVERLAP_GUARD')
+      .every((violation) => violation.blocking === true),
+  )
+
+  // (b) İçerik taşması → UYARI (yayınlamayı engellemez)
+  const overflow = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const address = overflow.elements.find((element) => element.type === 'address')
+  address.maxLines = 1
+  const overflowRendered = renderer.renderLabelDocument(
+    overflow,
+    previewSource.buildStressPreviewSource().source,
+  )
+  assert.equal(overflowRendered.printable, false, 'uyarı da bir ihlaldir')
+  assert.ok(
+    overflowRendered.violations.some(
+      (violation) => violation.code === 'LONG_ADDRESS_OVERFLOW_GUARD',
+    ),
+  )
+  assert.equal(
+    overflowRendered.hasBlockingViolation,
+    false,
+    'veriye bağlı taşma yayınlamayı ENGELLEMEZ',
+  )
+})
+
+test('EDITOR-40: temiz yerleşimde engelleyici ihlal YOKTUR (negatif kontrol)', async () => {
+  const renderer = await load('/src/labels/labelDocumentRenderer.ts')
+  const system = await load('/src/labels/labelSystemTemplates.ts')
+  const previewSource = await load('/src/labels/labelPreviewSource.ts')
+  const preview = previewSource.buildEditorPreviewSource([])
+  for (const template of system.SYSTEM_LABEL_TEMPLATES) {
+    const rendered = renderer.renderLabelDocument(template, preview.source)
+    assert.equal(
+      rendered.hasBlockingViolation,
+      false,
+      `${template.id} engelleyici ihlal üretmemeli`,
+    )
+  }
+})
+
+test('EDITOR-41: YAYINLA düğmesi engelleyici ihlalde KAPALIDIR', async () => {
+  const page = readFileSync(
+    join(root, 'src/pages/LabelTemplateEditorPage.tsx'), 'utf8',
+  )
+  const at = page.indexOf("data-testid=\"editor-activate\"")
+  assert.notEqual(at, -1, 'yayınla düğmesi bulunamadı')
+  const block = page.slice(at, at + 500)
+  assert.match(block, /rendered\?\.hasBlockingViolation === true/)
+  // Taslak kaydetmek ENGELLENMEZ: yarım kalmış iş kaybolmamalıdır.
+  const saveAt = page.indexOf("data-testid=\"editor-save-draft\"")
+  const saveBlock = page.slice(saveAt, saveAt + 260)
+  assert.doesNotMatch(saveBlock, /hasBlockingViolation/)
+})
+
+test('EDITOR-42: düzenleyici, havuz boşken ÖNİZLEME SİPARİŞİNİ kendisi çeker', async () => {
+  // Doğrudan düzenleyiciye gelen operatör uydurma DEMO veriyle yerleşim
+  // yapmak zorunda kalmamalıdır. Çekilen şey TEK kayıttır (tam koleksiyon
+  // DEĞİL) ve mevcut `/api/orders` sözleşmesini kullanır.
+  const service = readFileSync(
+    join(root, 'src/services/labelDocumentService.ts'), 'utf8',
+  )
+  assert.match(service, /\/api\/orders\?page=1&pageSize=1/)
+  const page = readFileSync(
+    join(root, 'src/pages/LabelTemplateEditorPage.tsx'), 'utf8',
+  )
+  assert.match(page, /fetchPreviewOrder\(\)/)
+  assert.match(page, /orders\.length > 0 \? orders : fetchedPreviewOrder/)
 })

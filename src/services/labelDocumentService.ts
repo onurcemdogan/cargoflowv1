@@ -72,6 +72,28 @@ async function request<T>(
   return payload as T
 }
 
+/**
+ * ÖNİZLEME İÇİN TEK SİPARİŞ.
+ *
+ * Düzenleyiciye doğrudan gelen (Siparişler ekranını hiç açmamış) bir
+ * operatör, uydurma DEMO veriyle yerleşim yapmak zorunda kalmamalıdır.
+ * Bu çağrı `/api/orders` sözleşmesini KULLANIR ve TEK kayıt ister:
+ * tam koleksiyon İNDİRİLMEZ, taşıyıcıya/pazaryerine ÇIKILMAZ.
+ */
+export async function fetchPreviewOrder(): Promise<unknown | null> {
+  try {
+    const response = await fetch('/api/orders?page=1&pageSize=1', {
+      credentials: 'include',
+    })
+    if (!response.ok) return null
+    const payload = (await response.json()) as { orders?: unknown[] }
+    return Array.isArray(payload.orders) ? (payload.orders[0] ?? null) : null
+  } catch {
+    // Önizleme siparişi alınamazsa DEMO veriye düşülür; düzenleyici AÇILIR.
+    return null
+  }
+}
+
 export async function fetchLabelDocuments(): Promise<LabelDocumentsResponse> {
   const payload = await request<{
     system?: LabelDocument[]

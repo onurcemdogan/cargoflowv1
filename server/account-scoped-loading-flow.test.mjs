@@ -23,7 +23,10 @@ function sliceBlock(src, anchor, length = 2200) {
 // ── 1: mount — siparişler ve katalog PARALEL; siparişler katalogu beklemez ──
 test('PERF-1: App mount siparişleri ve katalogu paralel yükler (orders katalogu awaitlemez)', () => {
   const app = readSrc('src/App.tsx')
-  const block = sliceBlock(app, 'const isFresh = () =>', 2600)
+  // Pencere, açılışta yayındaki etiket belgesini okuyan blok eklendiğinde
+  // her iki promise'i de kapsayacak biçimde genişletildi. Daha geniş pencere
+  // `doesNotMatch(await ...)` kontrollerini de GÜÇLENDİRİR.
+  const block = sliceBlock(app, 'const isFresh = () =>', 3600)
   // Orders ve katalog ayrı promise; ikisi de .then ile bağımsız uygulanır.
   assert.match(block, /const ordersPromise =/)
   assert.match(block, /const catalogPromise =/)

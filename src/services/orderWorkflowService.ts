@@ -316,6 +316,14 @@ export class OrderWorkflowService {
   // Kanonik havuz: gorulen siparisler id -> kayit. Secim cozumu ve siparis
   // detayi buradan yapilir; sayfa degisimi secimi KAYBETTIRMEZ.
   private canonicalOrderPool = new Map<string, CargoOrder>()
+  // Ucustaki calisma alani istekleri (sorgu dizesi -> promise).
+  private workspaceInFlight = new Map<
+    string,
+    Promise<{
+      workspace?: OrdersWorkspaceResult
+      externalProcessing?: ExternalProcessingState
+    }>
+  >()
 
   private authOrdersMeta: { total: number; page: number; pageSize: number } = {
     total: 0,
@@ -473,6 +481,24 @@ export class OrderWorkflowService {
     }
   }
 
+  /**
+   * TAM KOLEKSIYON YUKLEYICISI — KULLANIM DISI (UI YOLUNDA CAGRILMAZ).
+   *
+   * ═══ NEDEN DURUYOR ══════════════════════════════════════════════════
+   * Bu metod TUM siparis tablosunu 100'erlik sayfalarla indirir. 10k
+   * siparişte ~100 HTTP turu, 20k ustunde ise `MAX_ORDER_PAGES` ile ACIK
+   * hata uretir. Bu nedenle HICBIR UI yolundan cagrilmaz; yerini sunucu
+   * tarafi `fetchOrdersWorkspace()` almistir.
+   *
+   * SILINMEDI cunku `/api/orders` sayfalama SOZLESMESININ (sayfa
+   * metadata'sinin dogrulanmasi, kismi basari yasagi, sayfalar arasi
+   * tekillestirme) calisan referans uygulamasidir ve
+   * `orders-pagination-flow` paketi bu sozlesmeyi bu metod uzerinden
+   * kilitler.
+   *
+   * MUHAFIZ: `App.tsx` bu metodu cagirirsa RES-7b ve PERF-9 testleri
+   * KIRILIR. Yeni bir tam-koleksiyon yolu sessizce geri gelemez.
+   */
   async loadOrdersFromServer(
     filters: {
       status?: string
@@ -666,16 +692,30 @@ export class OrderWorkflowService {
     params.set('page', String(query.page))
     params.set('pageSize', String(query.pageSize))
 
-    const response = await fetch(`/api/orders/workspace?${params.toString()}`, {
-      credentials: 'include',
-    })
-    if (!response.ok) {
-      throw new Error(`Siparisler yuklenemedi (HTTP ${response.status}).`)
-    }
-    const payload = (await response.json()) as {
-      workspace?: OrdersWorkspaceResult
-      externalProcessing?: ExternalProcessingState
-    }
+    // ISTEK TEKILLESTIRME: AYNI sorgu zaten ucustaysa ikinci bir ag cagrisi
+    // ACILMAZ. React StrictMode'un cift efekt calistirmasi ve sekmeye hizli
+    // gidip gelme, ayni sayfayi iki kez indirmeye yol aciyordu.
+    const key = params.toString()
+    const inFlight = this.workspaceInFlight.get(key)
+    const request = inFlight
+      ? inFlight
+      : fetch(`/api/orders/workspace?${key}`, { credentials: 'include' })
+          .then(async (response) => {
+            if (!response.ok) {
+              throw new Error(
+                `Siparisler yuklenemedi (HTTP ${response.status}).`,
+              )
+            }
+            return (await response.json()) as {
+              workspace?: OrdersWorkspaceResult
+              externalProcessing?: ExternalProcessingState
+            }
+          })
+          .finally(() => {
+            this.workspaceInFlight.delete(key)
+          })
+    if (!inFlight) this.workspaceInFlight.set(key, request)
+    const payload = await request
     if (payload.externalProcessing) {
       this.externalProcessingState = payload.externalProcessing
     }

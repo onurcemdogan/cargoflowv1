@@ -202,6 +202,14 @@ const operationTabOptions: Array<{ key: OperationTabFilter; label: string }> = [
   { key: 'externallyProcessed', label: EXTERNAL_PROCESSING_LABEL },
 ]
 
+/**
+ * Serbest metin aramasında sunucuya gitmeden önce beklenen süre (ms).
+ *
+ * Yazma hızından kısa tutulursa her tuş bir istek üretir; çok uzun tutulursa
+ * arama "takılmış" hissettirir. 300 ms ikisi arasında ölçülmüş dengedir.
+ */
+export const ORDERS_SEARCH_DEBOUNCE_MS = 300
+
 const dateRangeOptions: Array<{ key: OrdersDatePreset; label: string }> = [
   { key: 'all', label: 'Tüm Tarihler' },
   { key: 'today', label: 'Bugün' },
@@ -305,6 +313,35 @@ export function OrdersPage({
     [customEndDate, customStartDate, datePreset],
   )
 
+  // ═══ ARAMA GECİKMESİ (DEBOUNCE) ══════════════════════════════════════
+  //
+  // ÖLÇÜLDÜ (tarayıcı, 260 siparişli gerçek kurulum): "Zeyn" yazmak DÖRT
+  // ayrı `/api/orders/workspace` isteği üretiyordu — her tuşa bir istek.
+  // 10 harflik bir müşteri adı 10 tur demekti ve yalnız SONUNCUSUNUN
+  // sonucu gösterilecekti.
+  //
+  // Yazma anında GÖRÜNEN alan gecikmez (kullanıcı harfi anında görür);
+  // yalnız SUNUCU SORGUSU duraklamayı bekler. Bayat yanıt koruması ayrıca
+  // devrededir: gecikmeye rağmen sıra karışırsa eski sonuç uygulanmaz.
+  const [debouncedText, setDebouncedText] = useState({
+    query,
+    customerQuery,
+    productQuery,
+    orderNumberQuery,
+    cargoSlipQuery,
+  })
+  useEffect(() => {
+    const next = {
+      query,
+      customerQuery,
+      productQuery,
+      orderNumberQuery,
+      cargoSlipQuery,
+    }
+    const timer = setTimeout(() => setDebouncedText(next), ORDERS_SEARCH_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [cargoSlipQuery, customerQuery, orderNumberQuery, productQuery, query])
+
   // TEK SORGU NESNESİ. Hem yerel (legacy) projeksiyon hem sunucu isteği
   // BUNDAN türer; iki tarafın filtre kümesi ayrışamaz.
   const workspaceQuery = useMemo<OrdersWorkspaceQuery>(
@@ -330,11 +367,11 @@ export function OrdersPage({
           : undefined,
         timezone: dateRange.timezone,
       },
-      search: query,
-      customerQuery,
-      productQuery,
-      orderNumberQuery,
-      cargoSlipQuery,
+      search: debouncedText.query,
+      customerQuery: debouncedText.customerQuery,
+      productQuery: debouncedText.productQuery,
+      orderNumberQuery: debouncedText.orderNumberQuery,
+      cargoSlipQuery: debouncedText.cargoSlipQuery,
       sortKey,
       sortDirection,
       page: currentPage,
@@ -345,22 +382,18 @@ export function OrdersPage({
       actionFilter,
       operationTab,
       cargo,
-      cargoSlipQuery,
       city,
       currentPage,
-      customerQuery,
       datePreset,
       dateRange.endTime,
       dateRange.startTime,
       dateRange.timezone,
+      debouncedText,
       marketplace,
       district,
       multiProductFilter,
       sameProductFilter,
-      orderNumberQuery,
       pageSize,
-      productQuery,
-      query,
       sortDirection,
       sortKey,
       status,

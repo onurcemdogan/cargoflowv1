@@ -7139,6 +7139,24 @@ button:disabled {
 }
 .label-editor-guards h4 { margin: 0 0 6px; font-size: 13px; }
 .label-editor-guards ul { margin: 0; padding-left: 18px; font-size: 12px; color: #8b1a10; display: grid; gap: 4px; }
+.label-editor-guards .label-guard-warning { color: #8a5300; }
+.label-editor-guard-block {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fdecea;
+  color: #8b1a10;
+  font-size: 12px;
+  font-weight: 600;
+}
+/* Birincil eylem (Yayınla) düzenleyici araç çubuğunda AÇIKÇA ayrışır:
+   kaydetmek ile yayınlamak aynı görünmemelidir. */
+.label-editor-toolbar button.primary-button {
+  background: var(--accent, #1f6feb);
+  border-color: var(--accent, #1f6feb);
+  color: #fff;
+}
+.label-editor-toolbar button.primary-button:disabled { opacity: .45; }
 .label-editor-empty { padding: 40px; text-align: center; color: #6b7787; }
 
 /* ── Özellik denetçisi ── */
