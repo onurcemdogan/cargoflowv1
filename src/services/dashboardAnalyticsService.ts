@@ -1,12 +1,18 @@
 import type { CargoOrder } from '../types/cargoflow'
 import type { AnalyticsClaim } from '../dashboard/analyticsClaims'
-import type {
-  DashboardOperationalSnapshot,
-  DashboardPeriodSelection,
+import {
+  extractDashboardOperationalSnapshot,
+  reviveDashboardViewModel,
+  type DashboardOperationalSnapshot,
+  type DashboardPeriodSelection,
+  type DashboardViewModel,
 } from '../dashboard/dashboardViewModel'
 import type { DashboardProviderCounts } from '../dashboard/dashboardSummary'
 
 export interface DashboardOperationalResult {
+  /** TAM görünüm modeli (satış dahil) — sunucuda hesaplanmıştır. */
+  viewModel: DashboardViewModel
+  /** Operasyon alanları; geriye dönük kullanım için ayrıca sunulur. */
   snapshot: DashboardOperationalSnapshot
   providerCounts?: DashboardProviderCounts
 }
@@ -93,9 +99,9 @@ function operationalKey(period: DashboardPeriodSelection): string {
  */
 export async function fetchDashboardOperationalSnapshot(
   period: DashboardPeriodSelection,
-  options: { refresh?: boolean } = {},
+  options: { refresh?: boolean; latestSyncAt?: string } = {},
 ): Promise<DashboardOperationalResult> {
-  const key = operationalKey(period)
+  const key = `${operationalKey(period)}|${options.latestSyncAt ?? ''}`
   if (!options.refresh && operationalCache && operationalCache.key === key) {
     return operationalCache.result
   }
@@ -105,19 +111,27 @@ export async function fetchDashboardOperationalSnapshot(
   const params = new URLSearchParams({ periodKey: period.key })
   if (period.startDate) params.set('periodStartDate', period.startDate)
   if (period.endDate) params.set('periodEndDate', period.endDate)
+  // Son senkron damgası istemcinin oturum durumundan gelir; sunucu bunu
+  // bilemez. Geçilmezse model kendi türetimine düşer ve iki taraf AYRIŞIR.
+  if (options.latestSyncAt) params.set('latestSyncAt', options.latestSyncAt)
   operationalInFlightKey = key
   operationalInFlight = fetch(`/api/dashboard/operational?${params}`, {
     credentials: 'include',
   })
     .then(async (response) => {
       const payload = await response.json()
-      if (!response.ok || payload?.ok === false || !payload?.operational) {
+      if (!response.ok || payload?.ok === false) {
         throw new Error(
           String(payload?.message ?? 'Operasyon özeti yüklenemedi.'),
         )
       }
+      if (!payload?.viewModel) {
+        throw new Error('Operasyon özeti yüklenemedi.')
+      }
+      const viewModel = reviveDashboardViewModel(payload.viewModel)
       const result: DashboardOperationalResult = {
-        snapshot: payload.operational as DashboardOperationalSnapshot,
+        viewModel,
+        snapshot: extractDashboardOperationalSnapshot(viewModel),
         providerCounts: payload.providerCounts as
           | DashboardProviderCounts
           | undefined,

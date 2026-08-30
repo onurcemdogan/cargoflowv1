@@ -1715,7 +1715,10 @@ function App() {
       {effectivePage === 'dashboard' ? (
         <DashboardPage
           orders={orders}
-          useServerOperationalSnapshot={integrationConfigService.isAuthMode()}
+          useServerOperationalSnapshot={
+            integrationHydrated && integrationConfigService.isAuthMode()
+          }
+          dataSourceResolved={integrationHydrated}
           products={products}
           integrationConfig={integrationConfig}
           maskedIntegrationStatus={maskedIntegrationStatus}

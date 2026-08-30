@@ -954,23 +954,27 @@ app.get('/api/dashboard/operational', async (request, response) => {
       startDate: strOrUndef(query.periodStartDate),
       endDate: strOrUndef(query.periodEndDate),
     }
-    const { buildDashboardOperationalSnapshot } = await import(
+    const { buildDashboardViewModelSnapshot } = await import(
       './dashboard/dashboardOperationalService.ts'
     )
     const startedAt = Date.now()
-    const result = await buildDashboardOperationalSnapshot(
+    const result = await buildDashboardViewModelSnapshot(
       context.db,
       context.organizationId,
       selectedPeriod,
       context.marketplaceAccountId,
+      { latestSyncAt: strOrUndef(query.latestSyncAt) },
     )
     response.json({
       ok: true,
-      operational: result.snapshot,
+      // TAM görünüm modeli. Satış satırları tarayıcıya İNMEZ; kartlar,
+      // grafik ve dağılımlar burada hesaplanmış olarak gelir.
+      viewModel: result.viewModel,
       providerCounts: result.providerCounts,
       diagnostics: {
         scannedOrders: result.scannedOrders,
         scannedProducts: result.scannedProducts,
+        scannedAnalyticsOrders: result.scannedAnalyticsOrders,
         cacheHit: result.cacheHit,
         durationMs: Date.now() - startedAt,
       },

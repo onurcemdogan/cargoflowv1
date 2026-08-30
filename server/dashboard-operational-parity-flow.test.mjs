@@ -333,3 +333,150 @@ test('DASH-8: anlık görüntü, tam sipariş yükünün ÇOK ALTINDA kalır ve 
       `${largeResult.bytes} / ${largeResult.legacyBytes})`,
   )
 })
+
+/* ═══ DASH-9..12 — TAM GÖRÜNÜM MODELİ (SATIŞ DAHİL) PARİTESİ ════════ */
+
+/**
+ * ESKİ yol: tarayıcı `/api/analytics/orders`'tan dönem satırlarını indirir ve
+ * satış modelini KENDİ kurar. Burada o yol birebir taklit edilir.
+ */
+async function legacyClientFullViewModel(deps, db, organizationId) {
+  const collected = []
+  let page = 1
+  for (;;) {
+    const result = await deps.persistence.listOrders(
+      db, organizationId, { page, pageSize: 100 }, undefined,
+    )
+    collected.push(...result.orders)
+    if (collected.length >= result.total || result.orders.length === 0) break
+    page += 1
+  }
+  const derived = collected.map((order) =>
+    deps.orderStatus.withDerivedOperationStatus(order),
+  )
+  const stamped = deps.externalProcessing.applyExternalProcessingState(derived, {
+    entries: {},
+  })
+  const orders = deps.orderCounts.dedupeOrdersByPackageIdentity(stamped)
+  const products = await deps.products.listAllProducts(db, organizationId, undefined)
+
+  // 1. render: aralığı öğren (tarayıcı bunu view-model'den türetir).
+  const draft = deps.viewModel.buildDashboardViewModel({
+    orders, products, selectedPeriod: PERIOD, now: FIXED_NOW,
+  })
+  const ranges = [
+    draft.period,
+    draft.comparisonPeriod,
+    ...draft.salesPeriodCards.map((card) => card.range),
+  ]
+  const startMs = Math.min(...ranges.map((r) => r.start.getTime()))
+  const endMs = Math.max(...ranges.map((r) => r.end.getTime()))
+
+  // 2. render: analitik satırlarla NİHAİ model (uç sanitize ederek döner).
+  const analyticsOrders = deps.analyticsCache.sanitizeAnalyticsOrders(
+    await deps.persistence.listOrdersForAnalytics(
+      db, organizationId, { startMs, endMs }, undefined,
+    ),
+  )
+  return deps.viewModel.buildDashboardViewModel({
+    orders,
+    analyticsOrders,
+    analyticsClaims: [],
+    claimsAvailable: false,
+    products,
+    selectedPeriod: PERIOD,
+    now: FIXED_NOW,
+  })
+}
+
+test('DASH-9: SUNUCU görünüm modeli, eski istemci yoluyla BİREBİR aynıdır', async (t) => {
+  const { pglite, db, org, deps } = await setup(140)
+  t.after(() => pglite.close())
+  deps.analyticsCache = await load('/server/cache/analyticsCache.ts')
+
+  const legacy = await legacyClientFullViewModel(deps, db, org.organizationId)
+  const server = await deps.operational.buildDashboardViewModelSnapshot(
+    db, org.organizationId, PERIOD, undefined, { now: FIXED_NOW },
+  )
+
+  // TÜM alanlar — satış, grafik, dağılım, ürün ve operasyon.
+  assert.deepEqual(server.viewModel, legacy, 'tam görünüm modeli birebir aynı')
+})
+
+test('DASH-10: SATIŞ alanları alan alan doğrulanır (yuvarlama/sıra dahil)', async (t) => {
+  const { pglite, db, org, deps } = await setup(140)
+  t.after(() => pglite.close())
+  deps.analyticsCache = await load('/server/cache/analyticsCache.ts')
+  const legacy = await legacyClientFullViewModel(deps, db, org.organizationId)
+  const server = (
+    await deps.operational.buildDashboardViewModelSnapshot(
+      db, org.organizationId, PERIOD, undefined, { now: FIXED_NOW },
+    )
+  ).viewModel
+
+  for (const field of [
+    'salesSummary',
+    'salesPeriodCards',
+    'salesChart',
+    'cityDistribution',
+    'marketplaceDistribution',
+    'topProducts',
+    'salesDateBasis',
+    'salesMetricDefinition',
+  ]) {
+    assert.deepEqual(server[field], legacy[field], `${field} ayrıştı`)
+  }
+  // İade veri kaynağı semantiği DEĞİŞMEZ: auth modunda kesin claim yok.
+  assert.equal(server.salesSummary.refundDataSource, 'order_status')
+})
+
+test('DASH-11: JSON gidiş-dönüşü modeli BOZMAZ (Date alanları canlandırılır)', async (t) => {
+  const { pglite, db, org, deps } = await setup(80)
+  t.after(() => pglite.close())
+  const server = (
+    await deps.operational.buildDashboardViewModelSnapshot(
+      db, org.organizationId, PERIOD, undefined, { now: FIXED_NOW },
+    )
+  ).viewModel
+  const revived = deps.viewModel.reviveDashboardViewModel(
+    JSON.parse(JSON.stringify(server)),
+  )
+  assert.deepEqual(revived, server, 'JSON turu sonrası model AYNI olmalı')
+  assert.ok(revived.period.start instanceof Date)
+  assert.ok(revived.comparisonPeriod.end instanceof Date)
+  for (const card of revived.salesPeriodCards) {
+    assert.ok(card.range.start instanceof Date, 'kart aralığı Date olmalı')
+  }
+})
+
+test('DASH-12: yanıt, dönem satırlarını TAŞIMAZ (satış yükü ortadan kalkar)', async (t) => {
+  const { pglite, db, org, deps } = await setup(300)
+  t.after(() => pglite.close())
+  deps.analyticsCache = await load('/server/cache/analyticsCache.ts')
+
+  const result = await deps.operational.buildDashboardViewModelSnapshot(
+    db, org.organizationId, PERIOD, undefined, { now: FIXED_NOW },
+  )
+  const modelBytes = JSON.stringify(result.viewModel).length
+
+  // ESKİ yolun tarayıcıya indirdiği satış yükü.
+  const analyticsRows = deps.analyticsCache.sanitizeAnalyticsOrders(
+    await deps.persistence.listOrdersForAnalytics(
+      db, org.organizationId,
+      { startMs: Date.UTC(2026, 5, 1), endMs: Date.UTC(2026, 8, 1) },
+      undefined,
+    ),
+  )
+  const legacyBytes = JSON.stringify(analyticsRows).length
+
+  assert.ok(analyticsRows.length > 0, 'karşılaştırma için satır olmalı')
+  assert.equal(
+    JSON.stringify(result.viewModel).includes('"rawPayloadEncrypted"'),
+    false,
+    'model ham sipariş yükü TAŞIMAZ',
+  )
+  assert.ok(
+    modelBytes < legacyBytes,
+    `model, ham satır yükünden küçük olmalı (${modelBytes} < ${legacyBytes})`,
+  )
+})

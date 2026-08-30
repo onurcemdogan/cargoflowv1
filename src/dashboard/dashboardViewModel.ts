@@ -329,6 +329,32 @@ export interface DashboardOperationalSnapshot {
   latestSyncAt?: string
 }
 
+/**
+ * JSON'dan gelen görünüm modelini CANLANDIRIR.
+ *
+ * `DashboardDateRange` alanları `Date` taşır; JSON bunları dizeye çevirir.
+ * Canlandırma olmadan `range.start.getTime()` çalışma anında patlardı.
+ * Date taşıyan TEK yapı budur (zaman kovaları ve dağılımlar dize/sayıdır),
+ * bu yüzden dönüşüm dar ve denetlenebilir kalır.
+ */
+export function reviveDashboardViewModel(input: unknown): DashboardViewModel {
+  const model = input as DashboardViewModel
+  const range = (value: DashboardDateRange): DashboardDateRange => ({
+    ...value,
+    start: new Date(value.start),
+    end: new Date(value.end),
+  })
+  return {
+    ...model,
+    period: range(model.period),
+    comparisonPeriod: range(model.comparisonPeriod),
+    salesPeriodCards: (model.salesPeriodCards ?? []).map((card) => ({
+      ...card,
+      range: range(card.range),
+    })),
+  }
+}
+
 /** Tam view-model'den operasyon alanlarını ayıklar (sunucu tarafı üretim). */
 export function extractDashboardOperationalSnapshot(
   viewModel: DashboardViewModel,

@@ -32,6 +32,7 @@ import {
   type DashboardOperationalSnapshot,
   type DashboardSalesPeriodCard,
   type DashboardTimeBucket,
+  type DashboardViewModel,
 } from '../dashboard/dashboardViewModel'
 import type {
   ApiDebugLog,
@@ -67,6 +68,16 @@ interface DashboardPageProps {
    * legacy (localStorage) modda false — orada tam liste zaten yereldedir.
    */
   useServerOperationalSnapshot?: boolean
+  /**
+   * Veri kaynağı MODU BELİRLENDİ Mİ?
+   *
+   * Entegrasyon hidrasyonu tamamlanmadan `useServerOperationalSnapshot`
+   * geçici olarak `false` görünür. O ANDA satış analitiği isteği atılırsa,
+   * sunucu modeli birazdan gelecek olmasına rağmen 269 kB'lık ham satır
+   * yükü BOŞUNA indirilir (tarayıcıda ölçüldü). Mod belirlenene kadar
+   * legacy analitik yolu BEKLER.
+   */
+  dataSourceResolved?: boolean
   products?: CargoProduct[]
   integrationConfig: IntegrationConfig
   maskedIntegrationStatus?: MaskedIntegrationStatus | null
@@ -112,6 +123,7 @@ const marketplaceColors = ['#2563eb', '#14b8a6', '#f59e0b', '#8b5cf6', '#64748b'
 export function DashboardPage({
   orders,
   useServerOperationalSnapshot = false,
+  dataSourceResolved = true,
   products = [],
   integrationConfig,
   maskedIntegrationStatus,
@@ -161,6 +173,20 @@ export function DashboardPage({
   // İNDİRMEZ; değerler aynı fonksiyonun sunucudaki çalışmasından türer.
   const [operationalSnapshot, setOperationalSnapshot] =
     useState<DashboardOperationalSnapshot | null>(null)
+  // SUNUCUDA HESAPLANMIŞ TAM GÖRÜNÜM MODELİ.
+  //
+  // ═══ NEDEN TAM MODEL ═══════════════════════════════════════════════════
+  // ÖLÇÜLDÜ (gerçek tarayıcı, 260 sipariş): satış analitiği ucu 269,4 kB
+  // ham sipariş satırı indiriyordu ve bu yük sipariş sayısıyla DOĞRUSAL
+  // büyüyordu. Kartların sayıları zaten sunucuda SQL ile toplanıyordu;
+  // satırlar YALNIZ ikincil grafikler (saatlik/günlük kova, il ve pazaryeri
+  // dağılımı, en çok satan ürün) için taşınıyordu.
+  //
+  // Artık AYNI `buildDashboardViewModel` sunucuda çalışır ve tarayıcıya
+  // yalnız hesaplanmış model iner. Satış semantiği DEĞİŞMEZ: aynı fonksiyon,
+  // aynı girdiler, aynı iade (claims) davranışı.
+  const [serverViewModel, setServerViewModel] =
+    useState<DashboardViewModel | null>(null)
   const [providerCounts, setProviderCounts] =
     useState<DashboardProviderCounts | null>(null)
   const [operationalError, setOperationalError] = useState<string>()
@@ -172,9 +198,11 @@ export function DashboardPage({
     let active = true
     fetchDashboardOperationalSnapshot(selectedPeriod, {
       refresh: operationalRefreshTick > 0,
+      latestSyncAt: lastSyncedAt,
     })
       .then((result) => {
         if (!active) return
+        setServerViewModel(result.viewModel)
         setOperationalSnapshot(result.snapshot)
         setProviderCounts(result.providerCounts ?? null)
         setOperationalError(undefined)
@@ -190,7 +218,12 @@ export function DashboardPage({
     return () => {
       active = false
     }
-  }, [operationalRefreshTick, selectedPeriod, useServerOperationalSnapshot])
+  }, [
+    lastSyncedAt,
+    operationalRefreshTick,
+    selectedPeriod,
+    useServerOperationalSnapshot,
+  ])
   // SATIŞ analitiği: operational ordersState'ten bağımsız, cap'siz dönemsel
   // veri (analytics endpoint'i). Operasyon panelleri ordersState'i kullanmaya
   // devam eder. Loading/error render'da TÜRETİLİR (effect'te senkron setState
@@ -223,7 +256,7 @@ export function DashboardPage({
   // geriye dönük davranışa düşer.
   const claimsAvailable =
     claimsResult?.source != null ? claimsResult.source !== 'unavailable' : undefined
-  const viewModel = useMemo(
+  const localViewModel = useMemo(
     () =>
       buildDashboardViewModel({
         orders,
@@ -249,6 +282,9 @@ export function DashboardPage({
       useServerOperationalSnapshot,
     ],
   )
+  // Sunucu modeli varken YEREL hesap KULLANILMAZ: tarayıcıda tam satış
+  // verisi yoktur ve kısmi havuzdan hesaplanmış bir model YANLIŞ olurdu.
+  const viewModel = serverViewModel ?? localViewModel
   // İlk açılışta kartların tamamını (Geçen Ay başı → Bugün sonu) kapsayan
   // TEK aralık çekilir; seçili dönem bu kapsamın dışına çıkarsa service
   // birleşik aralığı yeniden çeker, kapsam içindeyse cache'ten döner.
@@ -264,6 +300,9 @@ export function DashboardPage({
   }, [viewModel.period, viewModel.comparisonPeriod, viewModel.salesPeriodCards])
   const analyticsRequestKey = `${analyticsRangeKey}#${analyticsRetryTick}#${analyticsRefreshTick}`
   useEffect(() => {
+    // SUNUCU MODU: satış modeli zaten sunucuda hesaplandı; ham satır ÇEKİLMEZ.
+    // Mod henüz belirlenmediyse de BEKLENİR (boşuna indirme yok).
+    if (useServerOperationalSnapshot || !dataSourceResolved) return
     const [startMs, endMs] = analyticsRequestKey
       .split('#')[0]
       .split('|')
@@ -295,9 +334,16 @@ export function DashboardPage({
     }
     // analyticsRefreshTick zaten analyticsRequestKey içinde kodlanır; linter
     // için açıkça listelenir (değer yalnız key ile birlikte değişir).
-  }, [analyticsRequestKey, analyticsRefreshTick])
+  }, [
+    analyticsRequestKey,
+    analyticsRefreshTick,
+    dataSourceResolved,
+    useServerOperationalSnapshot,
+  ])
   // İade verisi orders ile aynı geniş kapsam için ayrı yüklenir.
   useEffect(() => {
+    // SUNUCU MODU: iade semantiği sunucudaki modele dahildir.
+    if (useServerOperationalSnapshot || !dataSourceResolved) return
     const [startMs, endMs] = analyticsRequestKey
       .split('#')[0]
       .split('|')
@@ -329,19 +375,31 @@ export function DashboardPage({
     return () => {
       active = false
     }
-  }, [analyticsRequestKey, analyticsRefreshTick])
+  }, [
+    analyticsRequestKey,
+    analyticsRefreshTick,
+    dataSourceResolved,
+    useServerOperationalSnapshot,
+  ])
   // SSR/test render'ında effect çalışmaz; skeleton'da kilitlenmemek için
   // loading yalnız tarayıcıda türetilir (fallback: operasyon verisi).
-  const analyticsLoading =
-    typeof window !== 'undefined' && analyticsResult?.key !== analyticsRequestKey
-  const analyticsError =
-    analyticsResult?.key === analyticsRequestKey
+  const analyticsLoading = useServerOperationalSnapshot || !dataSourceResolved
+    ? typeof window !== 'undefined' && serverViewModel === null && !operationalError
+    : typeof window !== 'undefined' && analyticsResult?.key !== analyticsRequestKey
+  const analyticsError = useServerOperationalSnapshot
+    ? undefined
+    : analyticsResult?.key === analyticsRequestKey
       ? analyticsResult.error
       : undefined
-  const analyticsPending = analyticsLoading && !analyticsOrders
+  const analyticsPending = useServerOperationalSnapshot
+    ? analyticsLoading
+    : analyticsLoading && !analyticsOrders
   // İade verisi yüklenemediyse satış NET değerleri iade düşümü içermez.
-  const claimsError =
-    claimsResult?.key === analyticsRequestKey ? claimsResult.error : undefined
+  const claimsError = useServerOperationalSnapshot
+    ? undefined
+    : claimsResult?.key === analyticsRequestKey
+      ? claimsResult.error
+      : undefined
   // Yenile: operasyonel sync'i tetikler (başarıda backend analitik cache'i
   // invalidate olur) VE analitik refresh tick'ini artırır (frontend + backend
   // cache bypass, refresh=true). Yalnız açık Yenile aksiyonunda çağrılır.
