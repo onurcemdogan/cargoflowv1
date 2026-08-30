@@ -1266,7 +1266,16 @@ export class OrderWorkflowService {
       ),
       this.loadOrders(),
     )
-    if (response.debug) {
+    // TANI LOGU YALNIZ GELISTIRMEDE.
+    //
+    // Bu satir legacy (tek-tenant) sync yolundadir ve normalizasyon
+    // ayrintilarini yazar. Uretim konsoluna siparis ayrintisi dokmek, ayni
+    // dosyadaki PERF_ORDERS_LOAD izinin DEV kapisiyla da CELISIYORDU.
+    if (
+      response.debug &&
+      typeof import.meta !== 'undefined' &&
+      import.meta.env?.DEV
+    ) {
       console.log('Trendyol order normalization debug', response.debug)
     }
     // Reconciled liste hem storage'a hem UI'ya gider (desi/shipment izi
