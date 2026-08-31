@@ -7081,6 +7081,29 @@ button:disabled {
   display: flex;
   justify-content: center;
 }
+/* TAŞIYICI BÖLGELERİ — görünür ama KİLİTLİ.
+   Operatör neyin neden korunduğunu görmeden yerleşim yapamaz: kimlik ve
+   operasyon alanları kesikli çerçeveyle işaretlenir, üzerlerine gelince
+   sebep (title) görünür. Bölgeler tıklanamaz (pointer-events: none). */
+.label-carrier-zone {
+  border: 1px dashed rgba(220, 38, 38, .55);
+  background: rgba(220, 38, 38, .05);
+  border-radius: 1px;
+}
+.label-carrier-zone.is-operational {
+  border-color: rgba(217, 119, 6, .55);
+  background: rgba(217, 119, 6, .05);
+}
+.label-carrier-zone.is-informational {
+  border-color: rgba(100, 116, 139, .4);
+  background: transparent;
+}
+/* Taban katman: taşıyıcının render edilmiş etiketi, en altta. */
+.label-base-layer {
+  image-rendering: pixelated;
+  user-select: none;
+}
+
 .label-canvas-surface {
   position: relative;
   background-color: #fff;

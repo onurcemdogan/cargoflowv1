@@ -1,4 +1,8 @@
 import type { PrintInput, PrintProvider, PrintResult } from './PrintProvider'
+import type { LabelBaseLayer } from '../../labels/labelBaseLayer'
+
+/** Taban katmanın bölge listesi — tip statik, modül çalışma zamanında yüklenir. */
+type CarrierBaseZones = LabelBaseLayer['carrierZones']
 import { defaultLabelTemplate } from '../../services/integrationConfigService'
 // ═══ RENDER YIGINI TALEP UZERINE ════════════════════════════════════════
 //
@@ -149,6 +153,31 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
                 input.mappingConfig,
                 input.products ?? [],
                 input.labelDocument,
+                // TABAN KATMAN YÜKLEYİCİ — overlay belgede taşıyıcının
+                // GERÇEK etiketi baskıya girer. Modül dinamik yüklenir:
+                // standalone yolda hiç indirilmez.
+                async (order) => {
+                  const { fetchCarrierBaseLayer } = await import(
+                    '../../services/labelDocumentService'
+                  )
+                  const payload = await fetchCarrierBaseLayer(
+                    String(order.id ?? ''),
+                  )
+                  if (!payload) return null
+                  const { LABEL_CANVAS_HEIGHT_MM, LABEL_CANVAS_WIDTH_MM } =
+                    await import('../../labels/labelGeometry')
+                  return {
+                    kind: 'surat_official',
+                    imageBase64: payload.imageBase64,
+                    widthMm: LABEL_CANVAS_WIDTH_MM,
+                    heightMm: LABEL_CANVAS_HEIGHT_MM,
+                    renderSha256: payload.renderSha256,
+                    printZplSha256: payload.printZplSha256,
+                    templateFingerprint: payload.carrierTemplateFingerprint,
+                    carrierZones:
+                      payload.carrierZones as CarrierBaseZones,
+                  }
+                },
               )
         const orderNumbers = printableOrders.map((order) => order.orderNumber)
         // Kullanıcıya AYRICA doğrulama sorulmaz: baskı yoluna teknik olarak

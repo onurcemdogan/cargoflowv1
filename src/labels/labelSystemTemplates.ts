@@ -210,14 +210,79 @@ const trendyol: LabelDocument = {
   ],
 }
 
+
+// ═══ OVERLAY ŞABLONLARI — TAŞIYICI ETİKETİNİN ÜSTÜNE ════════════════════
+//
+// Bu şablonlar etiketin TAMAMINI çizmez. Taban, Sürat'in GERÇEK çıktısıdır;
+// aşağıdaki öğeler yalnız kiracıya ait EKLERDİR.
+//
+// ═══ NEDEN BARKOD/ADRES YOK ══════════════════════════════════════════════
+// Barkod, alıcı adı ve adres taşıyıcı tabanında ZATEN vardır. Overlay'in
+// onları tekrar çizmesi aynı bilgiyi iki kez basmak olurdu — üretimde
+// görülen adres üst üste binme hatası tam olarak bu sınıftandır.
+//
+// ═══ KONUMLAR NEREDEN ════════════════════════════════════════════════════
+// Gerçek etiketin ÖLÇÜLEN bölge haritasında en alttaki taşıyıcı alanı
+// aktarma merkezidir (y ≈ 79.4 + 8.8 = 88.2 mm). Alt şerit (y ≥ 89 mm)
+// taşıyıcıya ait DEĞİLDİR; kiracı içeriği oraya yerleşir.
+const overlayStoreNote: LabelDocument = {
+  schemaVersion: 1,
+  id: 'surat-overlay-store-note',
+  name: 'Sürat üstü — mağaza notu',
+  mode: 'overlay',
+  elements: [
+    element('store-note', 'staticText', [4, 89.5, 62, 4], {
+      fontSize: 7,
+      bold: true,
+      wrap: false,
+      maxLines: 1,
+      z: 1,
+      text: 'Bizi tercih ettiğiniz için teşekkürler',
+    }),
+    element('order-no', 'orderNumber', [4, 94, 40, 4], { fontSize: 6, z: 2 }),
+    element('marketplace', 'marketplace', [68, 94, 28, 4], {
+      fontSize: 6,
+      align: 'right',
+      z: 3,
+    }),
+  ],
+}
+
+const overlayProductLines: LabelDocument = {
+  schemaVersion: 1,
+  id: 'surat-overlay-product-lines',
+  name: 'Sürat üstü — ürün satırları',
+  mode: 'overlay',
+  elements: [
+    element('products', 'productList', [4, 89, 92, 7], {
+      fontSize: 6,
+      wrap: true,
+      maxLines: 3,
+      lineHeight: 1.15,
+      z: 1,
+    }),
+    element('order-no', 'orderNumber', [4, 96, 45, 3.5], { fontSize: 6, z: 2 }),
+  ],
+}
+
 export const SYSTEM_LABEL_TEMPLATES: readonly LabelDocument[] = [
+  // OVERLAY şablonları ÖNCE: doğru soyutlama varsayılan olmalıdır.
+  overlayStoreNote,
+  overlayProductLines,
   classic,
   largeBarcode,
   minimal,
   trendyol,
 ]
 
-export const DEFAULT_SYSTEM_TEMPLATE_ID = classic.id
+/**
+ * VARSAYILAN = OVERLAY.
+ *
+ * Ürün kuralı: kiracı sıfırdan etiket tasarlamaz, taşıyıcının etiketinin
+ * üstüne ekleme yapar. Varsayılanın `classic` (tam etiket) olması, yanlış
+ * soyutlamayı varsayılan hâline getiriyordu.
+ */
+export const DEFAULT_SYSTEM_TEMPLATE_ID = overlayStoreNote.id
 
 export function findSystemTemplate(id: string): LabelDocument | null {
   return (
@@ -235,6 +300,8 @@ export function cloneDocument(
     id: overrides.id ?? document.id,
     name: overrides.name ?? document.name,
     basedOn: overrides.basedOn ?? document.basedOn,
+    // MOD KOPYALANIR: overlay bir şablonun kopyası da overlay'dir.
+    mode: document.mode,
     elements: document.elements.map((element) => ({ ...element })),
   }
 }

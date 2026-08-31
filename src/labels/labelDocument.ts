@@ -108,13 +108,47 @@ export interface LabelElement {
   showHumanReadable?: boolean
 }
 
+/**
+ * BELGE MODU — etiketin TAMAMI mı, yoksa taşıyıcının ÜSTÜ mü?
+ *
+ * ═══ NEDEN İKİ MOD ═══════════════════════════════════════════════════════
+ * `overlay`    : TABAN taşıyıcının GERÇEK etiketidir. Belge yalnız kiracıya
+ *                ait EKLERİ taşır. Barkod/alıcı/adres taşıyıcı tabanında
+ *                ZATEN vardır; overlay'in onları tekrar çizmesi aynı bilgiyi
+ *                iki kez basmak olurdu — üretimde görülen adres üst üste
+ *                binme hatası tam olarak bu sınıftandır.
+ * `standalone` : Taban YOK. Belge etiketin TAMAMINI çizer (eski
+ *                `cargoflow_html` yolu). Taşıyıcı artefaktı olmayan
+ *                kiracılar için KORUNUR.
+ *
+ * Varsayılan `standalone`'dur: alanı olmayan ESKİ kayıtlar davranışlarını
+ * AYNEN sürdürür. Yeni kiracı şablonları `overlay` doğar.
+ */
+export const LABEL_DOCUMENT_MODES = ['overlay', 'standalone'] as const
+export type LabelDocumentMode = (typeof LABEL_DOCUMENT_MODES)[number]
+
 export interface LabelDocument {
   schemaVersion: 1
   id: string
   name: string
   /** Türetildiği sistem şablonu (varsa) — yalnız bilgi amaçlı. */
   basedOn?: string
+  /** Bkz. LABEL_DOCUMENT_MODES. Yoksa `standalone` (geriye uyumluluk). */
+  mode?: LabelDocumentMode
+  /**
+   * TASARIM ANINDAKİ taşıyıcı şablon kimliği (YALNIZ overlay).
+   *
+   * Baskıda canlı tabanın parmak iziyle karşılaştırılır: taşıyıcı şablonunu
+   * değiştirdiyse eski yerleşim yeni etikette taşıyıcı alanlarının üstüne
+   * düşebilir. Uyuşmazlık muhafızla BİLDİRİLİR.
+   */
+  baseTemplateFingerprint?: string
   elements: LabelElement[]
+}
+
+/** Belge taşıyıcı tabanının ÜSTÜNE mi çiziliyor? */
+export function isOverlayDocument(document: LabelDocument | null | undefined): boolean {
+  return document?.mode === 'overlay'
 }
 
 export const LABEL_DOCUMENT_SCHEMA_VERSION = 1
@@ -124,6 +158,15 @@ export const DOCUMENT_VALIDATION_CODES = [
   'DUPLICATE_ELEMENT_ID',
   'REQUIRED_ELEMENT_HIDDEN',
   'REQUIRED_ELEMENT_MISSING',
+  /**
+   * OVERLAY belgede taşıyıcı KİMLİK öğesi var.
+   *
+   * Overlay, taşıyıcının GERÇEK etiketinin üstüne çizilir; barkod, QR ve
+   * takip numarası orada ZATEN basılıdır. Overlay'in bunları tekrar çizmesi
+   * aynı kimliği iki kez basmak olurdu — üretimde görülen adres üst üste
+   * binme hatasıyla AYNI sınıf. Bu yüzden overlay'de YASAKTIR.
+   */
+  'OVERLAY_DUPLICATES_CARRIER_IDENTITY',
   'LOCKED_ELEMENT_TEXT_OVERRIDE',
   'TEXT_ON_NON_TEXT_ELEMENT',
   'INVALID_NUMBER',
@@ -324,25 +367,52 @@ export function validateLabelDocument(
     }
   }
 
-  for (const required of REQUIRED_ELEMENTS) {
-    const element = (document.elements ?? []).find(
-      (item) => item?.type === required,
-    )
-    if (!element) {
+  // ═══ ZORUNLU ÖĞE KURALI MODA BAĞLIDIR ═══════════════════════════════
+  //
+  // `standalone`: belge etiketin TAMAMIDIR. Barkod/alıcı/adres onda YOKSA
+  //               etiket eksik basılır → ZORUNLU.
+  // `overlay`   : taban taşıyıcının GERÇEK etiketidir; bu üç alan orada
+  //               ZATEN vardır. Overlay'den de istemek, kiracıyı taşıyıcı
+  //               bilgisini TEKRAR çizmeye zorlardı — yani tam olarak
+  //               düzeltmeye çalıştığımız çift-basım hatasını dayatırdı.
+  //
+  // Overlay'de kural GEVŞEMEZ, TERSİNE ÇEVRİLİR: kimlik öğeleri YASAKTIR.
+  if (isOverlayDocument(document)) {
+    for (const element of document.elements ?? []) {
+      if (!element) continue
+      if (!(IDENTITY_LOCKED_ELEMENTS as readonly string[]).includes(element.type)) {
+        continue
+      }
       errors.push({
-        code: 'REQUIRED_ELEMENT_MISSING',
-        type: required,
-        detail: 'Güvenli teslimat için zorunlu öğe şablonda yok.',
-      })
-      continue
-    }
-    if (element.visible === false) {
-      errors.push({
-        code: 'REQUIRED_ELEMENT_HIDDEN',
+        code: 'OVERLAY_DUPLICATES_CARRIER_IDENTITY',
         elementId: element.id,
-        type: required,
-        detail: 'Güvenli teslimat için zorunlu öğe gizlenemez.',
+        type: element.type,
+        detail:
+          'Taşıyıcı etiketi bu kimliği ZATEN basıyor; overlay onu tekrar ' +
+          'çizemez (çift basım okunmaz kimliğe yol açar).',
       })
+    }
+  } else {
+    for (const required of REQUIRED_ELEMENTS) {
+      const element = (document.elements ?? []).find(
+        (item) => item?.type === required,
+      )
+      if (!element) {
+        errors.push({
+          code: 'REQUIRED_ELEMENT_MISSING',
+          type: required,
+          detail: 'Güvenli teslimat için zorunlu öğe şablonda yok.',
+        })
+        continue
+      }
+      if (element.visible === false) {
+        errors.push({
+          code: 'REQUIRED_ELEMENT_HIDDEN',
+          elementId: element.id,
+          type: required,
+          detail: 'Güvenli teslimat için zorunlu öğe gizlenemez.',
+        })
+      }
     }
   }
 
@@ -449,6 +519,17 @@ export function normalizeLabelDocument(input: unknown): LabelDocument | null {
     basedOn:
       typeof record.basedOn === 'string' && record.basedOn.trim()
         ? record.basedOn.trim().slice(0, 80)
+        : undefined,
+    // Mod korunur; bilinmeyen/eksik değer `standalone` sayılır (eski kayıtlar).
+    mode: (LABEL_DOCUMENT_MODES as readonly string[]).includes(
+      String(record.mode ?? ''),
+    )
+      ? (record.mode as LabelDocumentMode)
+      : 'standalone',
+    baseTemplateFingerprint:
+      typeof record.baseTemplateFingerprint === 'string' &&
+      record.baseTemplateFingerprint.trim()
+        ? record.baseTemplateFingerprint.trim().slice(0, 120)
         : undefined,
     elements,
   }

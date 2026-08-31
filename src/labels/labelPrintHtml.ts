@@ -6,7 +6,31 @@
 // Böylece tuvalde görülen ile basılan arasında yerleşim farkı OLUŞAMAZ.
 
 import type { LabelPrimitive } from './labelDocumentRenderer.ts'
+import type { LabelBaseLayer } from './labelBaseLayer.ts'
 import { mmToPt, ptToMm } from './labelGeometry.ts'
+
+/**
+ * TABAN KATMAN HTML'İ — taşıyıcının GERÇEK etiketi, ilkellerin ALTINDA.
+ *
+ * ═══ NEDEN GÖRÜNTÜ ═══════════════════════════════════════════════════════
+ * Taşıyıcı etiketinin gövdesi CargoFlow tarafından ÇİZİLMEZ. Taban, taşıyıcı
+ * ZPL'inin render edilmiş PNG'sidir ve baskıda AYNEN kullanılır. Tuval de
+ * AYNI base64'ü gösterir; iki yol arasında yeniden çizim YOKTUR, dolayısıyla
+ * ayrışma da olamaz.
+ *
+ * Görüntü fiziksel milimetreye sabitlenir (100×100 mm) ve `z-index` ile en
+ * altta kalır: kiracı öğeleri her zaman ÜSTÜNE çizilir.
+ */
+export function baseLayerToPrintHtml(baseLayer: LabelBaseLayer): string {
+  const style =
+    'position:absolute;left:0;top:0;' +
+    `width:${baseLayer.widthMm}mm;height:${baseLayer.heightMm}mm;` +
+    'z-index:0;'
+  return (
+    `<img class="lp-base" alt="" data-render-sha="${baseLayer.renderSha256}" ` +
+    `src="data:image/png;base64,${baseLayer.imageBase64}" style="${style}">`
+  )
+}
 
 /**
  * Baskı belgesi için AYNI ilkellerden HTML üretir.
@@ -37,7 +61,8 @@ export function primitivesToPrintHtml(
       const box =
         `position:absolute;left:${primitive.rect.x}mm;top:${primitive.rect.y}mm;` +
         `width:${primitive.rect.width}mm;height:${primitive.rect.height}mm;` +
-        'overflow:hidden;'
+        // Kiracı öğeleri taban görüntünün DAİMA üstünde kalır.
+        'overflow:hidden;z-index:1;'
       if (primitive.kind === 'barcode') {
         const inner = renderers.barcode ? renderers.barcode(primitive.value) : ''
         return (

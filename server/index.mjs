@@ -2611,6 +2611,46 @@ app.post('/api/labels/documents/:id/activate', async (request, response) => {
   }
 })
 
+// POST /api/labels/documents/:id/rollback — ÖNCEKİ YAYINLANMIŞ SÜRÜME DÖN.
+//
+// Bozuk bir yerleşim üretimdeyken operatörden yeniden tasarım beklenmez:
+// geri dönüş TEK adımdır. Taslak KORUNUR; yalnız AKTİF sürüm değişir.
+app.post('/api/labels/documents/:id/rollback', async (request, response) => {
+  const context = await requireLabelDocumentContext(request, response)
+  if (!context) return
+  try {
+    const record = await context.repo.rollbackLabelDocument(
+      context.db,
+      context.organizationId,
+      String(request.params.id),
+      request.body?.baseVersion,
+      new Date().toISOString(),
+    )
+    response.json({ ok: true, template: record, rolledBack: true })
+  } catch (error) {
+    sendLabelDocumentError(response, error)
+  }
+})
+
+// POST /api/labels/documents/revert-to-carrier — SAF SÜRAT ETİKETİNE DÖN.
+//
+// Hiçbir kiracı katmanı uygulanmaz. Şablonlar SİLİNMEZ: yalnız aktiflik
+// kaldırılır, böylece operatör hazır olduğunda tekrar yayınlayabilir.
+app.post('/api/labels/documents/revert-to-carrier', async (request, response) => {
+  const context = await requireLabelDocumentContext(request, response)
+  if (!context) return
+  try {
+    const state = await context.repo.revertToCarrierOriginal(
+      context.db,
+      context.organizationId,
+      new Date().toISOString(),
+    )
+    response.json({ ok: true, activeTemplateId: state.activeTemplateId })
+  } catch (error) {
+    sendLabelDocumentError(response, error)
+  }
+})
+
 app.patch('/api/labels/documents/:id', async (request, response) => {
   const context = await requireLabelDocumentContext(request, response)
   if (!context) return

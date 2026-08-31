@@ -96,7 +96,7 @@ test('EDITOR-01: sistem şablonlarının HEPSİ geçerlidir', async () => {
 test('EDITOR-02: barkod/QR/takip DEĞERİ şablondan YAZILAMAZ', async () => {
   const model = await load('/src/labels/labelDocument.ts')
   const system = await load('/src/labels/labelSystemTemplates.ts')
-  const base = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const base = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   const barcode = base.elements.find((element) => element.type === 'barcode')
   barcode.text = 'SAHTE-BARKOD-123'
 
@@ -123,7 +123,7 @@ test('EDITOR-02: barkod/QR/takip DEĞERİ şablondan YAZILAMAZ', async () => {
 test('EDITOR-03: zorunlu öğe GİZLENEMEZ', async () => {
   const model = await load('/src/labels/labelDocument.ts')
   const system = await load('/src/labels/labelSystemTemplates.ts')
-  const doc = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const doc = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   doc.elements.find((element) => element.type === 'address').visible = false
   const validation = model.validateLabelDocument(doc)
   assert.equal(validation.valid, false)
@@ -141,7 +141,7 @@ test('EDITOR-03: zorunlu öğe GİZLENEMEZ', async () => {
 test('EDITOR-04: tuval dışına taşan öğe REDDEDİLİR, normalizasyon KENETLER', async () => {
   const model = await load('/src/labels/labelDocument.ts')
   const system = await load('/src/labels/labelSystemTemplates.ts')
-  const doc = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const doc = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   const target = doc.elements.find((element) => element.type === 'recipientName')
   target.x = 95
   target.width = 40
@@ -161,7 +161,7 @@ test('EDITOR-04: tuval dışına taşan öğe REDDEDİLİR, normalizasyon KENETL
 test('EDITOR-05: okunamayacak kadar küçük barkod REDDEDİLİR', async () => {
   const model = await load('/src/labels/labelDocument.ts')
   const system = await load('/src/labels/labelSystemTemplates.ts')
-  const doc = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const doc = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   const barcode = doc.elements.find((element) => element.type === 'barcode')
   barcode.width = 8
   barcode.height = 2
@@ -176,7 +176,7 @@ test('EDITOR-05: okunamayacak kadar küçük barkod REDDEDİLİR', async () => {
 test('EDITOR-06: bilinmeyen öğe türü KABUL EDİLMEZ (beyaz liste)', async () => {
   const model = await load('/src/labels/labelDocument.ts')
   const system = await load('/src/labels/labelSystemTemplates.ts')
-  const doc = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const doc = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   doc.elements.push({
     id: 'evil',
     type: 'process.env.SECRET',
@@ -234,7 +234,7 @@ async function renderWithPreview(documentOverride) {
   const renderer = await load('/src/labels/labelDocumentRenderer.ts')
   const system = await load('/src/labels/labelSystemTemplates.ts')
   const previewSource = await load('/src/labels/labelPreviewSource.ts')
-  const doc = documentOverride ?? system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const doc = documentOverride ?? system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   const preview = previewSource.buildEditorPreviewSource([])
   return { renderer, doc, preview, rendered: renderer.renderLabelDocument(doc, preview.source) }
 }
@@ -284,7 +284,7 @@ test('EDITOR-12: UZUN ADRES taşması SESSİZCE kırpılmaz — açık muhafız'
   const renderer = await load('/src/labels/labelDocumentRenderer.ts')
   const system = await load('/src/labels/labelSystemTemplates.ts')
   const previewSource = await load('/src/labels/labelPreviewSource.ts')
-  const doc = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const doc = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   // Adres kutusunu daralt: gerçek uzun Türkçe adres SIĞMAZ.
   const address = doc.elements.find((element) => element.type === 'address')
   address.height = 6
@@ -304,7 +304,7 @@ test('EDITOR-13: BARKOD ve QR üzerine binen öğe muhafızı', async () => {
   const renderer = await load('/src/labels/labelDocumentRenderer.ts')
   const system = await load('/src/labels/labelSystemTemplates.ts')
   const previewSource = await load('/src/labels/labelPreviewSource.ts')
-  const doc = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const doc = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   const barcode = doc.elements.find((element) => element.type === 'barcode')
   const qr = doc.elements.find((element) => element.type === 'qr')
   const recipient = doc.elements.find((element) => element.type === 'recipientName')
@@ -359,7 +359,7 @@ async function editorState() {
   return {
     state,
     initial: state.createLabelEditorState(
-      system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0]),
+      system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID)),
     ),
   }
 }
@@ -667,6 +667,15 @@ test('EDITOR-26: settings_json içindeki DİĞER anahtarlar KORUNUR', async () =
 
 /* ═══ EDITOR-27..32 — TAŞIYICI SINIRI VE ÖNİZLEME ═════════════════ */
 
+/**
+ * TAM ETİKET (standalone) sistem şablonu.
+ *
+ * Aşağıdaki testler belgenin etiketin TAMAMINI çizdiği modu sınar (barkod,
+ * zorunlu öğeler, kimlik üstüne binme). Şablon SIRAYLA değil ADIYLA alınır:
+ * liste sırası (overlay şablonlarının eklenmesi gibi) bu testleri kırmamalı.
+ */
+const STANDALONE_TEMPLATE_ID = 'surat-classic-100x100'
+
 const EDITOR_SOURCES = [
   'src/labels/labelDocument.ts',
   'src/labels/labelGeometry.ts',
@@ -716,7 +725,17 @@ test('EDITOR-28: düzenleyici istemcisi YALNIZ şablon uçlarına gider', async 
   assert.ok(urls.length > 0, 'en az bir uç bulunmalı')
   // AÇIK BEYAZ LİSTE. Sipariş ucu YALNIZ önizleme için TEK kayıt okur
   // (sayfa boyutu 1); yerel, salt okunur ve taşıyıcıya çıkmaz.
-  const ALLOWED = ['/api/labels/documents', '/api/orders?page=1&pageSize=1']
+  //
+  // `/api/labels/render/surat` TABAN KATMAN içindir: düzenleyici artık boş
+  // tuval değil, taşıyıcının GERÇEK etiketinin üstünde çalışır. Bu uç KALICI
+  // artefaktı okuyup YEREL motorla PNG üretir; Sürat'e çağrı yapmaz, gönderi
+  // oluşturmaz, statü değiştirmez ve ham ZPL DÖNDÜRMEZ. Aşağıdaki yasaklı uç
+  // listesi (create/sync/shipments) DEĞİŞMEDEN geçerlidir.
+  const ALLOWED = [
+    '/api/labels/documents',
+    '/api/orders?page=1&pageSize=1',
+    '/api/labels/render/surat',
+  ]
   for (const url of urls) {
     assert.ok(
       ALLOWED.some((prefix) => url.startsWith(prefix)),
@@ -860,7 +879,7 @@ test('EDITOR-35: baskı sayfası, tuvalin kullandığı AYNI ilkellerden üretil
   const system = await load('/src/labels/labelSystemTemplates.ts')
   const previewSource = await load('/src/labels/labelPreviewSource.ts')
 
-  const doc = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const doc = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   const preview = previewSource.buildEditorPreviewSource([])
   const html = printer.renderDocumentLabelHtml(doc, preview.source)
   const rendered = renderer.renderLabelDocument(doc, preview.source)
@@ -882,7 +901,7 @@ test('EDITOR-36: KİMLİK değerleri etiket verisinden gelir, şablondan DEĞİL
   const system = await load('/src/labels/labelSystemTemplates.ts')
   const previewSource = await load('/src/labels/labelPreviewSource.ts')
 
-  const doc = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const doc = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   // Kötü niyetli/bozuk bir şablon kimlik öğesine metin yazmaya çalışsın.
   doc.elements.find((element) => element.type === 'barcode').text = 'SAHTE-123'
   doc.elements.find((element) => element.type === 'qr').text = 'SAHTE-QR'
@@ -956,7 +975,7 @@ test('EDITOR-39: kimlik üstüne binme ENGELLEYİCİ, içerik taşması UYARIDIR
   const previewSource = await load('/src/labels/labelPreviewSource.ts')
 
   // (a) Kimlik üstüne binme → ENGELLEYİCİ
-  const overlap = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const overlap = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   const barcode = overlap.elements.find((element) => element.type === 'barcode')
   const recipient = overlap.elements.find(
     (element) => element.type === 'recipientName',
@@ -975,7 +994,7 @@ test('EDITOR-39: kimlik üstüne binme ENGELLEYİCİ, içerik taşması UYARIDIR
   )
 
   // (b) İçerik taşması → UYARI (yayınlamayı engellemez)
-  const overflow = system.cloneDocument(system.SYSTEM_LABEL_TEMPLATES[0])
+  const overflow = system.cloneDocument(system.findSystemTemplate(STANDALONE_TEMPLATE_ID))
   const address = overflow.elements.find((element) => element.type === 'address')
   address.maxLines = 1
   const overflowRendered = renderer.renderLabelDocument(

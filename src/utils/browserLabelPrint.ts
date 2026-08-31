@@ -1,10 +1,17 @@
 import JsBarcode from 'jsbarcode'
-import type { LabelDocument } from '../labels/labelDocument'
+import {
+  isOverlayDocument,
+  type LabelDocument,
+} from '../labels/labelDocument'
+import type { LabelBaseLayer } from '../labels/labelBaseLayer'
 import {
   renderLabelDocument,
   type LabelRenderSource,
 } from '../labels/labelDocumentRenderer'
-import { primitivesToPrintHtml } from '../labels/labelPrintHtml'
+import {
+  baseLayerToPrintHtml,
+  primitivesToPrintHtml,
+} from '../labels/labelPrintHtml'
 import {
   ensurePersistentPrintFrame,
   suratPrintTrace,
@@ -469,6 +476,14 @@ export async function printCleanLabelDocument(
   mappingConfig: SuratLabelMappingConfig = {},
   products: CargoProduct[] = [],
   labelDocument?: LabelDocument,
+  /**
+   * TAŞIYICI TABANI YÜKLEYİCİ — YALNIZ overlay belgelerde çağrılır.
+   *
+   * Ağ erişimi bu modüle GİRMEZ: çağıran taraf (uygulama) yükleyiciyi
+   * enjekte eder. Böylece baskı yardımcısı saf kalır ve testlerde gerçek
+   * bir sunucu gerekmez.
+   */
+  loadBaseLayer?: (order: CargoOrder) => Promise<LabelBaseLayer | null>,
 ): Promise<BrowserLabelPrintDebug> {
   const executionId = `print-${++printExecutionCounter}`
   const orderNumbers = orders.map((order) => String(order.orderNumber ?? ''))
@@ -519,12 +534,29 @@ export async function printCleanLabelDocument(
     suratPrintTrace('HTML_BUILD_START', { executionId, orderNumbers })
     // SIPARIS BAZINDA izolasyon: render edilemeyen siparis BUTUN batch'i
     // dusurmez; yalniz kendisi atlanir ve sebebi debug.skipped'a yazilir.
+    // TABAN KATMANLAR — overlay belgede ZORUNLU, aksi hâlde hiç istenmez.
+    // Tek tek yüklenir; biri başarısız olursa YALNIZ o sipariş atlanır
+    // (aşağıda açık sebeple), diğerleri basılmaya devam eder.
+    const baseLayers = new Map<string, LabelBaseLayer>()
+    if (isOverlayDocument(labelDocument) && loadBaseLayer) {
+      for (const order of orders) {
+        const orderId = String(order.id ?? '')
+        if (!orderId) continue
+        try {
+          const layer = await loadBaseLayer(order)
+          if (layer) baseLayers.set(orderId, layer)
+        } catch {
+          // Sessiz yutma DEĞİL: eksik taban aşağıda açık atlama üretir.
+        }
+      }
+    }
     const document_ = buildCleanLabelDocument(
       orders,
       template,
       mappingConfig,
       products,
       labelDocument,
+      baseLayers,
     )
     const printHtml = document_.html
     debug.skipped = document_.skipped
@@ -839,10 +871,15 @@ export function renderDocumentLabelHtml(
   source: LabelRenderSource,
 ): string {
   const rendered = renderLabelDocument(labelDocument, source)
-  const body = primitivesToPrintHtml(rendered.primitives, {
-    barcode: (value) => renderBarcodeSvg(value),
-    qr: (value) => renderQrSvg(value, 'lp-qr-svg'),
-  })
+  // TABAN KATMAN önce: taşıyıcının gerçek etiketi en altta, kiracı öğeleri
+  // üstünde. Tuval de AYNI sırayı ve AYNI base64'ü kullanır.
+  const base = rendered.baseLayer ? baseLayerToPrintHtml(rendered.baseLayer) : ''
+  const body =
+    base +
+    primitivesToPrintHtml(rendered.primitives, {
+      barcode: (value) => renderBarcodeSvg(value),
+      qr: (value) => renderQrSvg(value, 'lp-qr-svg'),
+    })
   // ═══ NEDEN SAYFA KONTEYNERİ ══════════════════════════════════════════
   // İlkeller MUTLAK konumludur ve konumlandırma bağlamı olmadan GÖVDEYE
   // göre yerleşir. Tek etiketle bu fark edilmez; İKİ etiket basıldığında
@@ -867,6 +904,14 @@ export function buildCleanLabelDocument(
   // yerlesim kullanilir: surum yukseltmesi hicbir kiracinin etiketini
   // KENDILIGINDEN degistirmez.
   labelDocument?: LabelDocument,
+  /**
+   * TAŞIYICI TABAN KATMANLARI — sipariş kimliğine göre.
+   *
+   * OVERLAY belgeler taşıyıcının GERÇEK etiketinin ÜSTÜNE çizilir; taban
+   * olmadan basılan bir overlay, yalnız kiracı eklerini içeren BOŞ bir
+   * etiket üretirdi. Bu yüzden taban zorunludur (aşağıda uygulanır).
+   */
+  baseLayers?: ReadonlyMap<string, LabelBaseLayer>,
 ): CleanLabelDocument {
   const widthMm = template.widthMm || 100
   const heightMm = template.heightMm || 100
@@ -886,11 +931,33 @@ export function buildCleanLabelDocument(
         products,
       )
       const printData = applyCanonicalPrintIdentity(data, model)
+      // ═══ OVERLAY TABANSIZ BASILMAZ ══════════════════════════════════
+      // Overlay belge yalnız kiracı EKLERİNİ taşır; taşıyıcının barkodu,
+      // adresi ve rotası TABANDADIR. Taban yoksa çıktı, üzerinde yalnız
+      // mağaza notu olan BOŞ bir etiket olurdu — kargo için kullanılamaz.
+      // Sessizce böyle bir etiket basmaktansa sipariş AÇIK bir sebeple
+      // atlanır; operatör resmî ZPL yolunu kullanabilir.
+      const baseLayer = isOverlayDocument(labelDocument)
+        ? baseLayers?.get(String(order.id ?? ''))
+        : undefined
+      if (isOverlayDocument(labelDocument) && !baseLayer) {
+        const reason =
+          'Taşıyıcı etiketi (taban katman) alınamadı; yalnız kiracı ' +
+          'eklerinden oluşan etiket BASILMAZ.'
+        suratPrintTrace('PRINT_SKIPPED_REASON', {
+          orderNumber: model.orderNumber,
+          reason,
+          stage: 'base-layer',
+        })
+        skipped.push({ orderNumber: model.orderNumber, reason })
+        continue
+      }
       pages.push(
         labelDocument
           ? renderDocumentLabelHtml(labelDocument, {
               data: printData,
               order,
+              baseLayer,
             })
           : renderPrintableLabelHtml(printData),
       )

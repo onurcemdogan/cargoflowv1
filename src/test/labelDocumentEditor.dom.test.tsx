@@ -47,6 +47,8 @@ let templates: Array<{
   updatedAt: string
   draft: unknown
   active: unknown
+  /** Önceki AKTİF sürümler — sunucu sözleşmesinin aynısı (en yeni başta). */
+  history?: Array<{ document: unknown; version: number; activatedAt: string }>
 }> = []
 let activeTemplateId: string | null = null
 
@@ -107,6 +109,51 @@ beforeEach(() => {
         templates = [...templates, record]
         return jsonResponse({ ok: true, template: record })
       }
+      const rollbackMatch = url.match(/^\/api\/labels\/documents\/([^/]+)\/rollback$/)
+      if (rollbackMatch && method === 'POST') {
+        const id = decodeURIComponent(rollbackMatch[1])
+        templates = templates.map((item) => {
+          if (item.id !== id) return item
+          const [previous, ...rest] = item.history ?? []
+          return {
+            ...item,
+            version: item.version + 1,
+            active: previous?.document ?? item.active,
+            history: rest,
+          }
+        })
+        return jsonResponse({
+          ok: true,
+          template: templates.find((item) => item.id === id),
+          rolledBack: true,
+        })
+      }
+      if (url === '/api/labels/documents/revert-to-carrier' && method === 'POST') {
+        activeTemplateId = null
+        return jsonResponse({ ok: true, activeTemplateId: null })
+      }
+      // TABAN KATMAN ucu — KALICI artefaktın yerel render'ı. Taşıyıcıya
+      // çağrı YOKTUR; test bunu bir görüntü + bölge listesiyle taklit eder.
+      if (url === '/api/labels/render/surat' && method === 'POST') {
+        return jsonResponse({
+          ok: true,
+          imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+          widthMm: 100,
+          heightMm: 100,
+          renderSha256: 'a'.repeat(64),
+          printZplSha256: 'b'.repeat(64),
+          carrierZones: [
+            {
+              id: 'carrier-barcodeGraphic',
+              key: 'barcodeGraphic',
+              label: 'Ana barkod (çizim)',
+              zoneClass: 'identity',
+              reason: 'Taşıyıcı kimlik alanı. Bu alanın üstü KAPATILAMAZ.',
+              rect: { x: 6, y: 19.5, width: 87.5, height: 18 },
+            },
+          ],
+        })
+      }
       const draftMatch = url.match(/^\/api\/labels\/documents\/([^/]+)\/draft$/)
       if (draftMatch && method === 'PUT') {
         const id = decodeURIComponent(draftMatch[1])
@@ -127,7 +174,18 @@ beforeEach(() => {
         const id = decodeURIComponent(activateMatch[1])
         templates = templates.map((item) =>
           item.id === id
-            ? { ...item, version: item.version + 1, active: item.draft }
+            ? {
+                ...item,
+                version: item.version + 1,
+                active: item.draft,
+                // Önceki aktif ARŞİVLENİR (sunucu davranışının aynısı).
+                history: item.active
+                  ? [
+                      { document: item.active, version: item.version, activatedAt: 'now' },
+                      ...(item.history ?? []),
+                    ]
+                  : (item.history ?? []),
+              }
             : item,
         )
         activeTemplateId = id
@@ -502,15 +560,130 @@ describe('görsel etiket şablonu düzenleyicisi', () => {
     await waitFor(() =>
       expect(calls.some((call) => call.url.endsWith('/activate'))).toBe(true),
     )
-    // HER çağrı yalnız şablon ucuna gitmelidir.
+    // ═══ İZİNLİ UÇLAR — AÇIK LİSTE ══════════════════════════════════════
+    // Düzenleyici artık BOŞ tuval değil: kiracı, taşıyıcının GERÇEK
+    // etiketinin üstünde çalışır. O etiket ancak sunucuda, KALICI
+    // artefakttan render edilebilir; bu yüzden taban katman ucu izinlidir.
+    //
+    // Bu uç bir TAŞIYICI ÇAĞRISI DEĞİLDİR: yalnız kayıtlı baytları okur ve
+    // YEREL motorla PNG üretir. Aşağıda ayrıca KANITLANIR.
+    const ALLOWED_PREFIXES = [
+      '/api/labels/documents',
+      '/api/labels/render/surat',
+      '/api/orders?page=1&pageSize=1',
+    ]
     for (const call of calls) {
-      expect(call.url.startsWith('/api/labels/documents')).toBe(true)
+      expect(
+        ALLOWED_PREFIXES.some((prefix) => call.url.startsWith(prefix)),
+      ).toBe(true)
     }
+
+    // TAŞIYICI/PAZARYERİ uçları HİÇBİR koşulda çağrılmaz.
     expect(
       calls.some((call) =>
-        /surat|shipments|orders\/sync|trendyol/i.test(call.url),
+        /\/api\/shipments|\/api\/orders\/sync|\/api\/trendyol|ortakbarkod|suratkargo\.com/i.test(
+          call.url,
+        ),
       ),
     ).toBe(false)
+
+    // Taban katman ucu KANITLI biçimde zararsız: yalnız `orderId` taşır,
+    // ham ZPL GÖNDERMEZ ve gönderi oluşturma parametresi İÇERMEZ.
+    for (const call of calls.filter((entry) =>
+      entry.url.startsWith('/api/labels/render/surat'),
+    )) {
+      expect(Object.keys(call.body ?? {})).toEqual(['orderId'])
+      const payload = (call.body ?? {}) as Record<string, unknown>
+      for (const forbidden of ['zpl', 'printZpl', 'technicalZpl', 'barcodeRaw', 'desi']) {
+        expect(payload[forbidden]).toBeUndefined()
+      }
+    }
+  })
+
+  it('EDITOR-DOM-24: düzenleyici BOŞ TUVAL değil — taşıyıcının GERÇEK etiketi tabandadır', async () => {
+    // ÜRÜN KURALI: kiracı sıfırdan etiket tasarlamaz; Sürat'in resmî
+    // çıktısının ÜSTÜNE ekleme yapar. Taban görünmüyorsa soyutlama yanlıştır.
+    // OVERLAY şablonu: taban taşıyıcının etiketidir.
+    await createTemplateFromSystem('surat-overlay-store-note')
+    const base = await screen.findByTestId('label-base-layer')
+    expect(base.getAttribute('src')).toContain('data:image/png;base64,')
+    expect(base.getAttribute('data-render-sha')).toBe('a'.repeat(64))
+
+    // TAŞIYICI BÖLGESİ görünür ve NEDENİ yazılıdır — kilit sessiz değildir.
+    const zones = await screen.findAllByTestId('label-carrier-zone')
+    expect(zones.length).toBeGreaterThan(0)
+    const identity = zones.find(
+      (node) => node.getAttribute('data-zone-class') === 'identity',
+    )
+    expect(identity).toBeTruthy()
+    expect(identity?.getAttribute('title')).toMatch(/KAPATILAMAZ/)
+
+    // Taban katman ETKİLEŞİM ALMAZ: seçim/sürükleme kiracı öğelerine aittir.
+    expect(base.style.pointerEvents).toBe('none')
+    expect(identity?.style.pointerEvents).toBe('none')
+  })
+
+  it('EDITOR-DOM-25: ÖNCEKİ SÜRÜME DÖN — arşiv boşken KAPALI, yayın sonrası AÇIK', async () => {
+    await createTemplateFromSystem('surat-overlay-store-note')
+    // Hiç yayın yokken dönülecek yer YOKTUR.
+    expect(
+      (screen.getByTestId('editor-rollback') as HTMLButtonElement).disabled,
+    ).toBe(true)
+
+    // İlk yayın: hâlâ arşiv boş (önceki aktif yok).
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-activate'))
+    })
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith('/activate'))).toBe(true),
+    )
+    expect(
+      (screen.getByTestId('editor-rollback') as HTMLButtonElement).disabled,
+    ).toBe(true)
+
+    // İkinci yayın: önceki aktif arşive girer → geri dönüş AÇILIR.
+    await drag('store-note', 3, 0)
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-activate'))
+    })
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId('editor-rollback') as HTMLButtonElement).disabled,
+      ).toBe(false),
+    )
+
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-rollback'))
+    })
+    await waitFor(() =>
+      expect(calls.some((call) => call.url.endsWith('/rollback'))).toBe(true),
+    )
+  })
+
+  it('EDITOR-DOM-26: ORİJİNAL SÜRAT ETİKETİNE dön — kiracı katmanı kalkar', async () => {
+    await createTemplateFromSystem('surat-overlay-store-note')
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-activate'))
+    })
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId('editor-revert-carrier') as HTMLButtonElement).disabled,
+      ).toBe(false),
+    )
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('editor-revert-carrier'))
+    })
+    await waitFor(() =>
+      expect(
+        calls.some((call) => call.url.endsWith('/revert-to-carrier')),
+      ).toBe(true),
+    )
+    // Aktiflik kalkar → düğme tekrar KAPALI.
+    await waitFor(() =>
+      expect(
+        (screen.getByTestId('editor-revert-carrier') as HTMLButtonElement).disabled,
+      ).toBe(true),
+    )
   })
 
   it('EDITOR-DOM-21: klavye ile ince ayar (ok tuşları) çalışır', async () => {

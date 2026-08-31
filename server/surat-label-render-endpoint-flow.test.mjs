@@ -203,10 +203,11 @@ test('RE-6: DTO ham ZPL veya şifreli payload İÇERMEZ', async () => {
     .filter(([key]) => key !== 'imageBase64')
     .map(([, value]) => String(value))
     .join(' | ')
-  for (const forbidden of [
+  const LEAK_PROBES = [
     '^XA', '^FD', '^BC', '^GB', 'carrierPayload',
     'SENTETIK ALICI', '01200000001', '10000000000001',
-  ]) {
+  ]
+  for (const forbidden of LEAK_PROBES) {
     assert.equal(values.includes(forbidden), false, `sızıntı: ${forbidden}`)
   }
   // Ham ZPL taşıyacak bir ALAN hiç bulunmamalı.
@@ -226,10 +227,49 @@ test('RE-6: DTO ham ZPL veya şifreli payload İÇERMEZ', async () => {
     // metin veya müşteri verisi taşıyamaz (aşağıda bağlanır).
     'pages', 'missingPages', 'printArtifactStatus', 'productDetailStatus',
     'productDetailFailureReason',
+    // TABAN KATMAN bölgeleri: düzenleyicinin kilitleyeceği alanların
+    // GEOMETRİSİ. Ham ZPL DEĞİL, müşteri verisi DEĞİL — yalnız kutu
+    // koordinatları ve KAPALI SÖZLÜKTEN gelen etiket/sebep metinleri.
+    // Şekli aşağıda ayrıca kapatılır.
+    'carrierZones',
+    // Taşıyıcı ŞABLON kimliği: kapalı biçimli parmak izi, müşteri verisi
+    // DEĞİL. Biçimi aşağıda bağlanır.
+    'carrierTemplateFingerprint',
   ])
   for (const key of Object.keys(dto)) {
     assert.ok(allowed.has(key), `DTO'da beklenmeyen alan: ${key}`)
   }
+  // Parmak izi KAPALI BİÇİMDEDİR: nokta ile ayrılmış alfanümerik jetonlar.
+  // Serbest metin veya müşteri verisi taşıyamaz.
+  assert.match(
+    dto.carrierTemplateFingerprint,
+    /^[a-z0-9.-]*$/,
+    'parmak izi yalnız kapalı biçimli jeton taşımalı',
+  )
+
+  // Bölge nesneleri de KAPALI ve müşteri verisi TAŞIMAZ.
+  const zoneKeys = new Set(['id', 'key', 'label', 'zoneClass', 'reason', 'rect'])
+  const zoneClasses = new Set(['identity', 'operational', 'informational'])
+  for (const zone of dto.carrierZones ?? []) {
+    for (const key of Object.keys(zone)) {
+      assert.ok(zoneKeys.has(key), `bölgede beklenmeyen alan: ${key}`)
+    }
+    assert.ok(zoneClasses.has(zone.zoneClass), `bilinmeyen sınıf: ${zone.zoneClass}`)
+    // Kutu SAYIdır; metin taşıyamaz.
+    for (const axis of ['x', 'y', 'width', 'height']) {
+      assert.equal(typeof zone.rect[axis], 'number', `rect.${axis} sayı olmalı`)
+    }
+    // Etiket/sebep SABİT sözlükten gelir: alan İÇERİĞİNİ (adres, ad, telefon)
+    // ASLA taşımaz.
+    for (const forbidden of LEAK_PROBES) {
+      assert.equal(
+        `${zone.label} ${zone.reason} ${zone.id} ${zone.key}`.includes(forbidden),
+        false,
+        `bölge metninde sızıntı: ${forbidden}`,
+      )
+    }
+  }
+
   // Sayfa nesneleri de KAPALI: yeni bir alan sessizce eklenemez.
   const pageKeys = new Set([
     'kind', 'page', 'totalPages', 'imageBase64', 'renderSha256',

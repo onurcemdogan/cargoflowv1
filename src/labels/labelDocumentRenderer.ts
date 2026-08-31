@@ -20,6 +20,10 @@
 
 import type { CargoOrder } from '../types/cargoflow.ts'
 import type { LabelData } from '../utils/labelData.ts'
+import {
+  zoneBlocksOverlay,
+  type LabelBaseLayer,
+} from './labelBaseLayer.ts'
 import { resolveTenantBlockValues } from '../utils/labelTenantBlocks.ts'
 import {
   isIdentityLocked,
@@ -85,6 +89,24 @@ export const LABEL_GUARD_CODES = [
   'BARCODE_OVERLAP_GUARD',
   'QR_OVERLAP_GUARD',
   'LONG_ADDRESS_OVERFLOW_GUARD',
+  /**
+   * Kiracı katmanı TAŞIYICI bölgesinin üstüne bindi.
+   *
+   * Taban katman taşıyıcının GERÇEK etiketidir; üstüne eklenen öğe onun
+   * barkodunu, rotasını veya aktarma merkezini kapatırsa paket yanlış yere
+   * gider ya da hiç okunamaz. Kimlik/operasyon bölgelerinde ENGELLEYİCİ,
+   * bilgi bölgelerinde UYARIDIR.
+   */
+  'CARRIER_ZONE_OVERLAP_GUARD',
+  /**
+   * TAŞIYICI ŞABLONU DEĞİŞMİŞ.
+   *
+   * Kiracı yerleşimi, taşıyıcının O ANKİ şablonuna göre tasarlanmıştı;
+   * canlı tabanın parmak izi farklıysa boş sanılan şeritler artık dolu
+   * olabilir. Baskı DURDURULMAZ (taşıyıcı etiketi yine doğru basılır) ama
+   * operatör yerleşimi gözden geçirmelidir — bu yüzden UYARIDIR.
+   */
+  'CARRIER_TEMPLATE_CHANGED',
 ] as const
 
 export type LabelGuardCode = (typeof LABEL_GUARD_CODES)[number]
@@ -111,6 +133,13 @@ export interface LabelGuardViolation {
 }
 
 export interface RenderedLabel {
+  /**
+   * TABAN KATMAN — ilkellerin ALTINDA çizilir.
+   *
+   * Hem tuval hem baskı AYNI alanı okur: taban görüntüsü iki yolda
+   * ayrışamaz (`renderSha256` ile kanıtlanır).
+   */
+  baseLayer?: LabelBaseLayer
   primitives: LabelPrimitive[]
   violations: LabelGuardViolation[]
   /** Hiçbir ihlal yoksa etiket olduğu gibi basılabilir. */
@@ -129,6 +158,14 @@ export interface RenderedLabel {
 export interface LabelRenderSource {
   data: LabelData
   order?: CargoOrder
+  /**
+   * TABAN KATMAN — taşıyıcının gerçek etiketi.
+   *
+   * Verilirse belge bir OVERLAY'dir: öğeler bu görüntünün ÜSTÜNE çizilir ve
+   * taşıyıcı bölgeleri muhafızla korunur. Verilmezse belge tek başına bir
+   * etiket olarak çizilir (eski davranış, geriye uyumluluk).
+   */
+  baseLayer?: LabelBaseLayer
 }
 
 /** Belgede tanımlı öğe için etiket verisinden içerik çözer. */
@@ -372,7 +409,46 @@ export function renderLabelDocument(
     }
   }
 
+  // ═══ TAŞIYICI ŞABLON KİMLİĞİ ═══════════════════════════════════════════
+  // Belge hangi şablona göre tasarlandıysa onu taşır. Canlı taban farklı bir
+  // şablonsa bölge haritası da farklıdır: sessiz kalmak, eski yerleşimin yeni
+  // etikette taşıyıcı alanının üstüne düşmesi demekti.
+  const designedFingerprint = document.baseTemplateFingerprint
+  const liveFingerprint = source.baseLayer?.templateFingerprint
+  if (
+    source.baseLayer &&
+    designedFingerprint &&
+    liveFingerprint &&
+    designedFingerprint !== liveFingerprint
+  ) {
+    violations.push({
+      code: 'CARRIER_TEMPLATE_CHANGED',
+      elementId: document.id,
+      detail:
+        'Taşıyıcı etiket şablonu, bu yerleşim tasarlandığından beri ' +
+        `değişti (${designedFingerprint} → ${liveFingerprint}). ` +
+        'Yerleşimi gözden geçirin.',
+      blocking: false,
+    })
+  }
+
+  // ═══ TAŞIYICI BÖLGELERİ ════════════════════════════════════════════════
+  // Taban katman varsa kiracı öğeleri taşıyıcının alanlarını KAPATAMAZ.
+  // Bölgeler taşıyıcı ZPL'inden türetilir; burada sabit koordinat YOKTUR.
+  for (const zone of source.baseLayer?.carrierZones ?? []) {
+    for (const primitive of primitives) {
+      if (!rectsOverlap(zone.rect, primitive.rect)) continue
+      violations.push({
+        code: 'CARRIER_ZONE_OVERLAP_GUARD',
+        elementId: primitive.elementId,
+        detail: `${zone.label}: ${zone.reason}`,
+        blocking: zoneBlocksOverlay(zone),
+      })
+    }
+  }
+
   return {
+    baseLayer: source.baseLayer,
     primitives,
     violations,
     printable: violations.length === 0,

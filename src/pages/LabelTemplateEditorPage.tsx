@@ -32,6 +32,12 @@ import type { CargoOrder, CargoProduct } from '../types/cargoflow'
 import type { LabelDocument, LabelElement } from '../labels/labelDocument'
 import { validateLabelDocument } from '../labels/labelDocument'
 import { renderLabelDocument } from '../labels/labelDocumentRenderer'
+import type { LabelBaseLayer } from '../labels/labelBaseLayer'
+import { isOverlayDocument } from '../labels/labelDocument'
+import {
+  LABEL_CANVAS_HEIGHT_MM,
+  LABEL_CANVAS_WIDTH_MM,
+} from '../labels/labelGeometry'
 import {
   buildEditorPreviewSource,
   buildStressPreviewSource,
@@ -51,7 +57,10 @@ import {
   activateLabelDocument,
   createLabelDocument,
   fetchLabelDocuments,
+  fetchCarrierBaseLayer,
   fetchPreviewOrder,
+  revertToCarrierOriginal,
+  rollbackLabelDocument,
   renameLabelDocument,
   saveLabelDocumentDraft,
   type LabelTemplateRecord,
@@ -209,6 +218,42 @@ export function LabelTemplateEditorPage({
 
   const document = slot?.state.present
   const previewOrders = orders.length > 0 ? orders : fetchedPreviewOrder
+
+  // ═══ TABAN KATMAN — TAŞIYICININ GERÇEK ETİKETİ ══════════════════════
+  // Düzenleyici BOŞ tuval değildir. Önizleme siparişinin KALICI artefaktı
+  // sunucuda render edilir ve tuvalin altına serilir; kiracı öğeleri onun
+  // ÜSTÜNE çizilir. Taşıyıcıya çağrı YAPILMAZ.
+  const [baseLayer, setBaseLayer] = useState<LabelBaseLayer | undefined>()
+  const previewOrderId = String(previewOrders[0]?.id ?? '')
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      // Durum YALNIZ asenkron dalda yazılır: efekt gövdesinde doğrudan
+      // setState, eşzamanlı render'da fazladan geçiş üretir.
+      const payload = previewOrderId
+        ? await fetchCarrierBaseLayer(previewOrderId)
+        : null
+      if (!active) return
+      setBaseLayer(
+        payload
+          ? {
+              kind: 'surat_official',
+              imageBase64: payload.imageBase64,
+              // Fiziksel ölçü KANONİK tuval sabitidir (bkz. labelBaseLayer).
+              widthMm: LABEL_CANVAS_WIDTH_MM,
+              heightMm: LABEL_CANVAS_HEIGHT_MM,
+              renderSha256: payload.renderSha256,
+              printZplSha256: payload.printZplSha256,
+              templateFingerprint: payload.carrierTemplateFingerprint,
+              carrierZones: payload.carrierZones as LabelBaseLayer['carrierZones'],
+            }
+          : undefined,
+      )
+    })()
+    return () => {
+      active = false
+    }
+  }, [previewOrderId])
   const preview = useMemo(
     () =>
       previewMode === 'stress'
@@ -217,9 +262,21 @@ export function LabelTemplateEditorPage({
     [previewOrders, previewMode, products],
   )
 
+  // TABAN YALNIZ OVERLAY BELGEDE UYGULANIR.
+  //
+  // `standalone` belgeler etiketin TAMAMINI çizer (eski cargoflow_html
+  // yolu); altlarına taşıyıcı görüntüsü sermek aynı bilgiyi iki kez
+  // basmak ve muhafızları haksız yere tetiklemek olurdu.
+  const effectiveBaseLayer = isOverlayDocument(document) ? baseLayer : undefined
   const rendered = useMemo(
-    () => (document ? renderLabelDocument(document, preview.source) : null),
-    [document, preview.source],
+    () =>
+      document
+        ? renderLabelDocument(document, {
+            ...preview.source,
+            baseLayer: effectiveBaseLayer,
+          })
+        : null,
+    [document, preview.source, effectiveBaseLayer],
   )
   const validation = useMemo(
     () => (document ? validateLabelDocument(document) : null),
@@ -305,14 +362,56 @@ export function LabelTemplateEditorPage({
     })
   }
 
+  /**
+   * ÖNCEKİ YAYINLANMIŞ SÜRÜME DÖN.
+   *
+   * Bozuk bir yerleşim üretimdeyken operatörden yeniden tasarım beklenmez.
+   * Taslak KORUNUR: yalnız aktif sürüm değişir.
+   */
+  async function handleRollback() {
+    if (!slot) return
+    await runAction('Önceki yayınlanmış sürüme dönüldü.', async () => {
+      const record = await rollbackLabelDocument(slot.record.id, slot.record.version)
+      setSlots((current) => ({
+        ...current,
+        [record.id]: { record, state: current[record.id]?.state ?? slot.state },
+      }))
+      onActiveDocumentChange?.(record.active ?? null)
+    })
+  }
+
+  /**
+   * SAF SÜRAT ETİKETİNE DÖN.
+   *
+   * Kiracı katmanı uygulanmaz; baskı taşıyıcının çıktısını AYNEN kullanır.
+   * Şablonlar SİLİNMEZ — tekrar yayınlanabilir.
+   */
+  async function handleRevertToCarrier() {
+    await runAction('Orijinal Sürat etiketine dönüldü.', async () => {
+      await revertToCarrierOriginal()
+      setActiveTemplateId(null)
+      onActiveDocumentChange?.(null)
+    })
+  }
+
   async function handleActivate() {
     if (!slot || !document) return
     // Yayınlamadan ÖNCE taslak kaydedilir: yayınlanan şey ekranda görülen
     // yerleşimin TA KENDİSİ olmalıdır.
     await runAction('Şablon yayınlandı. Yeni etiketler bu yerleşimi kullanır.', async () => {
+      // YAYIN ANINDA TAŞIYICI ŞABLON KİMLİĞİ DAMGALANIR.
+      // Böylece bu yerleşimin hangi taşıyıcı şablonuna göre tasarlandığı
+      // kayda geçer; taşıyıcı şablonunu değiştirirse baskıda uyarı çıkar.
+      const stamped =
+        isOverlayDocument(document) && effectiveBaseLayer
+          ? {
+              ...document,
+              baseTemplateFingerprint: effectiveBaseLayer.templateFingerprint,
+            }
+          : document
       const saved = await saveLabelDocumentDraft(
         slot.record.id,
-        document,
+        stamped,
         slot.record.version,
       )
       const record = await activateLabelDocument(saved.id, saved.version)
@@ -652,6 +751,27 @@ export function LabelTemplateEditorPage({
             >
               <UploadCloud size={14} aria-hidden="true" /> Yayınla
             </button>
+            <button
+              type="button"
+              className="ghost-button"
+              data-testid="editor-rollback"
+              // Arşivde önceki sürüm YOKSA kapalı: "dönülecek yer yok".
+              disabled={!slot || busy || (slot.record.history?.length ?? 0) === 0}
+              title="Önceki yayınlanmış sürüme dön"
+              onClick={() => void handleRollback()}
+            >
+              <Undo2 size={14} aria-hidden="true" /> Önceki sürüme dön
+            </button>
+            <button
+              type="button"
+              className="ghost-button"
+              data-testid="editor-revert-carrier"
+              disabled={busy || !activeTemplateId}
+              title="Kiracı katmanını kaldır; yalnız Sürat'in resmî etiketi basılsın"
+              onClick={() => void handleRevertToCarrier()}
+            >
+              Orijinal Sürat etiketi
+            </button>
             {dirty ? (
               <span className="label-badge label-badge-draft" data-testid="editor-dirty">
                 Kaydedilmemiş değişiklik
@@ -669,6 +789,7 @@ export function LabelTemplateEditorPage({
             <LabelCanvas
               document={document}
               primitives={rendered.primitives}
+              baseLayer={effectiveBaseLayer}
               zoom={zoom}
               selectedId={selectedElementId}
               snapEnabled={snapEnabled}

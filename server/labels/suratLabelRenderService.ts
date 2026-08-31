@@ -17,6 +17,11 @@ import {
   resolvePrintableLabelForServing,
   PRINT_ZPL_SOURCE_MISSING_MESSAGE,
 } from '../shipments/printZplRepository.ts'
+import {
+  carrierTemplateFingerprint as carrierTemplateFingerprint_,
+  deriveCarrierZones,
+  type CarrierZone,
+} from '../../src/labels/labelBaseLayer.ts'
 import { buildPrintableJob } from '../../src/utils/printableLabelJob.ts'
 import { loadPrintLineItems } from '../shipments/printZplItems.ts'
 import { SURAT_PERSISTENCE_PROVIDER } from '../shipments/suratProvider.ts'
@@ -135,6 +140,20 @@ export interface SuratRenderDto {
   pages: SuratRenderPage[]
   /** Render edilemeyen sayfalar — sessizce düşürülmez. */
   missingPages: SuratRenderMissingPage[]
+  /**
+   * TAŞIYICI BÖLGELERİ — düzenleyicinin kilitleyeceği alanlar (mm).
+   *
+   * Koordinatlar taşıyıcı ZPL'inden SUNUCUDA türetilir; HAM ZPL istemciye
+   * gitmez. Düzenleyici bu kutuları taban görüntünün üstünde gösterir ve
+   * kiracı öğelerinin üstlerine binmesini engeller.
+   */
+  carrierZones: CarrierZone[]
+  /**
+   * TAŞIYICI ŞABLON KİMLİĞİ — kiracı yerleşiminin hangi şablona göre
+   * tasarlandığını kilitler. Serbest metin DEĞİL: semantic modelden gelen
+   * kapalı biçimli parmak izidir (ör. `surat-real-v2.bq1.pw799...`).
+   */
+  carrierTemplateFingerprint: string
   /** Kalıcı paket durumu; `fallback_carrier` = geçici taşıyıcı servisi. */
   printArtifactStatus: 'ready' | 'fallback_carrier'
   productDetailStatus: 'none' | 'ready' | 'failed'
@@ -225,7 +244,15 @@ export async function renderSuratLabel(
     )
   }
 
-  const model = resolution.kind === 'artifact' ? resolution.model : null
+  // ═══ DARALTMA `resolution` ÜSTÜNDEN YAPILIR ══════════════════════════
+  // Eskiden yalnız `model` türetiliyor, sonra `model ? … : resolution.X`
+  // yazılıyordu. TypeScript union'ı `model`in null olmasından DARALTAMAZ;
+  // bu yüzden `resolution.carrierZpl` gibi erişimler tip güvenliği DIŞINDA
+  // kalıyordu (dosya hiç tip kontrolünden geçmediği için de fark edilmemişti).
+  // Fallback dalı ayrı bir değişkenle AÇIKÇA daraltılır.
+  const artifact = resolution.kind === 'artifact' ? resolution : null
+  const carrierFallback = resolution.kind === 'carrier_fallback' ? resolution : null
+  const model = artifact ? artifact.model : null
   // ── FİZİKSEL SAYFALAR ─────────────────────────────────────────────────
   // Sıra BURADA ÜRETİLMEZ. Tek canonical kurucu (buildPrintableJob) taşıyıcıyı
   // ilk sıraya koyar, ek sayfaları 1..N doğrular; render yalnız o sırayı
@@ -236,7 +263,7 @@ export async function renderSuratLabel(
         carrierZpl: model.printZpl,
         supplementalLabels: model.supplementalLabels ?? [],
       })
-    : buildPrintableJob({ carrierZpl: resolution.carrierZpl })
+    : buildPrintableJob({ carrierZpl: carrierFallback?.carrierZpl ?? '' })
   if (!job.printReady) {
     throw new SuratRenderError(
       409,
@@ -248,6 +275,8 @@ export async function renderSuratLabel(
   const pages: SuratRenderPage[] = []
   const missingPages: SuratRenderMissingPage[] = []
   let carrierRender: Awaited<ReturnType<typeof renderZplToPng>> | null = null
+  let carrierZones: CarrierZone[] = []
+  let carrierTemplateFingerprint = ''
   const totalPages = job.pages.length
   for (const [index, entry] of job.pages.entries()) {
     const page = index + 1
@@ -291,7 +320,13 @@ export async function renderSuratLabel(
       })
       continue
     }
-    if (entry.kind === 'carrier') carrierRender = render
+    if (entry.kind === 'carrier') {
+      carrierRender = render
+      // Bölgeler SUNUCUDA türetilir. Ham ZPL tarayıcıya ASLA gitmez (RE-6);
+      // düzenleyicinin ihtiyacı olan tek şey KOORDİNATLARDIR.
+      carrierZones = deriveCarrierZones(entry.zpl)
+      carrierTemplateFingerprint = carrierTemplateFingerprint_(entry.zpl)
+    }
     pages.push({
       kind: entry.kind,
       page,
@@ -326,7 +361,7 @@ export async function renderSuratLabel(
         ? 'ready'
         : 'failed'
   const productDetailFailureReason = !model
-    ? resolution.productDetailFailureReason
+    ? carrierFallback?.productDetailFailureReason
     : productDetailStatus === 'failed'
       ? 'supplemental_render_failure'
       : undefined
@@ -346,7 +381,9 @@ export async function renderSuratLabel(
     heightPx: carrierRender.heightPx,
     widthMm: carrierRender.widthMm,
     heightMm: carrierRender.heightMm,
-    printZplSha256: model ? model.printZplSha256 : resolution.carrierZplSha256,
+    printZplSha256: model
+      ? model.printZplSha256
+      : (carrierFallback?.carrierZplSha256 ?? ''),
     renderSha256: carrierRender.renderSha256,
     renderEngine: ZPL_RENDERER_PACKAGE,
     renderEngineVersion: ZPL_RENDERER_PACKAGE_VERSION,
@@ -358,6 +395,8 @@ export async function renderSuratLabel(
     composeMode: model?.composeMode ?? null,
     pages,
     missingPages,
+    carrierZones,
+    carrierTemplateFingerprint,
     printArtifactStatus: model ? 'ready' : 'fallback_carrier',
     productDetailStatus,
     ...(productDetailFailureReason ? { productDetailFailureReason } : {}),

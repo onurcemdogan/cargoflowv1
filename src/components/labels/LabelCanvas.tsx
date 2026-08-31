@@ -33,6 +33,7 @@ import {
   snapToGrid,
 } from '../../labels/labelGeometry'
 import { LabelPrimitiveLayer } from './LabelPrimitiveLayer'
+import type { LabelBaseLayer } from '../../labels/labelBaseLayer'
 
 type ResizeHandle =
   | 'nw' | 'n' | 'ne'
@@ -59,6 +60,14 @@ export interface AlignmentGuide {
 interface LabelCanvasProps {
   document: LabelDocument
   primitives: LabelPrimitive[]
+  /**
+   * TABAN KATMAN — taşıyıcının GERÇEK etiketi.
+   *
+   * Düzenleyici BOŞ tuval değildir: kiracı, Sürat'in gerçek çıktısının
+   * üstünde çalışır. Görüntü baskıda kullanılan base64'ün AYNISIDIR;
+   * ikinci bir çizim yolu YOKTUR.
+   */
+  baseLayer?: LabelBaseLayer
   zoom: number
   selectedId?: string
   /** Izgara yakalaması açık mı? */
@@ -72,6 +81,7 @@ interface LabelCanvasProps {
 export function LabelCanvas({
   document: doc,
   primitives,
+  baseLayer,
   zoom,
   selectedId,
   snapEnabled,
@@ -309,6 +319,45 @@ export function LabelCanvas({
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
       >
+        {baseLayer ? (
+          <img
+            className="label-base-layer"
+            data-testid="label-base-layer"
+            data-render-sha={baseLayer.renderSha256}
+            alt="Sürat resmî etiketi"
+            src={`data:image/png;base64,${baseLayer.imageBase64}`}
+            style={{
+              position: 'absolute',
+              left: 0,
+              top: 0,
+              width: `${mmToPx(baseLayer.widthMm, zoom)}px`,
+              height: `${mmToPx(baseLayer.heightMm, zoom)}px`,
+              zIndex: 0,
+              pointerEvents: 'none',
+            }}
+          />
+        ) : null}
+        {/* TAŞIYICI BÖLGELERİ — görünür ama KİLİTLİ. Operatör neyin neden
+            korunduğunu görmeden yerleşim yapamaz. */}
+        {(baseLayer?.carrierZones ?? []).map((zone) => (
+          <div
+            key={zone.id}
+            className={`label-carrier-zone is-${zone.zoneClass}`}
+            data-testid="label-carrier-zone"
+            data-zone-id={zone.id}
+            data-zone-class={zone.zoneClass}
+            title={`${zone.label} — ${zone.reason}`}
+            style={{
+              position: 'absolute',
+              left: `${mmToPx(zone.rect.x, zoom)}px`,
+              top: `${mmToPx(zone.rect.y, zoom)}px`,
+              width: `${mmToPx(zone.rect.width, zoom)}px`,
+              height: `${mmToPx(zone.rect.height, zoom)}px`,
+              zIndex: 2,
+              pointerEvents: 'none',
+            }}
+          />
+        ))}
         <LabelPrimitiveLayer primitives={primitives} zoom={zoom} />
 
         {guides.map((guide) => (

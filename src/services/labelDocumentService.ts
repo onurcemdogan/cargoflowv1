@@ -17,6 +17,19 @@ export interface LabelTemplateRecord {
   updatedAt: string
   draft: LabelDocument | null
   active: LabelDocument | null
+  /** Aktif sürümün yayına alındığı an (sunucu damgası). */
+  activatedAt?: string
+  /**
+   * ARŞİV — önceki AKTİF sürümler, en yenisi başta.
+   *
+   * Arayüz bunu "önceki sürüme dön" düğmesini AÇMAK için okur: arşiv boşsa
+   * dönülecek bir yer yoktur ve düğme kapalıdır.
+   */
+  history?: Array<{
+    document: LabelDocument
+    version: number
+    activatedAt: string
+  }>
 }
 
 export interface LabelDocumentsResponse {
@@ -95,6 +108,61 @@ export async function fetchPreviewOrder(): Promise<unknown | null> {
 }
 
 /**
+ * TAŞIYICI TABAN KATMANI — düzenleyicinin ALTINDAKİ gerçek etiket.
+ *
+ * ═══ NEDEN DÜZENLEYİCİ BUNU ÇEKER ═══════════════════════════════════════
+ * Düzenleyici BOŞ tuval değildir. Kiracı, Sürat'in GERÇEK çıktısının üstünde
+ * çalışır; o çıktı ancak sunucuda (kalıcı artefakttan) render edilebilir.
+ *
+ * ═══ TAŞIYICIYA ÇIKMAZ ══════════════════════════════════════════════════
+ * Bu uç KALICI artefaktı okur ve yerel motorla PNG üretir. Sürat'e/pazar
+ * yerine hiçbir çağrı yapılmaz, hiçbir gönderi oluşturulmaz, hiçbir statü
+ * değişmez. Ham ZPL istemciye İNMEZ — yalnız görüntü ve bölge koordinatları.
+ */
+export interface CarrierBaseLayerResponse {
+  imageBase64: string
+  widthMm: number
+  heightMm: number
+  renderSha256: string
+  printZplSha256: string
+  carrierZones: unknown[]
+  carrierTemplateFingerprint: string
+}
+
+export async function fetchCarrierBaseLayer(
+  orderId: string,
+): Promise<CarrierBaseLayerResponse | null> {
+  if (!orderId) return null
+  try {
+    const response = await fetch('/api/labels/render/surat', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ orderId }),
+    })
+    if (!response.ok) return null
+    const payload = (await response.json()) as Record<string, unknown>
+    const imageBase64 = String(payload.imageBase64 ?? '')
+    if (!imageBase64) return null
+    return {
+      imageBase64,
+      widthMm: Number(payload.widthMm ?? 0),
+      heightMm: Number(payload.heightMm ?? 0),
+      renderSha256: String(payload.renderSha256 ?? ''),
+      printZplSha256: String(payload.printZplSha256 ?? ''),
+      carrierZones: Array.isArray(payload.carrierZones)
+        ? payload.carrierZones
+        : [],
+      carrierTemplateFingerprint: String(payload.carrierTemplateFingerprint ?? ''),
+    }
+  } catch {
+    // Taban alınamazsa düzenleyici AÇILIR: kiracı katmanı yine düzenlenebilir,
+    // yalnız altta taşıyıcı görüntüsü olmaz ve bu arayüzde BİLDİRİLİR.
+    return null
+  }
+}
+
+/**
  * UÇUŞTAKİ İSTEK TEKİLLEŞTİRME (cache DEĞİL).
  *
  * ═══ NEDEN ══════════════════════════════════════════════════════════════
@@ -132,6 +200,35 @@ export function fetchLabelDocuments(): Promise<LabelDocumentsResponse> {
   }
   void pending.then(clear, clear)
   return pending
+}
+
+/**
+ * ÖNCEKİ YAYINLANMIŞ SÜRÜME DÖN — tek adım.
+ *
+ * `baseVersion` iyimser kilittir: başka bir sekme aynı anda yayınladıysa
+ * geri dönüş SESSİZCE onun üzerine yazmaz, çakışma bildirilir.
+ */
+export async function rollbackLabelDocument(
+  templateId: string,
+  baseVersion: number,
+): Promise<LabelTemplateRecord> {
+  const payload = await request<{ template: LabelTemplateRecord }>(
+    `/api/labels/documents/${encodeURIComponent(templateId)}/rollback`,
+    { method: 'POST', body: JSON.stringify({ baseVersion }) },
+  )
+  return payload.template
+}
+
+/**
+ * SAF SÜRAT ETİKETİNE DÖN — kiracı katmanı uygulanmaz.
+ *
+ * Şablonlar SİLİNMEZ; yalnız aktiflik kaldırılır.
+ */
+export async function revertToCarrierOriginal(): Promise<void> {
+  await request<{ ok: boolean }>('/api/labels/documents/revert-to-carrier', {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
 }
 
 export async function createLabelDocument(input: {

@@ -55,7 +55,29 @@ export interface StoredLabelTemplateRecord {
   updatedAt: string
   draft: LabelDocument | null
   active: LabelDocument | null
+  /** Aktif sürümün yayına alındığı an. Hiç yayınlanmadıysa yok. */
+  activatedAt?: string
+  /**
+   * ARŞİV — önceki AKTİF sürümler, en yenisi başta.
+   *
+   * ═══ NEDEN ═════════════════════════════════════════════════════════════
+   * Yayınlanan bir yerleşim üretimde bozuk çıkarsa operatörün tek ihtiyacı
+   * "bir önceki hâline dön"dür. Arşiv olmadan geri dönüş, yerleşimi elle
+   * yeniden kurmak demekti. Sınırlıdır: sınırsız geçmiş, ayar satırını
+   * süresiz büyütürdü.
+   */
+  history: LabelDocumentVersion[]
 }
+
+export interface LabelDocumentVersion {
+  document: LabelDocument
+  /** Bu sürümün yayınlandığı andaki kayıt sürümü. */
+  version: number
+  activatedAt: string
+}
+
+/** En fazla kaç önceki aktif sürüm saklanır. */
+export const MAX_VERSION_HISTORY = 10
 
 export interface StoredLabelDocuments {
   activeTemplateId: string | null
@@ -103,7 +125,31 @@ function normalizeRecord(input: unknown): StoredLabelTemplateRecord | null {
     updatedAt: String(record.updatedAt ?? ''),
     draft: normalizeLabelDocument(record.draft),
     active: normalizeLabelDocument(record.active),
+    activatedAt:
+      typeof record.activatedAt === 'string' && record.activatedAt
+        ? record.activatedAt
+        : undefined,
+    history: normalizeHistory(record.history),
   }
+}
+
+/** Arşiv okuması: bozuk giriş SESSİZCE düşer, kayıt açılmaya devam eder. */
+function normalizeHistory(input: unknown): LabelDocumentVersion[] {
+  if (!Array.isArray(input)) return []
+  const out: LabelDocumentVersion[] = []
+  for (const entry of input) {
+    if (!entry || typeof entry !== 'object') continue
+    const row = entry as Record<string, unknown>
+    const document = normalizeLabelDocument(row.document)
+    if (!document) continue
+    out.push({
+      document,
+      version: Number.isFinite(Number(row.version)) ? Number(row.version) : 0,
+      activatedAt: String(row.activatedAt ?? ''),
+    })
+    if (out.length >= MAX_VERSION_HISTORY) break
+  }
+  return out
 }
 
 async function readSettingsRow(db: Db, organizationId: string) {
@@ -242,6 +288,7 @@ export async function createLabelDocumentFromSystem(
     // Yeni şablon TASLAK doğar: kopyalamak YAYINLAMAK DEĞİLDİR.
     draft,
     active: null,
+    history: [],
   }
   await writeState(
     db,
@@ -287,6 +334,7 @@ export async function duplicateLabelDocument(
     updatedAt: now,
     draft,
     active: null,
+    history: [],
   }
   await writeState(
     db,
@@ -345,12 +393,30 @@ export async function activateLabelDocument(
     throw new LabelDocumentError('NO_DRAFT', 'Yayınlanacak taslak yok.')
   }
   const document = assertValidDocument(candidate)
+  // ÖNCEKİ AKTİF ARŞİVLENİR — geri dönüş için tek kaynak budur. Aynı belge
+  // tekrar yayınlanırsa arşive KOPYA eklenmez (gürültü olurdu).
+  const previous = record.active
+  const unchanged =
+    previous && JSON.stringify(previous) === JSON.stringify(document)
+  const history =
+    previous && !unchanged
+      ? [
+          {
+            document: previous,
+            version: record.version,
+            activatedAt: record.activatedAt ?? record.updatedAt,
+          },
+          ...record.history,
+        ].slice(0, MAX_VERSION_HISTORY)
+      : record.history
   const next: StoredLabelTemplateRecord = {
     ...record,
     version: record.version + 1,
     updatedAt: now,
+    activatedAt: now,
     draft: document,
     active: document,
+    history,
   }
   await writeState(
     db,
@@ -425,6 +491,143 @@ export async function deleteLabelDocument(
  * (yerleşik) yerleşimi kullanmaya DEVAM EDER — sürüm yükseltmesi hiçbir
  * kiracının etiketini kendiliğinden değiştirmez.
  */
+/**
+ * ÖNCEKİ AKTİF SÜRÜME DÖN.
+ *
+ * ═══ NEDEN AYRI BİR İŞLEM ════════════════════════════════════════════════
+ * "Taslağı düzelt, tekrar yayınla" bir geri dönüş DEĞİLDİR: bozuk yerleşim
+ * üretimde dururken operatörden yeniden tasarım beklemek demektir. Geri
+ * dönüş TEK adımdır ve arşivdeki son aktif sürümü geri yükler.
+ *
+ * TASLAK KORUNUR: operatörün üzerinde çalıştığı taslak silinmez; yalnız
+ * AKTİF sürüm değişir.
+ */
+export async function rollbackLabelDocument(
+  db: Db,
+  organizationId: string,
+  templateId: string,
+  baseVersion: unknown,
+  now: string,
+): Promise<StoredLabelTemplateRecord> {
+  const state = await loadLabelDocuments(db, organizationId)
+  const record = requireTemplate(state, templateId)
+  assertVersion(record, baseVersion)
+  const [previous, ...rest] = record.history
+  if (!previous) {
+    throw new LabelDocumentError(
+      'NO_DRAFT',
+      'Geri dönülecek önceki yayınlanmış sürüm yok.',
+    )
+  }
+  // Geri dönülen sürüm de DOĞRULANIR: arşivdeki bir kayıt bozuksa üretime
+  // sessizce geri konmaz.
+  const document = assertValidDocument(previous.document)
+  const next: StoredLabelTemplateRecord = {
+    ...record,
+    version: record.version + 1,
+    updatedAt: now,
+    activatedAt: now,
+    active: document,
+    // Geri dönülen sürüm arşivden ÇIKAR; mevcut aktif onun yerine girer.
+    history: record.active
+      ? [
+          {
+            document: record.active,
+            version: record.version,
+            activatedAt: record.activatedAt ?? record.updatedAt,
+          },
+          ...rest,
+        ].slice(0, MAX_VERSION_HISTORY)
+      : rest,
+  }
+  await writeState(
+    db,
+    organizationId,
+    {
+      activeTemplateId: templateId,
+      templates: { ...state.templates, [templateId]: next },
+    },
+    now,
+  )
+  return next
+}
+
+/**
+ * TAMAMEN ORİJİNAL SÜRAT ETİKETİNE DÖN.
+ *
+ * Hiçbir kiracı katmanı uygulanmaz; baskı taşıyıcının çıktısını AYNEN
+ * kullanır. Şablonlar SİLİNMEZ — yalnız aktiflik kaldırılır, böylece
+ * operatör hazır olduğunda tekrar yayınlayabilir.
+ */
+export async function revertToCarrierOriginal(
+  db: Db,
+  organizationId: string,
+  now: string,
+): Promise<StoredLabelDocuments> {
+  const state = await loadLabelDocuments(db, organizationId)
+  const next = { ...state, activeTemplateId: null }
+  await writeState(db, organizationId, next, now)
+  return next
+}
+
+/** Baskıda hangi katmanın kullanıldığı — teşhis ve arayüz rozeti için. */
+export type LabelFallbackTier = 'active' | 'previous' | 'carrier_original'
+
+export interface ResolvedLabelLayer {
+  document: LabelDocument | null
+  tier: LabelFallbackTier
+  /** `previous` veya `carrier_original` ise NEDEN düşüldüğü. */
+  reason?: string
+}
+
+/**
+ * BASKI KATMANI ÇÖZÜMÜ — DÜŞME SIRASI.
+ *
+ *   1. aktif kiracı şablonu
+ *   2. önceki aktif sürüm (aktif olan doğrulamadan geçmiyorsa)
+ *   3. saf orijinal Sürat etiketi (belge YOK)
+ *
+ * ═══ NEDEN ═══════════════════════════════════════════════════════════════
+ * Üretim ETİKETSİZ KALMAMALIDIR. Bir yerleşim kaydı bozulursa ya da
+ * doğrulamadan düşerse baskı durmaz: bir önceki çalışan sürüme, o da yoksa
+ * taşıyıcının kendi etiketine düşer. Taşıyıcı etiketi HER ZAMAN basılabilir
+ * — çünkü onu biz üretmiyoruz.
+ */
+export async function resolveActiveLabelLayer(
+  db: Db,
+  organizationId: string,
+): Promise<ResolvedLabelLayer> {
+  const state = await loadLabelDocuments(db, organizationId)
+  if (!state.activeTemplateId) {
+    return { tier: 'carrier_original', document: null }
+  }
+  const record = state.templates[state.activeTemplateId]
+  if (!record) {
+    return {
+      tier: 'carrier_original',
+      document: null,
+      reason: 'Aktif şablon kaydı bulunamadı.',
+    }
+  }
+  if (record.active && validateLabelDocument(record.active).valid) {
+    return { tier: 'active', document: record.active }
+  }
+  for (const version of record.history) {
+    if (validateLabelDocument(version.document).valid) {
+      return {
+        tier: 'previous',
+        document: version.document,
+        reason: 'Aktif sürüm doğrulamadan geçmedi; önceki sürüme düşüldü.',
+      }
+    }
+  }
+  return {
+    tier: 'carrier_original',
+    document: null,
+    reason: 'Geçerli kiracı yerleşimi yok; taşıyıcı etiketi kullanılıyor.',
+  }
+}
+
 export async function resolveActiveLabelDocument(
   db: Db,
   organizationId: string,

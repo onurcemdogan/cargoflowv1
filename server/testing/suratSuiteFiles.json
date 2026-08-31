@@ -211,5 +211,6 @@
   "server/dashboard-operational-parity-flow.test.mjs",
   "server/label-editor-acceptance-flow.test.mjs",
   "server/label-print-artifact-smoke-flow.test.mjs",
+  "server/label-base-layer-overlay-flow.test.mjs",
   "server/surat-official-label-overlap-flow.test.mjs"
 ]
