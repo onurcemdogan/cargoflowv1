@@ -549,11 +549,29 @@ export function composeSuratDurusoftLabel(
   }
 
   // ── 2) Bold adres: taşıyıcının KENDİ satırları, KENDİ baytları ────────
-  const addressLines = semantic.addressLines
-  if (addressLines.length === 0 || addressLines.length > BOLD_ADDRESS_BASELINES.length) {
+  //
+  // ═══ TAŞIYICI BÖLGEYE SAHİPSE HİÇBİR ŞEY YAZILMAZ ═══════════════════
+  // Parser, bold adres bölgesinin taşıyıcı tarafından DOLDURULDUĞUNU
+  // (`carrierOwnsAddressBlock`) tespit edip `boldAddressSlots`'u boşaltır.
+  // Bu sinyal OKUNMUYORDU: composer sabit `BOLD_ADDRESS_BASELINES`'a
+  // koşulsuz yazıyordu. Sonuç, ÜRETİMDE GÖRÜLEN hataydı — aynı taban
+  // çizgisinde taşıyıcının `A0` (genişlik 25) metni ile bizim `A@`
+  // (genişlik 10) çift vuruşumuz üst üste biniyor, adres okunamaz hale
+  // geliyordu.
+  //
+  // Doğru davranış: bölge taşıyıcınınsa adres ZATEN basılıdır; ikinci bir
+  // kopya EKLENMEZ. Bölge boşsa (v1 şablonu) eskisi gibi devralınır.
+  const carrierOwnsAddressBlock = semantic.carrierOwnsAddressBlock === true
+  const addressLines = carrierOwnsAddressBlock ? [] : semantic.addressLines
+  if (
+    !carrierOwnsAddressBlock &&
+    (addressLines.length === 0 ||
+      addressLines.length > semantic.boldAddressSlots.length ||
+      addressLines.length > BOLD_ADDRESS_BASELINES.length)
+  ) {
     return fallback(
       'fallback_semantic_failure',
-      `bold adres için uygun satır sayısı yok (${addressLines.length})`,
+      `bold adres için uygun satır sayısı yok (${addressLines.length}/${semantic.boldAddressSlots.length})`,
       sourceZpl,
     )
   }
@@ -699,6 +717,7 @@ export function composeSuratDurusoftLabel(
     ),
   )
   // (whitelist 3) bold adres: aynı bayt, aynı font, +1 dot çift vuruş.
+  // `addressLines` taşıyıcı bölgeye sahipse BOŞTUR → hiçbir vuruş eklenmez.
   addressLines.forEach((line, index) => {
     const baseline = BOLD_ADDRESS_BASELINES[index]
     for (const offset of [0, 1]) {
