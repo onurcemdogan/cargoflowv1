@@ -38,6 +38,7 @@ import {
   type SalesDisposition,
   type SalesMetricDefinition,
 } from './dashboardSalesMetricDefinition.ts'
+import { createStringMemo } from '../utils/stringMemo.ts'
 
 // Yalnız SATIŞ analitiği rapor günü UTC'dir (Durusoft mutabakatı);
 // operasyon sayaçları ve tarih GÖSTERİMLERİ yerel (Europe/Istanbul)
@@ -663,7 +664,7 @@ export function buildDashboardViewModel({
       operationalSnapshot?.pickingLists ?? buildPickingLists(uniqueOrders, products),
     recentOperations:
       operationalSnapshot?.recentOperations ??
-      buildRecentOperations(uniqueOrders, products).slice(0, 10),
+      buildRecentOperations(uniqueOrders, products, RECENT_OPERATIONS_LIMIT),
     latestSyncAt:
       latestSyncAt ??
       operationalSnapshot?.latestSyncAt ??
@@ -1465,12 +1466,34 @@ function buildActionRequired(
   ]
 }
 
+/** Panelde gösterilen son operasyon satırı sayısı — TEK KAYNAK. */
+const RECENT_OPERATIONS_LIMIT = 10
+
+/**
+ * SON OPERASYONLAR — yalnız GÖSTERİLECEK kadar satır kurulur.
+ *
+ * ═══ NEDEN LİMİT BURADA ══════════════════════════════════════════════════
+ * Eskiden TÜM siparişler için tam satır kurulup sonra `.slice(0, 10)`
+ * uygulanıyordu. Her satır ucuz değildir: sekme sınıflandırması, eylem
+ * yetkileri (Sürat ZPL çözümlemesi dahil) ve 4.000 varyantlı katalog
+ * üzerinde ürün görseli çözümü yapar.
+ *
+ * ÖLÇÜLDÜ (gerçek Postgres, 25.000 sipariş): 24.990 satır kuruluyor ve
+ * ATILIYORDU; CPU profilinde ürün görseli çözümü %14, ZPL çözümlemesi
+ * zinciri %17 yer kaplıyordu.
+ *
+ * Sıralama ÖNCE yapılır, kesme SONRA, kurulum EN SON: `map` öğe başına
+ * bağımsız olduğundan sonuç BİREBİR aynıdır — yalnız atılacak satırlar
+ * hiç kurulmaz.
+ */
 function buildRecentOperations(
   orders: CargoOrder[],
   products: CargoProduct[],
+  limit: number,
 ): DashboardRecentOperation[] {
   return [...orders]
     .sort((left, right) => orderTimestamp(right) - orderTimestamp(left))
+    .slice(0, limit)
     .map((order) => {
       const firstItem = order.items[0]
       const state = classifyOrderForTabs(order)
@@ -1698,16 +1721,16 @@ function normalizeCity(value: unknown): string {
     .join(' ')
 }
 
-function normalizeIdentity(value: unknown): string {
-  return String(value ?? '')
+const normalizeIdentity = createStringMemo((raw) =>
+  raw
     .trim()
     .toLocaleLowerCase('tr-TR')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/ı/g, 'i')
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-}
+    .replace(/^-|-$/g, ''),
+)
 
 function orderIsInRange(order: CargoOrder, period: DashboardDateRange): boolean {
   return timestampInRange(order.orderDate || order.createdAt, period)

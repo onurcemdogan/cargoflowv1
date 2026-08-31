@@ -79,6 +79,17 @@ export interface BuildVisibleOrdersInput {
   orderNumberQuery?: string
   cargoSlipQuery?: string
   now?: Date
+  /**
+   * DIŞLAMA KAYITLARI TOPLANSIN MI? (varsayılan: evet)
+   *
+   * `debug.exclusions`, "bu sipariş neden görünmüyor" tanısı içindir ve her
+   * filtre aşamasında çıkan HER sipariş için bir kayıt üretir. Sunucu
+   * projeksiyonu bu kayıtları OKUMAZ; 25.000 siparişte aramada ~21.000
+   * gereksiz kayıt üretiliyordu (ölçüldü: ~200 ms).
+   *
+   * `visibleOrders` bu bayraktan ETKİLENMEZ — yalnız tanı verisi üretilmez.
+   */
+  collectExclusions?: boolean
 }
 
 export interface VisibleOrderExclusion {
@@ -126,7 +137,29 @@ export interface VisibleOrdersResult {
   debug: VisibleOrdersDebug
 }
 
+// Sekme sayaçları bu sınıflandırmayı ana sekme sayısı kadar tekrar ister;
+// sonuç sipariş nesnesine bağlı SAF bir değerdir. Bkz. `verifySuratShipment`
+// hafızasındaki gerekçe ve güvenlik kuralı.
+interface ClassificationMemoEntry {
+  shipment: CargoOrder['shipment']
+  result: OrderTabClassification
+}
+const classificationMemo = new WeakMap<object, ClassificationMemoEntry>()
+
 export function classifyOrderForTabs(
+  order: CargoOrder,
+): OrderTabClassification {
+  const cached = classificationMemo.get(order as object)
+  if (cached && cached.shipment === order.shipment) return cached.result
+  const result = computeOrderTabClassification(order)
+  classificationMemo.set(order as object, {
+    shipment: order.shipment,
+    result,
+  })
+  return result
+}
+
+function computeOrderTabClassification(
   order: CargoOrder,
 ): OrderTabClassification {
   const record = order as CargoOrder & Record<string, unknown>
@@ -429,12 +462,17 @@ export function buildVisibleOrders({
   orderNumberQuery = '',
   cargoSlipQuery = '',
   now = new Date(),
+  collectExclusions = true,
 }: BuildVisibleOrdersInput): VisibleOrdersResult {
+  // Tanı kapalıysa aynı diziye yazılır ama HİÇ büyümez: aşağıdaki tüm
+  // `push` çağrıları tek bir yerde, `recordExclusion` üzerinden geçer.
   const exclusions: VisibleOrderExclusion[] = []
+  // Tanı kapalıyken yardımcılar `null` alır ve HİÇ kayıt üretmez.
+  const sink: VisibleOrderExclusion[] | null = collectExclusions ? exclusions : null
   let current = persistentOrders.filter((order) => {
     const valid = Boolean(order && (order.id || order.orderNumber))
     if (!valid) {
-      exclusions.push(
+      sink?.push(
         toExclusion(order, 'invalidRecord', 'Sipariş kimliği bulunamadı.'),
       )
     }
@@ -446,7 +484,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforePackageDedup,
     current,
-    exclusions,
+    sink,
     'packageDedup',
     'Aynı marketplace paket kimliği yinelendi.',
   )
@@ -495,7 +533,7 @@ export function buildVisibleOrders({
     current = applyOrderFilter(
       current,
       (order) => !isExternallyProcessed(order),
-      exclusions,
+      sink,
       'externalProcessingFilter',
       'Sipariş harici sistemde işlendi olarak işaretlendi.',
     )
@@ -510,7 +548,7 @@ export function buildVisibleOrders({
           latestSyncBatchId &&
             order.lastMarketplaceSyncBatchId === latestSyncBatchId,
         ),
-      exclusions,
+      sink,
       'selectedTab',
       'Son başarılı senkron batch kaydında bulunmuyor.',
     )
@@ -530,7 +568,7 @@ export function buildVisibleOrders({
           todayRange,
           dateFilter.timezone || ORDERS_TIME_ZONE,
         ),
-      exclusions,
+      sink,
       'selectedTab',
       'Sipariş tarihi bugün (Europe/Istanbul) değil.',
     )
@@ -539,7 +577,7 @@ export function buildVisibleOrders({
       current,
       (order) =>
         orderMatchesQuickTab(classifyOrderForTabs(order), selectedTab),
-      exclusions,
+      sink,
       'selectedTab',
       `Sipariş ${selectedTab} sekmesi kapsamına girmiyor.`,
     )
@@ -556,7 +594,7 @@ export function buildVisibleOrders({
           classifyOrderForTabs(order),
           operationTabFilter as QuickTab,
         ),
-      exclusions,
+      sink,
       'operationTabFilter',
       `Sipariş ${operationTabFilter} işlem durumu kapsamına girmiyor.`,
     )
@@ -574,7 +612,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforeMarketplaceFilter,
     current,
-    exclusions,
+    sink,
     'marketplaceFilter',
     'Pazaryeri seçili filtreyle eşleşmiyor.',
   )
@@ -597,7 +635,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforeOperationStatusFilter,
     current,
-    exclusions,
+    sink,
     'statusFilter',
     'Sipariş durumu seçili statüyle eşleşmiyor.',
   )
@@ -622,7 +660,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforeCargoFilter,
     current,
-    exclusions,
+    sink,
     'cargoFilter',
     'Kargo kaydı seçili filtreyle eşleşmiyor.',
   )
@@ -638,7 +676,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforeCityFilter,
     current,
-    exclusions,
+    sink,
     'cityFilter',
     'Teslimat ili seçili filtreyle eşleşmiyor.',
   )
@@ -654,7 +692,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforeDistrictFilter,
     current,
-    exclusions,
+    sink,
     'districtFilter',
     'Teslimat ilçesi seçili filtreyle eşleşmiyor.',
   )
@@ -671,7 +709,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforeMultiProductFilter,
     current,
-    exclusions,
+    sink,
     'multiProductFilter',
     'Paket kalem sayısı seçili çoklu ürün filtresiyle eşleşmiyor.',
   )
@@ -686,7 +724,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforeActionFilter,
     current,
-    exclusions,
+    sink,
     'actionFilter',
     'Sipariş seçili aksiyon filtresi kapsamında değil.',
   )
@@ -703,7 +741,7 @@ export function buildVisibleOrders({
           { startTime, endTime },
           dateFilter.timezone || ORDERS_TIME_ZONE,
         ),
-      exclusions,
+      sink,
       'dateFilter',
       'Sipariş tarihi seçili Europe/Istanbul aralığında değil.',
     )
@@ -713,33 +751,7 @@ export function buildVisibleOrders({
   const beforeSearch = current
   const query = searchQuery.trim().toLocaleLowerCase('tr-TR')
   if (query) {
-    current = current.filter((order) =>
-      [
-        order.orderNumber,
-        order.externalOrderId,
-        // Kullanıcıya görünen Trendyol referansı (727...) ile de arama yapılabilsin;
-        // canonical orderNumber (114...) araması korunur.
-        order.cargoTrackingNumber,
-        order.shipment?.ozelKargoTakipNo,
-        order.shipment?.trendyolCargoTrackingNumber,
-        order.customerName,
-        order.customerPhone,
-        order.customerEmail,
-        order.city,
-        order.district,
-        ...order.items.flatMap((item) => [
-          item.productName,
-          item.sku,
-          item.merchantSku,
-          item.stockCode,
-          item.barcode,
-        ]),
-      ]
-        .filter(Boolean)
-        .join(' ')
-        .toLocaleLowerCase('tr-TR')
-        .includes(query),
-    )
+    current = current.filter((order) => orderSearchHaystack(order).includes(query))
   }
 
   current = filterByWorkspaceQuery(current, customerQuery, (order) => [
@@ -785,7 +797,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforeSearch,
     current,
-    exclusions,
+    sink,
     'searchFilter',
     'Sipariş arama alanlarıyla eşleşmiyor.',
   )
@@ -810,7 +822,7 @@ export function buildVisibleOrders({
   recordRemovedOrders(
     beforeSameProductFilter,
     current,
-    exclusions,
+    sink,
     'sameProductFilter',
     'Sipariş seçili aynı-ürün filtresiyle eşleşmiyor.',
   )
@@ -829,13 +841,13 @@ export function buildVisibleOrders({
 function applyOrderFilter(
   orders: CargoOrder[],
   predicate: (order: CargoOrder) => boolean,
-  exclusions: VisibleOrderExclusion[],
+  exclusions: VisibleOrderExclusion[] | null,
   stage: string,
   reason: string,
 ): CargoOrder[] {
   return orders.filter((order) => {
     const included = predicate(order)
-    if (!included) exclusions.push(toExclusion(order, stage, reason))
+    if (!included) exclusions?.push(toExclusion(order, stage, reason))
     return included
   })
 }
@@ -843,10 +855,22 @@ function applyOrderFilter(
 function recordRemovedOrders(
   before: CargoOrder[],
   after: CargoOrder[],
-  exclusions: VisibleOrderExclusion[],
+  exclusions: VisibleOrderExclusion[] | null,
   stage: string,
   reason: string,
 ): void {
+  // Tanı kapalıysa bu aşamanın tamamı atlanır.
+  if (!exclusions) return
+  // ═══ HİÇBİR ŞEY ÇIKMADIYSA HESAP DA YOK ═══════════════════════════════
+  // `after` her zaman `before`'un bir ALT DİZİSİDİR: bu aşamalar yalnız
+  // `.filter` uygular; sipariş EKLEMEZ ve SIRA DEĞİŞTİRMEZ. Uzunluklar
+  // eşitse hiçbir sipariş çıkmamıştır ve üretilecek dışlama kaydı YOKTUR.
+  //
+  // Bu kontrol olmadan "hepsi" seçili bir filtre bile (pazaryeri=all,
+  // şehir=all, …) tüm liste üzerinde paket kimliği hesaplayan tam bir
+  // geçiş yapıyordu. 11 aşama × 25.000 sipariş = ölçülen ~300 ms saf
+  // israf; çıktı ise her zaman BOŞ dizi.
+  if (before.length === after.length) return
   const retained = new Map<string, number>()
   after.forEach((order) => {
     const identity = orderPackageIdentity(order)
@@ -875,6 +899,58 @@ function toExclusion(
     excludedAtStage: stage,
     exclusionReason: reason,
   }
+}
+
+/**
+ * ARAMA SAMANLIĞI — sipariş başına BİR kez küçültülür.
+ *
+ * ═══ NEDEN ══════════════════════════════════════════════════════════════
+ * Arama alanları her istekte birleştirilip `toLocaleLowerCase('tr-TR')` ile
+ * küçültülüyordu. Bu bir ICU çağrısıdır ve 25.000 siparişte ölçülen maliyeti
+ * ~400 ms idi — arama kutusuna her dokunuşta yeniden.
+ *
+ * ═══ NEDEN BAYATLAYAMAZ ═════════════════════════════════════════════════
+ * Hafıza, HAM birleşim dizesiyle korunur. Katkı veren alanlardan biri
+ * (yerinde bile) değişirse ham dize değişir ve küçültme yeniden yapılır.
+ * Referans karşılaştırması değil, İÇERİK karşılaştırmasıdır; bayat sonuç
+ * dönmesi MÜMKÜN DEĞİLDİR. Küçültme saf bir dönüşümdür: aynı ham dize her
+ * zaman aynı sonucu verir.
+ */
+interface SearchHaystackEntry {
+  raw: string
+  lower: string
+}
+const searchHaystackMemo = new WeakMap<object, SearchHaystackEntry>()
+
+function orderSearchHaystack(order: CargoOrder): string {
+  const raw = [
+    order.orderNumber,
+    order.externalOrderId,
+    // Kullanıcıya görünen Trendyol referansı (727...) ile de arama yapılabilsin;
+    // canonical orderNumber (114...) araması korunur.
+    order.cargoTrackingNumber,
+    order.shipment?.ozelKargoTakipNo,
+    order.shipment?.trendyolCargoTrackingNumber,
+    order.customerName,
+    order.customerPhone,
+    order.customerEmail,
+    order.city,
+    order.district,
+    ...order.items.flatMap((item) => [
+      item.productName,
+      item.sku,
+      item.merchantSku,
+      item.stockCode,
+      item.barcode,
+    ]),
+  ]
+    .filter(Boolean)
+    .join(' ')
+  const cached = searchHaystackMemo.get(order as object)
+  if (cached && cached.raw === raw) return cached.lower
+  const lower = raw.toLocaleLowerCase('tr-TR')
+  searchHaystackMemo.set(order as object, { raw, lower })
+  return lower
 }
 
 function filterByWorkspaceQuery(

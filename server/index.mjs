@@ -921,11 +921,15 @@ app.get('/api/orders/workspace', async (request, response) => {
         groupHeaders: result.groupHeaders,
       },
       externalProcessing: result.externalProcessing,
-      // Ölçüm/tanı: gizli değer taşımaz (yalnız sayaç ve süre).
+      // Ölçüm/tanı: gizli değer taşımaz (yalnız sayaç, süre ve bellek).
       diagnostics: {
         scannedOrders: result.scannedOrders,
         cacheHit: result.cacheHit,
         durationMs: Date.now() - startedAt,
+        dbMs: result.dbMs,
+        projectionMs: result.projectionMs,
+        rowsReadIntoNode: result.rowsReadIntoNode,
+        rssBytes: process.memoryUsage().rss,
       },
     })
   } catch {
@@ -977,6 +981,10 @@ app.get('/api/dashboard/operational', async (request, response) => {
         scannedAnalyticsOrders: result.scannedAnalyticsOrders,
         cacheHit: result.cacheHit,
         durationMs: Date.now() - startedAt,
+        dbMs: result.dbMs,
+        projectionMs: result.projectionMs,
+        rowsReadIntoNode: result.rowsReadIntoNode,
+        rssBytes: process.memoryUsage().rss,
       },
     })
   } catch {

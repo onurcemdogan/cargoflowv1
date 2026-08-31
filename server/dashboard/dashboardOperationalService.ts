@@ -33,6 +33,7 @@ import { listAllProducts } from '../products/productPersistenceService.ts'
 import {
   loadWorkspaceOrders,
   projectClientDerivedOrders,
+  projectedWorkspaceOrders,
 } from '../orders/ordersWorkspaceService.ts'
 import { getExternalProcessing } from '../orders/externalProcessingRepository.ts'
 
@@ -46,9 +47,31 @@ interface ProductCacheEntry {
 
 let productCache: ProductCacheEntry | null = null
 
-/** Test/tanı: ürün cache'ini boşaltır. */
+/**
+ * DÖNEMSEL SATIŞ SATIRLARI — REVİZYON ALTINDA ÖNBELLEKLENİR.
+ *
+ * ═══ NEDEN ═══════════════════════════════════════════════════════════════
+ * Satış modeli (kartlar, kovalar, dağılımlar, en çok satanlar) bu satırlar
+ * üzerinde çalışır ve saf fonksiyon hafızaları NESNE KİMLİĞİNE bağlıdır.
+ * Satırlar her istekte yeniden okunup yeniden sanitize edilirse kimlikler
+ * değişir ve hafızalar HER İSTEKTE soğuk başlar.
+ *
+ * ÖLÇÜLDÜ (gerçek Postgres, 2.000 sipariş): bu yüzden uç 1,2 s sürüyordu;
+ * oysa sıcak nesnelerle aynı model ~130 ms'de kuruluyor.
+ *
+ * Anahtar revizyonu ve aralığı içerir: veri değişirse ya da farklı bir dönem
+ * istenirse yeniden okunur. Bayat satış verisi DÖNMEZ.
+ */
+interface AnalyticsCacheEntry {
+  key: string
+  rows: Record<string, unknown>[]
+}
+let analyticsRowsCache: AnalyticsCacheEntry | null = null
+
+/** Test/tanı: ürün ve satış satırı cache'lerini boşaltır. */
 export function resetDashboardProductCache(): void {
   productCache = null
+  analyticsRowsCache = null
 }
 
 async function loadProducts(
@@ -88,6 +111,12 @@ export interface DashboardViewModelResult {
   scannedProducts: number
   scannedAnalyticsOrders: number
   cacheHit: boolean
+  /** DB'de geçen toplam süre (ms). */
+  dbMs: number
+  /** Node'da model kurmakta geçen süre (ms). */
+  projectionMs: number
+  /** Bu istekte DB'den Node'a okunan satır sayısı. */
+  rowsReadIntoNode: number
 }
 
 /**
@@ -122,19 +151,47 @@ export async function buildDashboardViewModelSnapshot(
 ): Promise<DashboardViewModelResult> {
   const now = options.now ?? new Date()
   const load = await loadWorkspaceOrders(db, organizationId, marketplaceAccountId)
+  let dbMs = load.dbMs
+  let rowsReadIntoNode = load.rowsReadIntoNode
+  let externalStarted = Date.now()
   const externalProcessing = await getExternalProcessing(db, organizationId)
-  const orders = projectClientDerivedOrders(load.orders, externalProcessing)
+  dbMs += Date.now() - externalStarted
+  let projectionMs = 0
+  let projectionStarted = Date.now()
+  // Siparişler ekranıyla AYNI türetilmiş liste (nesne kimlikleri korunur →
+  // saf fonksiyon hafızaları sıcak kalır).
+  const orders = projectedWorkspaceOrders(
+    organizationId,
+    marketplaceAccountId,
+    load,
+    externalProcessing,
+  )
+  projectionMs += Date.now() - projectionStarted
+  const productsStarted = Date.now()
+  const productsCacheKey = productCache?.key
   const products = await loadProducts(
     db,
     organizationId,
     marketplaceAccountId,
     load.revision,
   )
+  dbMs += Date.now() - productsStarted
+  if (productCache?.key !== productsCacheKey) rowsReadIntoNode += products.length
 
-  // 1. GEÇİŞ: analitik olmadan model → hangi aralık gerekiyor?
+  // 1. GEÇİŞ: analitik satış verisinin çekileceği ARALIĞI öğren.
+  //
+  // ═══ NEDEN BOŞ LİSTE ═════════════════════════════════════════════════════
+  // Aralıklar (seçili dönem, karşılaştırma dönemi ve dönem kartları) YALNIZCA
+  // `selectedPeriod` ve `now` değerlerinden türer; sipariş verisine BAĞLI
+  // DEĞİLDİR. Bu ilk geçişi tam veriyle çalıştırmak, sonucu hiç kullanılmayan
+  // bir modeli baştan kurmak demekti (ölçüldü: 2.000 siparişte ~200 ms).
+  //
+  // Bu değişmez `dashboard-operational-parity-flow` (DASH-13) ile KİLİTLİDİR:
+  // aralıklar bir gün sipariş verisine bağlanırsa test düşer.
+  projectionStarted = Date.now()
   const draft = buildDashboardViewModel({
-    orders: orders as never,
-    products: products as never,
+    orders: [],
+    products: [],
     selectedPeriod,
     latestSyncAt: options.latestSyncAt,
     now,
@@ -146,20 +203,37 @@ export async function buildDashboardViewModelSnapshot(
   ]
   const startMs = Math.min(...ranges.map((range) => range.start.getTime()))
   const endMs = Math.max(...ranges.map((range) => range.end.getTime()))
+  projectionMs += Date.now() - projectionStarted
 
   // 2. GEÇİŞ: dönemsel satış verisiyle NİHAİ model.
   //
   // `sanitizeAnalyticsOrders` AYNI şekilde uygulanır: tarayıcı da bu
   // uçtan sanitize edilmiş satırlar alıyordu; farklı girdi farklı sonuç
   // demek olurdu.
-  const analyticsOrders = sanitizeAnalyticsOrders(
-    await listOrdersForAnalytics(
+  externalStarted = Date.now()
+  const analyticsKey = [
+    organizationId,
+    marketplaceAccountId ?? 'legacy-null',
+    load.revision,
+    startMs,
+    endMs,
+  ].join('|')
+  let analyticsOrders: Record<string, unknown>[]
+  if (analyticsRowsCache && analyticsRowsCache.key === analyticsKey) {
+    analyticsOrders = analyticsRowsCache.rows
+  } else {
+    const analyticsRows = await listOrdersForAnalytics(
       db,
       organizationId,
       { startMs, endMs },
       marketplaceAccountId,
-    ),
-  )
+    )
+    rowsReadIntoNode += analyticsRows.length
+    analyticsOrders = sanitizeAnalyticsOrders(analyticsRows)
+    analyticsRowsCache = { key: analyticsKey, rows: analyticsOrders }
+  }
+  dbMs += Date.now() - externalStarted
+  projectionStarted = Date.now()
   const viewModel = buildDashboardViewModel({
     orders: orders as never,
     analyticsOrders: analyticsOrders as never,
@@ -172,13 +246,19 @@ export async function buildDashboardViewModelSnapshot(
     now,
   })
 
+  const providerCounts = buildDashboardProviderCounts(orders as never)
+  projectionMs += Date.now() - projectionStarted
+
   return {
     viewModel,
-    providerCounts: buildDashboardProviderCounts(orders as never),
+    providerCounts,
     scannedOrders: orders.length,
     scannedProducts: products.length,
     scannedAnalyticsOrders: analyticsOrders.length,
     cacheHit: load.cacheHit,
+    dbMs,
+    projectionMs,
+    rowsReadIntoNode,
   }
 }
 

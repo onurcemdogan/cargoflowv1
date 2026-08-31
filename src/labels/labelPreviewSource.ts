@@ -16,7 +16,11 @@
 // sanmamalıdır.
 
 import type { CargoOrder, CargoProduct } from '../types/cargoflow.ts'
-import { buildLabelData } from '../utils/labelData.ts'
+import { buildLabelData, type LabelData } from '../utils/labelData.ts'
+import {
+  applyCanonicalPrintIdentity,
+  buildSuratPrintPageModel,
+} from '../utils/browserLabelPrint.ts'
 import type { LabelRenderSource } from './labelDocumentRenderer.ts'
 
 export interface EditorPreviewSource {
@@ -114,10 +118,32 @@ export function buildEditorPreviewSource(
   }
   const data = buildLabelData(order, order.shipment, undefined, {}, products)
   return {
-    source: { data, order },
+    source: { data: withCanonicalIdentity(data, order, products), order },
     isDemo: false,
     orderNumber: String(order.orderNumber ?? ''),
   }
+}
+
+/**
+ * ÖNİZLEME KİMLİĞİ = BASKI KİMLİĞİ.
+ *
+ * ═══ NEDEN GEREKLİ ═══════════════════════════════════════════════════════
+ * Baskı yolu, etiket verisinin üzerine kanonik kimlikleri (T.No, barkod, QR)
+ * `buildSuratPrintPageModel` çözümünden KAPLAR. Önizleme bunu yapmasaydı
+ * tuvalde barkod BOŞ görünür, kâğıda gerçek barkod basılırdı: operatörün
+ * göremeyeceği bir ayrışma. Aynı kaplama fonksiyonu KULLANILIR — ikinci bir
+ * çözüm yazmak, iki yolun zamanla ayrışmasının garantisi olurdu.
+ *
+ * Kanonik model çözülemiyorsa (ör. henüz gönderi yok) veri OLDUĞU GİBİ
+ * kalır: uydurma kimlik ÜRETİLMEZ.
+ */
+function withCanonicalIdentity(
+  data: LabelData,
+  order: CargoOrder,
+  products: CargoProduct[],
+): LabelData {
+  const { model } = buildSuratPrintPageModel(order, products)
+  return model ? applyCanonicalPrintIdentity(data, model) : data
 }
 
 /** Taşma senaryolarını denemek için AŞIRI veri (gerçek üretim verisi DEĞİL). */

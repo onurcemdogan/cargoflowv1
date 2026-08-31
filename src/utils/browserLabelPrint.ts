@@ -805,15 +805,54 @@ export interface CleanLabelDocument {
  * KIMLIK DEGISMEZ: barkod/QR degerleri ilkellerden gelir ve ilkeller etiket
  * verisinden; sablon bu degerleri YAZAMAZ.
  */
+/**
+ * KANONİK KİMLİK KAPLAMASI — önizleme ile baskının TEK kaynağı.
+ *
+ * ═══ NEDEN AYRI FONKSİYON ════════════════════════════════════════════════
+ * `buildLabelData` semantik etiket verisini üretir; T.No/barkod/QR gibi
+ * KİMLİK alanlarının kanonik çözümü ise `buildSuratPrintPageModel`
+ * içindedir (ZPL çözümlemesi, T.No–barkod çakışma reddi, aday zinciri).
+ *
+ * Bu kaplama yalnız baskı yolunda uygulanırsa DÜZENLEYİCİ ÖNİZLEMESİ ile
+ * BASKI ayrışır: tuvalde barkod BOŞ görünürken kâğıda gerçek barkod
+ * basılırdı — operatörün asla göremeyeceği bir fark. Bu yüzden kaplama
+ * TEK yerde tanımlanır ve iki yol da BURADAN geçer.
+ */
+export function applyCanonicalPrintIdentity(
+  data: LabelData,
+  model: SuratPrintPageModel,
+): LabelData {
+  return {
+    ...data,
+    tNo: model.trackingNumber,
+    trackingNumber: model.trackingNumber,
+    kargoTakipNo: model.trackingNumber,
+    barcodeValue: model.barcodeNumber,
+    mainBarcodeValue: model.barcodeNumber,
+    barcode: model.barcodeNumber,
+    qrPayload: model.ozelKargoTakipNo,
+  }
+}
+
 export function renderDocumentLabelHtml(
   labelDocument: LabelDocument,
   source: LabelRenderSource,
 ): string {
   const rendered = renderLabelDocument(labelDocument, source)
-  return primitivesToPrintHtml(rendered.primitives, {
+  const body = primitivesToPrintHtml(rendered.primitives, {
     barcode: (value) => renderBarcodeSvg(value),
     qr: (value) => renderQrSvg(value, 'lp-qr-svg'),
   })
+  // ═══ NEDEN SAYFA KONTEYNERİ ══════════════════════════════════════════
+  // İlkeller MUTLAK konumludur ve konumlandırma bağlamı olmadan GÖVDEYE
+  // göre yerleşir. Tek etiketle bu fark edilmez; İKİ etiket basıldığında
+  // hepsi AYNI koordinatlara yığılır ve sayfa sonu OLUŞMAZ — düzenleyici
+  // önizlemesinde ASLA görülmeyecek bir ayrışma.
+  //
+  // Bu yüzden her etiket kendi 10×10 cm kutusuna sarılır. Yerleşim
+  // kararları hâlâ YALNIZ ilkellerden gelir; konteyner ölçü vermez,
+  // yalnız fiziksel sayfayı ve konumlandırma bağlamını tanımlar.
+  return `<div class="lp-page">${body}</div>`
 }
 
 export function buildCleanLabelDocument(
@@ -846,16 +885,7 @@ export function buildCleanLabelDocument(
         mappingConfig,
         products,
       )
-      const printData = {
-        ...data,
-        tNo: model.trackingNumber,
-        trackingNumber: model.trackingNumber,
-        kargoTakipNo: model.trackingNumber,
-        barcodeValue: model.barcodeNumber,
-        mainBarcodeValue: model.barcodeNumber,
-        barcode: model.barcodeNumber,
-        qrPayload: model.ozelKargoTakipNo,
-      }
+      const printData = applyCanonicalPrintIdentity(data, model)
       pages.push(
         labelDocument
           ? renderDocumentLabelHtml(labelDocument, {
@@ -921,6 +951,29 @@ export function buildCleanLabelDocument(
       line-height: 1.05;
     }
     .label-page:last-child { break-after: auto; page-break-after: auto; }
+    /* KİRACI YERLEŞİM BELGESİ sayfası: ilkellerin konumlandırma bağlamı.
+       Ölçüler renderLabelDocument çıktısından gelir; bu kural yalnız
+       fiziksel sayfayı tanımlar.
+
+       SAYFA kuralları ürün blok kurallarından ÖNCE durur. Sebep: bazı
+       regresyon testleri (REF-20, LIVE-11..16) ürün bloğunun kırpılmadığını,
+       stil sayfasının ürün bölümünden baskı bölümüne kadar uzanan DİLİMİNE
+       bakarak doğrular. Sayfa kabının kırpma kuralı o dilime girerse test,
+       ürün bloğu adına ALAKASIZ bir kuralı ölçmüş olurdu.
+
+       Aynı sebeple bu yorum, o testlerin aradığı seçici METİNLERİNİ
+       İÇERMEZ: yorumda geçen bir seçici adı, dilim sınırını yorumun
+       kendisine kaydırırdı. */
+    .lp-page {
+      position: relative;
+      width: ${widthMm}mm;
+      height: ${heightMm}mm;
+      overflow: hidden;
+      background: #fff;
+      break-after: page;
+      page-break-after: always;
+    }
+    .lp-page:last-child { break-after: auto; page-break-after: auto; }
     .surat-rail {
       display: grid;
       grid-template-rows: 1fr 1fr;

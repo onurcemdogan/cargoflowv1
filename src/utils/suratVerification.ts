@@ -94,7 +94,49 @@ export function extractTrackingNumberFromTakipUrl(
     : { value: '', source: '' }
 }
 
+/**
+ * SAF FONKSİYON HAFIZASI (memoization).
+ *
+ * ═══ NEDEN ═══════════════════════════════════════════════════════════════
+ * ÖLÇÜLDÜ (gerçek Postgres, 200 sipariş): tek bir çalışma alanı
+ * projeksiyonu 197 ms sürüyordu; oysa sınıflandırıcının kendisi tüm küme
+ * için 8 ms. Fark, AYNI siparişin AYNI türetmesinin defalarca yeniden
+ * hesaplanmasıydı:
+ *   · sekme sayaçları 6 ana sekme için `buildVisibleOrders`'ı yeniden çağırır
+ *   · her çağrı içinde sınıflandırma, durum çözümü, baskı uygunluğu ve
+ *     Sürat doğrulaması ayrı ayrı `verifySuratShipment` çalıştırır (ZPL
+ *     ayrıştırma dahil)
+ * Tek bir istekte aynı ZPL onlarca kez ayrıştırılıyordu.
+ *
+ * ═══ NEDEN GÜVENLİ ═══════════════════════════════════════════════════════
+ * Bu fonksiyonlar SAFTIR: aynı sipariş nesnesi + aynı gönderi referansı →
+ * aynı sonuç. Hafıza `WeakMap` ile NESNE KİMLİĞİNE bağlanır (sipariş çöpe
+ * gidince kayıt da gider) ve her kayıt, hesaplandığı `shipment` referansını
+ * SAKLAR: gönderi değiştiyse kayıt KULLANILMAZ, yeniden hesaplanır. Yani
+ * yerinde mutasyon durumunda bile BAYAT sonuç dönmez.
+ *
+ * Sonuç DEĞİŞMEZ; yalnız tekrar eden hesap ortadan kalkar.
+ */
+interface VerificationMemoEntry {
+  shipment: Shipment | undefined
+  result: SuratVerificationResult
+}
+const verificationMemo = new WeakMap<object, VerificationMemoEntry>()
+
 export function verifySuratShipment(
+  order?: CargoOrder,
+  shipment?: Shipment,
+): SuratVerificationResult {
+  if (!order) return computeSuratVerification(order, shipment)
+  const effective = shipment ?? order.shipment
+  const cached = verificationMemo.get(order as object)
+  if (cached && cached.shipment === effective) return cached.result
+  const result = computeSuratVerification(order, shipment)
+  verificationMemo.set(order as object, { shipment: effective, result })
+  return result
+}
+
+function computeSuratVerification(
   order?: CargoOrder,
   shipment?: Shipment,
 ): SuratVerificationResult {

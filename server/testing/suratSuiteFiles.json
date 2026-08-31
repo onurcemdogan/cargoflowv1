@@ -209,5 +209,6 @@
   "server/canary-candidate-selector-flow.test.mjs",
   "server/orders-workspace-parity-flow.test.mjs",
   "server/dashboard-operational-parity-flow.test.mjs",
-  "server/label-editor-acceptance-flow.test.mjs"
+  "server/label-editor-acceptance-flow.test.mjs",
+  "server/label-print-artifact-smoke-flow.test.mjs"
 ]

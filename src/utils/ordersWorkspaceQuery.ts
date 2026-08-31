@@ -24,7 +24,11 @@ import type {
   MarketplaceName,
   OrderStatusFilter,
 } from '../types/cargoflow.ts'
-import { buildVisibleOrders } from './orderClassification.ts'
+import {
+  buildVisibleOrders,
+  classifyOrderForTabs,
+  orderMatchesQuickTab,
+} from './orderClassification.ts'
 import { buildOrderCountSummary, type OrderCountSummary } from './orderCounts.ts'
 import {
   groupOrdersBySameProductFamily,
@@ -143,37 +147,66 @@ function toClassificationDateFilter(date: OrdersWorkspaceDateFilter) {
 }
 
 /**
- * Sekme sayaçları.
+ * Sekme sayaçları — TEK GEÇİŞ.
  *
  * DİKKAT: `operationTab` ve `sameProduct` sayaçlara UYGULANMAZ — ana sekme
  * sayaçları aşama toplamını gösterir; teknik alt-filtre yalnız görünür
  * listeyi daraltır. Bu davranış mevcut ekranla BİREBİR aynıdır.
+ *
+ * ═══ NEDEN TEK GEÇİŞ ═════════════════════════════════════════════════════
+ * Önceki biçim tüm filtre hattını HER SEKME için baştan çalıştırıyordu (altı
+ * kez). ÖLÇÜLDÜ (gerçek Postgres, 10.000 sipariş): tek bir sayfa isteği
+ * ~500 ms saf Node projeksiyonu harcıyordu ve bunun çoğu bu tekrardı.
+ *
+ * ═══ NEDEN SONUÇ AYNI ════════════════════════════════════════════════════
+ * `selectedTab`, `buildVisibleOrders` içinde TEK bir yerde kullanılır ve
+ * SİPARİŞ BAŞINA bir yüklemdir (`orderMatchesQuickTab`). Diğer tüm aşamalar
+ * da sipariş başına yüklemdir; küme-bağımlı tek aşama `sameProduct`tır ve
+ * sayaç yolunda UYGULANMAZ. Yüklemlerin kesişimi sıraya bağlı olmadığından
+ * "önce diğer filtreler, sonra sekmeye göre böl" ile "her sekme için baştan
+ * filtrele" AYNI kümeleri verir.
+ *
+ * Bu denklik `orders-workspace-parity-flow` (WS-19) ile KİLİTLİDİR: naif
+ * (sekme başına yeniden filtreleyen) hesapla birebir karşılaştırılır.
  */
 function buildTabCounts(
   orders: CargoOrder[],
   query: OrdersWorkspaceQuery,
   now: Date,
 ): Record<QuickTab, number> {
+  const base = buildVisibleOrders({
+    persistentOrders: orders,
+    // Sekme filtresi UYGULANMAZ; bölme aşağıda yapılır.
+    selectedTab: 'all',
+    marketplaceFilter: query.marketplace,
+    operationStatusFilter: query.status,
+    cargoFilter: query.cargo,
+    cityFilter: query.city,
+    districtFilter: query.district,
+    multiProductFilter: query.multiProduct,
+    actionFilter: query.action,
+    dateFilter: toClassificationDateFilter(query.date),
+    searchQuery: query.search,
+    customerQuery: query.customerQuery,
+    productQuery: query.productQuery,
+    orderNumberQuery: query.orderNumberQuery,
+    cargoSlipQuery: query.cargoSlipQuery,
+    now,
+    // Projeksiyon `debug.exclusions` OKUMAZ; tanı kayıtlarını üretmek
+    // 25.000 siparişte ölçülen saf israftır. Görünür liste DEĞİŞMEZ.
+    collectExclusions: false,
+  }).visibleOrders
+
   const counts = {} as Record<QuickTab, number>
   for (const tab of ORDERS_QUICK_TABS) {
-    counts[tab.key] = buildVisibleOrders({
-      persistentOrders: orders,
-      selectedTab: tab.key,
-      marketplaceFilter: query.marketplace,
-      operationStatusFilter: query.status,
-      cargoFilter: query.cargo,
-      cityFilter: query.city,
-      districtFilter: query.district,
-      multiProductFilter: query.multiProduct,
-      actionFilter: query.action,
-      dateFilter: toClassificationDateFilter(query.date),
-      searchQuery: query.search,
-      customerQuery: query.customerQuery,
-      productQuery: query.productQuery,
-      orderNumberQuery: query.orderNumberQuery,
-      cargoSlipQuery: query.cargoSlipQuery,
-      now,
-    }).visibleOrders.length
+    counts[tab.key] = tab.key === 'all' ? base.length : 0
+  }
+  for (const order of base) {
+    const state = classifyOrderForTabs(order)
+    for (const tab of ORDERS_QUICK_TABS) {
+      if (tab.key === 'all') continue
+      if (orderMatchesQuickTab(state, tab.key)) counts[tab.key] += 1
+    }
   }
   return counts
 }
@@ -228,6 +261,9 @@ export function buildOrdersWorkspaceResult(
     orderNumberQuery: query.orderNumberQuery,
     cargoSlipQuery: query.cargoSlipQuery,
     now,
+    // Projeksiyon `debug.exclusions` OKUMAZ; tanı kayıtlarını üretmek
+    // 25.000 siparişte ölçülen saf israftır. Görünür liste DEĞİŞMEZ.
+    collectExclusions: false,
   }).visibleOrders
 
   const sorted = sortOrdersForWorkspace(filtered, query.sortKey, query.sortDirection)

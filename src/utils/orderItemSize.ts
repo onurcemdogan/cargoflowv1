@@ -1,4 +1,5 @@
 import type { CargoOrder, OrderItem } from '../types/cargoflow.ts'
+import { createStringMemo } from './stringMemo.ts'
 
 // ═══ BEDEN ÇÖZÜMLEYİCİ — YALNIZ SUNUM ═════════════════════════════════════
 //
@@ -23,12 +24,9 @@ function text(value: unknown): string {
   return String(value ?? '').trim()
 }
 
-function normalizeName(value: unknown): string {
-  return String(value ?? '')
-    .trim()
-    .toLocaleLowerCase('tr-TR')
-    .replace(/ı/g, 'i')
-}
+const normalizeName = createStringMemo((raw) =>
+  raw.trim().toLocaleLowerCase('tr-TR').replace(/ı/g, 'i'),
+)
 
 function fromVariantAttributes(value: unknown): string {
   if (!Array.isArray(value)) return ''

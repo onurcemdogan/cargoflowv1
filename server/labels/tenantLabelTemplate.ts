@@ -15,6 +15,32 @@
 //     yanlış paketi taşıyan bir etiket demektir.
 //
 // SAF: ağ yok, DB yok, render yok. Bu modül ŞABLONU DOĞRULAR ve ÇÖZER.
+//
+// ═══ SINIR: BU MODÜL ile `labelDocument` AYRI SİSTEMLERDİR ═══════════════
+//
+// Depoda etiket yerleşimi için İKİ model vardır ve BİRLEŞTİRİLMEMİŞLERDİR:
+//
+//   1) BU MODÜL (`tenantLabelTemplate`) — BLOK tabanlı, beyaz listeli
+//      yapılandırma (`LABEL_BLOCKS`). Resmî Sürat ZPL yolunu besler:
+//      taşıyıcı gövdesi taşıyıcıya aittir, kiracı yalnız kendi bandındaki
+//      blokları açıp kapatır/sıralar. `settings_json.labelTemplate`.
+//
+//   2) `src/labels/labelDocument.ts` — ÖĞE tabanlı serbest yerleşim
+//      (milimetre-kanonik, sürüklenebilir/yeniden boyutlandırılabilir).
+//      YALNIZ `cargoflow_html` baskı şablonunu besler.
+//      `settings_json.labelDocuments`.
+//
+// İki modelin alan adları ve doğrulama kuralları benzer görünse de KAPSAMLARI
+// farklıdır: (1) taşıyıcı ZPL'inin İZİN VERİLEN kısmını tarif eder, (2) tüm
+// sayfayı tarif eder. Ortak bir şemaya indirmek, (2)'nin serbest geometrisini
+// (1)'in taşıyıcı kısıtlarına ya bağlar ya da (1)'in güvenlik sınırını
+// gevşetir — ikisi de yanlış etiket üretme riskidir.
+//
+// ═══ BİLİNÇLİ ERTELEME ═══════════════════════════════════════════════════
+// Birleştirme, kiracı verisini taşıyan bir GÖÇ gerektirir ve yalnız görsel
+// tutarlılık için yapılmamalıdır. Bugünkü karar: İKİSİ DE KALIR, sınır
+// burada YAZILIDIR. Birleştirme yapılacaksa ayrı bir göç işi olarak,
+// her iki modelin kayıtlı kiracı verisi üzerinde parite testiyle yapılmalıdır.
 
 /** Beyaz liste. Bu kümenin DIŞINDA hiçbir alan şablona giremez. */
 export const LABEL_BLOCKS = [

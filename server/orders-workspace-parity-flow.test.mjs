@@ -157,6 +157,27 @@ async function legacyClientPipeline(deps, organizationId, query) {
   return projection.buildOrdersWorkspaceResult(deduped, query, FIXED_NOW)
 }
 
+/** ESKİ istemci havuzu (yalnız sipariş dizisi) — projeksiyon UYGULANMAZ. */
+async function legacyClientPipelineOrders(deps, organizationId) {
+  const collected = []
+  let page = 1
+  for (;;) {
+    const result = await deps.persistence.listOrders(
+      deps.db, organizationId, { page, pageSize: 100 }, undefined,
+    )
+    collected.push(...result.orders)
+    if (collected.length >= result.total || result.orders.length === 0) break
+    page += 1
+  }
+  const derived = collected.map((order) =>
+    deps.orderStatus.withDerivedOperationStatus(order),
+  )
+  const stamped = deps.externalProcessing.applyExternalProcessingState(derived, {
+    entries: {},
+  })
+  return deps.orderCounts.dedupeOrdersByPackageIdentity(stamped)
+}
+
 const FIXED_NOW = new Date('2026-07-20T09:00:00.000Z')
 
 function baseQuery(overrides = {}) {
@@ -428,4 +449,117 @@ test('WS-18: yanıt gövdesi TOPLAM sipariş sayısıyla BÜYÜMEZ', async (t) =
     largeResult.bytes <= smallResult.bytes * 1.25,
     `gövde koleksiyonla büyümemeli (${smallResult.bytes} → ${largeResult.bytes})`,
   )
+})
+
+/* ═══ WS-19 — SEKME SAYAÇLARI TEK GEÇİŞTE AYNI ═══════════════════════ */
+
+test('WS-19: tek geçişli sekme sayaçları, sekme başına yeniden filtreleyen NAİF hesapla AYNI', async (t) => {
+  // Sayaçlar artık filtre hattını sekme başına tekrar çalıştırmıyor. Bu test
+  // o optimizasyonun DENKLİĞİNİ kilitler: naif biçim (her sekme için baştan
+  // `buildVisibleOrders`) burada bağımsızca hesaplanır ve karşılaştırılır.
+  // Bir gün `selectedTab` hattın başka bir aşamasını etkilerse bu test düşer.
+  const { pglite, seed, deps, db } = await setup(220)
+  t.after(() => pglite.close())
+  const classification = await load('/src/utils/orderClassification.ts')
+
+  const scenarios = [
+    {},
+    { status: 'Shipped' },
+    { city: 'İzmir' },
+    { search: 'Şükrü' },
+    { multiProduct: 'multi' },
+    {
+      date: {
+        preset: 'custom',
+        startTime: Date.UTC(2026, 6, 5),
+        endTime: Date.UTC(2026, 6, 20, 23, 59, 59, 999),
+      },
+    },
+  ]
+
+  for (const overrides of scenarios) {
+    const query = baseQuery(overrides)
+    const server = await deps.workspace.buildOrdersWorkspacePage(
+      db, seed.organizationId, query, undefined, FIXED_NOW,
+    )
+
+    // Referans: eski istemci havuzu üzerinde, SEKME BAŞINA yeniden filtreleme.
+    const reference = await legacyClientPipelineOrders(deps, seed.organizationId)
+    const naive = {}
+    for (const tab of deps.projection.ORDERS_QUICK_TABS) {
+      naive[tab.key] = classification.buildVisibleOrders({
+        persistentOrders: reference,
+        selectedTab: tab.key,
+        marketplaceFilter: query.marketplace,
+        operationStatusFilter: query.status,
+        cargoFilter: query.cargo,
+        cityFilter: query.city,
+        districtFilter: query.district,
+        multiProductFilter: query.multiProduct,
+        actionFilter: query.action,
+        dateFilter: {
+          preset: query.date.preset,
+          startTime: query.date.startTime ?? Number.NEGATIVE_INFINITY,
+          endTime: query.date.endTime ?? Number.POSITIVE_INFINITY,
+          timezone: query.date.timezone,
+        },
+        searchQuery: query.search,
+        customerQuery: query.customerQuery,
+        productQuery: query.productQuery,
+        orderNumberQuery: query.orderNumberQuery,
+        cargoSlipQuery: query.cargoSlipQuery,
+        now: FIXED_NOW,
+      }).visibleOrders.length
+    }
+    assert.deepEqual(
+      server.tabCounts,
+      naive,
+      `sekme sayaçları ayrıştı: ${JSON.stringify(overrides)}`,
+    )
+  }
+})
+
+/* ═══ WS-20 — ÖNBELLEK BELLEK BÜTÇESİ ═══════════════════════════════ */
+
+test('WS-20: önbellek HACİMLE sınırlıdır ve tahliye CEVABI DEĞİŞTİRMEZ', async (t) => {
+  // Kapsam SAYISI ile sınırlamak kayıt BÜYÜKLÜĞÜNÜ görmezden gelirdi: sekiz
+  // küçük kiracı ile sekiz tane 25.000 siparişli kiracı aynı sayılırdı.
+  // Bütçe sipariş sayısına bağlıdır. Bu test hem sınırın UYGULANDIĞINI hem de
+  // tahliyenin bir DOĞRULUK sınırı OLMADIĞINI kanıtlar.
+  const { pglite, db, schema, deps } = await setup(60)
+  t.after(() => pglite.close())
+  const second = await seedWorkspace(db, schema, 60, 'parity-b')
+  const first = await db.select().from(schema.orders)
+  const firstOrg = first.find((row) => String(row.packageId) === 'PKG-0')
+    .organizationId
+
+  deps.workspace.resetOrdersWorkspaceCache()
+  deps.workspace.setMaxCachedOrdersForTest(100)
+
+  const query = baseQuery()
+  const before = await deps.workspace.buildOrdersWorkspacePage(
+    db, firstOrg, query, undefined, FIXED_NOW,
+  )
+  assert.equal(before.cacheHit, false, 'ilk okuma veritabanından gelmeli')
+
+  // İkinci kapsam yüklenince bütçe (100) aşılır → EN ESKİ kapsam düşer.
+  await deps.workspace.buildOrdersWorkspacePage(
+    db, second.organizationId, query, undefined, FIXED_NOW,
+  )
+  assert.ok(
+    deps.workspace.cachedWorkspaceOrderCount() <= 100,
+    `önbellek bütçesi aşıldı: ${deps.workspace.cachedWorkspaceOrderCount()}`,
+  )
+
+  // Düşen kapsam yeniden OKUNUR (cacheHit=false) ve cevap AYNIDIR.
+  const after = await deps.workspace.buildOrdersWorkspacePage(
+    db, firstOrg, query, undefined, FIXED_NOW,
+  )
+  assert.equal(after.cacheHit, false, 'tahliye edilen kapsam yeniden okunmalı')
+  assert.deepEqual(visibleIds(after), visibleIds(before), 'görünen satırlar AYNI')
+  assert.equal(after.totalItems, before.totalItems)
+  assert.deepEqual(after.tabCounts, before.tabCounts)
+  assert.deepEqual(after.listedCounts, before.listedCounts)
+
+  deps.workspace.resetOrdersWorkspaceCache()
 })

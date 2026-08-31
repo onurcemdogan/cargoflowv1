@@ -75,7 +75,8 @@
     "auto-label:revival:inspect": "node server/shipments/revivalInspectorCli.ts",
     "auto-label:queue-normalize:inspect": "node server/shipments/queueNormalizerCli.ts",
     "auto-label:queue-normalize:apply": "node server/shipments/queueNormalizerCli.ts --apply",
-    "test:label-editor:acceptance": "node --test server/label-editor-acceptance-flow.test.mjs",
+    "test:label-editor:acceptance": "node --test server/label-editor-acceptance-flow.test.mjs server/label-print-artifact-smoke-flow.test.mjs",
+    "benchmark:scale": "node --experimental-strip-types server/benchmarks/realPostgresScaleBenchmark.mjs",
     "test:performance:acceptance": "node --test server/performance-acceptance-flow.test.mjs server/orders-workspace-parity-flow.test.mjs server/dashboard-operational-parity-flow.test.mjs"
   },
   "dependencies": {

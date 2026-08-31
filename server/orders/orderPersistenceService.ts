@@ -239,6 +239,62 @@ function buildShipmentViewFromPayload(
 // ASLA bağlanmaz (findShipment org-scoped). local_create → kalıcı operation
 // payload'ından güvenli shipment görünümü + hasPrintableLabel; marketplace_external
 // → salt okunur.
+/** Gönderi arama anahtarı — pazaryeri kapsamı DAHİL. */
+function shipmentScopeKey(marketplace: string, packageId: string): string {
+  return `${marketplace}::${packageId}`
+}
+
+/**
+ * Gönderileri PAZARYERİ BAZINDA toplu okur.
+ *
+ * Siparişler tek bir pazaryerinden gelmek ZORUNDA DEĞİLDİR (filtre çubuğu
+ * Trendyol dışındaki pazaryerlerini de sunar). "İlk satırın pazaryerini
+ * hepsine uygula" kısayolu, karışık veri kümesinde SAYFAYA GÖRE DEĞİŞEN
+ * sonuç üretiyordu: aynı sipariş 1. sayfada farklı, 3. sayfada farklı
+ * sınıflanıyordu. Burada her pazaryeri kendi kapsamında okunur.
+ */
+async function loadShipmentsByMarketplace(
+  db: Db,
+  organizationId: string,
+  bases: Record<string, unknown>[],
+  chunkSize?: number,
+): Promise<Map<string, Record<string, unknown>>> {
+  const byMarketplace = new Map<string, string[]>()
+  for (const base of bases) {
+    const packageId = String(base.packageId ?? '')
+    if (!packageId) continue
+    const marketplace = String(base.marketplace ?? 'Trendyol')
+    const bucket = byMarketplace.get(marketplace) ?? []
+    bucket.push(packageId)
+    byMarketplace.set(marketplace, bucket)
+  }
+  const merged = new Map<string, Record<string, unknown>>()
+  for (const [marketplace, packageIds] of byMarketplace) {
+    const slices = chunkSize
+      ? chunkList(packageIds, chunkSize)
+      : [packageIds]
+    for (const slice of slices) {
+      const found = await findShipmentsForPackages(
+        db, organizationId, marketplace, slice, SURAT_PERSISTENCE_PROVIDER,
+      )
+      for (const [packageId, row] of found) {
+        const key = shipmentScopeKey(marketplace, packageId)
+        // İLK kazanır — tekil okuyucuyla AYNI seçim kuralı.
+        if (!merged.has(key)) merged.set(key, row)
+      }
+    }
+  }
+  return merged
+}
+
+function chunkList<T>(items: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    out.push(items.slice(index, index + size))
+  }
+  return out
+}
+
 async function attachShipment(
   db: Db,
   organizationId: string,
@@ -252,8 +308,18 @@ async function attachShipment(
 ): Promise<Record<string, unknown>> {
   const packageId = String(order.packageId ?? '')
   if (!packageId) return order
+  // ═══ ANAHTAR PAZARYERİ İÇERİR ══════════════════════════════════════════
+  //
+  // `shipments` tekilliği (org, marketplace, package_id, provider) üzerindedir:
+  // paket kimliği TEK BAŞINA benzersiz DEĞİLDİR. Toplu okuma yalnız
+  // packageId ile anahtarlanırsa, farklı pazaryerlerinden aynı paket kimliği
+  // birbirinin gönderisini alır ve sipariş YANLIŞ sekmeye düşer.
+  //
+  // Tekil yol zaten `order.marketplace` ile sorguluyordu; toplu yol da artık
+  // AYNI kapsamı kullanır.
+  const shipmentKey = shipmentScopeKey(String(order.marketplace), packageId)
   const shipment = preloaded
-    ? (preloaded.shipments.get(packageId) ?? null)
+    ? (preloaded.shipments.get(shipmentKey) ?? null)
     : await findShipment(db, organizationId, String(order.marketplace), packageId, SURAT_PERSISTENCE_PROVIDER)
   if (!shipment) return order
   if (shipment.source === 'local_create') {
@@ -330,11 +396,8 @@ export async function listOrders(
     rowToOrder(row, linesByOrder.get(String(row.id)) ?? []),
   )
   const packageIds = bases.map((base) => String(base.packageId ?? ''))
-  const marketplace = String(bases[0]?.marketplace ?? 'Trendyol')
   const preloaded = {
-    shipments: await findShipmentsForPackages(
-      db, organizationId, marketplace, packageIds, SURAT_PERSISTENCE_PROVIDER,
-    ),
+    shipments: await loadShipmentsByMarketplace(db, organizationId, bases),
     operations: await findLatestOperationsForPackages(
       db, organizationId, packageIds,
     ),
@@ -398,12 +461,9 @@ export async function listOrdersForWorkspace(
     rowToOrder(row, linesByOrder.get(String(row.id)) ?? []),
   )
   const packageIds = bases.map((base) => String(base.packageId ?? ''))
-  const marketplace = String(bases[0]?.marketplace ?? 'Trendyol')
   const preloaded = {
-    shipments: await chunkedMerge(packageIds, (slice) =>
-      findShipmentsForPackages(
-        db, organizationId, marketplace, slice, SURAT_PERSISTENCE_PROVIDER,
-      ),
+    shipments: await loadShipmentsByMarketplace(
+      db, organizationId, bases, WORKSPACE_LOOKUP_CHUNK,
     ),
     operations: await chunkedMerge(packageIds, (slice) =>
       findLatestOperationsForPackages(db, organizationId, slice),

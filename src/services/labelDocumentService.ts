@@ -94,17 +94,44 @@ export async function fetchPreviewOrder(): Promise<unknown | null> {
   }
 }
 
-export async function fetchLabelDocuments(): Promise<LabelDocumentsResponse> {
-  const payload = await request<{
-    system?: LabelDocument[]
-    templates?: LabelTemplateRecord[]
-    activeTemplateId?: string | null
-  }>('/api/labels/documents')
-  return {
-    system: Array.isArray(payload.system) ? payload.system : [],
-    templates: Array.isArray(payload.templates) ? payload.templates : [],
-    activeTemplateId: payload.activeTemplateId ?? null,
+/**
+ * UÇUŞTAKİ İSTEK TEKİLLEŞTİRME (cache DEĞİL).
+ *
+ * ═══ NEDEN ══════════════════════════════════════════════════════════════
+ * Aynı belge listesi açılışta İKİ yerden okunuyordu: App (baskı yolu için
+ * yayındaki yerleşim) ve düzenleyici sayfası (şablon listesi). Düzenleyici
+ * doğrudan açıldığında bu, AYNI parametresiz GET'in iki kez gitmesi demekti.
+ *
+ * ═══ NEDEN BAYATLAMAZ ═══════════════════════════════════════════════════
+ * Sonuç SAKLANMAZ. Yalnız halihazırda UÇUŞTA olan bir istek varsa aynı söz
+ * paylaşılır; istek biter bitmez kayıt SİLİNİR. Kaydet/yayınla sonrası
+ * yapılan her `load()` yine GERÇEK bir istektir — bayat liste GÖSTERİLMEZ.
+ */
+let documentsInFlight: Promise<LabelDocumentsResponse> | null = null
+
+export function fetchLabelDocuments(): Promise<LabelDocumentsResponse> {
+  if (documentsInFlight) return documentsInFlight
+  const pending = (async () => {
+    const payload = await request<{
+      system?: LabelDocument[]
+      templates?: LabelTemplateRecord[]
+      activeTemplateId?: string | null
+    }>('/api/labels/documents')
+    return {
+      system: Array.isArray(payload.system) ? payload.system : [],
+      templates: Array.isArray(payload.templates) ? payload.templates : [],
+      activeTemplateId: payload.activeTemplateId ?? null,
+    }
+  })()
+  documentsInFlight = pending
+  // Kayıt HER İKİ sonuçta da temizlenir. Hata dalı da ele alındığı için
+  // türetilmiş sözden "unhandled rejection" ÇIKMAZ; asıl hatayı çağıran
+  // görmeye devam eder.
+  const clear = () => {
+    documentsInFlight = null
   }
+  void pending.then(clear, clear)
+  return pending
 }
 
 export async function createLabelDocument(input: {

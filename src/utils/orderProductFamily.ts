@@ -4,6 +4,7 @@ import {
   findRawLineForItem,
   resolveOrderItemSize,
 } from './orderItemSize.ts'
+import { createStringMemo } from './stringMemo.ts'
 
 /**
  * "Aynı Ürün Siparişi" filtre değeri.
@@ -62,16 +63,16 @@ export interface ProductFamilyGroup {
   orderRefs: ProductFamilyOrderRef[]
 }
 
-function normalizeToken(value: unknown): string {
-  return String(value ?? '')
+const normalizeToken = createStringMemo((raw) =>
+  raw
     .trim()
     .toLocaleLowerCase('tr-TR')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/ı/g, 'i')
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-}
+    .replace(/^-|-$/g, ''),
+)
 
 function firstToken(...values: unknown[]): string {
   for (const value of values) {

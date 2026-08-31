@@ -88,15 +88,43 @@ export type SalesDisposition = 'sale' | 'return' | 'cancel'
 
 // frontend normalizeIdentity ile AYNI kural (tek kaynak). Türkçe-katlama +
 // aksan temizliği + alfasayısal dışı → '-'.
+/**
+ * DESENLER MODÜL DÜZEYİNDE.
+ *
+ * Bunlar her çağrıda `new RegExp(...)` ile YENİDEN kuruluyordu. CPU profili
+ * (gerçek Postgres, 2.000 sipariş): bu tek fonksiyon örneklerin ~%28'iydi.
+ * Desenler sabittir; kurulum maliyeti gereksizdi.
+ */
+const COMBINING_MARKS = /[\u0300-\u036f]/g
+const DOTLESS_I = /\u0131/g
+const NON_ALNUM = /[^a-z0-9]+/g
+const EDGE_DASH = /^-|-$/g
+
+/**
+ * DİZE HAFIZASI — aynı statü metni bir istek içinde binlerce kez normalize
+ * ediliyordu (her sipariş için birden çok statü sinyali). Dönüşüm saf ve
+ * deterministiktir; hafıza yalnız tekrarı ortadan kaldırır, kuralı DEĞİL.
+ * Sınır aşılırsa tamamen boşaltılır (sınırsız bellek YOK).
+ */
+const DISPOSITION_MEMO_LIMIT = 20_000
+const dispositionMemo = new Map<string, string>()
+
 export function normalizeDispositionToken(value: unknown): string {
-  return String(value ?? '')
+  const raw = String(value ?? '')
+  if (raw === '') return ''
+  const cached = dispositionMemo.get(raw)
+  if (cached !== undefined) return cached
+  const normalized = raw
     .trim()
     .toLocaleLowerCase('tr-TR')
     .normalize('NFD')
-    .replace(new RegExp('[\\u0300-\\u036f]', 'g'), '')
-    .replace(new RegExp('\\u0131', 'g'), 'i')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
+    .replace(COMBINING_MARKS, '')
+    .replace(DOTLESS_I, 'i')
+    .replace(NON_ALNUM, '-')
+    .replace(EDGE_DASH, '')
+  if (dispositionMemo.size >= DISPOSITION_MEMO_LIMIT) dispositionMemo.clear()
+  dispositionMemo.set(raw, normalized)
+  return normalized
 }
 
 function matchesAny(token: string, candidates: readonly string[]): boolean {

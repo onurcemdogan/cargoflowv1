@@ -480,3 +480,94 @@ test('DASH-12: yanıt, dönem satırlarını TAŞIMAZ (satış yükü ortadan ka
     `model, ham satır yükünden küçük olmalı (${modelBytes} < ${legacyBytes})`,
   )
 })
+
+/* ═══ DASH-13..14 — OPTİMİZASYON DEĞİŞMEZLERİ ══════════════════════════ */
+
+test('DASH-13: analitik ARALIĞI sipariş verisine BAĞLI DEĞİLDİR', async (t) => {
+  // Sunucu, satış verisinin çekileceği aralığı BOŞ listeyle kurulan hafif bir
+  // ilk geçişten alır (tam modeli iki kez kurmamak için). Bu ancak aralıklar
+  // yalnızca döneme ve `now`a bağlıysa doğrudur. Bir gün sipariş verisine
+  // bağlanırsa BU TEST DÜŞER ve optimizasyon geri alınmalıdır.
+  const { pglite, db, org, deps } = await setup(60)
+  t.after(() => pglite.close())
+  const page = await deps.persistence.listOrders(
+    db, org.organizationId, { page: 1, pageSize: 100 }, undefined,
+  )
+  const reference = page.orders.map((order) =>
+    deps.orderStatus.withDerivedOperationStatus(order),
+  )
+  assert.ok(reference.length > 0, 'karşılaştırma için sipariş olmalı')
+
+  const rangesOf = (model) =>
+    JSON.stringify(
+      [model.period, model.comparisonPeriod, ...model.salesPeriodCards.map((card) => card.range)]
+        .map((range) => [range.key, range.start.toISOString(), range.end.toISOString()]),
+    )
+
+  for (const period of [
+    { key: 'today' },
+    { key: 'yesterday' },
+    { key: 'last7' },
+    { key: 'last30' },
+    { key: 'thisMonth' },
+    { key: 'custom', startDate: '2026-07-03', endDate: '2026-08-11' },
+  ]) {
+    const empty = deps.viewModel.buildDashboardViewModel({
+      orders: [], products: [], selectedPeriod: period, now: FIXED_NOW,
+    })
+    const withOrders = deps.viewModel.buildDashboardViewModel({
+      orders: reference, products: [], selectedPeriod: period, now: FIXED_NOW,
+    })
+    assert.equal(
+      rangesOf(empty),
+      rangesOf(withOrders),
+      `${period.key}: aralık sipariş verisine bağlı olmamalı`,
+    )
+  }
+})
+
+test('DASH-14: sağlayıcı sayaçları TEK geçişte AYNI sonucu verir', async (t) => {
+  // Sayaçlar önceden sağlayıcı başına listeyi baştan tarıyordu; tek geçişe
+  // indirildi. Bu test, iki biçimin AYNI sayıları ürettiğini kilitler.
+  const { pglite, db, org, deps } = await setup(120)
+  t.after(() => pglite.close())
+  const orders = await (async () => {
+    const collected = []
+    let page = 1
+    for (;;) {
+      const result = await deps.persistence.listOrders(
+        db, org.organizationId, { page, pageSize: 100 }, undefined,
+      )
+      collected.push(...result.orders)
+      if (collected.length >= result.total || result.orders.length === 0) break
+      page += 1
+    }
+    return collected.map((order) => deps.orderStatus.withDerivedOperationStatus(order))
+  })()
+
+  const summary = await load('/src/dashboard/dashboardSummary.ts')
+  const registry = await load('/src/dashboard/providerRegistry.ts')
+  const actual = summary.buildDashboardProviderCounts(orders)
+
+  // Bağımsız (naif) referans hesap — üretim kodunu KULLANMAZ.
+  const expectedMarketplace = {}
+  for (const provider of Object.values(registry.marketplaceProviderRegistry)) {
+    expectedMarketplace[provider.providerKey] = orders.filter(
+      (order) =>
+        registry.resolveMarketplaceProvider(order.marketplace).providerKey ===
+        provider.providerKey,
+    ).length
+  }
+  const expectedCarrier = {}
+  for (const provider of Object.values(registry.carrierProviderRegistry)) {
+    expectedCarrier[provider.providerKey] = orders.filter(
+      (order) =>
+        Boolean(order.shipment?.verifiedShipment) &&
+        registry.resolveCarrierProvider(
+          order.shipment?.provider || order.cargoProviderName,
+        ).providerKey === provider.providerKey,
+    ).length
+  }
+  assert.deepEqual(actual.marketplaceOrderCounts, expectedMarketplace)
+  assert.deepEqual(actual.carrierVerifiedShipmentCounts, expectedCarrier)
+})

@@ -1,0 +1,122 @@
+[
+  {
+    "id": "recipient",
+    "kind": "text",
+    "type": "recipientName",
+    "rect": {
+      "x": 4,
+      "y": 4,
+      "width": 92,
+      "height": 7
+    },
+    "lines": 1
+  },
+  {
+    "id": "phone",
+    "kind": "text",
+    "type": "phone",
+    "rect": {
+      "x": 4,
+      "y": 11.5,
+      "width": 92,
+      "height": 5
+    },
+    "lines": 1
+  },
+  {
+    "id": "address",
+    "kind": "text",
+    "type": "address",
+    "rect": {
+      "x": 4,
+      "y": 17,
+      "width": 92,
+      "height": 18
+    },
+    "lines": 1
+  },
+  {
+    "id": "city",
+    "kind": "text",
+    "type": "cityDistrict",
+    "rect": {
+      "x": 4,
+      "y": 36,
+      "width": 92,
+      "height": 7
+    },
+    "lines": 1
+  },
+  {
+    "id": "barcode",
+    "kind": "barcode",
+    "type": "barcode",
+    "rect": {
+      "x": 4,
+      "y": 45,
+      "width": 92,
+      "height": 18
+    },
+    "hasValue": true
+  },
+  {
+    "id": "tracking",
+    "kind": "text",
+    "type": "trackingText",
+    "rect": {
+      "x": 4,
+      "y": 64,
+      "width": 92,
+      "height": 6
+    },
+    "lines": 1
+  },
+  {
+    "id": "order-no",
+    "kind": "text",
+    "type": "orderNumber",
+    "rect": {
+      "x": 4,
+      "y": 71,
+      "width": 70,
+      "height": 5
+    },
+    "lines": 1
+  },
+  {
+    "id": "qr",
+    "kind": "qr",
+    "type": "qr",
+    "rect": {
+      "x": 78,
+      "y": 71,
+      "width": 18,
+      "height": 18
+    },
+    "hasValue": true
+  },
+  {
+    "id": "products",
+    "kind": "text",
+    "type": "productList",
+    "rect": {
+      "x": 4,
+      "y": 77,
+      "width": 70,
+      "height": 14
+    },
+    "lines": 2
+  },
+  {
+    "id": "cargo-meta",
+    "kind": "text",
+    "type": "cargoMeta",
+    "rect": {
+      "x": 4,
+      "y": 92,
+      "width": 92,
+      "height": 5
+    },
+    "lines": 1
+  }
+]

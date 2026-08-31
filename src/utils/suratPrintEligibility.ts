@@ -77,7 +77,26 @@ export function isPreassignedAwaitingAcceptance(
   )
 }
 
+// Aynı gerekçe ve aynı güvenlik kuralı: bkz. `verifySuratShipment` hafızası.
+interface EligibilityMemoEntry {
+  shipment: Shipment | undefined
+  result: SuratPrintEligibility
+}
+const eligibilityMemo = new WeakMap<object, EligibilityMemoEntry>()
+
 export function resolveSuratPrintEligibility(
+  order: CargoOrder,
+  shipmentOverride?: Shipment,
+): SuratPrintEligibility {
+  const effective = shipmentOverride ?? order.shipment
+  const cached = eligibilityMemo.get(order as object)
+  if (cached && cached.shipment === effective) return cached.result
+  const result = computeSuratPrintEligibility(order, shipmentOverride)
+  eligibilityMemo.set(order as object, { shipment: effective, result })
+  return result
+}
+
+function computeSuratPrintEligibility(
   order: CargoOrder,
   shipmentOverride?: Shipment,
 ): SuratPrintEligibility {
