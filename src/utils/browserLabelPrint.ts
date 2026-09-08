@@ -423,6 +423,8 @@ export interface BrowserLabelPrintDebug {
   labelHtmlLength: number
   barcodeValue: string
   zplAvailable: boolean
+  /** Taban katman yüklenemeyen siparişlerin sebepleri (varsa). */
+  baseLayerFailures?: string[]
   printableContentPreview: string
   printWindowOpened: boolean
   printCalled: boolean
@@ -538,6 +540,7 @@ export async function printCleanLabelDocument(
     // Tek tek yüklenir; biri başarısız olursa YALNIZ o sipariş atlanır
     // (aşağıda açık sebeple), diğerleri basılmaya devam eder.
     const baseLayers = new Map<string, LabelBaseLayer>()
+    const baseLayerErrors = new Map<string, string>()
     if (isOverlayDocument(labelDocument) && loadBaseLayer) {
       for (const order of orders) {
         const orderId = String(order.id ?? '')
@@ -545,10 +548,19 @@ export async function printCleanLabelDocument(
         try {
           const layer = await loadBaseLayer(order)
           if (layer) baseLayers.set(orderId, layer)
-        } catch {
-          // Sessiz yutma DEĞİL: eksik taban aşağıda açık atlama üretir.
+          else baseLayerErrors.set(orderId, 'taşıyıcı tabanı boş döndü')
+        } catch (error) {
+          // ═══ SESSİZ YUTMA YOK ═══════════════════════════════════════
+          // Bu catch eskiden hatayı yutuyordu ve sonuç "gizemli atlama"
+          // oluyordu: operatör siparişin neden basılmadığını göremiyordu.
+          // Sebep kaydedilir ve atlama mesajına AYNEN taşınır.
+          baseLayerErrors.set(
+            orderId,
+            error instanceof Error ? error.message : 'taşıyıcı tabanı alınamadı',
+          )
         }
       }
+      debug.baseLayerFailures = [...baseLayerErrors.values()]
     }
     const document_ = buildCleanLabelDocument(
       orders,
@@ -557,6 +569,7 @@ export async function printCleanLabelDocument(
       products,
       labelDocument,
       baseLayers,
+      baseLayerErrors,
     )
     const printHtml = document_.html
     debug.skipped = document_.skipped
@@ -912,6 +925,8 @@ export function buildCleanLabelDocument(
    * etiket üretirdi. Bu yüzden taban zorunludur (aşağıda uygulanır).
    */
   baseLayers?: ReadonlyMap<string, LabelBaseLayer>,
+  /** Taban yüklenemediyse NEDENİ — atlama mesajına aynen taşınır. */
+  baseLayerErrors?: ReadonlyMap<string, string>,
 ): CleanLabelDocument {
   const widthMm = template.widthMm || 100
   const heightMm = template.heightMm || 100
@@ -941,9 +956,10 @@ export function buildCleanLabelDocument(
         ? baseLayers?.get(String(order.id ?? ''))
         : undefined
       if (isOverlayDocument(labelDocument) && !baseLayer) {
+        const detail = baseLayerErrors?.get(String(order.id ?? ''))
         const reason =
           'Taşıyıcı etiketi (taban katman) alınamadı; yalnız kiracı ' +
-          'eklerinden oluşan etiket BASILMAZ.'
+          `eklerinden oluşan etiket BASILMAZ.${detail ? ` (${detail})` : ''}`
         suratPrintTrace('PRINT_SKIPPED_REASON', {
           orderNumber: model.orderNumber,
           reason,
@@ -1655,11 +1671,35 @@ async function waitForPrintDocument(targetDocument: Document): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 180))
 }
 
+/**
+ * BASKI BELGESİ GERÇEKTEN İÇERİK TAŞIYOR MU?
+ *
+ * ═══ İKİ KOMPOZİSYON, İKİ KANIT ══════════════════════════════════════════
+ * `standalone` : etiketin TAMAMINI CargoFlow çizer. İçerik kanıtı metindir;
+ *                boş bir gövde basılmamalıdır. Kontrol AYNEN korunur.
+ *
+ * `overlay`    : taban taşıyıcının GERÇEK etiketidir; kiracı katmanı yalnız
+ *                ek taşır. İçerik kanıtı METİN UZUNLUĞU DEĞİLDİR — geçerli
+ *                bir overlay yalnız logo taşıyabilir ve neredeyse hiç metni
+ *                olmayabilir. Kanıt TABAN GÖRÜNTÜSÜDÜR.
+ *
+ * ═══ NEDEN BU KONTROL DÜZELTİLDİ ═════════════════════════════════════════
+ * Muhafız yalnız eski `label-page` işaretini tanıyordu. Overlay sayfası
+ * `lp-page` üretir; sonuç olarak GEÇERLİ bir overlay belgesi üretildikten
+ * SONRA burada sessizce reddediliyor ve operatör "Yazdırılacak etiket
+ * içeriği oluşturulamadı" görüyordu. Birim testleri bunu yakalayamadı:
+ * doğrudan `buildCleanLabelDocument` çağırıyor, bu kapıdan geçmiyorlardı.
+ */
 function isPrintableLabelHtml(html: string): boolean {
+  if (!html.includes('<body>')) return false
+  if (html.includes('class="lp-page"')) {
+    return (
+      html.includes('class="lp-base"') &&
+      html.includes('data:image/png;base64,')
+    )
+  }
   return (
-    html.includes('class="label-page"') &&
-    html.includes('<body>') &&
-    stripHtml(html).trim().length > 20
+    html.includes('class="label-page"') && stripHtml(html).trim().length > 20
   )
 }
 
@@ -1694,3 +1734,6 @@ function escapeHtml(value: unknown): string {
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#039;')
 }
+
+/** YALNIZ TEST: baskı kapısı doğrudan sınanabilsin (BASE-18 regresyonu). */
+export const __testing = { isPrintableLabelHtml }

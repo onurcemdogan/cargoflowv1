@@ -28,6 +28,14 @@ function element(
   }
 }
 
+// ═══ ESKİ (TAM ETİKET) ŞABLONLAR — `standalone` ════════════════════════
+//
+// Bunlar taşıyıcı tabanının ÜSTÜNE değil, etiketin TAMAMI olarak çizilir ve
+// YALNIZ taşıyıcı artefaktı olmayan (legacy `cargoflow_html`) akış için
+// vardır. Sürat etiketi düzenlenirken doğru seçim OVERLAY presetleridir;
+// bu yüzden liste sırasında overlay'ler ÖNCE gelir ve varsayılan odur.
+//
+// Adları KORUNUR: mevcut kiracı kayıtları `basedOn` ile bunlara işaret eder.
 const classic: LabelDocument = {
   schemaVersion: 1,
   id: 'surat-classic-100x100',
@@ -228,7 +236,7 @@ const trendyol: LabelDocument = {
 const overlayStoreNote: LabelDocument = {
   schemaVersion: 1,
   id: 'surat-overlay-store-note',
-  name: 'Sürat üstü — mağaza notu',
+  name: 'Sürat + Minimal Ek Bilgi',
   mode: 'overlay',
   elements: [
     element('store-note', 'staticText', [4, 89.5, 62, 4], {
@@ -251,7 +259,7 @@ const overlayStoreNote: LabelDocument = {
 const overlayProductLines: LabelDocument = {
   schemaVersion: 1,
   id: 'surat-overlay-product-lines',
-  name: 'Sürat üstü — ürün satırları',
+  name: 'Sürat + Ürün Bilgisi',
   mode: 'overlay',
   elements: [
     element('products', 'productList', [4, 89, 92, 7], {

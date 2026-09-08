@@ -32,6 +32,11 @@ import {
   cloneDocument,
   findSystemTemplate,
 } from '../../src/labels/labelSystemTemplates.ts'
+import {
+  migrateStandaloneToOverlay,
+  type MigrationWarning,
+} from '../../src/labels/labelOverlayMigration.ts'
+import type { CarrierZone } from '../../src/labels/labelBaseLayer.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = {
@@ -57,6 +62,13 @@ export interface StoredLabelTemplateRecord {
   active: LabelDocument | null
   /** Aktif sürümün yayına alındığı an. Hiç yayınlanmadıysa yok. */
   activatedAt?: string
+  /**
+   * Bu kayıt hangi ESKİ şablondan göçürüldü?
+   *
+   * İdempotensi anahtarıdır: aynı kaynaktan ikinci bir göç taslağı
+   * üretilmez. Kaynak kayıt bu alandan ETKİLENMEZ.
+   */
+  migratedFrom?: string
   /**
    * ARŞİV — önceki AKTİF sürümler, en yenisi başta.
    *
@@ -128,6 +140,10 @@ function normalizeRecord(input: unknown): StoredLabelTemplateRecord | null {
     activatedAt:
       typeof record.activatedAt === 'string' && record.activatedAt
         ? record.activatedAt
+        : undefined,
+    migratedFrom:
+      typeof record.migratedFrom === 'string' && record.migratedFrom.trim()
+        ? record.migratedFrom.trim()
         : undefined,
     history: normalizeHistory(record.history),
   }
@@ -300,6 +316,88 @@ export async function createLabelDocumentFromSystem(
 }
 
 /** Var olan ÖZEL şablonu kopyalar. */
+/**
+ * ESKİ (STANDALONE) ŞABLONU OVERLAY TASLAĞINA GÖÇÜR.
+ *
+ * ═══ KAYNAK ASLA DEĞİŞMEZ ════════════════════════════════════════════════
+ * Göç, kaynak kaydın taslağına, aktifine veya arşivine DOKUNMAZ. Yeni bir
+ * şablon kaydı doğar ve YALNIZ taslak taşır: yayınlamak operatörün AÇIK
+ * kararıdır. Böylece bir sürüm yükseltmesi kimsenin üretim çıktısını
+ * kendiliğinden değiştiremez.
+ *
+ * ═══ İDEMPOTENT ══════════════════════════════════════════════════════════
+ * Aynı kaynaktan ikinci kez göç istenirse YENİ kayıt üretilmez; mevcut göç
+ * taslağı döner. Tekrarlanan tıklama overlay çoğaltamaz.
+ */
+export async function migrateTemplateToOverlay(
+  db: Db,
+  organizationId: string,
+  templateId: string,
+  carrierZones: readonly CarrierZone[],
+  now: string,
+  newId: string,
+  templateFingerprint?: string,
+): Promise<{
+  record: StoredLabelTemplateRecord
+  warnings: MigrationWarning[]
+  created: boolean
+}> {
+  const state = await loadLabelDocuments(db, organizationId)
+  const source = requireTemplate(state, templateId)
+  const document = source.active ?? source.draft
+  if (!document) {
+    throw new LabelDocumentError('NO_DRAFT', 'Göçürülecek yerleşim yok.')
+  }
+
+  // İDEMPOTENSİ: bu kaynaktan üretilmiş bir göç taslağı VARSA o döner.
+  const existing = Object.values(state.templates).find(
+    (record) =>
+      record.migratedFrom === templateId && record.draft?.mode === 'overlay',
+  )
+  if (existing) {
+    const repeat = migrateStandaloneToOverlay(document, carrierZones, {
+      id: existing.id,
+      name: existing.name,
+      templateFingerprint,
+    })
+    return { record: existing, warnings: repeat.warnings, created: false }
+  }
+
+  if (Object.keys(state.templates).length >= MAX_CUSTOM_TEMPLATES) {
+    throw new LabelDocumentError(
+      'LIMIT_REACHED',
+      `En fazla ${MAX_CUSTOM_TEMPLATES} özel şablon tutulabilir.`,
+    )
+  }
+
+  const migration = migrateStandaloneToOverlay(document, carrierZones, {
+    id: newId,
+    name: `${source.name} (Sürat tabanlı)`.slice(0, 80),
+    templateFingerprint,
+  })
+  const draft = assertValidDocument(migration.draft)
+  const record: StoredLabelTemplateRecord = {
+    id: newId,
+    name: draft.name,
+    basedOn: source.basedOn ?? source.id,
+    migratedFrom: templateId,
+    version: 1,
+    updatedAt: now,
+    draft,
+    // YAYINLANMAZ: aktif sürüm boş doğar.
+    active: null,
+    history: [],
+  }
+  await writeState(
+    db,
+    organizationId,
+    // `activeTemplateId` DEĞİŞMEZ: üretim çıktısı aynı kalır.
+    { ...state, templates: { ...state.templates, [newId]: record } },
+    now,
+  )
+  return { record, warnings: migration.warnings, created: true }
+}
+
 export async function duplicateLabelDocument(
   db: Db,
   organizationId: string,

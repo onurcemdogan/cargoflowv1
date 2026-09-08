@@ -472,12 +472,11 @@ function App() {
           .then((module) => module.fetchLabelDocuments())
           .then((payload) => {
             if (!isFresh()) return
-            const activeRecord = payload.activeTemplateId
-              ? payload.templates.find(
-                  (item) => item.id === payload.activeTemplateId,
-                )
-              : undefined
-            setActiveLabelDocument(activeRecord?.active ?? null)
+            // ÇÖZÜLMÜŞ katman TÜKETİLİR — aktif kayıt ELLE seçilmez.
+            // Aktif sürüm bozuksa sunucu önceki ÇALIŞAN sürüme, o da yoksa
+            // taşıyıcı orijinaline düşer; istemcinin kendi seçimi bu
+            // korumayı atlardı (bozuk overlay = tabanın üstüne ikinci barkod).
+            setActiveLabelDocument(payload.activeLayer.document)
           })
           .catch(() => {
             // Belge okunamazsa YERLEŞİK yerleşim kullanılır; baskı DURMAZ.

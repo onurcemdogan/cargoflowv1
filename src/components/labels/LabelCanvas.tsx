@@ -27,13 +27,17 @@ import {
   ALIGNMENT_SNAP_TOLERANCE_MM,
   LABEL_CANVAS_HEIGHT_MM,
   LABEL_CANVAS_WIDTH_MM,
+  rectsOverlap,
   SNAP_GRID_MM,
   mmToPx,
   pxToMm,
   snapToGrid,
 } from '../../labels/labelGeometry'
 import { LabelPrimitiveLayer } from './LabelPrimitiveLayer'
-import type { LabelBaseLayer } from '../../labels/labelBaseLayer'
+import {
+  zoneBlocksOverlay,
+  type LabelBaseLayer,
+} from '../../labels/labelBaseLayer'
 
 type ResizeHandle =
   | 'nw' | 'n' | 'ne'
@@ -97,6 +101,8 @@ export function LabelCanvas({
     null,
   )
   const [guides, setGuides] = useState<AlignmentGuide[]>([])
+  /** Sürükleme sırasında ihlal edilen taşıyıcı bölgeleri — anlık uyarı. */
+  const [blockedZones, setBlockedZones] = useState<string[]>([])
 
   const elementsById = useMemo(() => {
     const map = new Map<string, LabelElement>()
@@ -273,6 +279,20 @@ export function LabelCanvas({
       width: round2(Math.max(min.width, next.width)),
       height: round2(Math.max(min.height, next.height)),
     }
+
+    // ═══ TAŞIYICI BÖLGESİ ÇAKIŞMASI — SÜRÜKLERKEN UYARI, BIRAKIRKEN RET ══
+    // Kiracı öğesi taşıyıcının barkodunun/rotasının üstüne SÜRÜKLENEBİLİR
+    // (kullanıcı hareketi kesilmez), ama hareket UYARI gösterir ve son
+    // konum KABUL EDİLMEZ: öge son geçerli yerinde kalır. Böylece operatör
+    // "bıraktım, oldu sandım" durumuna düşmez.
+    const blocking = (baseLayer?.carrierZones ?? []).filter((zone) =>
+      zoneBlocksOverlay(zone) && rectsOverlap(zone.rect, next),
+    )
+    setBlockedZones(blocking.map((zone) => zone.label))
+    if (blocking.length > 0) {
+      setGuides(activeGuides)
+      return
+    }
     setGuides(activeGuides)
     schedule(drag.elementId, next)
   }
@@ -290,6 +310,7 @@ export function LabelCanvas({
       flush()
     }
     dragRef.current = null
+    setBlockedZones([])
     setGuides([])
     onGestureEnd()
   }
@@ -346,7 +367,8 @@ export function LabelCanvas({
             data-testid="label-carrier-zone"
             data-zone-id={zone.id}
             data-zone-class={zone.zoneClass}
-            title={`${zone.label} — ${zone.reason}`}
+            title={`${zone.label} — Sürat tarafından yönetilir. ${zone.reason}`}
+            aria-label={`${zone.label} kilitli`}
             style={{
               position: 'absolute',
               left: `${mmToPx(zone.rect.x, zoom)}px`,
@@ -356,10 +378,28 @@ export function LabelCanvas({
               zIndex: 2,
               pointerEvents: 'none',
             }}
-          />
+          >
+            {/* KİLİT ROZETİ — bölgenin neden düzenlenemediği görünür olmalı.
+                Yalnız ENGELLEYİCİ bölgelerde gösterilir; bilgi alanları
+                uyarı sınıfındadır ve rozetle gürültü yapmaz. */}
+            {zone.zoneClass !== 'informational' ? (
+              <span className="label-carrier-zone-lock" aria-hidden="true">
+                🔒
+              </span>
+            ) : null}
+          </div>
         ))}
         <LabelPrimitiveLayer primitives={primitives} zoom={zoom} />
 
+        {blockedZones.length > 0 ? (
+          <div
+            className="label-collision-warning"
+            data-testid="label-collision-warning"
+            role="alert"
+          >
+            {`Taşıyıcı alanı: ${blockedZones.join(', ')} — buraya konulamaz`}
+          </div>
+        ) : null}
         {guides.map((guide) => (
           <div
             key={`${guide.axis}-${guide.positionMm}`}

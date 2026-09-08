@@ -2536,6 +2536,16 @@ app.get('/api/labels/documents', async (request, response) => {
       system: context.system.SYSTEM_LABEL_TEMPLATES,
       templates: Object.values(state.templates),
       activeTemplateId: state.activeTemplateId,
+      // ═══ ÇÖZÜLMÜŞ AKTİF KATMAN — DÜŞME SIRASI DAHİL ═══════════════════
+      // İstemci `templates[activeTemplateId].active`'i KENDİSİ seçmemelidir:
+      // aktif sürüm bozuksa doğrulamadan geçmeyen bir belgeyi baskıya
+      // sokardı (üretimde çift barkod anlamına gelir). Düşme sırası
+      // (active → previous → carrier_original) SUNUCUDA hesaplanır ve
+      // istemci SONUCU tüketir.
+      activeLayer: await context.repo.resolveActiveLabelLayer(
+        context.db,
+        context.organizationId,
+      ),
     })
   } catch {
     response
@@ -2606,6 +2616,55 @@ app.post('/api/labels/documents/:id/activate', async (request, response) => {
       new Date().toISOString(),
     )
     response.json({ ok: true, template: record, activated: true })
+  } catch (error) {
+    sendLabelDocumentError(response, error)
+  }
+})
+
+// POST /api/labels/documents/:id/migrate-to-overlay
+//
+// ESKİ (tam etiket) şablonu, taşıyıcı tabanı üstüne oturan bir OVERLAY
+// TASLAĞINA çevirir. Kaynak şablon DEĞİŞMEZ, aktif çıktı DEĞİŞMEZ ve taslak
+// KENDİLİĞİNDEN yayınlanmaz — yayınlamak operatörün açık kararıdır.
+//
+// Taşıyıcı bölgeleri, verilen siparişin KALICI artefaktından SUNUCUDA
+// türetilir; taşıyıcıya çağrı yapılmaz.
+app.post('/api/labels/documents/:id/migrate-to-overlay', async (request, response) => {
+  const context = await requireLabelDocumentContext(request, response)
+  if (!context) return
+  const orderId = String(request.body?.orderId ?? '')
+  if (!orderId) {
+    response.status(400).json({ ok: false, message: 'orderId zorunlu.' })
+    return
+  }
+  try {
+    const [{ renderSuratLabel }, { getOrder }] = await Promise.all([
+      import('./labels/suratLabelRenderService.ts'),
+      import('./orders/orderPersistenceService.ts'),
+    ])
+    const dto = await renderSuratLabel({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: context.marketplaceAccountId,
+      orderId,
+      getOrder,
+    })
+    const now = new Date().toISOString()
+    const result = await context.repo.migrateTemplateToOverlay(
+      context.db,
+      context.organizationId,
+      String(request.params.id),
+      dto.carrierZones,
+      now,
+      `tpl_${Date.now().toString(36)}`,
+      dto.carrierTemplateFingerprint,
+    )
+    response.json({
+      ok: true,
+      template: result.record,
+      warnings: result.warnings,
+      created: result.created,
+    })
   } catch (error) {
     sendLabelDocumentError(response, error)
   }

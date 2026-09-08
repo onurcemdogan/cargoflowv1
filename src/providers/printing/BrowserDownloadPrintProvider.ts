@@ -1,5 +1,12 @@
 import type { PrintInput, PrintProvider, PrintResult } from './PrintProvider'
 import type { LabelBaseLayer } from '../../labels/labelBaseLayer'
+// Kanonik tuval ölçüsü: iki SAYI sabiti. Statik import edilir — dinamik
+// import bir başarısızlık noktası ekliyordu ve ağır render yığınını
+// GETİRMEZ (labelGeometry saf sabit/matematik modülüdür).
+import {
+  LABEL_CANVAS_HEIGHT_MM,
+  LABEL_CANVAS_WIDTH_MM,
+} from '../../labels/labelGeometry'
 
 /** Taban katmanın bölge listesi — tip statik, modül çalışma zamanında yüklenir. */
 type CarrierBaseZones = LabelBaseLayer['carrierZones']
@@ -164,8 +171,6 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
                     String(order.id ?? ''),
                   )
                   if (!payload) return null
-                  const { LABEL_CANVAS_HEIGHT_MM, LABEL_CANVAS_WIDTH_MM } =
-                    await import('../../labels/labelGeometry')
                   return {
                     kind: 'surat_official',
                     imageBase64: payload.imageBase64,

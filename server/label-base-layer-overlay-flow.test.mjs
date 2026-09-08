@@ -569,3 +569,87 @@ test('BASE-17: TAŞIYICI ŞABLONU DEĞİŞTİYSE uyarı çıkar, baskı DURMAZ',
   assert.match(warning.detail, /surat-real-v1\.bq0\.eski/)
   assert.equal(drifted.hasBlockingViolation, false)
 })
+
+/* ═══ BASE-18..19 — TARAYICI E2E'NİN YAKALADIĞI KUSURLAR ══════════ */
+
+test('BASE-18: OVERLAY baskı belgesi BASILABİLİR sayılır (muhafız regresyonu)', async () => {
+  // ═══ TARAYICI E2E BULGUSU ═══════════════════════════════════════════
+  // `isPrintableLabelHtml` yalnız ESKİ `label-page` işaretini tanıyordu.
+  // Overlay sayfası `lp-page` üretir; geçerli belge ÜRETİLDİKTEN SONRA bu
+  // kapıda sessizce reddediliyor ve operatör "Yazdırılacak etiket içeriği
+  // oluşturulamadı" görüyordu. Birim testleri yakalayamamıştı: doğrudan
+  // `buildCleanLabelDocument` çağırıp bu kapıdan GEÇMİYORLARDI.
+  const print = await load('/src/utils/browserLabelPrint.ts')
+  const base = await baseLayer()
+  const result = print.buildCleanLabelDocument(
+    [PRINTABLE_ORDER], PRINT_TEMPLATE, {}, [], OVERLAY_DOC,
+    new Map([[PRINTABLE_ORDER.id, base]]),
+  )
+  assert.equal(
+    print.__testing.isPrintableLabelHtml(result.html),
+    true,
+    'overlay belgesi basılabilir sayılmalı',
+  )
+  // Boş gövde hâlâ REDDEDİLİR: muhafız gevşetilmedi.
+  assert.equal(print.__testing.isPrintableLabelHtml('<html><body></body></html>'), false)
+  // Taban görüntüsü OLMAYAN bir overlay sayfası da reddedilir.
+  assert.equal(
+    print.__testing.isPrintableLabelHtml('<body><div class="lp-page"></div></body>'),
+    false,
+    'tabansız overlay sayfası basılabilir SAYILMAZ',
+  )
+})
+
+test('BASE-19: BOZUK aktif sürüm baskıya GİRMEZ — çözülmüş katman tüketilir', async () => {
+  // ═══ TARAYICI E2E BULGUSU ═══════════════════════════════════════════
+  // Sunucu `resolveActiveLabelLayer` ile düşme sırasını hesaplıyordu ama
+  // istemci `templates[activeTemplateId].active`'i DOĞRUDAN okuyordu.
+  // Sonuç: bozuk aktif sürümdeki barkod öğesi taşıyıcı tabanın ÜSTÜNE
+  // çiziliyor, yani ÇİFT BARKOD basılıyordu.
+  const { pglite, db, schema, organizationId } = await makeDb()
+  try {
+    const repo = await load('/server/labels/labelDocumentRepository.ts')
+    const created = await repo.createLabelDocumentFromSystem(
+      db, organizationId, 'surat-overlay-store-note', 'Overlay', '2026-08-01T00:00:00.000Z', 'tpl_1',
+    )
+    const v1 = await repo.activateLabelDocument(
+      db, organizationId, 'tpl_1', created.version, '2026-08-02T00:00:00.000Z',
+    )
+    const saved = await repo.saveLabelDocumentDraft(
+      db, organizationId, 'tpl_1',
+      { ...v1.active, elements: v1.active.elements.map((e) => ({ ...e, x: e.x + 1 })) },
+      v1.version, '2026-08-03T00:00:00.000Z',
+    )
+    await repo.activateLabelDocument(
+      db, organizationId, 'tpl_1', saved.version, '2026-08-04T00:00:00.000Z',
+    )
+
+    const { eq } = await import('drizzle-orm')
+    const rows = await db.select().from(schema.organizationSettings)
+      .where(eq(schema.organizationSettings.organizationId, organizationId))
+    const settings = JSON.parse(JSON.stringify(rows[0].settingsJson))
+    settings.labelDocuments.templates.tpl_1.active.elements = [
+      { id: 'x', type: 'barcode', x: -90, y: -90, width: 0, height: 0, z: 1, visible: true },
+    ]
+    await db.update(schema.organizationSettings).set({ settingsJson: settings })
+      .where(eq(schema.organizationSettings.organizationId, organizationId))
+
+    const layer = await repo.resolveActiveLabelLayer(db, organizationId)
+    assert.equal(layer.tier, 'previous', 'önceki ÇALIŞAN sürüme düşmeli')
+    // Çözülmüş katmanda BARKOD ÖĞESİ YOKTUR — taşıyıcı tabanda basılıdır.
+    assert.equal(
+      layer.document.elements.some((e) => e.type === 'barcode'),
+      false,
+      'baskıya giren belge taşıyıcı kimliğini TEKRAR çizmemeli',
+    )
+    // Bozuk sürüm doğrudan okunsaydı barkod öğesi baskıya girerdi:
+    const raw = settings.labelDocuments.templates.tpl_1.active
+    assert.equal(
+      raw.elements.some((e) => e.type === 'barcode'),
+      true,
+      'ham aktif sürüm gerçekten bozuk olmalı (test anlamlı kalsın)',
+    )
+  } finally {
+    await pglite.close()
+  }
+})

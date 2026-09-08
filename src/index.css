@@ -7085,6 +7085,43 @@ button:disabled {
    Operatör neyin neden korunduğunu görmeden yerleşim yapamaz: kimlik ve
    operasyon alanları kesikli çerçeveyle işaretlenir, üzerlerine gelince
    sebep (title) görünür. Bölgeler tıklanamaz (pointer-events: none). */
+.label-carrier-zone-lock {
+  position: absolute;
+  top: 0;
+  right: 1px;
+  font-size: 8px;
+  line-height: 1;
+  opacity: .7;
+}
+/* Sürüklerken taşıyıcı alanına girildiğinde ANLIK uyarı. */
+.label-collision-warning {
+  position: absolute;
+  left: 50%;
+  top: 6px;
+  transform: translateX(-50%);
+  z-index: 20;
+  background: rgba(220, 38, 38, .95);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 3px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+/* Göç raporu — hangi öğenin neden düştüğü SESSİZ kalmaz. */
+.label-migration-warnings {
+  flex-basis: 100%;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border: 1px solid rgba(217, 119, 6, .4);
+  background: rgba(217, 119, 6, .06);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.label-migration-warnings ul { margin: 4px 0 0; padding-left: 18px; }
+.label-migration-warnings li { margin-top: 2px; }
+
 .label-carrier-zone {
   border: 1px dashed rgba(220, 38, 38, .55);
   background: rgba(220, 38, 38, .05);

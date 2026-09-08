@@ -59,6 +59,8 @@ import {
   fetchLabelDocuments,
   fetchCarrierBaseLayer,
   fetchPreviewOrder,
+  migrateTemplateToOverlay,
+  type OverlayMigrationWarning,
   revertToCarrierOriginal,
   rollbackLabelDocument,
   renameLabelDocument,
@@ -112,6 +114,10 @@ export function LabelTemplateEditorPage({
   const [snapEnabled, setSnapEnabled] = useState(true)
   const [previewMode, setPreviewMode] = useState<'order' | 'stress'>('order')
   const [busy, setBusy] = useState(false)
+  /** Son göç işleminin uyarıları — SESSİZ kayıp olmadığının kanıtı. */
+  const [migrationWarnings, setMigrationWarnings] = useState<
+    OverlayMigrationWarning[]
+  >([])
 
   // ŞABLON BAŞINA düzenleyici durumu: kaydedilmemiş değişiklikler şablon
   // değiştirip geri dönünce KAYBOLMAZ.
@@ -127,10 +133,9 @@ export function LabelTemplateEditorPage({
       setRecords(payload.templates)
       setActiveTemplateId(payload.activeTemplateId)
       setLoadError(undefined)
-      const activeRecord = payload.activeTemplateId
-        ? payload.templates.find((item) => item.id === payload.activeTemplateId)
-        : undefined
-      onActiveDocumentChange?.(activeRecord?.active ?? null)
+      // Baskı yoluna ÇÖZÜLMÜŞ katman bildirilir (bkz. App.tsx): bozuk aktif
+      // sürüm baskıya SOKULMAZ, sunucunun düştüğü sürüm kullanılır.
+      onActiveDocumentChange?.(payload.activeLayer.document)
       // Sunucudan gelen kayıtlar, YEREL kaydedilmemiş taslakları EZMEZ.
       setSlots((current) => {
         const next = { ...current }
@@ -360,6 +365,44 @@ export function LabelTemplateEditorPage({
         current.map((item) => (item.id === record.id ? record : item)),
       )
     })
+  }
+
+  /**
+   * ESKİ ŞABLONU SÜRAT TABANINA GÖÇÜR.
+   *
+   * Kaynak şablon DEĞİŞMEZ; yeni bir OVERLAY TASLAĞI açılır ve seçilir.
+   * Taşıyıcının bastığı alanlar taslağa KOPYALANMAZ; hangi öğenin neden
+   * düştüğü operatöre listelenir. Yayınlamak AYRI ve açık bir adımdır.
+   */
+  async function handleMigrateToOverlay() {
+    if (!slot || !previewOrderId) return
+    await runAction(
+      'Sürat tabanlı taslak oluşturuldu. İnceleyip yayınlayabilirsiniz.',
+      async () => {
+        const result = await migrateTemplateToOverlay(
+          slot.record.id,
+          previewOrderId,
+        )
+        setMigrationWarnings(result.warnings)
+        setSlots((current) => ({
+          ...current,
+          [result.template.id]: {
+            record: result.template,
+            state: createLabelEditorState(
+              result.template.draft ?? result.template.active!,
+            ),
+          },
+        }))
+        setSelectedTemplateId(result.template.id)
+        setRecords((current) =>
+          current.some((item) => item.id === result.template.id)
+            ? current.map((item) =>
+                item.id === result.template.id ? result.template : item,
+              )
+            : [...current, result.template],
+        )
+      },
+    )
   }
 
   /**
@@ -754,6 +797,20 @@ export function LabelTemplateEditorPage({
             <button
               type="button"
               className="ghost-button"
+              data-testid="editor-migrate-overlay"
+              // YALNIZ eski (tam etiket) şablonda anlamlıdır; overlay
+              // şablonu zaten taşıyıcı tabanı üstündedir.
+              disabled={
+                !slot || busy || isOverlayDocument(document) || !previewOrderId
+              }
+              title="Bu eski şablondan Sürat tabanlı bir overlay taslağı üret"
+              onClick={() => void handleMigrateToOverlay()}
+            >
+              Sürat tabanına taşı
+            </button>
+            <button
+              type="button"
+              className="ghost-button"
               data-testid="editor-rollback"
               // Arşivde önceki sürüm YOKSA kapalı: "dönülecek yer yok".
               disabled={!slot || busy || (slot.record.history?.length ?? 0) === 0}
@@ -772,6 +829,28 @@ export function LabelTemplateEditorPage({
             >
               Orijinal Sürat etiketi
             </button>
+            {migrationWarnings.length > 0 ? (
+              <div
+                className="label-migration-warnings"
+                data-testid="editor-migration-warnings"
+                role="status"
+              >
+                <strong>
+                  Göç raporu ({migrationWarnings.length} not)
+                </strong>
+                <ul>
+                  {migrationWarnings.map((warning) => (
+                    <li
+                      key={`${warning.elementId}-${warning.code}`}
+                      data-testid="editor-migration-warning"
+                      data-code={warning.code}
+                    >
+                      {warning.detail}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             {dirty ? (
               <span className="label-badge label-badge-draft" data-testid="editor-dirty">
                 Kaydedilmemiş değişiklik

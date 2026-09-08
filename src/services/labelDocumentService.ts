@@ -19,6 +19,8 @@ export interface LabelTemplateRecord {
   active: LabelDocument | null
   /** Aktif sürümün yayına alındığı an (sunucu damgası). */
   activatedAt?: string
+  /** Bu kayıt hangi eski şablondan göçürüldü? */
+  migratedFrom?: string
   /**
    * ARŞİV — önceki AKTİF sürümler, en yenisi başta.
    *
@@ -32,9 +34,22 @@ export interface LabelTemplateRecord {
   }>
 }
 
+/** Baskıda hangi katmanın kullanıldığı — sunucuda çözülür. */
+export interface ResolvedLabelLayer {
+  document: LabelDocument | null
+  tier: 'active' | 'previous' | 'carrier_original'
+  reason?: string
+}
+
 export interface LabelDocumentsResponse {
   system: LabelDocument[]
   templates: LabelTemplateRecord[]
+  /**
+   * ÇÖZÜLMÜŞ aktif katman. İstemci aktif belgeyi KENDİSİ seçmez: bozuk bir
+   * aktif sürüm baskıya girerse taşıyıcı tabanının üstüne ikinci bir barkod
+   * çizilirdi. Düşme sırası sunucuda uygulanır, burada yalnız TÜKETİLİR.
+   */
+  activeLayer: ResolvedLabelLayer
   activeTemplateId: string | null
 }
 
@@ -184,11 +199,16 @@ export function fetchLabelDocuments(): Promise<LabelDocumentsResponse> {
       system?: LabelDocument[]
       templates?: LabelTemplateRecord[]
       activeTemplateId?: string | null
+      activeLayer?: ResolvedLabelLayer
     }>('/api/labels/documents')
     return {
       system: Array.isArray(payload.system) ? payload.system : [],
       templates: Array.isArray(payload.templates) ? payload.templates : [],
       activeTemplateId: payload.activeTemplateId ?? null,
+      activeLayer: payload.activeLayer ?? {
+        document: null,
+        tier: 'carrier_original',
+      },
     }
   })()
   documentsInFlight = pending
@@ -200,6 +220,42 @@ export function fetchLabelDocuments(): Promise<LabelDocumentsResponse> {
   }
   void pending.then(clear, clear)
   return pending
+}
+
+export interface OverlayMigrationWarning {
+  code: string
+  elementId: string
+  type: string
+  detail: string
+}
+
+/**
+ * ESKİ ŞABLONU SÜRAT TABANINA GÖÇÜR.
+ *
+ * Kaynak şablon DEĞİŞMEZ; yeni bir OVERLAY TASLAĞI doğar ve yayınlanmaz.
+ * Operatör taslağı görür, uyarıları okur, isterse yayınlar.
+ */
+export async function migrateTemplateToOverlay(
+  templateId: string,
+  orderId: string,
+): Promise<{
+  template: LabelTemplateRecord
+  warnings: OverlayMigrationWarning[]
+  created: boolean
+}> {
+  const payload = await request<{
+    template: LabelTemplateRecord
+    warnings?: OverlayMigrationWarning[]
+    created?: boolean
+  }>(`/api/labels/documents/${encodeURIComponent(templateId)}/migrate-to-overlay`, {
+    method: 'POST',
+    body: JSON.stringify({ orderId }),
+  })
+  return {
+    template: payload.template,
+    warnings: Array.isArray(payload.warnings) ? payload.warnings : [],
+    created: payload.created !== false,
+  }
 }
 
 /**
