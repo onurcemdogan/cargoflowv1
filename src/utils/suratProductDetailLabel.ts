@@ -29,7 +29,7 @@ import {
   buildProductLineTitle,
   type SuratProductLineItem,
 } from './suratZplProductLine.ts'
-import { estimateA0Width } from './suratDurusoftComposer.ts'
+import { estimateA0Width } from './suratLabelComposer.ts'
 import {
   DEFAULT_PRODUCT_LINE_PARTS,
   type ProductLineParts,

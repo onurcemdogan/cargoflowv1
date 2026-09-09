@@ -808,7 +808,7 @@ test('BULK-6/7: hazır baskıda provider-create ve ürün toplama/composer ÇAĞ
   for (const forbidden of [
     'aggregateProductLineItems',
     'planProductDetailPages',
-    'composeSuratDurusoftLabel',
+    'composeSuratLabel',
     'deriveAugmentedSuratZpl',
     'OrtakBarkodOlustur',
   ]) {

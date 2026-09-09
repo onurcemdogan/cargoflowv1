@@ -297,7 +297,7 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
         // DÖNDÜRÜLMÜŞ METİN (dikey sipariş rayı): eksenler YER DEĞİŞTİRİR.
         // Metnin uzunluğu DİKEY eksene, karakter hücresi YATAY eksene düşer.
         //
-        // KÖK NEDEN (DuruSoft cila turu): yön ne olursa olsun kutu origin'den
+        // KÖK NEDEN (cila turu): yön ne olursa olsun kutu origin'den
         // AŞAĞI uzatılıyordu. ^FWB (alttan üste okunan) ray için bu, etiket
         // boyunu (799) AŞAN sahte bir alt sınır üretiyordu (ör. 700 + 312 =
         // 1012). Ray gerçekte origin'den YUKARI uzar.

@@ -1,4 +1,4 @@
-// CLI: Durusoft ↔ CargoFlow sipariş/paket sayısı mutabakatı — SALT OKUNUR.
+// CLI: Referans rapor ↔ CargoFlow sipariş/paket sayısı mutabakatı — SALT OKUNUR.
 //
 // Provider (Trendyol/Sürat) çağrısı YAPMAZ, DB'ye YAZMAZ, gönderi
 // OLUŞTURMAZ. Yalnız mevcut yerel kayıtları okur ve CargoFlow'un GERÇEK

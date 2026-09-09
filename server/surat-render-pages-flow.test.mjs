@@ -251,7 +251,7 @@ test('RENDER-PAGES-6: render servisi ürün toplama/planlayıcı/composer ÇALI�
     'aggregateProductLineItems',
     'planProductDetailPages',
     'buildProductDetailLabels',
-    'composeSuratDurusoftLabel',
+    'composeSuratLabel',
     'deriveAugmentedSuratZpl',
     'OrtakBarkodOlustur',
     'compareAndSetArtifact',
@@ -379,7 +379,7 @@ test('RENDER-PAGES-10: mevcut tek görüntü sözleşmesi KORUNUR', async () => 
   assert.equal(dto.heightMm, 99.875)
   assert.equal(dto.imageBase64, dto.pages[0].imageBase64)
   assert.ok(typeof dto.printZplSha256 === 'string' && dto.printZplSha256.length === 64)
-  assert.ok(['official_augmented', 'durusoft_composed'].includes(dto.renderContract))
+  assert.ok(['official_augmented', 'carrier_composed'].includes(dto.renderContract))
   // Yanıt HAM ZPL taşımaz.
   const serialized = JSON.stringify(dto)
   for (const forbidden of ['^XA', '^FD', 'technicalZpl', 'printZpl"']) {

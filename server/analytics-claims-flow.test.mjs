@@ -229,7 +229,7 @@ test('dashboard satış kartları claim mutabakatı (A-E, H)', async (t) => {
 
   // H) order-cohort: order geçen ay, claim event bu ay → iade SİPARİŞİN
   // ayına (GEÇEN AY) yazılır; bu ay (claim event ayı) etkilenmez. Böylece
-  // satış hangi ayda sayıldıysa iade de o ay düşer (Durusoft mutabakatı).
+  // satış hangi ayda sayıldıysa iade de o ay düşer (referans rapor mutabakatı).
   {
     const orders = [
       saleOrder({ id: 'H', packageId: 'PH', lineId: '6', price: 500, orderDate: '2026-06-15T10:00:00.000Z' }),

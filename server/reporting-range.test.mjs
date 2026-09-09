@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { createServer } from 'vite'
 
-// Satış raporlama günü UTC mutabakatı (Durusoft): saf helper makine
+// Satış raporlama günü UTC mutabakatı (referans rapor): saf helper makine
 // timezone'undan bağımsızdır; yalnız SATIŞ analitiği bucket'ları değişir,
 // operasyon sayaçları yerel gün semantiğini korur.
 test('UTC raporlama günü: sınırlar, TZ bağımsızlığı ve satış/operasyon ayrımı', async (t) => {

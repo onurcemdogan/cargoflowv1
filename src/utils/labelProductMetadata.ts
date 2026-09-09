@@ -79,7 +79,7 @@ export function isPlaceholderValue(value: unknown): boolean {
 
 // Gerçek bir model/stok kodu mu? Serbest metin ("taşlı") REDDEDİLİR.
 //
-// KANIT (DuruSoft canlı çıktısı): gerçek merchant SKU'su SAF SAYISAL olabilir
+// KANIT (referans canlı çıktı): gerçek merchant SKU'su SAF SAYISAL olabilir
 // ("[6496]"). Eski kural "en az bir harf VE en az bir rakam" istediği için bu
 // tür kodlar sessizce DÜŞÜYORDU. Kural daraltıldı: saf sayısal kod da geçerli
 // SAYILIR, ancak BEDEN ile karışmaması için en az 4 hane olmalıdır

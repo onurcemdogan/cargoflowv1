@@ -176,7 +176,7 @@ function purgeEligibilityWhere(cutoff: Date) {
 // ama hiçbir operasyon tarihi uydurulmuş olmaz.
 //
 // KAPSAM ARŞİV KURALIYLA AYNIDIR: yalnız LABEL_READY/LABEL_PRINTED ve
-// pazaryeri ileri/terminal DEĞİLSE. Yani Trendyol Shipped (DuruSoft gibi
+// pazaryeri ileri/terminal DEĞİLSE. Yani Trendyol Shipped (referans gibi
 // harici sağlayıcı vakaları dâhil), Delivered, iptal/iade, çözülmemiş
 // (NEW/BARCODE_WAITING) ve zaten arşivli kayıtlar baseline ALMAZ.
 function baselineEligibilityWhere() {

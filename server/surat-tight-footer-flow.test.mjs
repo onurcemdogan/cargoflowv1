@@ -353,7 +353,7 @@ test('TF-15: ^FT + ^BC yorum satırı payı AŞAĞI eklenir, çubuklar YUKARI', 
   assert.ok(none.contentBottom <= 500, `taban aşılmamalı: ${none.contentBottom}`)
 })
 
-// ═══ TF-16..TF-19: DURUSOFT CİLA TURU (yalnız augmentation katmanı) ═════
+// ═══ TF-16..TF-19: CİLA TURU (yalnız augmentation katmanı) ═════
 
 const LONG_ITEM = {
   quantity: 1,
@@ -373,7 +373,7 @@ test('TF-16: metin TEK sürekli ^FB bloğunda akar (başlık/meta ZORLA ayrılma
     '/src/utils/suratZplProductLine.ts')
   const plan = planSuratFooter([LONG_ITEM], ROOMY)
   assert.equal(plan.ok, true)
-  // Ürün başına TEK blok → DuruSoft gibi doğal sarma.
+  // Ürün başına TEK blok → referans gibi doğal sarma.
   assert.equal(plan.blocks[0].length, 1, 'iki bloklu biçim KALDIRILDI')
   const commands = buildFooterZplCommands(plan, { utf8: true })
   assert.equal(commands.length, 1, 'tek ^FB komutu')
@@ -382,7 +382,7 @@ test('TF-16: metin TEK sürekli ^FB bloğunda akar (başlık/meta ZORLA ayrılma
 })
 
 // SÖZLEŞME GÜNCELLENDİ: eski hedef "satır sayısını azalt" idi; fiziksel
-// referans (DuruSoft termal çıktı) ise DAHA BÜYÜK FONT + SARMA gösteriyor.
+// referans (referans termal çıktı) ise DAHA BÜYÜK FONT + SARMA gösteriyor.
 // Yeni hedef: yer varken en büyük fontu kullan ve banda SIĞ.
 test('TF-17: sürekli akış — yer varken EN BÜYÜK font, taşma YOK', async () => {
   const { planSuratFooter } = await load('/src/utils/suratZplProductLine.ts')
@@ -476,7 +476,7 @@ function parseTight() {
 
 // ═══ TF-20..TF-24: DÖNDÜRÜLMÜŞ RAY GEOMETRİSİ + SOL SINIR ══════════════
 //
-// DuruSoft footer'ı etiketin sol fiziksel kenarına yakın başlar. Bizimki
+// referans footer'ı etiketin sol fiziksel kenarına yakın başlar. Bizimki
 // dikey "Sipariş No" rayının sağından başlıyordu, çünkü döndürülmüş metin
 // yön (orientation) gözetmeden origin'den AŞAĞI uzatılıyordu: ^FWB rayı için
 // bu, ^LL'yi (799) aşan sahte bir alt sınır üretiyordu (700 + 312 = 1012).
@@ -525,7 +525,7 @@ test('TF-22: footer rayla ÇAKIŞMAZ', async () => {
   assert.equal(belowRail, true, 'bu şekilde footer rayın altındadır')
 })
 
-test('TF-23: footer sol sınırı DuruSoft gibi sola yaklaşır', async () => {
+test('TF-23: footer sol sınırı referans gibi sola yaklaşır', async () => {
   const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
   const { planSuratFooter } = await load('/src/utils/suratZplProductLine.ts')
   const geometry = parseSuratZplGeometry(PROD_ZPL)
@@ -557,7 +557,7 @@ test('TF-24: ray ÖLÇÜLEMEZSE muhafazakâr sol sınır KORUNUR', async () => {
   assert.equal(planSuratFooter([LIVE_ITEM], overlapping).area.x, 69)
 })
 
-// ═══ TF-25..TF-28: ÜRÜN TEKİLLEŞTİRME (DuruSoft kompaktlığı) ═══════════
+// ═══ TF-25..TF-28: ÜRÜN TEKİLLEŞTİRME (referans kompaktlık) ═══════════
 
 test('TF-25: AYNI ürünün tekrar satırları TEK satırda toplanır', async () => {
   const { aggregateProductLineItems, buildProductLineText } = await load(

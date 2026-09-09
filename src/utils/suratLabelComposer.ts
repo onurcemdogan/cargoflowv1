@@ -1,6 +1,6 @@
-// DURUSOFT PARITY COMPOSER.
+// SÜRAT ETİKET COMPOSER — REFERANS ÇIKTIYLA PARİTE.
 //
-// Gerçek Sürat technicalZpl'inden, DuruSoft referansına eşlenik türetilmiş
+// Gerçek Sürat technicalZpl'inden, referans çıktıya eşlenik türetilmiş
 // baskı ZPL'i üretir. Kaynak ZPL'e DOKUNULMAZ; composer yalnız türev üretir.
 //
 // ═══ SÖZLEŞME (composed mode) ══════════════════════════════════════════════
@@ -30,7 +30,7 @@
 // D) DETERMINISM — aynı girdi her zaman bayt bayt aynı çıktıyı verir.
 //
 // E) QR ZORUNLULUĞU — doğrulanmış 727 VARSA ve GEÇERLİYSE, QR composed modun
-//    ZORUNLU parçasıdır. QR güvenli alana sığmıyorsa QR'sız KISMİ bir DuruSoft
+//    ZORUNLU parçasıdır. QR güvenli alana sığmıyorsa QR'sız KISMİ bir referans çıktı
 //    etiketi ÜRETİLMEZ: composer tümüyle reddeder ve official_augmented
 //    fallback'i kullanılır. (727 yok / geçersiz / kaynaklar çelişiyorsa mevcut
 //    iş kuralı sürer: QR basılmaz, composed modun geri kalanı çalışır.)
@@ -142,9 +142,9 @@ const TRANSFER_FONT_WIDTH_STEPS: readonly number[] = [46, 43, 40]
  *
  * Version 1 (21 modül) doğrulanmış 727 payload'ı için yeterlidir.
  * İlk GÜVENLİ aday seçilir; hiçbiri güvenli değilse composer REDDEDER
- * (QR'sız kısmi DuruSoft etiketi ÜRETİLMEZ).
+ * (QR'sız kısmi referans etiket ÜRETİLMEZ).
  *
- *   A) mag 5 (105 dot), DuruSoft'un ideal sağ-alt konumu
+ *   A) mag 5 (105 dot), referans çıktının ideal sağ-alt konumu
  *   B) mag 4 (84 dot),  aynı bant — uzun aktarma adlarında sağa kayabilir
  *
  * YÜKSELTİLMİŞ BANT DEĞERLENDİRİLDİ VE REDDEDİLDİ: ödeme ayracı (y=539) ile
@@ -236,7 +236,7 @@ const QR_QUIET_MODULES = 4
 const LABEL_EDGE = 799
 
 export type SuratComposeMode =
-  | 'durusoft_composed'
+  | 'carrier_composed'
   | 'fallback_unknown_template'
   | 'fallback_semantic_failure'
   | 'fallback_geometry_failure'
@@ -845,7 +845,7 @@ function cloneFieldAt(
 
 // ═══ COMPOSER ═════════════════════════════════════════════════════════════
 
-export function composeSuratDurusoftLabel(
+export function composeSuratLabel(
   rawSourceZpl: unknown,
   input: SuratComposeInput = {},
 ): SuratComposedLabel {
@@ -1041,7 +1041,7 @@ export function composeSuratDurusoftLabel(
   }
 
   // E) DOĞRULANMIŞ 727 VARSA QR ZORUNLUDUR. Hiçbir aday güvenli değilse
-  //    QR'sız kısmi DuruSoft etiketi üretmek YERİNE composer tümüyle reddeder.
+  //    QR'sız kısmi referans etiket üretmek YERİNE composer tümüyle reddeder.
   if (qr.payload !== null && !placement) {
     return fallback(
       'fallback_geometry_failure',
@@ -1362,7 +1362,7 @@ export function composeSuratDurusoftLabel(
 
   return {
     composed: true,
-    mode: 'durusoft_composed',
+    mode: 'carrier_composed',
     reason: null,
     zpl: outputZpl,
     diagnostics: {

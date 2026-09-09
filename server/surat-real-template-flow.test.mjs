@@ -205,7 +205,7 @@ test('RT-9: geometri ölçümü gerçek şablonda tutarlı', async () => {
 //           Bu, composer'dan ÖNCEKİ davranışın AYNISIDIR ve hiçbir iddiası
 //           gevşetilmemiştir — altındaki test gövdesi değişmedi.
 //
-//   RT-10B  durusoft_composed — DuruSoft parity için bilinçli layout dönüşümü
+//   RT-10B  carrier_composed — referans çıktı parity için bilinçli layout dönüşümü
 //           uygulanır (^BC yorum satırı Y→N). Bu yüzden bayt-önek iddiası
 //           BURADA GEÇERSİZDİR; yerine DAHA GÜÇLÜ bir sözleşme kanıtlanır:
 //           kaynak artefakt değişmez + 6 semantic invariant + transform
@@ -256,7 +256,7 @@ test('RT-10B: composed mod kaynağı korur ve whitelist/invariant ile bağlanır
     '/server/shipments/printZplRepository.ts')
   const { parseZplDocument } = await load('/src/utils/zplCommandModel.ts')
   const { diffZplAgainstSource, INVARIANT_KEYS } = await load(
-    '/src/utils/suratDurusoftComposer.ts')
+    '/src/utils/suratLabelComposer.ts')
   const { extractSuratSemanticFields } = await load(
     '/src/utils/suratSemanticParser.ts')
 
@@ -266,8 +266,8 @@ test('RT-10B: composed mod kaynağı korur ve whitelist/invariant ile bağlanır
   const derived = deriveAugmentedSuratZplWithHashes(zpl, items, { compose })
 
   // — A) SOURCE IMMUTABILITY —
-  assert.equal(derived.renderContract, 'durusoft_composed')
-  assert.equal(derived.composeMode, 'durusoft_composed')
+  assert.equal(derived.renderContract, 'carrier_composed')
+  assert.equal(derived.composeMode, 'carrier_composed')
   assert.equal(derived.sourceZpl, zpl, 'kaynak AYNEN taşınır')
   assert.equal(sha256Hex(zpl), sourceShaBefore, 'kaynak SHA değişmez')
   assert.equal(derived.printZplSourceSha256, sourceShaBefore)

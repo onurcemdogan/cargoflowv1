@@ -38,7 +38,7 @@ const MASKED_ZPL = readFileSync(
 
 let _vite
 let renderZplToPng
-let composeSuratDurusoftLabel
+let composeSuratLabel
 let resolveCarrierQrEnlargement
 let resolveVerticalReferenceShift
 let fieldTextBox
@@ -56,10 +56,10 @@ before(async () => {
     '/server/labels/zplRenderService.ts',
   ))
   ;({
-    composeSuratDurusoftLabel,
+    composeSuratLabel,
     resolveCarrierQrEnlargement,
     resolveVerticalReferenceShift,
-  } = await _vite.ssrLoadModule('/src/utils/suratDurusoftComposer.ts'))
+  } = await _vite.ssrLoadModule('/src/utils/suratLabelComposer.ts'))
   ;({ fieldTextBox } = await _vite.ssrLoadModule(
     '/src/utils/zplTextGeometry.ts',
   ))
@@ -117,7 +117,7 @@ function inkDelta(before, after, predicate = () => true) {
   }
 }
 
-const compose = (zpl, input = {}) => composeSuratDurusoftLabel(zpl, input)
+const compose = (zpl, input = {}) => composeSuratLabel(zpl, input)
 
 // ═══ GEO-01..GEO-05: QR BÜYÜTME ═════════════════════════════════════════
 
@@ -134,7 +134,7 @@ test('GEO-01: kaynak QR token bozuk olduğu için 21×21 dot basılıyor', async
 
 test('GEO-02: composed QR 105×105 dot — modül kenarı 0.625 mm', async () => {
   const composed = compose(V2_ZPL)
-  assert.equal(composed.mode, 'durusoft_composed')
+  assert.equal(composed.mode, 'carrier_composed')
   const enlargement = composed.diagnostics.carrierQr
   assert.ok(enlargement, 'QR büyütmesi uygulanmalı')
   assert.equal(enlargement.effectiveMagnification, 1, 'yazıcının GERÇEKTE uyguladığı değer')
@@ -353,7 +353,7 @@ test('GEO-12: taşıyıcı komutu SİLİNMEZ, beklenmeyen mutasyon YOK', () => {
     ['maskeli', MASKED_ZPL],
   ]) {
     const composed = compose(zpl, { cargoTrackingNumber: '7271234567890' })
-    assert.equal(composed.mode, 'durusoft_composed', name)
+    assert.equal(composed.mode, 'carrier_composed', name)
     assert.equal(composed.diagnostics.diff.deletions, 0, `${name}: silme YOK`)
     assert.equal(
       composed.diagnostics.diff.unexpectedMutations,
@@ -515,7 +515,7 @@ test('GEO-19: barkod altı numara BASILAN barkoda ortalanır', async () => {
       `^FD>:${payload}^FS`,
     )
     const composed = compose(source)
-    assert.equal(composed.mode, 'durusoft_composed', payload)
+    assert.equal(composed.mode, 'carrier_composed', payload)
 
     const bm = await bitmap(composed.zpl)
     const bars = barcodeSpan(bm)

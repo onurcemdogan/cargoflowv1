@@ -174,7 +174,7 @@ test('SERVE-9/10: yalnız verilen baytlar kullanılır — üretim/toplama YOK',
   const { readFileSync } = await import('node:fs')
   const source = readFileSync('src/utils/printableLabelJob.ts', 'utf8')
   assert.equal(
-    /aggregateProductLineItems|planProductDetailPages|composeSuratDurusoftLabel|renderZplToPng/.test(
+    /aggregateProductLineItems|planProductDetailPages|composeSuratLabel|renderZplToPng/.test(
       source,
     ),
     false,

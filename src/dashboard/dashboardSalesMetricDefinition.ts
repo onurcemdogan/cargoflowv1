@@ -1,6 +1,6 @@
 // CANONICAL Dashboard satış metriği tanımı — TEK KAYNAK (single source of truth).
 //
-// CargoFlow local-only Dashboard ile referans (Trendyol/Durusoft) satış
+// CargoFlow local-only Dashboard ile referans (Trendyol / dış rapor) satış
 // Dashboard'u arasındaki tutarsızlık KÖK NEDENİ bir FORMÜL farkı değil, bir
 // TANIM (semantik) farkıdır. Bu modül o tanımı açıkça sabitler; backend
 // mutabakatı, frontend viewModel ve diagnostic CLI AYNI tanımı kullanır ki
@@ -36,7 +36,7 @@ export const SALES_DATE_BASIS_LABEL = 'Sipariş Tarihine Göre Satış'
 export const ACTIVITY_DATE_BASIS_LABEL = 'Son Güncellenme Tarihine Göre Aktivite'
 
 // ── SAAT DİLİMİ ──────────────────────────────────────────────────────────────
-// Satış rapor GÜNÜ Durusoft mutabakatı gereği UTC bucket sınırıyla hesaplanır;
+// Satış rapor GÜNÜ referans rapor mutabakatı gereği UTC bucket sınırıyla hesaplanır;
 // "bugün hangi tarih?" seçimi (anchor) Europe/Istanbul takvimine göre yapılır
 // (bkz. reportingRange.ts). Kullanıcıya gösterim İstanbul'dur.
 export const SALES_REPORTING_TIME_ZONE = 'UTC' as const

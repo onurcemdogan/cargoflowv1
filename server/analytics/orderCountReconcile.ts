@@ -1,6 +1,6 @@
-// Durusoft ↔ CargoFlow sipariş/paket sayısı mutabakatı — SAF model (IO YOK).
+// Referans rapor ↔ CargoFlow sipariş/paket sayısı mutabakatı — SAF model (IO YOK).
 //
-// AMAÇ: "Durusoft 35 paket, CargoFlow 25" farkının hangi katmandan geldiğini
+// AMAÇ: "referans rapor 35 paket, CargoFlow 25" farkının hangi katmandan geldiğini
 // KANITA bağlamak. Provider çağrısı, DB write ve UI değişikliği YOKTUR.
 //
 // GİZLİLİK: müşteri adı, adres, telefon, ham order/package ID veya payload
@@ -212,7 +212,7 @@ export interface ReconcileDecision {
 
 // Karar sırası bilinçli: önce ölçülebilir MEKANİK kusurlar (fetch/scope/
 // pagination), sonra veri eksikliği, en son semantik/tanım farkı. Kanıt
-// olmadan "Durusoft yanlış" veya "CargoFlow eksik" DENMEZ.
+// olmadan "referans rapor yanlış" veya "CargoFlow eksik" DENMEZ.
 export function decideReconciliation(input: ConclusionInput): ReconcileDecision {
   const evidence: string[] = []
 

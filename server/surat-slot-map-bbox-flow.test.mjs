@@ -198,9 +198,9 @@ test('SLOT-REG: yeni test dosyasi test:surat icinde KAYITLI', () => {
 
 /* ═══ COMPOSER — v2 ŞABLONU ARTIK BESTELENİR ═══════════════════════ */
 
-const COMPOSER = await import('../src/utils/suratDurusoftComposer.ts')
+const COMPOSER = await import('../src/utils/suratLabelComposer.ts')
 const V2_NUMERIC = 'surat-real-v2-numeric.zpl'
-const compose = (zpl) => COMPOSER.composeSuratDurusoftLabel(zpl, {
+const compose = (zpl) => COMPOSER.composeSuratLabel(zpl, {
   items: [{ productName: 'Urun A', quantity: 2 }],
   cargoTrackingNumber: '7270034422363739',
 })

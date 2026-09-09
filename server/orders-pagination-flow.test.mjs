@@ -136,7 +136,7 @@ test('PAG-2: tam 25 kayıt artık tavana takılmaz', async () => {
   assert.equal(orders.length, 25)
 })
 
-test('PAG-3: 35 paket İKİ sayfadan eksiksiz yüklenir (Durusoft senaryosu)', async () => {
+test('PAG-3: 35 paket İKİ sayfadan eksiksiz yüklenir (referans rapor senaryosu)', async () => {
   // Backend'in 25'lik varsayılanını taklit et: pageSize yanıtta 25 dönerse
   // yükleyici KALAN sayfaları da çeker.
   const calls = []

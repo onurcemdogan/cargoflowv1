@@ -1,6 +1,6 @@
-// DURUSOFT SAĞ-ALT QR — CANONICAL PAYLOAD ÇÖZÜMÜ.
+// SAĞ-ALT QR — CANONICAL PAYLOAD ÇÖZÜMÜ.
 //
-// DOĞRULANMIŞ İŞ KURALI: DuruSoft referans etiketindeki sağ-alt QR fiziksel
+// DOĞRULANMIŞ İŞ KURALI: referans etiketteki sağ-alt QR fiziksel
 // olarak okutulmuştur ve `727` ile başlayan Trendyol takip/QR numarasını verir.
 // Bu bir varsayım DEĞİL, ölçülmüş bir gerçektir.
 //

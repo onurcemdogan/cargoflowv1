@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
+
+/** Muhafizin kendi yolu: literal YALNIZ burada gecebilir. */
+const SELF = 'server/sync-status-copy-flow.test.mjs'
 
 // A) MARKA REFERANSI TEMIZLIGI  B) SON SENKRONIZASYON DURUMU — KAYNAK SOZLESMELERI
 //
@@ -44,15 +48,46 @@ const UI_SOURCES = [
   'src/components/ActionResult.tsx',
 ]
 
+// ═══ MARKA ADI YALNIZ BURADA GECER — BILINCLI ═══════════════════════════
+//
+// Ucuncu taraf firma adi CargoFlow deposunun HICBIR yerinde gecmemelidir.
+// Bu kuralin kendisi ancak adi ARAYAN bir kontrolle uygulanabilir; bu yuzden
+// literal SADECE bu iki NEGATIF iddiada yasar. Buradan silmek, kurali
+// uygulayan tek mekanizmayi ortadan kaldirir.
+const FORBIDDEN_BRAND = /durusoft/i
+
 test('COPY-1: kullaniciya gorunen hicbir yuzeyde marka referansi YOK', () => {
   for (const relative of UI_SOURCES) {
     const visible = withoutComments(readSource(relative))
     assert.equal(
-      /durusoft/i.test(visible),
+      FORBIDDEN_BRAND.test(visible),
       false,
       `${relative} kullaniciya gorunen metinde marka referansi tasimamali`,
     )
   }
+})
+
+test('COPY-1b: DEPONUN TAMAMINDA marka referansi YOK (bu muhafiz haric)', () => {
+  // Kabul kriteri artik calistirilabilir: yorumlarda, testlerde, fixture'larda
+  // ve dosya adlarinda da geri gelemez.
+  const tracked = execFileSync('git', ['ls-files'], { encoding: 'utf8' })
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  const offenders = []
+  for (const relative of tracked) {
+    if (relative === SELF) continue
+    if (FORBIDDEN_BRAND.test(relative)) offenders.push(`${relative} (dosya adi)`)
+    let content
+    try {
+      content = readFileSync(relative, 'utf8')
+    } catch {
+      continue // ikili dosya veya okunamiyor
+    }
+    if (FORBIDDEN_BRAND.test(content)) offenders.push(relative)
+  }
+  assert.deepEqual(offenders, [], `marka referansi geri gelmis: ${offenders.join(', ')}`)
 })
 
 test('COPY-2: tooltip marka bagimsiz metni gosterir', () => {
@@ -62,7 +97,7 @@ test('COPY-2: tooltip marka bagimsiz metni gosterir', () => {
       'Satış raporlarında aynı gün sınırı kullanılır. Sipariş saatleri Türkiye saatiyle gösterilmeye devam eder.',
     ),
   )
-  assert.equal(/title="Durusoft/i.test(dashboard), false)
+  assert.equal(/title="durusoft/i.test(dashboard), false)
 })
 
 test('COPY-3: rapor gunu / saat davranisi DEGISMEDI', () => {
@@ -73,11 +108,11 @@ test('COPY-3: rapor gunu / saat davranisi DEGISMEDI', () => {
 })
 
 test('COPY-4: ic tanimlayicilar (composer/render contract) KORUNUR', () => {
-  const composer = readSource('src/utils/suratDurusoftComposer.ts')
-  assert.ok(composer.includes('composeSuratDurusoftLabel'))
-  assert.ok(composer.includes('durusoft_composed'))
+  const composer = readSource('src/utils/suratLabelComposer.ts')
+  assert.ok(composer.includes('composeSuratLabel'))
+  assert.ok(composer.includes('carrier_composed'))
   const augmented = readSource('src/utils/augmentedSuratZpl.ts')
-  assert.ok(augmented.includes('composeSuratDurusoftLabel'))
+  assert.ok(augmented.includes('composeSuratLabel'))
 })
 
 test('SYNC-STATUS-6: basarisiz yenileme onceki basariyi SILMEZ', () => {

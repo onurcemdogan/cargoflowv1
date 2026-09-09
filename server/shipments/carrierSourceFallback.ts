@@ -46,7 +46,7 @@ export type CarrierValidation =
  * Karşılaştırma için canonical biçim.
  *
  * `>:` ZPL Code128 subset-C anahtarıdır ve VERİNİN PARÇASI DEĞİLDİR; alan
- * gövdesinden ayrılır (bkz. suratDurusoftComposer, aynı kural). Bunun dışında
+ * gövdesinden ayrılır (bkz. suratLabelComposer, aynı kural). Bunun dışında
  * yalnız kenar boşluğu kırpılır: hane atma, biçim tahmini, kısmi eşleşme YOK.
  */
 export function normalizeCarrierCode(value: unknown): string {

@@ -1,6 +1,6 @@
 // RESMÎ SÜRAT ZPL'İNE ÜRÜN SATIRI EKLEME — SAF (IO/DOM/ağ YOK).
 //
-// KANIT (DuruSoft canlı çıktısı): resmî Sürat etiketi AYNEN korunuyor; tek
+// KANIT (referans canlı çıktı): resmî Sürat etiketi AYNEN korunuyor; tek
 // eklenen şey etiketin en altındaki ürün satırı:
 //   "1 x Önü Drapeli Loş Tesettür Takım (Renk: Krem, Beden: 40) [6496]"
 // Header, 1D barkod, barkod altı numara, alıcı/adres, ödeme tipi, birim, desi,
@@ -53,7 +53,7 @@ export interface SuratFooterProfile {
 
 // ÖNCELİK SIRASI: BÜYÜK FONT → WRAP → ancak son çare olarak SHRINK.
 //
-// FİZİKSEL KANIT (kullanıcının Zebra çıktısı, 203 dpi): DuruSoft'un ürün
+// FİZİKSEL KANIT (kullanıcının Zebra çıktısı, 203 dpi): referans çıktının ürün
 // satırı İKİ SATIR ve belirgin şekilde daha büyük okunuyor; CargoFlow'un
 // tek satırı küçük kalıyordu. Eski politika "ne olursa olsun tek satıra
 // sığdır ve küçült" idi — merdivende her `wrapped-*` profili, kendinden
@@ -76,7 +76,7 @@ export const SURAT_FOOTER_PROFILES: SuratFooterProfile[] = [
   //
   // ÖLÇÜM (maskeli gerçek şablon, footer bandı 771 × 66 dot): tipik ürün
   // satırı (~76 karakter) 20 dot'ta tek satıra sığmıyordu ve eski merdiven
-  // onu 18 dot TEK satıra düşürüyordu. Fiziksel referansta DuruSoft aynı
+  // onu 18 dot TEK satıra düşürüyordu. Fiziksel referansta referans çıktı aynı
   // içeriği İKİ SATIR ve daha büyük fontla basıyor. İki satır 20 dot
   // 50 dot yer tutar (66 dot banda sığar).
   { key: 'wrapped-standard', fontHeight: 20, fontWidth: 20, maxLinesPerItem: 2, lineGap: 4 },
@@ -106,7 +106,7 @@ export const SURAT_FOOTER_PROFILES: SuratFooterProfile[] = [
   // sığmıyorsa ürün satırı yine EKLENMEZ (sessiz kırpma YOK).
   // ARA KADEME: 16 → 12 sıçramasını kapatır. Yer varsa DAHA BÜYÜK okunur
   // fontu (14 dot) iki satırda kullanmak, 12 dot'luk tek satırdan daha
-  // profesyonel görünür — DuruSoft referansı da iki satırlıdır.
+  // profesyonel görünür — referans çıktı da iki satırlıdır.
   { key: 'wrapped-mid', fontHeight: 14, fontWidth: 12, maxLinesPerItem: 2, lineGap: 2 },
   { key: 'single-line-micro', fontHeight: 12, fontWidth: 10, maxLinesPerItem: 1, lineGap: 1 },
   { key: 'wrapped-micro', fontHeight: 12, fontWidth: 10, maxLinesPerItem: 2, lineGap: 1 },
@@ -140,7 +140,7 @@ export const DEFAULT_PRODUCT_LINE_PARTS: ProductLineParts = {
 }
 
 /**
- * DuruSoft biçimi: `{adet} x {ürün adı} (Renk: X, Beden: Y) [SKU]`.
+ * referans biçim: `{adet} x {ürün adı} (Renk: X, Beden: Y) [SKU]`.
  * Renk/beden bulunamazsa "Belirtilmemiş" yazılır (TAHMİN YOK). SKU yoksa
  * köşeli parantez HİÇ basılmaz; boş "()", "[]" veya sarkan ayraç oluşmaz.
  */
@@ -176,7 +176,7 @@ export function buildProductLineText(
 }
 
 /**
- * SUNUM AŞAMASINDA TEKİLLEŞTİRME (DuruSoft referansı).
+ * SUNUM AŞAMASINDA TEKİLLEŞTİRME (referans çıktı).
  *
  * AYNI ürünün birden çok sipariş satırı tek satırda toplanır:
  *   "1 x Elbise (Renk: Lacivert, Beden: 40)" ×2  →  "2 x Elbise (...)"
@@ -314,7 +314,7 @@ export interface SuratFooterArea {
 export function resolveFooterArea(geometry: ZplGeometry): SuratFooterArea {
   const top = geometry.contentBottom + FOOTER_TOP_GAP
   const bottom = geometry.labelLength - FOOTER_BOTTOM_MARGIN
-  // SOL SINIR — DuruSoft referansı footer'ı etiketin sol fiziksel kenarına
+  // SOL SINIR — referans çıktı footer'ı etiketin sol fiziksel kenarına
   // yakın başlatır. Bunu yapabilmek için rayın GERÇEK dikey uzanımı bilinir:
   // dikey "Sipariş No" rayı ^FWB ile alttan üste uzanır, yani `leftRailBottom`
   // origin'dir ve footer bunun ALTINDA kalıyorsa ray artık yolda DEĞİLDİR.
@@ -407,7 +407,7 @@ export function planSuratFooter(
       const full = buildProductLineText(item, parts)
       const singleLines = estimateLines(full, profile.fontWidth, area.width)
       if (singleLines === 1) {
-        // DuruSoft kanıtı: mümkün olduğunda TEK kompakt satır.
+        // referans kanıtı: mümkün olduğunda TEK kompakt satır.
         blocks.push([{ text: full, lines: 1 }])
         continue
       }
@@ -415,7 +415,7 @@ export function planSuratFooter(
         fits = false
         break
       }
-      // SÜREKLİ AKIŞ (DuruSoft referansı): başlık ile meta arasına ZORLA
+      // SÜREKLİ AKIŞ (referans çıktı): başlık ile meta arasına ZORLA
       // satır sonu KOYULMAZ. Tek bir ^FB bloğu metni doğal olarak sarar —
       // "1 x Ürün Adı (Renk: X, Beden: Y)" ilk satırı doldurur, artan
       // "[SKU]" alt satıra akar. Eski iki-bloklu biçim ilk satırı yarım

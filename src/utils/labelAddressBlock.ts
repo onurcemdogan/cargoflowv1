@@ -21,7 +21,7 @@
 // düzenleyicide "bu boyutta adres etikete sığmıyor" uyarısını görür ve
 // puntoyu/satırı kendisi azaltır.
 
-import { estimateA0Width } from './suratDurusoftComposer.ts'
+import { estimateA0Width } from './suratLabelComposer.ts'
 
 export type LabelRenderMode = 'RAW_SURAT_FALLBACK' | 'COMPOSED'
 

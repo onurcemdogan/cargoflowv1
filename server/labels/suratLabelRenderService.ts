@@ -121,11 +121,11 @@ export interface SuratRenderDto {
    * Baskı ZPL'inin RENDER SÖZLEŞMESİ. Teşhis içindir; HAM ZPL, payload veya
    * müşteri alanı İÇERMEZ.
    *   'official_augmented' → resmî ZPL + güvenli ürün footer'ı
-   *   'durusoft_composed'  → DuruSoft parity dönüşümü uygulandı
+   *   'carrier_composed'  → referans parite dönüşümü uygulandı
    */
-  renderContract: 'official_augmented' | 'durusoft_composed'
+  renderContract: 'official_augmented' | 'carrier_composed'
   /**
-   * Composer sonucu: 'durusoft_composed' veya fallback nedeni
+   * Composer sonucu: 'carrier_composed' veya fallback nedeni
    * (fallback_unknown_template | fallback_semantic_failure |
    *  fallback_geometry_failure | fallback_invariant_failure |
    *  fallback_whitelist_violation). Denenmediyse null.

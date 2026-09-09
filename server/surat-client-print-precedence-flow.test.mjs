@@ -247,7 +247,7 @@ test('CLIENT-5: ürün detay FAILED + taşıyıcı HAZIR → ana etiket basılab
 
 test('CLIENT-6: istemci ürün toplama / composer ÇALIŞTIRMAZ', async () => {
   const forbidden =
-    /aggregateProductLineItems|planProductDetailPages|buildProductDetailLabels|composeSuratDurusoftLabel|deriveAugmentedSuratZpl/
+    /aggregateProductLineItems|planProductDetailPages|buildProductDetailLabels|composeSuratLabel|deriveAugmentedSuratZpl/
   const persisted = readFileSync(
     join(here, '..', 'src', 'utils', 'persistedLabel.ts'),
     'utf8',

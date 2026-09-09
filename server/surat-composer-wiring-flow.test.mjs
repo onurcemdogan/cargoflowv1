@@ -9,7 +9,7 @@ import { drizzle } from 'drizzle-orm/pglite'
 import { eq } from 'drizzle-orm'
 import { createServer } from 'vite'
 
-// DURUSOFT COMPOSER — ÜRETİM KABLOLAMASI (WIRING).
+// SÜRAT ETİKET COMPOSER — ÜRETİM KABLOLAMASI (WIRING).
 //
 // NEDEN BU PAKET VAR:
 // Composer'ın kendisi CF-*/CR-* ile doğrulanmıştı, ama üretimde HİÇ
@@ -19,7 +19,7 @@ import { createServer } from 'vite'
 // gerçek caller'ın onu gönderdiğini iddia etmiyordu.
 //
 // Bu paket iddiaları UTILITY seviyesinde değil, ÜRETİM YOLU seviyesinde kurar:
-//   - create yolu ilk artefaktı durusoft_composed üretmeli
+//   - create yolu ilk artefaktı carrier_composed üretmeli
 //   - kalıcı artefakt varsa AYNEN dönmeli (immutable reprint)
 //   - her kritik başarısızlıkta official_augmented'a düşmeli ve
 //     YARIM composed çıktı ASLA kalıcı olmamalı
@@ -129,7 +129,7 @@ const carrierPayload = (source = zpl, extra = {}) => ({
   ...extra,
 })
 
-/** DuruSoft composed çıktının GÖRSEL imzaları. */
+/** referans çıktı composed çıktının GÖRSEL imzaları. */
 function assertComposedMarkers(printZpl) {
   assert.ok(printZpl.includes('^BCN,,N,N'), 'dahili yorum satırı KAPALI')
   assert.equal(printZpl.includes('^BCN,,Y,N'), false)
@@ -175,12 +175,12 @@ function assertNoComposedLeak(printZpl) {
 
 // ═══ CW-1..CW-3: CREATE YOLU (attachPrintZplArtifact) ════════════════════
 
-test('CW-1: create yolu İLK artefaktı durusoft_composed üretir', () => {
+test('CW-1: create yolu İLK artefaktı carrier_composed üretir', () => {
   const next = repo.attachPrintZplArtifact(carrierPayload(), ITEMS, NOW)
   const artifact = next.printZplArtifact
   assert.ok(artifact, 'artefakt yazılmalı')
-  assert.equal(artifact.renderContract, 'durusoft_composed')
-  assert.equal(artifact.composeMode, 'durusoft_composed')
+  assert.equal(artifact.renderContract, 'carrier_composed')
+  assert.equal(artifact.composeMode, 'carrier_composed')
   assertComposedMarkers(artifact.printZpl)
   // Kaynak alanlara DOKUNULMAZ.
   assert.equal(next.technicalZpl, zpl)
@@ -190,7 +190,7 @@ test('CW-1: create yolu İLK artefaktı durusoft_composed üretir', () => {
 test('CW-2: create artefaktında semantic invariant’lar KORUNUR', async () => {
   const { extractSuratSemanticFields } = await load(
     '/src/utils/suratSemanticParser.ts')
-  const { INVARIANT_KEYS } = await load('/src/utils/suratDurusoftComposer.ts')
+  const { INVARIANT_KEYS } = await load('/src/utils/suratLabelComposer.ts')
   const artifact = repo.attachPrintZplArtifact(carrierPayload(), ITEMS, NOW)
     .printZplArtifact
   const before = extractSuratSemanticFields(zpl).fields
@@ -209,7 +209,7 @@ test('CW-3: 727 payload’ın shipment alt kapsamından da çözülür', () => {
     ITEMS,
     NOW,
   ).printZplArtifact
-  assert.equal(artifact.renderContract, 'durusoft_composed')
+  assert.equal(artifact.renderContract, 'carrier_composed')
   assert.ok(artifact.printZpl.includes(`^FDLA,${VERIFIED_727}^FS`))
 })
 
@@ -233,8 +233,8 @@ test('CW-4: kalıcı artefakt varsa AYNEN döner, YENİDEN compose EDİLMEZ', as
   assert.equal(model.hydrated, false, 'yeniden üretim YOK')
   assert.equal(model.printZpl, persisted.printZpl, 'bayt bayt aynı')
   assert.equal(model.printZplSha256, persisted.printZplSha256)
-  assert.equal(model.renderContract, 'durusoft_composed', 'sözleşme taşınır')
-  assert.equal(model.composeMode, 'durusoft_composed')
+  assert.equal(model.renderContract, 'carrier_composed', 'sözleşme taşınır')
+  assert.equal(model.composeMode, 'carrier_composed')
   // İkinci okuma da AYNI.
   const again = await repo.resolvePersistedPrintableLabel(db, key, {
     items: [],
@@ -254,7 +254,7 @@ test('CW-5: artefaktı OLMAYAN legacy kayıt hydration’da composed üretir', a
     now: NOW,
   })
   assert.equal(model.hydrated, true)
-  assert.equal(model.renderContract, 'durusoft_composed')
+  assert.equal(model.renderContract, 'carrier_composed')
   assertComposedMarkers(model.printZpl)
   const stored = await readArtifact(db, organizationId)
   assert.equal(stored.printZpl, model.printZpl, 'kalıcı kayıt da composed')
@@ -294,7 +294,7 @@ test('CW-7: SEMANTIC başarısızlık → official_augmented, sızıntı YOK', (
 })
 
 test('CW-8: GEÇERLİ 727 + QR geometri çakışması → official_augmented', () => {
-  // Aktarma merkezi adı uzarsa QR güvenli alana sığmaz; QR’sız KISMİ DuruSoft
+  // Aktarma merkezi adı uzarsa QR güvenli alana sığmaz; QR’sız KISMİ referans çıktı
   // etiketi üretmek YASAK → composer tümüyle reddeder.
   const crowded = zpl.replace(
     /\^FT220,705\^A0N,70,50\^FH.\^FD[^^]*\^FS/,
@@ -317,9 +317,9 @@ test('CW-9: 727 YOK → composed sürer ama QR BASILMAZ', () => {
     ITEMS,
     NOW,
   ).printZplArtifact
-  assert.equal(artifact.renderContract, 'durusoft_composed')
+  assert.equal(artifact.renderContract, 'carrier_composed')
   assert.equal((artifact.printZpl.match(/\^BQ/g) ?? []).length, 0)
-  // Diğer DuruSoft dönüşümleri YİNE uygulanır.
+  // Diğer referans çıktı dönüşümleri YİNE uygulanır.
   assert.ok(artifact.printZpl.includes('^BCN,,N,N'))
   assert.ok(artifact.printZpl.includes('^FT64,417^A@N'))
 })
@@ -336,7 +336,7 @@ test('CW-10: utility varsayılanı DEĞİŞMEDİ (CF-34 sözleşmesi)', async ()
   const opted = deriveAugmentedSuratZpl(zpl, ITEMS, {
     compose: { cargoTrackingNumber: VERIFIED_727 },
   })
-  assert.equal(opted.renderContract, 'durusoft_composed')
+  assert.equal(opted.renderContract, 'carrier_composed')
 })
 
 // ═══ CW-11..CW-14: UYARLANABİLİR QR YERLEŞİMİ ════════════════════════════
@@ -364,20 +364,20 @@ test('CW-11: ÜRETİM VAKASI "IKITELLI AKTARMA" artık composed üretir', () => 
     NOW,
   ).printZplArtifact
   // Üretimde fallback_geometry_failure veren SINIF.
-  assert.equal(artifact.renderContract, 'durusoft_composed')
-  assert.equal(artifact.composeMode, 'durusoft_composed')
+  assert.equal(artifact.renderContract, 'carrier_composed')
+  assert.equal(artifact.composeMode, 'carrier_composed')
   assertComposedMarkers(artifact.printZpl)
   assert.ok(
     artifact.printZpl.includes(`^BQN,2,5^FDLA,${VERIFIED_727}^FS`),
-    'ideal DuruSoft ölçeği (mag 5) seçilmeli',
+    'ideal referans ölçek (mag 5) seçilmeli',
   )
   // Aktarma merkezi gövdesi AYNEN korunur.
   assert.ok(artifact.printZpl.includes('^FDIKITELLI AKTARMA^FS'))
 })
 
 test('CW-12: uzunluk sınıfları — yaygın adlar composed, ekstrem ad fallback', async () => {
-  const { composeSuratDurusoftLabel } = await load(
-    '/src/utils/suratDurusoftComposer.ts')
+  const { composeSuratLabel } = await load(
+    '/src/utils/suratLabelComposer.ts')
   const expectations = [
     ['VAN AKTARMA', true],
     ['GEBZE AKTARMA', true],
@@ -387,7 +387,7 @@ test('CW-12: uzunluk sınıfları — yaygın adlar composed, ekstrem ad fallbac
     ['ISTANBUL ANADOLU AKTARMA MERKEZI', false],
   ]
   for (const [name, shouldCompose] of expectations) {
-    const result = composeSuratDurusoftLabel(withTransferCenter(name), {
+    const result = composeSuratLabel(withTransferCenter(name), {
       cargoTrackingNumber: VERIFIED_727,
     })
     assert.equal(result.composed, shouldCompose, `${name}: ${result.reason ?? 'composed'}`)
@@ -405,8 +405,8 @@ test('CW-12: uzunluk sınıfları — yaygın adlar composed, ekstrem ad fallbac
 })
 
 test('CW-13: eşik KARAKTER SAYISINA değil GERÇEK GENİŞLİĞE bağlı', async () => {
-  const { composeSuratDurusoftLabel, estimateA0Width } = await load(
-    '/src/utils/suratDurusoftComposer.ts')
+  const { composeSuratLabel, estimateA0Width } = await load(
+    '/src/utils/suratLabelComposer.ts')
   // Aynı karakter sayısı, çok farklı genişlik: dar harfler vs geniş harfler.
   const narrow = 'IIIIIIIIIIIIIIII' // 16 karakter, dar
   const wide = 'WWWWWWWWWWWWWWWW' // 16 karakter, geniş
@@ -416,14 +416,14 @@ test('CW-13: eşik KARAKTER SAYISINA değil GERÇEK GENİŞLİĞE bağlı', asyn
     'tahminci karakter genişliğini AYIRT ETMELİ',
   )
   assert.equal(
-    composeSuratDurusoftLabel(withTransferCenter(narrow), {
+    composeSuratLabel(withTransferCenter(narrow), {
       cargoTrackingNumber: VERIFIED_727,
     }).composed,
     true,
     'dar 16 karakter sığar',
   )
   assert.equal(
-    composeSuratDurusoftLabel(withTransferCenter(wide), {
+    composeSuratLabel(withTransferCenter(wide), {
       cargoTrackingNumber: VERIFIED_727,
     }).composed,
     false,
@@ -432,12 +432,12 @@ test('CW-13: eşik KARAKTER SAYISINA değil GERÇEK GENİŞLİĞE bağlı', asyn
 })
 
 test('CW-14: uzun aktarma adında ölçek küçülür, quiet-zone korunur', async () => {
-  const { composeSuratDurusoftLabel } = await load(
-    '/src/utils/suratDurusoftComposer.ts')
-  const short = composeSuratDurusoftLabel(withTransferCenter('VAN AKTARMA'), {
+  const { composeSuratLabel } = await load(
+    '/src/utils/suratLabelComposer.ts')
+  const short = composeSuratLabel(withTransferCenter('VAN AKTARMA'), {
     cargoTrackingNumber: VERIFIED_727,
   }).diagnostics
-  const long = composeSuratDurusoftLabel(withTransferCenter('ERZURUM AKTARMA'), {
+  const long = composeSuratLabel(withTransferCenter('ERZURUM AKTARMA'), {
     cargoTrackingNumber: VERIFIED_727,
   }).diagnostics
   assert.equal(short.qrMagnification, 5, 'kısa ad → ideal ölçek')
@@ -514,8 +514,8 @@ test('CW-16: ÜRETİM VAKASI "DIYARBAKIR AKTARMA" artık composed üretir', () =
     ITEMS,
     NOW,
   ).printZplArtifact
-  assert.equal(artifact.renderContract, 'durusoft_composed')
-  assert.equal(artifact.composeMode, 'durusoft_composed')
+  assert.equal(artifact.renderContract, 'carrier_composed')
+  assert.equal(artifact.composeMode, 'carrier_composed')
   // DÖRTLÜ AYNI ANDA: küçük barkod metni + bold adres + QR + footer.
   assertComposedMarkers(artifact.printZpl)
   // Aktarma GÖVDESİ değişmez; yalnız font genişliği daralır.
@@ -525,8 +525,8 @@ test('CW-16: ÜRETİM VAKASI "DIYARBAKIR AKTARMA" artık composed üretir', () =
 })
 
 test('CW-17: yaygın aktarma adları compose olur, aşırı uzun ad fallback kalır', async () => {
-  const { composeSuratDurusoftLabel } = await load(
-    '/src/utils/suratDurusoftComposer.ts')
+  const { composeSuratLabel } = await load(
+    '/src/utils/suratLabelComposer.ts')
   const cases = [
     ['VAN AKTARMA', true],
     ['GEBZE AKTARMA', true],
@@ -536,7 +536,7 @@ test('CW-17: yaygın aktarma adları compose olur, aşırı uzun ad fallback kal
     ['ISTANBUL ANADOLU AKTARMA MERKEZI', false],
   ]
   for (const [name, shouldCompose] of cases) {
-    const result = composeSuratDurusoftLabel(withTransferCenter(name), {
+    const result = composeSuratLabel(withTransferCenter(name), {
       cargoTrackingNumber: VERIFIED_727,
     })
     assert.equal(result.composed, shouldCompose, `${name}: ${result.reason ?? 'ok'}`)
@@ -549,7 +549,7 @@ test('CW-17: yaygın aktarma adları compose olur, aşırı uzun ad fallback kal
     assert.ok(transferFontWidth <= transferFontWidthNative, name)
     assert.ok(transferFontWidth >= 40, `${name}: okunabilirlik tabanı`)
     // ÜÇ KOLON: orta blok QR'ın quiet-zone'undan ÖNCE biter.
-    const { estimateA0Width } = await load('/src/utils/suratDurusoftComposer.ts')
+    const { estimateA0Width } = await load('/src/utils/suratLabelComposer.ts')
     const transferRight = 220 + estimateA0Width(name, transferFontWidth)
     const quiet = 4 * result.diagnostics.qrMagnification
     assert.ok(

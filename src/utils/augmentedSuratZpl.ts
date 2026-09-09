@@ -33,10 +33,10 @@ import {
 } from './labelTenantBlocks.ts'
 
 import {
-  composeSuratDurusoftLabel,
+  composeSuratLabel,
   type SuratComposeInput,
   type SuratComposeMode,
-} from './suratDurusoftComposer.ts'
+} from './suratLabelComposer.ts'
 
 /**
  * KALICI ARTEFAKTIN GEOMETRİ SÖZLEŞMESİ.
@@ -97,11 +97,11 @@ export interface AugmentedSuratZpl {
    * Baskı ZPL'i hangi SÖZLEŞMEYLE üretildi.
    *   'official_augmented' → kaynak ZPL çıktının BAYT ÖNEKİ olarak durur
    *                          (RT-10A); taşıyıcı komutları hiç değişmez.
-   *   'durusoft_composed'  → DuruSoft parity dönüşümü uygulandı (RT-10B);
+   *   'carrier_composed'  → referans parite dönüşümü uygulandı (RT-10B);
    *                          kaynak artefakt değişmez, semantic invariant ve
    *                          transform whitelist ile doğrulanır.
    */
-  renderContract: 'official_augmented' | 'durusoft_composed'
+  renderContract: 'official_augmented' | 'carrier_composed'
   /** Composer denendiyse sonucu; denenmediyse null. */
   composeMode: SuratComposeMode | null
   /** Composer fallback'e düştüyse güvenli teknik sebep. */
@@ -156,7 +156,7 @@ export interface DeriveAugmentedOptions {
    */
   productLineParts?: ProductLineParts
   /**
-   * Verilirse DuruSoft composer DENENİR. Verilmezse davranış eskisiyle
+   * Verilirse Sürat etiket composer DENENİR. Verilmezse davranış eskisiyle
    * BİREBİR aynıdır (augmentation-only, RT-10A sözleşmesi).
    */
   compose?: SuratComposeInput
@@ -171,13 +171,13 @@ export function deriveAugmentedSuratZpl(
   // COMPOSER: yalnız açıkça istendiğinde denenir. Kaynak dizgi DEĞİŞMEZ;
   // composer başarısız olursa taban kaynak ZPL olarak kalır (fail-safe).
   const composition = options.compose
-    ? composeSuratDurusoftLabel(sourceZpl, options.compose)
+    ? composeSuratLabel(sourceZpl, options.compose)
     : null
   const composed = composition?.composed === true
   const baseZpl = composed && composition ? composition.zpl : sourceZpl
   const composeFields = {
     renderContract: composed
-      ? ('durusoft_composed' as const)
+      ? ('carrier_composed' as const)
       : ('official_augmented' as const),
     composeMode: composition?.mode ?? null,
     ...(composition && !composed

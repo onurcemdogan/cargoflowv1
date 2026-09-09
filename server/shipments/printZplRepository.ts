@@ -69,7 +69,7 @@ export interface PersistedPrintZpl {
    * Eski kayıtlarda bulunmaz → 'official_augmented' varsayılır (doğrudur:
    * composer'dan önce üretilen her artefakt augmentation-only'dir).
    */
-  renderContract?: 'official_augmented' | 'durusoft_composed'
+  renderContract?: 'official_augmented' | 'carrier_composed'
   /** Composer denendiyse sonucu (fallback sebebi dahil). */
   composeMode?: string
   /**
@@ -238,7 +238,7 @@ function readPersisted(
     ...(typeof block.augmentationReason === 'string'
       ? { augmentationReason: block.augmentationReason as DomainAugmentationStatus }
       : {}),
-    ...(block.renderContract === 'durusoft_composed' ||
+    ...(block.renderContract === 'carrier_composed' ||
     block.renderContract === 'official_augmented'
       ? { renderContract: block.renderContract }
       : {}),
@@ -409,7 +409,7 @@ function readCandidate(
   return undefined
 }
 
-/** Kalıcı payload'dan DuruSoft composer girdisini çözer. */
+/** Kalıcı payload'dan Sürat etiket composer girdisini çözer. */
 export function resolveComposeInput(
   payload: Record<string, unknown>,
 ): { cargoTrackingNumber?: string; ozelKargoTakipNo?: string } {
@@ -735,7 +735,7 @@ export function attachPrintZplArtifact(
 ): Record<string, unknown> {
   const sourceZpl = pickSourceZpl(carrierPayload)
   if (!sourceZpl.trim()) return carrierPayload
-  // DuruSoft composer İLK ARTEFAKT ÜRETİMİNDE devreye girer. Compose girdisi
+  // Sürat etiket composer İLK ARTEFAKT ÜRETİMİNDE devreye girer. Compose girdisi
   // AYNI carrier payload'dan çözülür; composer uygun değilse (şablon, semantic,
   // geometri, invariant, whitelist) sessizce official_augmented'a düşer.
   const { artifact } = buildPrintZplArtifact(

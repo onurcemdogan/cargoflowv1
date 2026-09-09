@@ -72,7 +72,7 @@ const SERVER_REACHABLE_SRC = [
   'src/utils/orderLineIntegrity.ts',
   'src/utils/printableLabelJob.ts',
   'src/utils/shipmentStatus.ts',
-  'src/utils/suratDurusoftComposer.ts',
+  'src/utils/suratLabelComposer.ts',
   'src/utils/suratProductDetailLabel.ts',
   'src/utils/suratProductLineItems.ts',
   'src/utils/suratSemanticParser.ts',

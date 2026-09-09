@@ -1,4 +1,4 @@
-// Durusoft ↔ CargoFlow sayı mutabakatı — SALT OKUNUR veri yolu.
+// Referans rapor ↔ CargoFlow sayı mutabakatı — SALT OKUNUR veri yolu.
 //
 // YALNIZ select. INSERT/UPDATE/DELETE YOK, provider (Trendyol/Sürat) çağrısı
 // YOK. Ham PII bu modülden dışarı taşınmaz; çağıran yalnız aggregate + SHA-256

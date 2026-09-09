@@ -183,42 +183,42 @@
       "x": 65,
       "y": 15,
       "type": "vertical",
-      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+      "evidence": "KANIT YOK: bu cizgi referans fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
     },
     {
       "rawCommand": "^GB760,0,2",
       "x": 20,
       "y": 110,
       "type": "horizontal",
-      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+      "evidence": "KANIT YOK: bu cizgi referans fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
     },
     {
       "rawCommand": "^GB760,0,2",
       "x": 20,
       "y": 285,
       "type": "horizontal",
-      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+      "evidence": "KANIT YOK: bu cizgi referans fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
     },
     {
       "rawCommand": "^GB760,0,2",
       "x": 20,
       "y": 455,
       "type": "horizontal",
-      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+      "evidence": "KANIT YOK: bu cizgi referans fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
     },
     {
       "rawCommand": "^GB760,0,2",
       "x": 20,
       "y": 545,
       "type": "horizontal",
-      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+      "evidence": "KANIT YOK: bu cizgi referans fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
     },
     {
       "rawCommand": "^GB760,0,2",
       "x": 20,
       "y": 700,
       "type": "horizontal",
-      "evidence": "KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
+      "evidence": "KANIT YOK: bu cizgi referans fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR."
     }
   ]
 }

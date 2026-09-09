@@ -6,9 +6,9 @@ Ekrandaki kutu ve çizgiler **renderer'dan gelmiyor**. Hepsi, render'a girdi
 olarak verilen **sentetik fixture'ın kendi `^GB` komutlarından** geliyor.
 
 Sentetik fixture'daki 7 `^GB` komutundan **6'sının gerçek Sürat şablonunda
-bulunduğuna dair hiçbir kanıt yok** — bu satırları DuruSoft fotoğrafına
+bulunduğuna dair hiçbir kanıt yok** — bu satırları referans fotoğrafına
 bakarak ben uydurdum. Bu, kullanıcının koyduğu
-"DuruSoft görseline bakarak koordinat uydurma yok" kuralının ihlalidir.
+"referans görsele bakarak koordinat uydurma yok" kuralının ihlalidir.
 
 Karar kuralı sonucu: **B şıkkı** — sentetik fixture yanlış referanstır.
 
@@ -81,7 +81,7 @@ Sentetik fixture'ın çizgi yapısı, **CargoFlow'un KENDİ ürettiği** ZPL
 Yani "gerçek Sürat şablonu" diye sunduğum fixture, aslında **CargoFlow'un
 kendi etiket tasarımının** kopyasıdır. Sürat'in şablonu değildir.
 
-## 5. DuruSoft ekran görüntüsündeki çizgiler
+## 5. Referans ekran görüntüsündeki çizgiler
 
 Fotoğraf bir **ekran fotoğrafıdır**: moiré, perspektif ve düşük kontrast var.
 Görünmeyen çizgi **yok kabul edilmemiştir**.
@@ -107,7 +107,7 @@ gerçek ZPL'den değil.
 
 ## 6. Ekrandaki "tuhaf" farkların kaynağı
 
-Bir önceki turda paylaştığım zebrash görselinin DuruSoft çıktısından farklı
+Bir önceki turda paylaştığım zebrash görselinin referans çıktıdan farklı
 görünmesinin nedeni **motor değil, fixture koordinatlarıdır**:
 
 - alıcı/adres bölümünde büyük boş alan → fixture'da adres `y=320`'de bitiyor

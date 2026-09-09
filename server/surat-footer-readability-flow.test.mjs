@@ -7,7 +7,7 @@ import { createServer } from 'vite'
 
 // ÜRÜN FOOTER OKUNABİLİRLİĞİ + DİKEY "ALICI" BAŞLIĞININ KALDIRILMASI.
 //
-// FİZİKSEL REFERANS: kullanıcının 203 dpi Zebra çıktısı. DuruSoft'un ürün
+// FİZİKSEL REFERANS: kullanıcının 203 dpi Zebra çıktısı. referans çıktının ürün
 // satırı İKİ SATIR ve belirgin daha büyük okunuyor; CargoFlow tek satıra
 // sığdırıp küçültüyordu.
 //
@@ -72,9 +72,9 @@ test('FOOTER-READABILITY-1: kısa ürün → tek satır, en büyük font', async
   assert.ok(mm(plan.profile.fontHeight) >= 2.2, 'fiziksel yükseklik >= 2,2 mm')
 })
 
-// ═══ FOOTER-READABILITY-2: ORTA (DuruSoft benzeri) ═══════════════════════
+// ═══ FOOTER-READABILITY-2: ORTA (referansa benzer) ═══════════════════════
 
-test('FOOTER-READABILITY-2: DuruSoft benzeri orta uzunluk → 20 dot, iki satır', async () => {
+test('FOOTER-READABILITY-2: referansa benzer orta uzunluk → 20 dot, iki satır', async () => {
   // Fotoğraftaki CargoFlow satırıyla aynı uzunluk sınıfı (~76 karakter).
   // ESKİ davranış: 18 dot TEK satır (fiziksel olarak küçük kalıyordu).
   const plan = await planFor([item()])
@@ -152,10 +152,10 @@ test('FOOTER-READABILITY-4: sıra BÜYÜK FONT → WRAP → SHRINK; taşma yok',
 // ═══ RECIPIENT-1/2: DİKEY "ALICI" BAŞLIĞI ════════════════════════════════
 
 async function composed() {
-  const { composeSuratDurusoftLabel } = await load(
-    '/src/utils/suratDurusoftComposer.ts',
+  const { composeSuratLabel } = await load(
+    '/src/utils/suratLabelComposer.ts',
   )
-  return composeSuratDurusoftLabel(ZPL, {
+  return composeSuratLabel(ZPL, {
     cargoTrackingNumber: '7271234567890',
     ozelKargoTakipNo: '7271234567890',
   })
@@ -163,7 +163,7 @@ async function composed() {
 
 test('RECIPIENT-1: dikey başlık alanının gövdesi BOŞ, komut yapısı yerinde', async () => {
   const result = await composed()
-  assert.equal(result.mode, 'durusoft_composed', result.reason ?? '')
+  assert.equal(result.mode, 'carrier_composed', result.reason ?? '')
 
   const { parseZplDocument, collectZplFields } = await load(
     '/src/utils/zplCommandModel.ts',
@@ -196,14 +196,14 @@ test('RECIPIENT-1: dikey başlık alanının gövdesi BOŞ, komut yapısı yerin
     '^FDALICI^FS',
   )
   assert.ok(withLiteral.includes('^FDALICI^FS'), 'sentetik kaynak hazırlanmalı')
-  const { composeSuratDurusoftLabel } = await load(
-    '/src/utils/suratDurusoftComposer.ts',
+  const { composeSuratLabel } = await load(
+    '/src/utils/suratLabelComposer.ts',
   )
-  const literalResult = composeSuratDurusoftLabel(withLiteral, {
+  const literalResult = composeSuratLabel(withLiteral, {
     cargoTrackingNumber: '7271234567890',
     ozelKargoTakipNo: '7271234567890',
   })
-  assert.equal(literalResult.mode, 'durusoft_composed', literalResult.reason ?? '')
+  assert.equal(literalResult.mode, 'carrier_composed', literalResult.reason ?? '')
   // KABUL KRİTERİ: literal "ALICI" hiçbir ^FD gövdesinde BASILMAZ.
   const bodies = Array.from(literalResult.zpl.matchAll(/\^FD([^]*?)\^FS/g)).map(
     (match) => match[1],
@@ -342,7 +342,7 @@ test('FOOTER-BOUND-1: kısa içerik gerçek bandın İÇİNDE', async () => {
   assert.equal(box.maxLines, 1)
 })
 
-test('FOOTER-BOUND-2: DuruSoft görünümü → 20 dot, EN FAZLA 2 satır, bant içinde', async () => {
+test('FOOTER-BOUND-2: referans görünüm → 20 dot, EN FAZLA 2 satır, bant içinde', async () => {
   const box = await renderedFooterBox([item()])
   assertInsideBand(box, 'normal')
   assert.equal(box.profile.fontHeight, 20, 'referans görünüm 20 dot')

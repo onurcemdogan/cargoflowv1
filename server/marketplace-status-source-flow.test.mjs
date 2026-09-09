@@ -50,7 +50,7 @@ const STATUS = '/src/utils/shipmentStatus.ts'
 /**
  * PRODUCTION FIXTURE — PII YOK.
  * packageId 4065450430 / orderNumber 11492802204 gerçek vakasıdır: sipariş
- * CargoFlow ile DEĞİL harici sağlayıcı (DuruSoft) ile işlenmiştir, bu yüzden
+ * CargoFlow ile DEĞİL harici sağlayıcı ile işlenmiştir, bu yüzden
  * YEREL SÜRAT GÖNDERİSİ YOKTUR. Müşteri adı/adres/telefon fixture'a GİRMEZ.
  */
 function order(overrides = {}) {
@@ -137,7 +137,7 @@ test('MARKETPLACE-STATUS-5: Cancelled / Returned / UnDelivered / UnSupplied → 
   }
 })
 
-test('MARKETPLACE-STATUS-6: DuruSoft üretim vakası — Shipped, yerel Sürat doğrulaması OLMASA DA kazanır', async () => {
+test('MARKETPLACE-STATUS-6: harici sağlayıcı üretim vakası — Shipped, yerel Sürat doğrulaması OLMASA DA kazanır', async () => {
   // Gerçek vakada Sürat doğrulaması şu değerleri üretir:
   //   verifiedShipment=false · hasSuratShipment=false
   //   hasTrackingQuery=false · hasSuratTrackingNumber=false

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url'
 import test, { after } from 'node:test'
 import { createServer } from 'vite'
 
-// DURUSOFT COMPOSER — TEMEL KATMANLAR.
+// SÜRAT ETİKET COMPOSER — TEMEL KATMANLAR.
 //
 // Bu paket composer'ın altındaki ÜÇ bağımsız katmanı kilitler:
 //   AŞAMA 1  zplCommandModel      — kayıpsız komut modeli (round-trip)
@@ -458,13 +458,13 @@ test('CF-24: teşhis çıktısı GERÇEK DEĞER veya hash SIZDIRMAZ', async () =
 
 // ═══ AŞAMA 4-14 — COMPOSER ════════════════════════════════════════════════
 
-const composer = () => load('/src/utils/suratDurusoftComposer.ts')
+const composer = () => load('/src/utils/suratLabelComposer.ts')
 const augment = () => load('/src/utils/augmentedSuratZpl.ts')
 const VERIFIED_727 = '7271234567890'
 
 test('CF-25: Code128 dahili yorum satırı KAPANIR, gövde DEĞİŞMEZ', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
-  const out = composeSuratDurusoftLabel(zpl, {}).zpl
+  const { composeSuratLabel } = await composer()
+  const out = composeSuratLabel(zpl, {}).zpl
   assert.ok(zpl.includes('^BCN,,Y,N'), 'kaynakta yorum satırı AÇIK')
   assert.ok(out.includes('^BCN,,N,N'), 'çıktıda yorum satırı KAPALI')
   assert.equal(out.includes('^BCN,,Y,N'), false)
@@ -483,8 +483,8 @@ test('CF-26: ayrı insan-okunur metin BASILAN barkod geometrisiyle ortalanır', 
   // Sahadan gelen etikette sonuç ölçüldü: numara barkodun merkezinden 88
   // dot (≈11 mm) solda basılıyordu. Ortalama artık BASILAN genişliği esas
   // alır; spesifikasyon bilgisi aşağıda ayrıca kilitli kalır.
-  const { composeSuratDurusoftLabel, code128ModuleCount } = await composer()
-  const result = composeSuratDurusoftLabel(zpl, {})
+  const { composeSuratLabel, code128ModuleCount } = await composer()
+  const result = composeSuratLabel(zpl, {})
   // Görüntülenen sayı = kodlanan gövde (kontrol öneki HARİÇ).
   assert.ok(result.zpl.includes('^FD18529630741^FS'))
 
@@ -504,7 +504,7 @@ test('CF-26: ayrı insan-okunur metin BASILAN barkod geometrisiyle ortalanır', 
 
   // Deterministik: aynı girdi → aynı X/genişlik.
   assert.equal(
-    composeSuratDurusoftLabel(zpl, {}).diagnostics.humanTextBlockWidth,
+    composeSuratLabel(zpl, {}).diagnostics.humanTextBlockWidth,
     result.diagnostics.humanTextBlockWidth,
   )
   // Çift hane subset C'de tam yarıya iner; önek yoksa subset B.
@@ -516,10 +516,10 @@ test('CF-26: ayrı insan-okunur metin BASILAN barkod geometrisiyle ortalanır', 
 })
 
 test('CF-27: bold adres kaynağın KENDİ satır ve baytlarını kullanır', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
+  const { composeSuratLabel } = await composer()
   const { resolveSuratSemanticModel, BOLD_ADDRESS_BASELINES } = await parser()
   const semantic = resolveSuratSemanticModel(zpl)
-  const result = composeSuratDurusoftLabel(zpl, {})
+  const result = composeSuratLabel(zpl, {})
   assert.equal(result.diagnostics.boldAddressLines, 2)
   semantic.addressLines.forEach((line, index) => {
     const baseline = BOLD_ADDRESS_BASELINES[index]
@@ -544,13 +544,13 @@ test('CF-27: bold adres kaynağın KENDİ satır ve baytlarını kullanır', asy
 })
 
 test('CF-28: tek satırlık adres tek bold slot kullanır', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
+  const { composeSuratLabel } = await composer()
   // Kaynakta 2. adres satırını boşalt → 1 satırlık profil.
   const single = zpl.replace(
     /\^FT63,396\^A@N,15,10,TT0003M_\^FH.\^CI17\^F8\^FD[^^]*\^FS/,
     `^FT63,396^A@N,15,10,TT0003M_^FH${BS}^CI17^F8^FD^FS`,
   )
-  const result = composeSuratDurusoftLabel(single, {})
+  const result = composeSuratLabel(single, {})
   assert.equal(result.composed, true, result.reason ?? '')
   assert.equal(result.diagnostics.boldAddressLines, 1)
   assert.ok(result.zpl.includes('^FT63,417^A@N,15,10,TT0003M_'))
@@ -561,13 +561,13 @@ test('CF-28: tek satırlık adres tek bold slot kullanır', async () => {
 })
 
 test('CF-29: bölgeye sığmayan adres composer’ı REDDEDER (kırpma YOK)', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
+  const { composeSuratLabel } = await composer()
   const huge = 'A'.repeat(120)
   const oversized = zpl.replace(
     /\^FT63,376\^A@N,15,10,TT0003M_\^FH.\^CI17\^F8\^FD[^^]*\^FS/,
     `^FT63,376^A@N,15,10,TT0003M_^FH${BS}^CI17^F8^FD${huge}^FS`,
   )
-  const result = composeSuratDurusoftLabel(oversized, {})
+  const result = composeSuratLabel(oversized, {})
   assert.equal(result.composed, false)
   assert.equal(result.mode, 'fallback_geometry_failure')
   assert.match(result.reason, /sığmıyor/)
@@ -575,8 +575,8 @@ test('CF-29: bölgeye sığmayan adres composer’ı REDDEDER (kırpma YOK)', as
 })
 
 test('CF-30: QR komutu ve gövdesi doğrulanmış değere EŞİT', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
-  const result = composeSuratDurusoftLabel(zpl, { ozelKargoTakipNo: VERIFIED_727 })
+  const { composeSuratLabel } = await composer()
+  const result = composeSuratLabel(zpl, { ozelKargoTakipNo: VERIFIED_727 })
   assert.ok(result.zpl.includes(`^BQN,2,5^FDLA,${VERIFIED_727}^FS`))
   assert.equal((result.zpl.match(/\^BQ/g) ?? []).length, 1)
   // Konum SABİT DEĞİL, DIŞ MARJ SİMETRİSİNDEN türetilir:
@@ -591,7 +591,7 @@ test('CF-30: QR komutu ve gövdesi doğrulanmış değere EŞİT', async () => {
   // QR'dan hemen önce kapsam ^BY'si yazılır (renderer sapmasını 10 dota sınırlar).
   assert.ok(result.zpl.includes(`^BY2,3,10^FO${expectedX},596^BQN,2,5`))
   // Uyuşmayan iki kaynak → QR YOK, composer yine çalışır.
-  const clash = composeSuratDurusoftLabel(zpl, {
+  const clash = composeSuratLabel(zpl, {
     cargoTrackingNumber: VERIFIED_727,
     ozelKargoTakipNo: '7279999999999',
   })
@@ -601,9 +601,9 @@ test('CF-30: QR komutu ve gövdesi doğrulanmış değere EŞİT', async () => {
 })
 
 test('CF-31: transform whitelist — beklenmeyen mutasyon/silme YOK', async () => {
-  const { composeSuratDurusoftLabel, diffZplAgainstSource } = await composer()
+  const { composeSuratLabel, diffZplAgainstSource } = await composer()
   const { parseZplDocument } = await model()
-  const result = composeSuratDurusoftLabel(zpl, { cargoTrackingNumber: VERIFIED_727 })
+  const result = composeSuratLabel(zpl, { cargoTrackingNumber: VERIFIED_727 })
   const diff = diffZplAgainstSource(
     parseZplDocument(zpl),
     parseZplDocument(result.zpl),
@@ -636,10 +636,10 @@ test('CF-31: transform whitelist — beklenmeyen mutasyon/silme YOK', async () =
 })
 
 test('CF-32: invariant doğrulayıcı BOZULMUŞ çıktıyı reddeder', async () => {
-  const { composeSuratDurusoftLabel, verifySuratOutputInvariants } = await composer()
+  const { composeSuratLabel, verifySuratOutputInvariants } = await composer()
   const { resolveSuratSemanticModel } = await parser()
   const semantic = resolveSuratSemanticModel(zpl)
-  const good = composeSuratDurusoftLabel(zpl, { cargoTrackingNumber: VERIFIED_727 })
+  const good = composeSuratLabel(zpl, { cargoTrackingNumber: VERIFIED_727 })
   assert.equal(
     verifySuratOutputInvariants(semantic, good.zpl, VERIFIED_727).ok,
     true,
@@ -658,8 +658,8 @@ test('CF-32: invariant doğrulayıcı BOZULMUŞ çıktıyı reddeder', async () 
 })
 
 test('CF-33: sayfa sözleşmesi composed çıktıda korunur', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
-  const out = composeSuratDurusoftLabel(zpl, { cargoTrackingNumber: VERIFIED_727 }).zpl
+  const { composeSuratLabel } = await composer()
+  const out = composeSuratLabel(zpl, { cargoTrackingNumber: VERIFIED_727 }).zpl
   assert.equal((out.match(/\^XA/g) ?? []).length, 1)
   assert.equal((out.match(/\^XZ/g) ?? []).length, 1)
   assert.equal((out.match(/\^PW799/g) ?? []).length, 1)
@@ -681,8 +681,8 @@ test('CF-34: augmentation zinciri iki sözleşmeyi AYIRIR', async () => {
   const composed = deriveAugmentedSuratZpl(zpl, items, {
     compose: { cargoTrackingNumber: VERIFIED_727 },
   })
-  assert.equal(composed.renderContract, 'durusoft_composed')
-  assert.equal(composed.composeMode, 'durusoft_composed')
+  assert.equal(composed.renderContract, 'carrier_composed')
+  assert.equal(composed.composeMode, 'carrier_composed')
   assert.equal(composed.sourceZpl, zpl, 'kaynak alanı HAM kalır')
   assert.equal(composed.augmentationStatus, 'success')
 
@@ -728,14 +728,14 @@ function withLongTransferCenter(source, value) {
 }
 
 test('CF-36: GEÇERLİ 727 + QR çakışması → composer TÜMÜYLE reddeder', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
+  const { composeSuratLabel } = await composer()
   // 20 karakterlik aktarma merkezi adı QR'ın güvenli bölgesini yer.
   const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKTARMA MERKEZI')
-  const result = composeSuratDurusoftLabel(crowded, {
+  const result = composeSuratLabel(crowded, {
     cargoTrackingNumber: VERIFIED_727,
   })
 
-  // QR'sız KISMİ DuruSoft etiketi ÜRETİLMEZ.
+  // QR'sız KISMİ referans etiket ÜRETİLMEZ.
   assert.equal(result.composed, false)
   assert.equal(result.mode, 'fallback_geometry_failure')
   assert.match(result.reason, /qrRejection=geometry_conflict/)
@@ -772,7 +772,7 @@ test('CF-37: çakışma durumunda augmentation zinciri RT-10A sözleşmesine dö
 })
 
 test('CF-38: 727 YOK/GEÇERSİZ ise mevcut iş kuralı korunur (composed sürer)', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
+  const { composeSuratLabel } = await composer()
   // Çakışma OLMAYAN kaynakta 727 yoksa composed mod çalışır, QR basılmaz.
   for (const [label, input, rejection] of [
     ['aday yok', {}, 'no_candidate'],
@@ -783,7 +783,7 @@ test('CF-38: 727 YOK/GEÇERSİZ ise mevcut iş kuralı korunur (composed sürer)
       'sources_disagree',
     ],
   ]) {
-    const result = composeSuratDurusoftLabel(zpl, input)
+    const result = composeSuratLabel(zpl, input)
     assert.equal(result.composed, true, `${label}: composed sürmeli`)
     assert.equal(result.diagnostics.qrRejection, rejection, label)
     assert.equal(result.diagnostics.qrBox, null)
@@ -792,15 +792,15 @@ test('CF-38: 727 YOK/GEÇERSİZ ise mevcut iş kuralı korunur (composed sürer)
   // 727 YOKKEN aktarma metni uzun olsa bile composed mod ENGELLENMEZ:
   // QR zaten üretilmeyecektir, geometri çakışması doğmaz.
   const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKTARMA MERKEZI')
-  const noQr = composeSuratDurusoftLabel(crowded, {})
+  const noQr = composeSuratLabel(crowded, {})
   assert.equal(noQr.composed, true)
   assert.equal(noQr.diagnostics.qrRejection, 'no_candidate')
 })
 
 test('CF-39: ^BY durumu QR’dan sonra GERİ YÜKLENİR (sızıntı yok)', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
+  const { composeSuratLabel } = await composer()
   const { parseZplDocument } = await model()
-  const result = composeSuratDurusoftLabel(zpl, { cargoTrackingNumber: VERIFIED_727 })
+  const result = composeSuratLabel(zpl, { cargoTrackingNumber: VERIFIED_727 })
 
   const sourceBy = parseZplDocument(zpl).commands.filter((c) => c.name === 'BY')
   const outputBy = parseZplDocument(result.zpl).commands.filter((c) => c.name === 'BY')
@@ -836,8 +836,8 @@ test('CF-39: ^BY durumu QR’dan sonra GERİ YÜKLENİR (sızıntı yok)', async
 })
 
 test('CF-40: fark raporu mutasyon / ekleme / silme AYRI verir', async () => {
-  const { composeSuratDurusoftLabel } = await composer()
-  const result = composeSuratDurusoftLabel(zpl, { cargoTrackingNumber: VERIFIED_727 })
+  const { composeSuratLabel } = await composer()
+  const result = composeSuratLabel(zpl, { cargoTrackingNumber: VERIFIED_727 })
   const { diff } = result.diagnostics
   assert.equal(diff.deletions, 0, 'taşıyıcı komutu SİLİNMEZ')
   assert.equal(diff.unexpectedMutations, 0)

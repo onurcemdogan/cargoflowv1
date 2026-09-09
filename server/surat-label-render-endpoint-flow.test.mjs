@@ -294,13 +294,13 @@ test('RE-6: DTO ham ZPL veya şifreli payload İÇERMEZ', async () => {
   assert.ok(['none', 'ready', 'failed'].includes(dto.productDetailStatus))
   // Yeni teşhis alanları KAPALI SÖZLÜKTEN gelir; serbest metin sızamaz.
   assert.ok(
-    ['official_augmented', 'durusoft_composed'].includes(dto.renderContract),
+    ['official_augmented', 'carrier_composed'].includes(dto.renderContract),
     `renderContract kapalı sözlükte olmalı: ${dto.renderContract}`,
   )
   assert.ok(
     dto.composeMode === null ||
       [
-        'durusoft_composed',
+        'carrier_composed',
         'fallback_unknown_template',
         'fallback_semantic_failure',
         'fallback_geometry_failure',

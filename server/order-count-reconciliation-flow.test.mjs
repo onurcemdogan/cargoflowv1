@@ -8,14 +8,14 @@ import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
 import { createServer } from 'vite'
 
-// Durusoft ↔ CargoFlow sipariş/paket sayısı mutabakatı.
+// Referans rapor ↔ CargoFlow sipariş/paket sayısı mutabakatı.
 // Veriler SENTETİKTİR; gerçek müşteri bilgisi veya gerçek ID yoktur.
 
 const here = dirname(fileURLToPath(import.meta.url))
 process.env.ORDER_DATA_ENCRYPTION_KEY = randomBytes(32).toString('hex')
 process.env.SHIPMENT_ENCRYPTION_KEY = randomBytes(32).toString('hex')
 
-// Durusoft ekranıyla BİREBİR aynı pencere (Europe/Istanbul 13:39 → UTC 10:39).
+// referans rapor ekranıyla BİREBİR aynı pencere (Europe/Istanbul 13:39 → UTC 10:39).
 const START = '2026-07-28T10:39:00.000Z'
 const END = '2026-08-02T10:39:00.000Z'
 
@@ -57,7 +57,7 @@ async function makeDb() {
 
 // ── tarih ekseni ──────────────────────────────────────────────────────────
 
-test('OCR-1: Durusoft penceresi birebir; orderDate ve modifiedAt AYRI sayılır', () => {
+test('OCR-1: referans rapor penceresi birebir; orderDate ve modifiedAt AYRI sayılır', () => {
   const rows = [
     // orderDate içinde, modifiedAt dışında
     { packageId: 'p1', orderDate: '2026-07-29T08:00:00Z', marketplaceLastModifiedAt: '2026-08-03T00:00:00Z' },
@@ -234,7 +234,7 @@ test('OCR-6: gerçek şemada 35 paket yerelde MEVCUT ama UI yalnız 25 yükler',
   const accA = await accounts.resolveOrCreateActiveAccount(db, org.id, 'Trendyol', '277221')
   const accB = await accounts.resolveOrCreateActiveAccount(db, org.id, 'Trendyol', '999999')
 
-  // Durusoft penceresinde 35 paket; 33 Created + 2 LABEL_READY.
+  // referans rapor penceresinde 35 paket; 33 Created + 2 LABEL_READY.
   const rows = []
   for (let i = 0; i < 35; i += 1) {
     rows.push({
@@ -280,8 +280,8 @@ test('OCR-6: gerçek şemada 35 paket yerelde MEVCUT ama UI yalnız 25 yükler',
   const localModel = model.summarizePackages(local.rows)
 
   // Kapsamdaki TÜM kayıtlar yerelde MEVCUT: 35 paket, 36 kalem.
-  assert.equal(localModel.distinctPackageCount, 35, 'Durusoft 35 ile eşleşir')
-  assert.equal(localModel.lineCount, 36, 'Durusoft 36 kalem ile eşleşir')
+  assert.equal(localModel.distinctPackageCount, 35, 'referans rapor 35 ile eşleşir')
+  assert.equal(localModel.lineCount, 36, 'referans rapor 36 kalem ile eşleşir')
   assert.equal(localModel.quantityTotal, 36)
   assert.equal(local.accountScopeMismatchCount, 1, 'diğer hesap ayrı sayılır')
   assert.equal(local.duplicatePackageIds, 0)

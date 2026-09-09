@@ -1,9 +1,9 @@
 // Dashboard SATIŞ analitiği için saf raporlama günü helper'ı.
 //
 // Kanıtlanan kök neden (19.07.2026 mutabakatı): CargoFlow satış kartları
-// makinenin yerel gününü, Durusoft raporları UTC gününü kullanıyordu;
+// makinenin yerel gününü, referans raporlar UTC gününü kullanıyordu;
 // TSİ 00:00-02:59 siparişleri farklı günlere düşüyordu. Ürün kararı:
-// satış analitiği Durusoft ile karşılaştırılabilirlik için UTC rapor
+// satış analitiği referans raporla karşılaştırılabilirlik için UTC rapor
 // günü kullanır. Sipariş saatlerinin KULLANICIYA GÖSTERİMİ, Siparişler
 // ekranı tarih filtreleri ve operasyon sayaçları değişmez.
 //
@@ -89,7 +89,7 @@ function parseCustomDate(
 // "Bugün hangi TARİH?" seçimi (anchor) HER ZAMAN Europe/Istanbul
 // takvimine göre yapılır — kullanıcı gece 00:00 TSİ'de yeni günü görür.
 // Seçilen tarihin VERİ bucket'ı ise reportingTimeZone sınırlarıyla
-// (varsayılan UTC, Durusoft mutabakatı) hesaplanır. Bu ayrım olmadan
+// (varsayılan UTC, referans rapor mutabakatı) hesaplanır. Bu ayrım olmadan
 // TSİ 00:00-03:00 arasında kartlar bir gün geride etiketleniyordu.
 const REPORT_DAY_ANCHOR_TIME_ZONE: ReportingTimeZone = 'Europe/Istanbul'
 

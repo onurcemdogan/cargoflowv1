@@ -16,7 +16,7 @@ import { createServer } from 'vite'
 // `^FT63,417` ve `^FT63,433` alanlarında bitmap `A0` (genişlik 25) metin var.
 // `resolveSuratSemanticModel` bunu DOĞRU tespit ediyordu
 // (`carrierOwnsAddressBlock = true`, `boldAddressSlots = 0`) — ama
-// `composeSuratDurusoftLabel` bu sinyali HİÇ OKUMUYORDU. Composer, sabit
+// `composeSuratLabel` bu sinyali HİÇ OKUMUYORDU. Composer, sabit
 // `BOLD_ADDRESS_BASELINES` dizisine koşulsuz yazıyor ve taşıyıcının metninin
 // ÜSTÜNE, farklı bir fontla (`A@` genişlik 10) ikinci bir kopya çiziyordu.
 // Aynı taban çizgisi + aynı x + farklı font genişliği = okunamayan adres.
@@ -71,13 +71,13 @@ function inAddressBand(box) {
 }
 
 async function compose(name, mutate = (zpl) => zpl) {
-  const composer = await load('/src/utils/suratDurusoftComposer.ts')
+  const composer = await load('/src/utils/suratLabelComposer.ts')
   const parser = await load('/src/utils/suratSemanticParser.ts')
   const source = mutate(fixture(name))
   return {
     source,
     semantic: parser.resolveSuratSemanticModel(source),
-    result: composer.composeSuratDurusoftLabel(source, COMPOSE_INPUT),
+    result: composer.composeSuratLabel(source, COMPOSE_INPUT),
   }
 }
 
@@ -102,7 +102,7 @@ test('OVL-01: v2 şablonunda adres bloğu TAŞIYICIYA aittir (sinyal doğru)', a
 
 test('OVL-02: taşıyıcı bloğa sahipken composer bold adres YAZMAZ', async () => {
   const { result } = await compose(V2)
-  assert.equal(result.mode, 'durusoft_composed', 'compose yine de çalışmalı')
+  assert.equal(result.mode, 'carrier_composed', 'compose yine de çalışmalı')
   assert.equal(
     result.diagnostics.boldAddressLines,
     0,
@@ -172,7 +172,7 @@ test('OVL-05: adres bloğu BOŞSA composer devralmaya DEVAM eder', async () => {
   const { semantic, result } = await compose(V1)
   assert.equal(semantic.carrierOwnsAddressBlock, false)
   assert.ok(semantic.boldAddressSlots.length > 0, 'boş slot bulunmalı')
-  assert.equal(result.mode, 'durusoft_composed')
+  assert.equal(result.mode, 'carrier_composed')
   assert.ok(
     result.diagnostics.boldAddressLines > 0,
     'boş bölgede bold adres YAZILMALI',
@@ -210,7 +210,7 @@ for (const scenario of ADDRESS_SCENARIOS) {
         .split('^FD33^FS')
         .join(`^FD${scenario.line2}^FS`),
     )
-    assert.equal(result.mode, 'durusoft_composed')
+    assert.equal(result.mode, 'carrier_composed')
     const overlaps = geometry
       .findZplTextOverlaps(result.zpl)
       .filter((o) => inAddressBand(o.left) && inAddressBand(o.right))

@@ -7,7 +7,7 @@ import { createServer } from 'vite'
 
 // RESMÎ SÜRAT ZPL'İNE ÜRÜN SATIRI EKLEME.
 //
-// DuruSoft canlı çıktısında resmî Sürat etiketi AYNEN korunuyor; tek eklenen
+// referans canlı çıktıda resmî Sürat etiketi AYNEN korunuyor; tek eklenen
 // alan en alttaki ürün satırıdır:
 //   "1 x Önü Drapeli Loş Tesettür Takım (Renk: Krem, Beden: 40) [6496]"
 //
@@ -41,7 +41,7 @@ after(async () => {
   if (_vite) await _vite.close()
 })
 
-// ── SENTETİK resmî Sürat şablonu (DuruSoft görselindeki bölüm iskeleti) ────
+// ── SENTETİK resmî Sürat şablonu (referans görseldeki bölüm iskeleti) ────
 function officialZpl(over = {}) {
   const route = over.route ?? 'KARACADAG/04'
   const transfer = over.transfer ?? 'DIYARBAKIR AKTARMA'
@@ -72,7 +72,7 @@ function officialZpl(over = {}) {
   ].join('\n')
 }
 
-const DURUSOFT_ITEM = {
+const REFERENCE_ITEM = {
   productName: 'Önü Drapeli Loş Tesettür Takım',
   quantity: 1,
   color: 'Krem',
@@ -97,7 +97,7 @@ function productLines(printZpl) {
 
 test('OZP-1..OZP-4: technicalZpl byte-for-byte korunur, komut sırası bozulmaz', async () => {
   const source = officialZpl()
-  const result = await derive([DURUSOFT_ITEM], source)
+  const result = await derive([REFERENCE_ITEM], source)
   // 1) Kaynak metin nesne olarak DEĞİŞMEDEN taşınır.
   assert.equal(result.sourceZpl, source)
   // 2) Kaynak SHA'sı kaynağın kendi SHA'sıdır.
@@ -111,7 +111,7 @@ test('OZP-1..OZP-4: technicalZpl byte-for-byte korunur, komut sırası bozulmaz'
 })
 
 test('OZP-5..OZP-9: ürün komutları final ^PQ öncesine eklenir; ^PQ/^XZ ve tek sayfa korunur', async () => {
-  const result = await derive([DURUSOFT_ITEM])
+  const result = await derive([REFERENCE_ITEM])
   const lines = result.printZpl.trim().split('\n')
   // 5) ürün satırı ^PQ'den ÖNCE
   const productIndex = lines.findIndex((line) => line.includes('Drapeli'))
@@ -129,7 +129,7 @@ test('OZP-5..OZP-9: ürün komutları final ^PQ öncesine eklenir; ^PQ/^XZ ve te
 
 test('OZP-10..OZP-16: resmî alanlar (PW/LL/BC/BX/T.No/sipariş/desi) DEĞİŞMEZ', async () => {
   const source = officialZpl()
-  const result = await derive([DURUSOFT_ITEM], source)
+  const result = await derive([REFERENCE_ITEM], source)
   for (const invariant of [
     '^PW799',
     '^LL0799',
@@ -148,14 +148,14 @@ test('OZP-10..OZP-16: resmî alanlar (PW/LL/BC/BX/T.No/sipariş/desi) DEĞİŞME
   }
 })
 
-// ═══ 17-24: DuruSoft biçimi ════════════════════════════════════════════════
+// ═══ 17-24: referans biçim ════════════════════════════════════════════════
 
 // SÖZLEŞME GÜNCELLENDİ (fiziksel okunabilirlik turu): "her koşulda TEK
-// SATIR" politikası KALDIRILDI. Fiziksel referans (DuruSoft termal çıktı)
+// SATIR" politikası KALDIRILDI. Fiziksel referans (referans termal çıktı)
 // aynı içeriği İKİ SATIR ve daha büyük fontla basıyor. İddia zayıflamadı:
 // biçim ve içerik aynen kilitli, yalnız satır politikası güncellendi.
-test('OZP-17: tek ürün DuruSoft biçiminde ve EN BÜYÜK fontla basılır', async () => {
-  const result = await derive([DURUSOFT_ITEM])
+test('OZP-17: tek ürün referans biçiminde ve EN BÜYÜK fontla basılır', async () => {
+  const result = await derive([REFERENCE_ITEM])
   const lines = productLines(result.printZpl)
   assert.ok(lines.length >= 1, 'ürün satırı basılmalı')
   // Yer varken en büyük okunur font (20 dot) tercih edilir.
@@ -164,13 +164,13 @@ test('OZP-17: tek ürün DuruSoft biçiminde ve EN BÜYÜK fontla basılır', as
     lines[0].includes(
       '1 x Önü Drapeli Loş Tesettür Takım (Renk: Krem, Beden: 40) [6496]',
     ),
-    `beklenen DuruSoft biçimi yok: ${lines[0]}`,
+    `beklenen referans biçim yok: ${lines[0]}`,
   )
 })
 
 test('OZP-18: çok uzun ürün adı güvenli profile düşer, KESİLMEZ', async () => {
   const longItem = {
-    ...DURUSOFT_ITEM,
+    ...REFERENCE_ITEM,
     productName:
       'Önü Drapeli Loş Tesettür Takım Uzun Model Ekstra Detaylı Kışlık Koleksiyon Serisi Premium',
   }
@@ -218,7 +218,7 @@ test('OZP-25..OZP-28: eksik renk/beden "Belirtilmemiş", SKU yoksa [] yok, metad
   assert.equal(/,\s*\)/.test(noSku), false)
   assert.equal(/\s{2,}/.test(noSku), false, 'çift boşluk yok')
   // 28) metadata TAM OLARAK BİR KEZ
-  const full = buildProductLineText(DURUSOFT_ITEM)
+  const full = buildProductLineText(REFERENCE_ITEM)
   assert.equal((full.match(/Renk:/g) ?? []).length, 1)
   assert.equal((full.match(/Beden:/g) ?? []).length, 1)
   assert.equal((full.match(/\[/g) ?? []).length, 1)
@@ -230,7 +230,7 @@ test('OZP-29..OZP-31: ürün satırı resmî içerikle çakışmaz, ^LL dışın
   const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
   const source = officialZpl()
   const geometry = parseSuratZplGeometry(source)
-  const result = await derive([DURUSOFT_ITEM], source)
+  const result = await derive([REFERENCE_ITEM], source)
   const metrics = result.metrics
   assert.ok(metrics, 'ölçüm raporlanır')
   // 29) resmî içeriğin ALTINDA başlar
@@ -242,7 +242,7 @@ test('OZP-29..OZP-31: ürün satırı resmî içerikle çakışmaz, ^LL dışın
   // Eski iddia "footerLeft > rayın sağı" idi; bu, rayın DİKEY uzanımı
   // ölçülemediği için konulmuş MUHAFAZAKÂR bir vekildi. Ray artık gerçek
   // kutusuyla ölçülüyor (^FWB alttan üste uzar), bu yüzden footer rayın
-  // ALTINA inip etiketin soluna yaklaşabiliyor (DuruSoft referansı).
+  // ALTINA inip etiketin soluna yaklaşabiliyor (referans çıktı).
   // Doğru sözleşme KUTULARIN ÇAKIŞMAMASIDIR: ya rayın sağında ya altında.
   const rightOfRail = metrics.footerLeft >= geometry.leftRailRight
   const belowRail =
@@ -290,7 +290,7 @@ test('OZP-32/OZP-33: sığmayan içerik güvenli uyarı verir, kaynak bozulmaz',
 
 test('OZP-34/OZP-35: bilinmeyen şablon BOZULMAZ, fallback sebebi kaydedilir', async () => {
   const foreign = ['^XA', '^PW600', '^LL400', '^FO10,10^A0N,20,20^FDBaska^FS', '^XZ'].join('\n')
-  const result = await derive([DURUSOFT_ITEM], foreign)
+  const result = await derive([REFERENCE_ITEM], foreign)
   assert.equal(result.augmented, false)
   assert.equal(result.fallbackReason, 'unsupported_template')
   assert.equal(result.printZpl, foreign, 'kaynak aynen korunur')
@@ -302,8 +302,8 @@ test('OZP-34/OZP-35: bilinmeyen şablon BOZULMAZ, fallback sebebi kaydedilir', a
 // ═══ 36-42: determinizm, reprint ve yüzey eşitliği ═════════════════════════
 
 test('OZP-36/OZP-38/OZP-39: türetme DETERMINISTIK; katalog değişimi etkilemez', async () => {
-  const first = await derive([DURUSOFT_ITEM])
-  const second = await derive([{ ...DURUSOFT_ITEM }])
+  const first = await derive([REFERENCE_ITEM])
+  const second = await derive([{ ...REFERENCE_ITEM }])
   assert.equal(first.printZplSha256, second.printZplSha256)
   assert.equal(first.printZpl, second.printZpl)
   // Ürün satırı SİPARİŞ SATIRINDAN üretilir; ürün kataloğu girdi DEĞİLDİR.
@@ -437,7 +437,7 @@ test('OZP-52: migration eklenmez', () => {
 test('OZP-TR: Türkçe karakter kararı deterministiktir', async () => {
   const { transliterateTurkish } = await load('/src/utils/suratZplProductLine.ts')
   // ^CI28 (UTF-8) kaynakta Türkçe AYNEN korunur.
-  const utf8Result = await derive([DURUSOFT_ITEM], officialZpl())
+  const utf8Result = await derive([REFERENCE_ITEM], officialZpl())
   assert.ok(utf8Result.printZpl.includes('Önü Drapeli Loş Tesettür Takım'))
   // ^CI28 yoksa deterministik transliterasyon (bozuk karakter YOK).
   assert.equal(transliterateTurkish('Şğıİç Öü'), 'Sgi Ic Ou'.replace('Sgi Ic', 'SgiIc'))
@@ -750,7 +750,7 @@ test('HF-6: augmentation başarılıysa ürün satırı KORUNUR (özellik kaybol
   assert.equal(model.augmentationStatus, 'success')
   assert.ok(
     model.zpl.includes('(Renk: Krem, Beden: 40) [6496]'),
-    'DuruSoft biçimli ürün satırı eklenir',
+    'referans biçimli ürün satırı eklenir',
   )
   // Kaynak korunur ve tek sayfa kalır.
   assert.equal((model.zpl.match(/\^XA/g) ?? []).length, 1)

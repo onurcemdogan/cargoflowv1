@@ -65,7 +65,7 @@ const report = {
     evidence:
       r.type === 'rectangle'
         ? 'DOLAYLI KANIT: canli production regresyonunda gercek Surat ZPL inde etiketin buyuk bolumunu kaplayan bir ^GB cercevesi bulundugu davranisla kanitlandi (contentBottom ~785).'
-        : 'KANIT YOK: bu cizgi DuruSoft fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR.',
+        : 'KANIT YOK: bu cizgi referans fotografina bakilarak TARAFIMDAN uydurulmustur; gercek Surat ZPL inde bulundugu KANITLANMAMISTIR.',
   })),
 }
 writeFileSync(join(out, 'gb-command-comparison.json'), JSON.stringify(report, null, 2), 'utf8')

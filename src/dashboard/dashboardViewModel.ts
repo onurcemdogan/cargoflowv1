@@ -40,7 +40,7 @@ import {
 } from './dashboardSalesMetricDefinition.ts'
 import { createStringMemo } from '../utils/stringMemo.ts'
 
-// Yalnız SATIŞ analitiği rapor günü UTC'dir (Durusoft mutabakatı);
+// Yalnız SATIŞ analitiği rapor günü UTC'dir (referans rapor mutabakatı);
 // operasyon sayaçları ve tarih GÖSTERİMLERİ yerel (Europe/Istanbul)
 // semantiğini korur.
 function toReportingPeriodKey(key: DashboardPeriodKey): ReportingPeriodKey {
@@ -867,7 +867,7 @@ function resolveComparisonPeriod(
 }
 
 // Satış kartlarının gün sınırları saf UTC raporlama helper'ından gelir
-// (Durusoft mutabakatı); yalnız etiket/başlık metinleri burada kalır.
+// (referans rapor mutabakatı); yalnız etiket/başlık metinleri burada kalır.
 function salesCardReportingKey(
   key: DashboardSalesPeriodKey,
 ): ReportingPeriodKey {
@@ -1116,7 +1116,7 @@ function buildClaimOrderResolver(
 
 // Verilen dönem için kabul edilmiş iade etkisini üretir. Döneme aitlik
 // ORDER-COHORT'tur: iade, iade edilen SİPARİŞİN orderDate ayına yazılır
-// (Durusoft mutabakatı). Siparişi bulunamayan (fetch penceresinden eski)
+// (referans rapor mutabakatı). Siparişi bulunamayan (fetch penceresinden eski)
 // iadeler hiçbir döneme yazılmaz.
 function buildClaimAdjustment(
   claims: AnalyticsClaim[] | undefined,
