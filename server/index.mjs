@@ -25,6 +25,7 @@ import { promisify } from 'node:util'
 import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
 import { loadLocalEnvFile as sharedLoadLocalEnvFile } from './runtime/localEnv.ts'
 import { buildTrendyolShipmentEligibility } from './shipments/trendyolShipmentEligibility.ts'
+import { resolveOutboundRecipientPhone } from '../src/utils/labelData.ts'
 import {
   markCarrierBoundaryEntered,
   runWithCarrierBoundary,
@@ -10539,7 +10540,19 @@ function buildSuratShipmentPayload(
     Ilce: String(order.district ?? ''),
     TelefonEv: '',
     TelefonIs: '',
-    TelefonCep: String(order.customerPhone ?? ''),
+    // ═══ ALICI TELEFONU — ETİKETLE AYNI ADAY ZİNCİRİ ══════════════════
+    //
+    // ÜRETİM HATASI: burada YALNIZ `order.customerPhone` okunuyordu.
+    // Trendyol telefonu çoğu pakette `shipmentAddress` içinde döndürüyor;
+    // etiket katmanı yedi adaylık zinciriyle onu buluyor ve BASIYOR, ama
+    // taşıyıcıya giden bu istekte alan BOŞ gidiyordu. Sonuç: barkod
+    // okutuluyor, gönderi Serendip'e düşüyor, ALICI TELEFONU GÖRÜNMÜYOR.
+    //
+    // Artık iki taraf da TEK kaynaktan besleniyor. Maskeli değer (538*******)
+    // bilinçli olarak GÖNDERİLMEZ: aranamayan bir numara, telefon yokluğunu
+    // gizleyen çöp veridir. Geçerli telefon yoksa alan boş kalır ve
+    // `TelefonCepWarning` operatöre bunu AÇIKÇA söyler.
+    TelefonCep: resolveOutboundRecipientPhone(order).phone,
     Email: String(order.customerEmail ?? ''),
     AliciKodu: '',
     KargoTuru: 3,

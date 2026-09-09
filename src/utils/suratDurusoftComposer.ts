@@ -46,6 +46,7 @@ import {
   type ZplCommand,
   type ZplDocument,
   type ZplEdit,
+  type ZplField,
 } from './zplCommandModel.ts'
 import {
   BOLD_ADDRESS_BASELINES,
@@ -56,6 +57,7 @@ import {
   type SuratSemanticKey,
   type SuratSemanticModel,
 } from './suratSemanticParser.ts'
+import { fieldTextBox } from './zplTextGeometry.ts'
 import {
   resolveSuratQrPayload,
   type SuratQrRejection, type SuratQrResolution, type SuratQrSource,
@@ -279,6 +281,29 @@ export interface SuratComposeDiagnostics {
   readonly transferFontWidth: number
   readonly transferFontWidthNative: number
   /**
+   * TAŞIYICININ KENDİ QR'ı büyütüldüyse uygulanan geometri; büyütme
+   * güvenli değilse null (kaynak AYNEN korunmuştur).
+   */
+  readonly carrierQr: {
+    readonly x: number
+    readonly y: number
+    readonly size: number
+    readonly magnification: number
+    /**
+     * Yazıcının DÜZELTMEDEN ÖNCE gerçekten uyguladığı büyütme. Bozuk
+     * token'da niyet edilen değerden farklıdır — düzeltmenin ne kadar
+     * kazandırdığı ancak bu değerle okunur.
+     */
+    readonly effectiveMagnification: number
+  } | null
+  /** Dikey sipariş referansı güvenli kenara kaydırıldıysa; aksi halde null. */
+  readonly orderReferenceShift: {
+    readonly fromX: number
+    readonly x: number
+    readonly fromInkLeft: number
+    readonly inkLeft: number
+  } | null
+  /**
    * Kaynağa göre fark raporu. Beklenen değerler:
    *   deletions            = 0 (taşıyıcı komutu ASLA silinmez)
    *   allowedMutations     = 1 (yalnız ^BC yorum bayrağı Y→N)
@@ -455,12 +480,332 @@ export function resolveQrPlacement(
   return null
 }
 
+
+/**
+ * TAŞIYICININ KENDİ QR'ını OKUNABİLİR HALE GETİRME.
+ *
+ * ═══ KÖK NEDEN — ÖLÇÜLDÜ ═════════════════════════════════════════════════
+ * Taşıyıcı şablonu QR'ı şu komutla basar (bayt bayt, sondaki BOŞLUK dahil):
+ *
+ *     ^FT690,650^BQN,4,4 ^FDQA,7270034422363739^FS
+ *
+ * Üçüncü parametre (magnification) `"4 "` biçimindedir. Bu SAYI DEĞİLDİR:
+ * ayrıştırıcı parametreyi geçersiz sayar ve VARSAYILAN büyütmeye (1) düşer.
+ * 799×799 gerçek render ile ölçüldü:
+ *
+ *     ^BQN,4,4   (sonda boşluk)  →  21×21 dot  (büyütme 1 — 2.6 mm)
+ *     ^BQN,2,4                   →  84×84 dot  (büyütme 4)
+ *     ^BQN,2,5                   → 105×105 dot (büyütme 5)
+ *     ^BQN,4,5                   → 105×105 dot (model alanı ETKİSİZ)
+ *
+ * Yani sahadaki "QR çok küçük" şikâyeti bir tercih değil, BOZUK BİR
+ * PARAMETRE TOKEN'ının sonucudur: etiket 21 modülü 21 dota basıyor, modül
+ * kenarı 0.125 mm oluyor ve hiçbir el terminali okuyamıyor.
+ *
+ * ═══ DÜZELTME ════════════════════════════════════════════════════════════
+ * Token normalize edilir ve büyütme, GEOMETRİNİN İZİN VERDİĞİ EN BÜYÜK
+ * değere çıkarılır. Yük, model, yönelim ve konum bandı DEĞİŞMEZ; okunan
+ * veri birebir aynıdır.
+ *
+ * ═══ GÜVENLİK ════════════════════════════════════════════════════════════
+ * Büyütme YALNIZ geometri KANITLANDIĞINDA uygulanır: büyümüş kare, sessiz
+ * bölgesiyle birlikte etiket kenarına ve dikey bandıyla kesişen HİÇBİR
+ * komşunun işgal kutusuna değmeyecekse. Aksi halde kaynak AYNEN korunur.
+ */
+const CARRIER_QR_MODULES = 21
+/** Version-1 QR (ECC Q) sayısal kapasitesi. Üstünde modül sayısı ARTAR. */
+const CARRIER_QR_MAX_NUMERIC_V1 = 27
+/** Geçersiz parametrede ayrıştırıcının düştüğü büyütme (ölçüldü). */
+const QR_DEFAULT_MAGNIFICATION = 1
+/** Büyükten küçüğe denenir; ilk GÜVENLİ olan uygulanır. */
+const CARRIER_QR_MAGNIFICATION_CANDIDATES: readonly number[] = [6, 5]
+/**
+ * `^FT` ile konumlanan `^BQ`'nun render'da kutunun ÜSTÜNE eklediği pay
+ * (büyütme başına 7 dot — ölçüldü). Band hesabı iki yorumu da KAPSAR.
+ */
+const QR_FT_LIFT_PER_MAGNIFICATION = 7
+
+export interface CarrierQrEnlargement {
+  readonly x: number
+  readonly y: number
+  readonly magnification: number
+  readonly size: number
+  /** Kaynak token bozuk olduğu için yazıcının GERÇEKTEN kullandığı değer. */
+  readonly effectiveMagnification: number
+}
+
+/** `^BQ` argümanlarındaki magnification TOKEN'ı (3. parametre), ham haliyle. */
+function qrMagnificationToken(args: string): string {
+  return String(args ?? '').split(',')[2] ?? ''
+}
+
+/**
+ * Yazıcının GERÇEKTEN uygulayacağı büyütme.
+ *
+ * Token temiz bir tamsayı DEĞİLSE (örn. `"4 "`) parametre geçersizdir ve
+ * varsayılan büyütme yürürlüğe girer. Niyet edilen değeri okumak burada
+ * YANLIŞ olurdu: sorunun ta kendisi, niyet ile uygulananın ayrışmasıdır.
+ */
+function effectiveQrMagnification(args: string): number {
+  const token = qrMagnificationToken(args)
+  if (!/^\d+$/.test(token)) return QR_DEFAULT_MAGNIFICATION
+  const parsed = Number.parseInt(token, 10)
+  return parsed > 0 ? parsed : QR_DEFAULT_MAGNIFICATION
+}
+
+/** `^BQ` argümanlarında YALNIZ büyütmeyi değiştirir; diğerleri AYNEN. */
+function withQrMagnification(args: string, magnification: number): string {
+  const parts = String(args ?? '').split(',')
+  while (parts.length < 3) parts.push('')
+  parts[2] = String(magnification)
+  return parts.join(',')
+}
+
+export function resolveCarrierQrEnlargement(
+  qrField: ZplField | undefined,
+  occupancy: readonly QrOccupancyBox[],
+): CarrierQrEnlargement | null {
+  if (!qrField?.codeCommand || qrField.positionType !== 'FT') return null
+  const effective = effectiveQrMagnification(qrField.codeCommand.args)
+
+  // MODÜL SAYISI VARSAYIMI KANITLANIR: yalnız Version-1'e sığdığı KESİN olan
+  // kısa sayısal yükte büyütülür. Daha uzun yük daha çok modül demektir ve
+  // 21 modül varsayımı sessizce yanlış olurdu.
+  const payload = String(qrField.data ?? '')
+  const digits = payload.replace(/^[A-Za-z]{1,2},/, '')
+  if (!/^\d+$/.test(digits) || digits.length > CARRIER_QR_MAX_NUMERIC_V1) {
+    return null
+  }
+
+  for (const magnification of CARRIER_QR_MAGNIFICATION_CANDIDATES) {
+    if (magnification <= effective) continue
+    const size = CARRIER_QR_MODULES * magnification
+    const quietZone = QR_QUIET_MODULES * magnification
+    // ^FT yorumu belirsizdir (kutu tabanı mı, tabandan 7×m yukarısı mı);
+    // band İKİSİNİ DE kapsar, böylece hangi yorum geçerli olursa olsun
+    // çakışma kontrolü GEÇERLİDİR.
+    const bandTop = qrField.y - size - QR_FT_LIFT_PER_MAGNIFICATION * magnification
+    const bandBottom = qrField.y
+    if (bandTop - quietZone < 0) continue
+    if (bandBottom + quietZone > LABEL_EDGE) continue
+
+    const maxLeft = LABEL_EDGE - quietZone - size
+    let requiredLeft = 0
+    for (const box of occupancy) {
+      const intersectsVertically = box.top <= bandBottom && bandTop <= box.bottom
+      if (!intersectsVertically) continue
+      requiredLeft = Math.max(requiredLeft, box.right + quietZone)
+    }
+    if (requiredLeft > maxLeft) continue
+    // Mevcut yerinden GÖRSEL olarak kaymaması için EN SAĞ güvenli konum
+    // tercih edilir; QR yalnız BÜYÜR.
+    const x = Math.min(Math.max(qrField.x, requiredLeft), maxLeft)
+    if (x < requiredLeft) continue
+
+    return {
+      x,
+      y: qrField.y,
+      magnification,
+      size,
+      effectiveMagnification: effective,
+    }
+  }
+  return null
+}
+
+/**
+ * SOL DİKEY REFERANS ALANININ GÜVENLİ x KONUMU.
+ *
+ * ═══ SORUN ═══════════════════════════════════════════════════════════════
+ * Taşıyıcı, dikey sipariş referansını (`Siparis No: 727...`) `^FT25,706`
+ * `^A0B` ile basar. Döndürülmüş `^FT` alanı taban çizgisinin SOLUNA uzadığı
+ * için (bkz. zplTextGeometry ölçümleri) gerçek sütun x≈5..28'dedir —
+ * ETİKETİN EN SOLDAKİ MÜREKKEBİ budur; taşıyıcının kendi dikey "SURAT KARGO"
+ * rayı bile 4 dot daha içeridedir. Medya birkaç mm kaydığında ilk kırpılan
+ * alan bu olur; "bazen çıkmıyor" şikâyetinin fiziksel karşılığı budur.
+ *
+ * ═══ ÇÖZÜM ═══════════════════════════════════════════════════════════════
+ * Sütun, taşıyıcının KENDİ yerleşiminin izin verdiği KADAR sağa alınır:
+ * sağdaki ilk engelin (dikey kural / DataMatrix / metin) soluna sabit bir
+ * boşluk bırakan konuma. Engeller ZPL geometrisinden türetilir; sabit
+ * koordinat YOKTUR. Kaydırma bir dot bile kazandırmıyorsa alan AYNEN kalır.
+ *
+ * ═══ NEDEN "MÜMKÜN OLAN EN SAĞ" ══════════════════════════════════════════
+ * Kırpılma etiketin KENARINDA olur; alanlar arası göreli boşluklar medya
+ * kaymasından etkilenmez. Bu yüzden doğru hedef "kenardan olabildiğince
+ * uzak, komşusundan sabit boşlukta" konumdur.
+ */
+
+/** Döndürülmüş glifin hücre sınırını aşan mürekkebi (ölçüldü: ≤4 dot). */
+const GLYPH_OVERSHOOT_DOTS = 4
+/** Kaydırılan sütun ile sağındaki ilk engel arasındaki en az boşluk (1 mm). */
+const RAIL_MIN_GAP_DOTS = 8
+/** Kaydırmanın anlamlı sayılması için gereken en az kazanç. */
+const MIN_SHIFT_GAIN_DOTS = 2
+/**
+ * HEDEF SOL MÜREKKEP MARJI — 24 dot = 3.0 mm (203 dpi).
+ *
+ * Termal transfer yazıcılarda medya hizası ±1.5 mm oynayabilir; 3 mm içerik
+ * marjı bu oynamayı kırpılma olmadan karşılar ve etiket baskısında yerleşik
+ * güvenli alan ölçüsüdür. Hedefe ULAŞILAMIYORSA komşunun izin verdiği EN
+ * SAĞ konum kullanılır — hiç kaydırmamak yerine kazanılabilecek kadarı
+ * kazanılır; kaydırma hiç kazandırmıyorsa alan AYNEN kalır.
+ */
+const TARGET_INK_MARGIN_DOTS = 24
+/** Döndürülmüş glifin hücrenin SOLUNDA bıraktığı boşluk (ölçüldü). */
+const GLYPH_INK_INSET_DOTS = 5
+
+interface BlockingBox {
+  readonly left: number
+  readonly top: number
+  readonly bottom: number
+}
+
+/**
+ * Bir alanın SOL sınırı ve dikey uzanımı.
+ *
+ * MODELLENEMEYEN alan ENGEL SAYILIR (tüm dikey aralık): tanımadığımız bir
+ * komut yüzünden kaydırma yapmak, bilmediğimiz bir şeyin üstüne basmaktır.
+ */
+function blockingBox(field: ZplField): BlockingBox | null {
+  if (field.kind === 'text') {
+    const box = fieldTextBox(field)
+    // Gövdesi BOŞ metin basılmaz; engel değildir.
+    if (!box) return null
+    return { left: box.x, top: box.y, bottom: box.y + box.height }
+  }
+  if (field.kind === 'graphic') {
+    const args = (field.codeCommand?.args ?? '').split(',')
+    const width = Number.parseInt(args[0] ?? '', 10)
+    const height = Number.parseInt(args[1] ?? '', 10)
+    const thickness = Number.parseInt(args[2] ?? '', 10)
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return null
+    const stroke = Number.isFinite(thickness) ? Math.max(thickness, 1) : 1
+    const span = Math.max(height, stroke)
+    // Gerçek şablonda `^GB` daima `^FO` (sol üst) ile konumlanır. `^FT` ile
+    // konumlanmış bir kutu ise TABANDAN yukarı çizilir; hangisi olduğunu
+    // varsaymak yerine band İKİ YORUMU DA kapsar — engel hesabında fazla
+    // kapsamak GÜVENLİ yöndür.
+    return {
+      left: field.x,
+      top: field.positionType === 'FT' ? field.y - span : field.y,
+      bottom: field.y + span,
+    }
+  }
+  if (field.kind === 'datamatrix') {
+    return {
+      left: field.x,
+      top: field.y - DATA_MATRIX_MAX_HEIGHT,
+      bottom: field.y,
+    }
+  }
+  if (field.kind === 'code128') {
+    const height = Number.parseInt(
+      (field.byCommand?.args ?? '').split(',')[2] ?? '',
+      10,
+    )
+    if (!Number.isFinite(height) || height <= 0) {
+      return { left: field.x, top: -Infinity, bottom: Infinity }
+    }
+    return { left: field.x, top: field.y - height, bottom: field.y }
+  }
+  if (field.kind === 'qr') {
+    const magnification = effectiveQrMagnification(field.codeCommand?.args ?? '')
+    const size = CARRIER_QR_MODULES * magnification
+    // ^FT ve ^FO yorumlarını BİRLİKTE kapsayan en kötü durum bandı.
+    const lift =
+      field.positionType === 'FT'
+        ? size + QR_FT_LIFT_PER_MAGNIFICATION * magnification
+        : 0
+    return {
+      left: field.x,
+      top: field.y - lift,
+      bottom: field.y + (field.positionType === 'FT' ? 0 : QR_RENDER_Y_OFFSET + size),
+    }
+  }
+  return { left: field.x, top: -Infinity, bottom: Infinity }
+}
+
+export interface VerticalReferenceShift {
+  readonly x: number
+  readonly fromX: number
+  /** Kaydırma sonrası sol MÜREKKEP kenarı — kırpılma payının ölçüsü. */
+  readonly inkLeft: number
+  readonly fromInkLeft: number
+}
+
+export function resolveVerticalReferenceShift(
+  referenceField: ZplField | undefined,
+  neighbours: readonly ZplField[],
+): VerticalReferenceShift | null {
+  if (!referenceField) return null
+  if (referenceField.positionType !== 'FT') return null
+  if (referenceField.font?.orientation !== 'B') return null
+  const cell = referenceField.font?.height ?? 0
+  const fontWidth = referenceField.font?.width ?? 0
+  const text = String(referenceField.data ?? '')
+  if (cell <= 0 || fontWidth <= 0 || !text.trim()) return null
+
+  // ═══ İKİ FARKLI GENİŞLİK MODELİ — BİLİNÇLİ ══════════════════════════
+  // KENDİ uzanımı için composer'ın KALİBRE modeli (`estimateA0Width`,
+  // karakter başına ilerleme tablosu) kullanılır: burada FAZLA tahmin,
+  // olmayan bir çakışma uydurup kaydırmayı engellerdi.
+  // KOMŞULAR için `fieldTextBox`'ın kaba, GENİŞ modeli kullanılır: orada
+  // fazla tahmin GÜVENLİ yöndür.
+  const run = estimateA0Width(text, fontWidth)
+  // Döndürülmüş `^FT` alanı taban çizgisinin SOLUNA ve YUKARISINA uzar.
+  const own = {
+    x: referenceField.x - cell,
+    y: referenceField.y - run,
+    width: cell,
+    height: run,
+  }
+
+  let limit = LABEL_EDGE
+  for (const other of neighbours) {
+    if (other === referenceField) continue
+    const box = blockingBox(other)
+    if (!box) continue
+    // Sütunun SOLUNDA kalan bir alan sağa kaymayı sınırlamaz.
+    if (box.left <= own.x) continue
+    const overlapsVertically =
+      box.top <= own.y + own.height && own.y <= box.bottom
+    if (!overlapsVertically) continue
+    limit = Math.min(limit, box.left)
+  }
+
+  // Hücrenin SAĞ kenarı = taban çizgisi x. Mürekkep hücreyi ≤4 dot aşar.
+  const maxX = limit - RAIL_MIN_GAP_DOTS - GLYPH_OVERSHOOT_DOTS
+  // Hedef: sol MÜREKKEP kenarı güvenli marja otursun. Mürekkep hücrenin
+  // solundan GLYPH_INK_INSET_DOTS kadar içeride başlar.
+  const targetX =
+    TARGET_INK_MARGIN_DOTS - GLYPH_INK_INSET_DOTS + own.width
+  const shifted = Math.min(targetX, maxX)
+  if (shifted - referenceField.x < MIN_SHIFT_GAIN_DOTS) return null
+  return {
+    x: shifted,
+    fromX: referenceField.x,
+    inkLeft: shifted - own.width + GLYPH_INK_INSET_DOTS,
+    fromInkLeft: own.x + GLYPH_INK_INSET_DOTS,
+  }
+}
+
 function fallback(
   mode: SuratComposeMode,
   reason: string,
   sourceZpl: string,
 ): SuratComposedLabel {
   return { composed: false, mode, reason, zpl: sourceZpl, diagnostics: null }
+}
+
+/**
+ * `^FT`/`^FO` argümanında YALNIZ x,y değiştirir; ek parametreler (hizalama
+ * gibi) AYNEN korunur.
+ */
+function replacePositionXY(args: string, x: number, y: number): string {
+  const parts = String(args ?? '').split(',')
+  const rest = parts.slice(2)
+  return [String(x), String(y), ...rest].join(',')
 }
 
 /** Bir alanın komutlarını, konumu değiştirilmiş kopyayla klonlar. */
@@ -672,6 +1017,41 @@ export function composeSuratDurusoftLabel(
       ? { x: placement.x, y: placement.y, size: placement.size }
       : null
 
+  // ── 4) TAŞIYICININ KENDİ QR'ı: FİZİKSEL OKUNABİLİR BOYUT ─────────────
+  //
+  // Composer kendi QR'ını EKLEMEDİĞİ durumda (taşıyıcı zaten basıyor) tek
+  // yapabileceği, VAR OLAN QR'ı okunabilir modül boyutuna çıkarmaktır.
+  // İşgal listesi, seçilen aktarma genişliğiyle YENİDEN kurulur: QR
+  // yerleşimi hangi tipografiyle doğrulandıysa büyütme de onunla sınanır.
+  const carrierQrField = carrierAlreadyPrintsQr
+    ? semantic.zplFields.find((field) => field.kind === 'qr')
+    : undefined
+  const carrierQrEnlargement = resolveCarrierQrEnlargement(
+    carrierQrField,
+    buildOccupancy(transferWidth),
+  )
+
+  // ── 5) SOL DİKEY SİPARİŞ REFERANSI: GÜVENLİ BASKI KENARI ─────────────
+  //
+  // Dikey "ALICI" başlığı bu çıktıda GÖRÜNMEZ kılınıyor (whitelist 6); bu
+  // yüzden komşuluk hesabına GİRMEZ. Basılmayan bir metni engel saymak,
+  // kaydırmayı sahte bir çakışmaya kurban ederdi.
+  const headingField = semantic.zplFields.find(
+    (field) =>
+      field.x === RECIPIENT_HEADING.x &&
+      field.y === RECIPIENT_HEADING.y &&
+      field.font?.orientation === RECIPIENT_HEADING.orientation &&
+      field.font?.height === RECIPIENT_HEADING.height &&
+      field.font?.width === RECIPIENT_HEADING.width &&
+      field.dataCommand !== null,
+  )
+  const headingData = headingField?.data ?? null
+  const orderReferenceField = fields.orderReference?.field
+  const orderReferenceShift = resolveVerticalReferenceShift(
+    orderReferenceField,
+    semantic.zplFields.filter((field) => field !== headingField),
+  )
+
   // ── DÜZENLEMELER ──────────────────────────────────────────────────────
   const document = semantic.document
   const edits: ZplEdit[] = []
@@ -688,16 +1068,6 @@ export function composeSuratDurusoftLabel(
   // SİLME DEĞİL BOŞALTMA: `^FD` gövdesi boşaltılır, komut yapısı YERİNDE
   // kalır. Böylece "taşıyıcı komutu ASLA silinmez" invariant'ı (deletions=0)
   // olduğu gibi korunur ve düzenleme tek bir mutasyona indirgenir.
-  const headingField = semantic.zplFields.find(
-    (field) =>
-      field.x === RECIPIENT_HEADING.x &&
-      field.y === RECIPIENT_HEADING.y &&
-      field.font?.orientation === RECIPIENT_HEADING.orientation &&
-      field.font?.height === RECIPIENT_HEADING.height &&
-      field.font?.width === RECIPIENT_HEADING.width &&
-      field.dataCommand !== null,
-  )
-  const headingData = headingField?.data ?? null
   if (headingField?.dataCommand && headingData) {
     edits.push({
       type: 'replace',
@@ -772,6 +1142,84 @@ export function composeSuratDurusoftLabel(
     })
   }
 
+  // (whitelist 7) taşıyıcı QR'ının büyütmesi 4 → 5.
+  //
+  // İKİ KOMUT, TEK NİYET: `^BQ` argümanındaki büyütme ile `^FT` konumu
+  // birlikte değişir; konum değişmiyorsa yalnız büyütme yazılır.
+  const carrierQrArgsBefore = carrierQrField?.codeCommand?.args ?? null
+  const carrierQrArgsAfter =
+    carrierQrEnlargement && carrierQrArgsBefore !== null
+      ? withQrMagnification(
+          carrierQrArgsBefore,
+          carrierQrEnlargement.magnification,
+        )
+      : null
+  const carrierQrPositionBefore =
+    carrierQrEnlargement && carrierQrField
+      ? carrierQrField.positionCommand.args
+      : null
+  const carrierQrPositionAfter =
+    carrierQrEnlargement && carrierQrField && carrierQrPositionBefore !== null
+      ? replacePositionXY(
+          carrierQrPositionBefore,
+          carrierQrEnlargement.x,
+          carrierQrEnlargement.y,
+        )
+      : null
+  if (
+    carrierQrEnlargement &&
+    carrierQrField?.codeCommand &&
+    carrierQrArgsAfter !== null
+  ) {
+    edits.push({
+      type: 'replace',
+      target: carrierQrField.codeCommand,
+      commands: [{ name: 'BQ', args: carrierQrArgsAfter }],
+    })
+    if (carrierQrPositionAfter !== null && carrierQrPositionAfter !== carrierQrPositionBefore) {
+      edits.push({
+        type: 'replace',
+        target: carrierQrField.positionCommand,
+        commands: [
+          {
+            name: carrierQrField.positionCommand.name,
+            args: carrierQrPositionAfter,
+          },
+        ],
+      })
+    }
+  }
+
+  // (whitelist 8) dikey sipariş referansı güvenli kenara kaydırılır.
+  const orderReferencePositionBefore =
+    orderReferenceShift && orderReferenceField
+      ? orderReferenceField.positionCommand.args
+      : null
+  const orderReferencePositionAfter =
+    orderReferenceShift && orderReferenceField && orderReferencePositionBefore !== null
+      ? replacePositionXY(
+          orderReferencePositionBefore,
+          orderReferenceShift.x,
+          orderReferenceField.y,
+        )
+      : null
+  if (
+    orderReferenceField &&
+    orderReferencePositionAfter !== null &&
+    orderReferencePositionAfter !== orderReferencePositionBefore
+  ) {
+    edits.push({
+      type: 'replace',
+      target: orderReferenceField.positionCommand,
+      commands: [
+        {
+          name: orderReferenceField.positionCommand.name,
+          args: orderReferencePositionAfter,
+        },
+      ],
+    })
+  }
+
   const pq = document.commands.find((command) => command.name === 'PQ')
   const xz = document.commands.find((command) => command.name === 'XZ')
   const anchor = pq ?? xz
@@ -827,6 +1275,33 @@ export function composeSuratDurusoftLabel(
     ) {
       return false
     }
+    // (7) Taşıyıcı QR'ının büyütülmesi — YALNIZ hesaplanan değere.
+    if (
+      mutation.name === 'BQ' &&
+      carrierQrArgsBefore !== null &&
+      carrierQrArgsAfter !== null &&
+      mutation.from === carrierQrArgsBefore &&
+      mutation.to === carrierQrArgsAfter
+    ) {
+      return false
+    }
+    if (
+      carrierQrPositionAfter !== null &&
+      mutation.name === carrierQrField?.positionCommand.name &&
+      mutation.from === carrierQrPositionBefore &&
+      mutation.to === carrierQrPositionAfter
+    ) {
+      return false
+    }
+    // (8) Dikey sipariş referansının güvenli kenara kaydırılması.
+    if (
+      orderReferencePositionAfter !== null &&
+      mutation.name === orderReferenceField?.positionCommand.name &&
+      mutation.from === orderReferencePositionBefore &&
+      mutation.to === orderReferencePositionAfter
+    ) {
+      return false
+    }
     return true
   })
   if (unexpected.length > 0) {
@@ -866,6 +1341,23 @@ export function composeSuratDurusoftLabel(
       qrCandidateIndex: qrFits && placement ? placement.candidateIndex : null,
       transferFontWidth: qrFits ? transferWidth : transferNativeWidth,
       transferFontWidthNative: transferNativeWidth,
+      carrierQr: carrierQrEnlargement
+        ? {
+            x: carrierQrEnlargement.x,
+            y: carrierQrEnlargement.y,
+            size: carrierQrEnlargement.size,
+            magnification: carrierQrEnlargement.magnification,
+            effectiveMagnification: carrierQrEnlargement.effectiveMagnification,
+          }
+        : null,
+      orderReferenceShift: orderReferenceShift
+        ? {
+            fromX: orderReferenceShift.fromX,
+            x: orderReferenceShift.x,
+            fromInkLeft: orderReferenceShift.fromInkLeft,
+            inkLeft: orderReferenceShift.inkLeft,
+          }
+        : null,
       diff: {
         mutations: diff.mutations.length,
         allowedMutations: diff.mutations.length,

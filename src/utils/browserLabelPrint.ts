@@ -902,7 +902,13 @@ export function renderDocumentLabelHtml(
   // Bu yüzden her etiket kendi 10×10 cm kutusuna sarılır. Yerleşim
   // kararları hâlâ YALNIZ ilkellerden gelir; konteyner ölçü vermez,
   // yalnız fiziksel sayfayı ve konumlandırma bağlamını tanımlar.
-  return `<div class="lp-page">${body}</div>`
+  // ═══ SAYFA KOMPOZİSYON MODUNU İLAN EDER ══════════════════════════════
+  // Baskı muhafızı, sayfanın hangi KANITI taşıması gerektiğini bilmelidir:
+  // overlay sayfasının kanıtı TABAN GÖRÜNTÜSÜ, standalone sayfasınınki
+  // METİNDİR. Bu ayrım HTML'den okunamıyordu; muhafız her `lp-page`'den
+  // taban görüntüsü bekleyip standalone belgeleri REDDEDİYORDU.
+  const mode = isOverlayDocument(labelDocument) ? 'overlay' : 'standalone'
+  return `<div class="lp-page" data-mode="${mode}">${body}</div>`
 }
 
 export function buildCleanLabelDocument(
@@ -1692,15 +1698,21 @@ async function waitForPrintDocument(targetDocument: Document): Promise<void> {
  */
 function isPrintableLabelHtml(html: string): boolean {
   if (!html.includes('<body>')) return false
+  const hasText = () => stripHtml(html).trim().length > 20
   if (html.includes('class="lp-page"')) {
+    // ═══ KANIT SAYFANIN İLAN ETTİĞİ MODA GÖRE SEÇİLİR ═══════════════
+    // Muhafız eskiden HER `lp-page`'den taban görüntüsü istiyordu. Oysa
+    // taban YALNIZ overlay belgelerinde vardır; kendi etiketini baştan
+    // sona çizen `standalone` belge taban TAŞIMAZ ve bu yüzden GEÇERLİ
+    // bir çıktı üretmiş olmasına rağmen "içerik oluşturulamadı" diye
+    // reddediliyordu — o kiracılar CargoFlow şablonuyla HİÇ basamıyordu.
+    if (html.includes('data-mode="standalone"')) return hasText()
     return (
       html.includes('class="lp-base"') &&
       html.includes('data:image/png;base64,')
     )
   }
-  return (
-    html.includes('class="label-page"') && stripHtml(html).trim().length > 20
-  )
+  return html.includes('class="label-page"') && hasText()
 }
 
 function previewPrintableContent(html: string): string {

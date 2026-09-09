@@ -98,7 +98,21 @@ const ZONE_CLASS: Record<SuratSemanticKey, CarrierZoneClass> = {
   addressLine2: 'informational',
   recipientPhone: 'informational',
   cityDistrict: 'informational',
-  orderReference: 'informational',
+  // ═══ DİKEY SİPARİŞ REFERANSI KİMLİKTİR ══════════════════════════════
+  //
+  // Sol dikey `Siparis No: 727…` sütunu, gönderinin pazaryeri karşılığıdır
+  // ve `INVARIANT_KEYS` içinde ZATEN dokunulmaz sayılır. "Bilgi alanı"
+  // sınıfı ise kiracı yerleşiminin onu UYARIYLA kapatmasına izin veriyordu.
+  //
+  // Sahadaki "727 bazen çıkmıyor" şikâyetinin iki fiziksel nedeni vardır:
+  // baskı kenarında kırpılma (composer normalizasyonuyla giderildi) ve
+  // ÜSTÜNÜN KAPATILMASI. İkincisi kapatılmadan "deterministik olarak
+  // çözüldü" denemez; bu yüzden bölge BLOKLAYICI kimlik sınıfındadır.
+  //
+  // Etkisi YALNIZ yayınlama kapısıdır: baskı engellenmez, kiracı bu alanı
+  // örten bir yerleşimi YAYINLAYAMAZ. Göç aracının serbest şerit arayıcısı
+  // da artık bu şeridi kendiliğinden atlar.
+  orderReference: 'identity',
 }
 
 const ZONE_LABEL: Record<SuratSemanticKey, string> = {

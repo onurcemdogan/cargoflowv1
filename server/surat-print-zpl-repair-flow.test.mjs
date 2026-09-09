@@ -415,3 +415,89 @@ test('PR-11: CLI varsayılanı DRY-RUN ve apply jeton ister', () => {
   // Provider çağrısı veya migration YOK.
   assert.equal(/SuratKargoProvider|fetch\(|drizzle-kit/.test(cli), false)
 })
+
+// ═══ PR-12..PR-14: ESKİ GEOMETRİ SÖZLEŞMESİ ═════════════════════════════
+//
+// Kalıcı artefakt DEĞİŞMEZDİR — aynı gönderi tekrar basıldığında aynı
+// baytlar çıkar. Ama composer'ın GEOMETRİSİ düzeltildiğinde (bozuk `^BQ`
+// token'ı yüzünden 21×21 dot basılan QR, etiket kenarına sıfırlanmış dikey
+// referans) eski artefaktı olduğu gibi bırakmak, o gönderilerin SONSUZA DEK
+// okunamayan etiketle basılması demektir.
+//
+// Bu yüzden `printZplVersion` yürürlükteki sözleşmeden eskiyse gönderi
+// ADAYDIR. Araç yine opt-in ve dry-run varsayılandır.
+
+/** Ürün satırı EKLENMİŞ ama ESKİ geometri sürümüyle damgalanmış artefakt. */
+function outdatedGeometryArtifact() {
+  const artifact = augmentedArtifact()
+  return { ...artifact, printZplVersion: 'surat-product-line-v1' }
+}
+
+test('PR-12: eski geometri sürümü ADAYDIR ve yeniden türetilir', async () => {
+  const db = await makeDb()
+  const seeded = await seed(db, { artifact: outdatedGeometryArtifact() })
+  const before = await readPayload(db, seeded.organizationId)
+  const report = await repair.repairSourceOnlyPrintZpl(
+    db,
+    { organizationId: seeded.organizationId },
+    { apply: true, now: '2026-09-09T00:00:00.000Z' },
+  )
+  assert.equal(report.candidates, 1)
+  assert.equal(report.repaired, 1)
+  assert.equal(report.entries[0].outcome, 'repaired')
+  const after = await readPayload(db, seeded.organizationId)
+  assert.notEqual(
+    after.row.carrierPayloadEncrypted,
+    before.row.carrierPayloadEncrypted,
+    'artefakt güncellenmeli',
+  )
+  assert.equal(
+    after.payload.printZplArtifact.printZplVersion,
+    'surat-product-line-v2-geometry',
+  )
+  // KAYNAK KUTSAL KALIR.
+  assert.equal(after.payload.technicalZpl, TECHNICAL_ZPL)
+})
+
+test('PR-13: GÜNCEL sürümlü artefakta dokunulmaz', async () => {
+  const db = await makeDb()
+  const seeded = await seed(db, { artifact: augmentedArtifact() })
+  const before = await readPayload(db, seeded.organizationId)
+  const report = await repair.repairSourceOnlyPrintZpl(
+    db,
+    { organizationId: seeded.organizationId },
+    { apply: true },
+  )
+  assert.equal(report.candidates, 0)
+  assert.equal(report.entries[0].outcome, 'already_augmented')
+  const after = await readPayload(db, seeded.organizationId)
+  assert.equal(
+    after.row.carrierPayloadEncrypted,
+    before.row.carrierPayloadEncrypted,
+  )
+})
+
+test('PR-14: yeniden türetme başarısızsa MEVCUT artefakt KORUNUR', async () => {
+  // Katalog satırı yok → yeniden türetme ürün satırı üretemez. Eski geometri
+  // sürümü diye artefaktı ürün satırsız bir çıktıyla DEĞİŞTİRMEK, veri
+  // kaybı olurdu.
+  const db = await makeDb()
+  const seeded = await seed(db, {
+    artifact: outdatedGeometryArtifact(),
+    withItems: false,
+  })
+  const before = await readPayload(db, seeded.organizationId)
+  const report = await repair.repairSourceOnlyPrintZpl(
+    db,
+    { organizationId: seeded.organizationId },
+    { apply: true },
+  )
+  assert.equal(report.repaired, 0)
+  assert.equal(report.entries[0].outcome, 'still_outdated_geometry')
+  const after = await readPayload(db, seeded.organizationId)
+  assert.equal(
+    after.row.carrierPayloadEncrypted,
+    before.row.carrierPayloadEncrypted,
+    'mevcut ürün satırı KAYBOLMAZ',
+  )
+})

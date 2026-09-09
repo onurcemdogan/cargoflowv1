@@ -146,7 +146,7 @@ test('PZ-1..PZ-7: artifact üretimi — alanlar, SHA ve uzunluk doğru', async (
     NOW,
   )
   assert.equal(augmentationStatus, 'augmented')
-  assert.equal(artifact.printZplVersion, 'surat-product-line-v1')
+  assert.equal(artifact.printZplVersion, 'surat-product-line-v2-geometry')
   assert.equal(artifact.printZplCreatedAt, NOW)
   assert.ok(artifact.printZplFooterProfile)
   assert.ok(artifact.templateFingerprint)
@@ -489,7 +489,7 @@ test('WIRE-1: create zinciri printZplArtifact’i AYNI yazımda persist eder', a
     stored.printZplArtifact.printZpl.includes('(Renk: Krem, Beden: 40) [6496]'),
     'katalog zenginleştirmesi create sırasında uygulandı',
   )
-  assert.equal(stored.printZplArtifact.printZplVersion, 'surat-product-line-v1')
+  assert.equal(stored.printZplArtifact.printZplVersion, 'surat-product-line-v2-geometry')
   assert.ok(stored.printZplArtifact.printZplCreatedAt)
 })
 
@@ -581,7 +581,7 @@ test('WIRE-4: label servisi persisted printZpl döndürür (katalog zenginleşti
   assert.ok(result.zpl.includes('(Renk: Krem, Beden: 40) [6496]'))
   assert.equal(result.source, 'shipment.printZplArtifact')
   // Güvenli DTO özeti döner (ham payload YOK).
-  assert.equal(result.print.printZplVersion, 'surat-product-line-v1')
+  assert.equal(result.print.printZplVersion, 'surat-product-line-v2-geometry')
   assert.equal(result.print.renderMode, 'raw-zpl')
   assert.equal(result.print.augmentationStatus, 'augmented')
   // Kalıcı hale geldi.

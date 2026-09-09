@@ -795,3 +795,78 @@ test('PRINT-15: bu duman paketi KAPILARA bağlı (sessizce düşürülemez)', ()
   const snapshot = join(here, 'fixtures', 'surat-render', 'print-document-shape.json')
   assert.ok(JSON.parse(readFileSync(snapshot, 'utf8')).length > 0)
 })
+
+/* ═══ PRINT-16 — KOMPOZİSYON MODUNA GÖRE BASKI KANITI ═════════════ */
+
+// ÜRETİM HATASI: baskı muhafızı HER `lp-page` sayfasından taşıyıcı taban
+// GÖRÜNTÜSÜ bekliyordu. Oysa taban YALNIZ overlay belgelerinde vardır.
+// Kendi etiketini baştan sona çizen `standalone` belge taban taşımaz; geçerli
+// ve dolu bir çıktı üretmesine rağmen kapıda reddediliyordu. Sonuç: eski
+// (standalone) şablonu yayında olan kiracılar "CargoFlow Şablonuyla Yazdır"
+// aksiyonunu HİÇ kullanamıyor, yalnız "Yazdırılacak etiket içeriği
+// oluşturulamadı" mesajını görüyordu.
+//
+// Muhafız artık sayfanın İLAN ETTİĞİ moda göre kanıt ister:
+//   standalone → METİN,  overlay → TABAN GÖRÜNTÜSÜ.
+test('PRINT-16: standalone belge taban GÖRÜNTÜSÜ olmadan da basılabilir', async () => {
+  const ctx = await runPrintChain({ address: NORMAL_ADDRESS })
+  try {
+    const print = await load('/src/utils/browserLabelPrint.ts')
+    const { isPrintableLabelHtml } = print.__testing
+
+    // ── standalone: taban YOK, metin VAR → basılabilir ───────────────
+    const standalone = {
+      ...ctx.document,
+      mode: undefined,
+      elements: ctx.document.elements.filter((e) => e.type !== 'qr'),
+    }
+    const standaloneHtml = print.buildCleanLabelDocument(
+      ctx.orders, TEMPLATE, {}, [], standalone,
+    ).html
+    assert.match(standaloneHtml, /class="lp-page" data-mode="standalone"/)
+    assert.equal(
+      standaloneHtml.includes('class="lp-base"'),
+      false,
+      'standalone sayfada taşıyıcı tabanı YOKTUR',
+    )
+    assert.equal(
+      isPrintableLabelHtml(standaloneHtml),
+      true,
+      'dolu standalone çıktı REDDEDİLEMEZ',
+    )
+
+    // ── overlay + taban YOK → hâlâ REDDEDİLİR (kanıt kaybolmadı) ─────
+    // Bu belge kompozisyonda ELENİR: yalnız kiracı eklerinden oluşan bir
+    // etiket hiç üretilmez. Muhafızın gevşetilmediğini bu kanıtlar.
+    const overlay = { ...ctx.document, mode: 'overlay' }
+    assert.throws(
+      () =>
+        print.buildCleanLabelDocument(
+          ctx.orders, TEMPLATE, {}, [], overlay, new Map(), new Map(),
+        ),
+      /taban katman/i,
+      'overlay belge taşıyıcı tabanı OLMADAN basılamaz',
+    )
+    // Ve muhafız, elle kurulmuş bir overlay sayfasını da reddeder.
+    assert.equal(
+      isPrintableLabelHtml(
+        '<body><div class="lp-page" data-mode="overlay"><div class="lp"></div></div></body>',
+      ),
+      false,
+      'overlay sayfası taban görüntüsü OLMADAN basılamaz',
+    )
+
+    // ── BOŞ standalone → REDDEDİLİR (metin kanıtı gerçekten aranıyor) ─
+    const empty = { ...ctx.document, mode: undefined, elements: [] }
+    const emptyHtml = print.buildCleanLabelDocument(
+      ctx.orders, TEMPLATE, {}, [], empty,
+    ).html
+    assert.equal(
+      isPrintableLabelHtml(emptyHtml),
+      false,
+      'boş standalone sayfa basılmaz',
+    )
+  } finally {
+    await ctx.pglite.close()
+  }
+})

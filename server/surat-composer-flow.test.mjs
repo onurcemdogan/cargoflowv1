@@ -591,19 +591,29 @@ test('CF-31: transform whitelist — beklenmeyen mutasyon/silme YOK', async () =
   )
   // SİLME SIFIR KALIR — taşıyıcı komutu ASLA kaldırılmaz.
   assert.equal(diff.removed.length, 0)
-  // İZİNLİ MUTASYONLAR (whitelist): (1) Code128 yorum satırı bayrağı ve
-  // (6) dikey alıcı başlığının GÖVDESİNİN boşaltılması. Başlık SİLİNMEZ,
-  // yalnız `^FD` gövdesi boşaltılır — bu yüzden mutasyon, silme değil.
-  assert.equal(diff.mutations.length, 2)
+  // İZİNLİ MUTASYONLAR (whitelist): (1) Code128 yorum satırı bayrağı,
+  // (6) dikey alıcı başlığının GÖVDESİNİN boşaltılması ve (8) sol dikey
+  // sipariş referansının güvenli baskı marjına normalize edilmesi.
+  // Başlık SİLİNMEZ, yalnız `^FD` gövdesi boşaltılır — bu yüzden mutasyon,
+  // silme değil. Referans da SİLİNMEZ; yalnız `^FT` konumu değişir.
+  assert.equal(diff.mutations.length, 3)
   const names = diff.mutations.map((mutation) => mutation.name).sort()
-  assert.deepEqual(names, ['BC', 'FD'])
+  assert.deepEqual(names, ['BC', 'FD', 'FT'])
+  // Konum mutasyonu YALNIZ x'i değiştirir; taban çizgisi (y) korunur.
+  const positionMutation = diff.mutations.find((m) => m.name === 'FT')
+  assert.equal(positionMutation.from, '25,706')
+  assert.equal(positionMutation.to.split(',')[1], '706', 'y DEĞİŞMEZ')
+  assert.ok(
+    Number(positionMutation.to.split(',')[0]) > 25,
+    'yalnız SAĞA normalize edilir',
+  )
   const headingMutation = diff.mutations.find(
     (mutation) => mutation.name === 'FD',
   )
   assert.equal(headingMutation.to, '', 'başlık gövdesi BOŞALTILIR')
   assert.equal(result.diagnostics.diff.unexpectedMutations, 0)
   assert.equal(result.diagnostics.diff.deletions, 0)
-  assert.equal(result.diagnostics.diff.allowedMutations, 2)
+  assert.equal(result.diagnostics.diff.allowedMutations, 3)
 })
 
 test('CF-32: invariant doğrulayıcı BOZULMUŞ çıktıyı reddeder', async () => {
@@ -812,10 +822,16 @@ test('CF-40: fark raporu mutasyon / ekleme / silme AYRI verir', async () => {
   const { diff } = result.diagnostics
   assert.equal(diff.deletions, 0, 'taşıyıcı komutu SİLİNMEZ')
   assert.equal(diff.unexpectedMutations, 0)
-  // İzinli mutasyonlar: ^BC yorum bayrağı + dikey alıcı başlığının
-  // gövdesinin boşaltılması. İkisi de whitelist'te AÇIKÇA tanımlı.
-  assert.equal(diff.allowedMutations, 2, '^BC bayrağı + başlık gövdesi')
-  assert.equal(diff.mutations, 2)
+  // İzinli mutasyonlar: ^BC yorum bayrağı, dikey alıcı başlığının
+  // gövdesinin boşaltılması ve sol dikey sipariş referansının güvenli
+  // baskı marjına normalize edilmesi. Üçü de whitelist'te AÇIKÇA tanımlı.
+  assert.equal(
+    diff.allowedMutations,
+    3,
+    '^BC bayrağı + başlık gövdesi + referans konumu',
+  )
+  assert.equal(diff.mutations, 3)
+  assert.ok(result.diagnostics.orderReferenceShift, 'referans normalize edildi')
   assert.ok(diff.insertions > 0, 'yeni alanlar eklenir')
   // Ekleme bileşimi: barkod metni + bold adres vuruşları + QR durum/QR.
   assert.equal(

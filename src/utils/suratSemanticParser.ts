@@ -38,6 +38,21 @@ interface SuratSlotSpec {
   readonly font?: SuratFontSignature
   /** Kaynakta HER ZAMAN boş olması beklenen slot (bold adres bölgesi). */
   readonly mustBeEmpty?: boolean
+  /**
+   * CARGOFLOW'UN NORMALİZE ETTİĞİ x KORİDORU.
+   *
+   * ═══ NEDEN VAR ══════════════════════════════════════════════════════
+   * Composer, sol dikey sipariş referansını kırpılma payı için taşıyıcının
+   * yerleşiminin izin verdiği kadar SAĞA alır. Konum kilidi bunu "slot yok"
+   * sayarsa, TÜRETİLMİŞ etiketin semantic modeli ÇÖZÜLEMEZ ve taşıyıcı
+   * bölge koruması tamamen devre dışı kalır.
+   *
+   * ═══ NEDEN GÜVENLİ ══════════════════════════════════════════════════
+   * Serbestlik YALNIZ x'tedir ve YALNIZ bu slot içindir. y, komut ailesi ve
+   * FONT İMZASI (A0, yön B, 20/28) tam eşleşmeye devam eder; koridor da sol
+   * marjla sınırlıdır. İki aday çıkarsa slot BELİRSİZ sayılır — tahmin YOK.
+   */
+  readonly xCorridor?: { readonly min: number; readonly max: number }
 }
 
 export type SuratSemanticKey =
@@ -96,7 +111,16 @@ const SLOTS: readonly SuratSlotSpec[] = [
   { key: 'deliveryType', label: 'teslim tipi', x: 340, y: 599, kind: 'text', font: TEXT_FONT(35, 33) },
   { key: 'routeCode', label: 'rota', x: 220, y: 636, kind: 'text', font: TEXT_FONT(44, 52) },
   { key: 'transferCenter', label: 'aktarma merkezi', x: 220, y: 705, kind: 'text', font: TEXT_FONT(70, 50) },
-  { key: 'orderReference', label: 'dikey sipariş no', x: 25, y: 706, kind: 'text', font: TEXT_FONT(20, 28, 'B') },
+  {
+    key: 'orderReference',
+    label: 'dikey sipariş no',
+    x: 25,
+    y: 706,
+    kind: 'text',
+    font: TEXT_FONT(20, 28, 'B'),
+    // Composer bu alanı sol marj içinde sağa normalize eder.
+    xCorridor: { min: 0, max: 120 },
+  },
   { key: 'dataMatrixPayload', label: 'DataMatrix', x: 59, y: 706, kind: 'datamatrix' },
 ]
 
@@ -189,16 +213,41 @@ function locate(
   fields: readonly ZplField[],
   slot: SuratSlotSpec,
 ): { field: ZplField } | { error: string } {
+  const matchesX = (value: number): boolean =>
+    slot.xCorridor
+      ? value >= slot.xCorridor.min && value <= slot.xCorridor.max
+      : value === slot.x
   const atPosition = fields.filter(
-    (field) => field.positionType === 'FT' && field.x === slot.x && field.y === slot.y,
+    (field) =>
+      field.positionType === 'FT' &&
+      matchesX(field.x) &&
+      field.y === slot.y &&
+      // Koridorlu slotta font imzası AYIRT EDİCİ ölçüdür; aynı taban
+      // çizgisindeki başka bir alan slotu ele geçiremesin.
+      (!slot.xCorridor || !slot.font || fontMatches(field, slot.font)),
   )
   if (atPosition.length === 0) {
     return { error: `${slot.label} slotu yok (^FT${slot.x},${slot.y})` }
   }
-  if (atPosition.length > 1) {
-    return { error: `${slot.label} slotu BELİRSİZ (^FT${slot.x},${slot.y} ${atPosition.length} kez)` }
+  // ═══ BOŞ TAŞIYICI SLOTU + DOLU KOPYA — BELİRSİZLİK DEĞİLDİR ═════════
+  //
+  // v1 şablonunda taşıyıcı, bold adres slotlarını BOŞ `^FD` ile açar;
+  // composer aynı konuma DOLU bir kopya ekler. Aynı noktada iki alan olur.
+  // Bunu "belirsiz" saymak, TÜRETİLMİŞ etiketin semantic modelini tümüyle
+  // çözümsüz bırakıyordu — ve modelle birlikte taşıyıcı bölge koruması da
+  // sessizce devre dışı kalıyordu (deriveCarrierZones boş liste dönüyordu).
+  //
+  // Basılan içerik DOLU alandır; boş yer tutucu basılmaz. Bu yüzden tek bir
+  // DOLU aday varsa slot ONUNDUR. İki DOLU aday hâlâ belirsizdir — gerçek
+  // çift basım gizlenmez.
+  const printed = atPosition.filter(
+    (candidate) => String(candidate.data ?? '').trim() !== '',
+  )
+  const resolved = printed.length === 1 ? printed : atPosition
+  if (resolved.length > 1) {
+    return { error: `${slot.label} slotu BELİRSİZ (^FT${slot.x},${slot.y} ${resolved.length} kez)` }
   }
-  const [field] = atPosition
+  const [field] = resolved
   if (field.kind !== slot.kind) {
     return { error: `${slot.label} beklenen komut ailesi değil (${field.kind} ≠ ${slot.kind})` }
   }
@@ -229,8 +278,11 @@ function locateNearby(
     if (claimed.has(field)) return false
     if (field.positionType !== 'FT') return false
     if (field.kind !== slot.kind) return false
-    const dx = field.x - slot.x
+    const dx = slot.xCorridor ? 0 : field.x - slot.x
     const dy = field.y - slot.y
+    if (slot.xCorridor && !(field.x >= slot.xCorridor.min && field.x <= slot.xCorridor.max)) {
+      return false
+    }
     if (Math.hypot(dx, dy) > SLOT_DRIFT_RADIUS) return false
     // Font AİLESİ (kimlik) korunmalı; yalnız punto serbesttir.
     if (slot.font && !fontFamilyMatches(field, slot.font)) return false
@@ -310,12 +362,19 @@ function extractFromZplFields(
   // Bir alan en fazla BİR slota bağlanır → slotlar arası anlam sızıntısı
   // YAPISAL OLARAK imkânsızdır.
   const claimed = new Set<ZplField>()
-  const resolvedSlots: SuratSlotSpec[] = SLOTS.map((baseSlot) =>
-    baseSlot.key === 'transferCenter' &&
-    expectations.transferFontWidth !== undefined &&
-    baseSlot.font
-      ? { ...baseSlot, font: { ...baseSlot.font, width: expectations.transferFontWidth } }
-      : baseSlot)
+  const resolvedSlots: SuratSlotSpec[] = SLOTS.map((baseSlot) => {
+    if (
+      baseSlot.key === 'transferCenter' &&
+      expectations.transferFontWidth !== undefined &&
+      baseSlot.font
+    ) {
+      return {
+        ...baseSlot,
+        font: { ...baseSlot.font, width: expectations.transferFontWidth },
+      }
+    }
+    return baseSlot
+  })
 
   const exactHits = new Map<SuratSemanticKey, ZplField>()
   for (const slot of resolvedSlots) {

@@ -286,10 +286,11 @@ test('RT-10B: composed mod kaynağı korur ve whitelist/invariant ile bağlanır
     parseZplDocument(derived.printZpl),
   )
   assert.equal(diff.removed.length, 0, 'taşıyıcı komutu SİLİNMEZ')
-  // İKİ beklenen mutasyon: (1) Code128 yorum bayrağı, (6) dikey alıcı
-  // başlığının GÖVDESİ boşaltılır. Başlık komutu SİLİNMEZ — bu yüzden
-  // `removed` hâlâ sıfırdır.
-  assert.equal(diff.mutations.length, 2, 'iki beklenen mutasyon')
+  // ÜÇ beklenen mutasyon: (1) Code128 yorum bayrağı, (6) dikey alıcı
+  // başlığının GÖVDESİ boşaltılır, (8) sol dikey sipariş referansı güvenli
+  // baskı marjına normalize edilir. Hiçbiri SİLME değildir — `removed`
+  // hâlâ sıfırdır.
+  assert.equal(diff.mutations.length, 3, 'üç beklenen mutasyon')
   const barcodeFlag = diff.mutations.find((mutation) => mutation.name === 'BC')
   assert.ok(barcodeFlag, '^BC yorum bayrağı mutasyonu bulunmalı')
   assert.ok(barcodeFlag.from.startsWith('N,,Y,N'))
@@ -297,6 +298,14 @@ test('RT-10B: composed mod kaynağı korur ve whitelist/invariant ile bağlanır
   const heading = diff.mutations.find((mutation) => mutation.name === 'FD')
   assert.ok(heading, 'başlık gövdesi mutasyonu bulunmalı')
   assert.equal(heading.to, '', 'başlık gövdesi BOŞALTILIR')
+  const reference = diff.mutations.find((mutation) => mutation.name === 'FT')
+  assert.ok(reference, 'dikey referans konum mutasyonu bulunmalı')
+  assert.equal(reference.from, '25,706')
+  assert.equal(reference.to.split(',')[1], '706', 'taban çizgisi DEĞİŞMEZ')
+  assert.ok(
+    Number(reference.to.split(',')[0]) > 25,
+    'referans yalnız SAĞA normalize edilir',
+  )
   assert.ok(diff.inserted > 0, 'yeni alanlar EKLENİR')
 
   // — B) SEMANTIC INVARIANTS —

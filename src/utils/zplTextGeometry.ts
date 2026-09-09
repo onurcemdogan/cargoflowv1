@@ -72,15 +72,37 @@ export function fieldTextBox(field: ZplField): ZplTextBox | null {
   const fontWidth = field.font?.width ?? 0
   if (cell <= 0 || fontWidth <= 0) return null
   const run = textWidth(text, fontWidth)
-  // DÖNDÜRME: `B` (90° saat yönünün tersi) ve `R` (90° saat yönü) yönelimli
-  // alanlarda metin DİKEY uzar. Kutuyu döndürmezsek dikey bir alan yatay
-  // sanılır ve komşularıyla sahte kesişim üretir.
-  const rotated =
-    field.font?.orientation === 'B' || field.font?.orientation === 'R'
+  const orientation = field.font?.orientation ?? 'N'
+  const rotated = orientation === 'B' || orientation === 'R'
   const width = rotated ? cell : run
   const height = rotated ? run : cell
-  const top = field.positionType === 'FT' ? field.y - height : field.y
-  return { field, text, x: field.x, y: top, width, height }
+
+  // ═══ DÖNDÜRÜLMÜŞ `^FT` ALANI HANGİ YÖNE UZAR ════════════════════════
+  //
+  // `^FO` SOL ÜST köşedir: yönelim ne olursa olsun kutu origin'den SAĞA ve
+  // AŞAĞI uzar; yalnız en/boy takas edilir.
+  //
+  // `^FT` TABAN ÇİZGİSİDİR ve yönelimle birlikte DÖNER. Bu, gerçek render
+  // ile ölçülmüştür (799×799, `^A0*,20,28`, origin 400,400):
+  //
+  //     N : mürekkep x 401..588, y 385..399  → [x, x+run] × [y-cell, y]
+  //     B : mürekkep x 385..403, y 211..398  → [x-cell, x] × [y-run, y]
+  //     R : mürekkep x 396..414, y 401..588  → [x, x+cell] × [y, y+run]
+  //     I : mürekkep x 211..398, y 396..414  → [x-run, x] × [y, y+cell]
+  //
+  // ═══ NEDEN ÖNEMLİ ═══════════════════════════════════════════════════
+  // Kod, döndürülmüş alanı KOŞULSUZ `x` sağına ve `y` yukarısına koyuyordu.
+  // Gerçek şablonun dikey "ALICI" başlığı (^FT54,430 A0B) bu yüzden
+  // [54..77] şeridinde sanılıyordu; GERÇEKTE [31..54] şeridindedir. Yani
+  // dedektör dikey alanlar için 23 dotluk YANLIŞ bir sütuna bakıyordu:
+  // gerçek binmeyi kaçırabilir, olmayan binmeyi uydurabilirdi.
+  const anchorsRight = orientation === 'B' || orientation === 'I'
+  const anchorsBottom = orientation === 'N' || orientation === 'B'
+  const left =
+    field.positionType === 'FT' && anchorsRight ? field.x - width : field.x
+  const top =
+    field.positionType === 'FT' && anchorsBottom ? field.y - height : field.y
+  return { field, text, x: left, y: top, width, height }
 }
 
 /**

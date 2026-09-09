@@ -321,6 +321,8 @@ export interface CanonicalShipmentInput {
   kargoIcerigi?: string
 }
 
+import { resolveOutboundRecipientPhone } from '../../src/utils/labelData.ts'
+
 const str = (value: unknown): string => String(value ?? '').trim()
 
 /** Tanımsız/boş alanları ATLAR (§16: gereksiz null doldurma YOK). */
@@ -350,7 +352,23 @@ export function buildSuratCanonicalGonderiModel(
   assignOptional(model, 'Ilce', str(order.district))
   assignOptional(model, 'TelefonEv', str(order.customerHomePhone))
   assignOptional(model, 'TelefonIs', str(order.customerWorkPhone))
-  assignOptional(model, 'TelefonCep', str(order.customerPhone))
+  // ═══ ALICI TELEFONU — ETİKETLE AYNI ZİNCİR ══════════════════════════════
+  //
+  // ÜRETİMDE GÖRÜLEN HATA: burada YALNIZ `order.customerPhone` okunuyordu.
+  // Etiket ise 8 adaylı bir zincir kullanıyordu (`shipmentAddress.phone`,
+  // `.gsm`, ham Trendyol paketi, fatura adresi...). Telefon o adaylardan
+  // birinde olup `customerPhone` boş olduğunda etikete BASILIYOR ama
+  // `TelefonCep` isteğe HİÇ KONULMUYORDU (assignOptional boşu atlar) —
+  // gönderi Serendip'e telefonsuz düşüyordu.
+  //
+  // Artık AYNI aday zinciri kullanılır. Maskeli değer (`538*******`)
+  // taşıyıcıya GÖNDERİLMEZ: aranamayan bir numara "telefon var" izlenimi
+  // verirdi. Geçerli telefon yoksa alan HİÇ gönderilmez.
+  assignOptional(
+    model,
+    'TelefonCep',
+    resolveOutboundRecipientPhone(order as never).phone,
+  )
   assignOptional(model, 'Email', str(order.customerEmail))
   assignOptional(model, 'AliciKodu', str(order.aliciKodu))
 

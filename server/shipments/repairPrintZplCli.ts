@@ -1,5 +1,17 @@
-// CLI: ürün satırı eklenememiş (source_only) kayıtlı printZpl artefaktlarını
-// org kapsamlı onarır. VARSAYILAN DRY-RUN — DB'ye YAZMAZ.
+// CLI: kayıtlı printZpl artefaktlarını org kapsamlı onarır.
+// VARSAYILAN DRY-RUN — DB'ye YAZMAZ.
+//
+// İKİ ADAY SINIFI:
+//   1) ürün satırı eklenememiş (source_only) artefaktlar,
+//   2) GEOMETRİ SÖZLEŞMESİ ESKİ artefaktlar — `printZplVersion` yürürlükteki
+//      sürümden eski olanlar. Composer'ın geometrisi düzeltildiğinde (bozuk
+//      `^BQ` token'ı yüzünden 21×21 dot basılan QR, etiket kenarına
+//      sıfırlanmış dikey sipariş referansı) eski artefaktlar bu araç
+//      çalıştırılmadıkça okunamayan etiketle basılmaya devam eder.
+//
+// GERİLEME YASAĞI: ZATEN ürün satırı taşıyan bir artefakt, yeniden türetme
+// başarısız olduğu için ürün satırsız bir çıktıyla DEĞİŞTİRİLMEZ; sebep
+// `still_outdated_geometry` olarak raporlanır.
 //
 // DRY-RUN AYNI ZAMANDA TEŞHİSTİR: her gönderi için augmentation'ın hangi
 // sebeple düştüğünü (no_items / unsupported_template / footer_overflow)

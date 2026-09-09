@@ -291,3 +291,156 @@ test('CANON-ISOLATION: modul AG/ORTAM/CREDENTIAL DEPOSU bilmez', () => {
     else process.env.SURAT_LIVE_KULLANICI_ADI = previous
   }
 })
+
+// ═══ PHONE-01..PHONE-07: ALICI TELEFONU — SERENDIP'E KADAR ══════════════
+//
+// ÜRETİM HATASI: barkod okutuluyor, gönderi Serendip'e düşüyor ama ALICI
+// TELEFONU görünmüyordu. Kök neden, "kanıt üretiliyor ama tüketilmiyor"
+// kalıbının bir örneğiydi:
+//
+//   · ETİKET tarafı telefonu YEDİ ADAYLIK bir zincirden çözüyordu
+//     (shipmentAddress.phone, rawOrder.invoiceAddress.phone, …),
+//   · CREATE isteği ise YALNIZ `order.customerPhone` alanına bakıyordu.
+//
+// Trendyol telefonu çoğu pakette `shipmentAddress` içinde döndürdüğü için
+// etikette telefon GÖRÜNÜYOR, taşıyıcıya giden `TelefonCep` ise BOŞ
+// gidiyordu. Serendip yalnız taşıyıcıya gideni bilir.
+//
+// Bu testler iki tarafın AYNI aday zincirini kullandığını ve giden veriye
+// özgü iki kuralı (maskeli değer gönderilmez, biçim normalize edilir)
+// kilitler.
+
+const phoneOrder = (over) => ({ ...trendyolOrder, customerPhone: undefined, ...over })
+
+const telefonCep = (order) => {
+  const context = M.resolveSuratMarketplaceContext(order)
+  return M.buildSuratCanonicalGonderiModel(shipmentInput(order, context)).TelefonCep
+}
+
+test('PHONE-01: customerPhone doluysa TelefonCep dolar', () => {
+  assert.equal(telefonCep(phoneOrder({ customerPhone: '5440000000' })), '5440000000')
+})
+
+test('PHONE-02: telefon YALNIZ shipmentAddress icinde ise de gonderilir', () => {
+  // Regresyon kilidi: eski kod burada TelefonCep ALANINI HIC KOYMUYORDU.
+  assert.equal(
+    telefonCep(phoneOrder({ shipmentAddress: { phone: '5440000000' } })),
+    '5440000000',
+  )
+  assert.equal(
+    telefonCep(phoneOrder({ shipmentAddress: { phoneNumber: '5440000000' } })),
+    '5440000000',
+  )
+  assert.equal(
+    telefonCep(phoneOrder({ shipmentAddress: { gsm: '5440000000' } })),
+    '5440000000',
+  )
+})
+
+test('PHONE-03: telefon YALNIZ ham siparis govdesinde ise de gonderilir', () => {
+  assert.equal(
+    telefonCep(
+      phoneOrder({ rawOrder: { shipmentAddress: { phone: '5440000000' } } }),
+    ),
+    '5440000000',
+  )
+  assert.equal(
+    telefonCep(
+      phoneOrder({ rawOrder: { invoiceAddress: { phone: '5440000000' } } }),
+    ),
+    '5440000000',
+  )
+  assert.equal(
+    telefonCep(
+      phoneOrder({ rawPackage: { shipmentAddress: { gsm: '5440000000' } } }),
+    ),
+    '5440000000',
+  )
+})
+
+test('PHONE-04: bicim normalize edilir (+90 / 0090 / 0 / ayraclar)', () => {
+  for (const raw of [
+    '+90 544 000 00 00',
+    '0090-544-000-00-00',
+    '0544 000 00 00',
+    '(544) 000 00 00',
+  ]) {
+    assert.equal(telefonCep(phoneOrder({ customerPhone: raw })), '5440000000', raw)
+  }
+})
+
+test('PHONE-05: MASKELI deger taşıyıcıya GONDERILMEZ', () => {
+  // Etikette gosterilebilir (operator gorsun diye) ama Serendip'te
+  // aranamayan bir kayit uretmemek icin giden istege KONULMAZ.
+  assert.equal(telefonCep(phoneOrder({ customerPhone: '538*******' })), undefined)
+  // Maskeli deger, GECERLI bir adayin onune de gecmez.
+  assert.equal(
+    telefonCep(
+      phoneOrder({
+        shipmentAddress: { phone: '538*******' },
+        customerPhone: '5440000000',
+      }),
+    ),
+    '5440000000',
+  )
+})
+
+test('PHONE-06: gecerli telefon yoksa SAHTE numara uretilmez', () => {
+  assert.equal(telefonCep(phoneOrder({})), undefined)
+  for (const placeholder of ['0', '-', '0000000000', '5555555555']) {
+    assert.equal(telefonCep(phoneOrder({ customerPhone: placeholder })), undefined, placeholder)
+  }
+})
+
+test('PHONE-07: etiket ve create AYNI zinciri kullanir', async () => {
+  const { resolveRecipientPhone, resolveOutboundRecipientPhone } = await import(
+    '../src/utils/labelData.ts'
+  )
+  const cases = [
+    { shipmentAddress: { phone: '5440000000' } },
+    { rawOrder: { invoiceAddress: { phone: '5440000000' } } },
+    { customerPhone: '+90 544 000 00 00' },
+    { rawPackage: { shipmentAddress: { gsm: '5440000000' } } },
+  ]
+  for (const over of cases) {
+    const order = phoneOrder(over)
+    const label = resolveRecipientPhone(order)
+    const outbound = resolveOutboundRecipientPhone(order)
+    assert.equal(
+      outbound.source,
+      label.source,
+      `ayni aday secilmeli: ${JSON.stringify(over)}`,
+    )
+    assert.equal(
+      outbound.phone,
+      label.phone.replace(/\s+/g, ''),
+      `ayni numara: ${JSON.stringify(over)}`,
+    )
+    // Ve giden istekte gercekten yer almali.
+    assert.equal(telefonCep(order), outbound.phone)
+  }
+})
+
+test('PHONE-08: ESKI create kurucusu da AYNI zinciri kullanir', async () => {
+  // `buildSuratShipmentPayload` (server/index.mjs) modül-içi bir fonksiyondur
+  // ve dışarı açılmaz; sözleşmesi bu yüzden KAYNAK üzerinden kilitlenir.
+  // Kanonik rota yeni birincil yol olsa da bu kurucu hâlâ sekiz çağrı
+  // noktasından besleniyor: telefon zincirinin DIŞINDA kalırsa hata geri
+  // gelir.
+  const { readFile } = await import('node:fs/promises')
+  const source = await readFile(new URL('./index.mjs', import.meta.url), 'utf8')
+  const body = source
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith('//'))
+    .join('\n')
+  assert.match(
+    body,
+    /TelefonCep:\s*resolveOutboundRecipientPhone\(order\)\.phone/,
+    'giden istek paylaşılan aday zincirinden beslenmeli',
+  )
+  assert.doesNotMatch(
+    body,
+    /TelefonCep:\s*String\(order\.customerPhone/,
+    'tek alana bakan eski kural geri gelmemeli',
+  )
+})

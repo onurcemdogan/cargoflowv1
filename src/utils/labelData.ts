@@ -1,5 +1,5 @@
-import { resolveLabelProductMetadata } from './labelProductMetadata'
-import { resolveCatalogVariantMetadata } from './labelVariantCatalog'
+import { resolveLabelProductMetadata } from './labelProductMetadata.ts'
+import { resolveCatalogVariantMetadata } from './labelVariantCatalog.ts'
 import type {
   CargoOrder,
   CargoProduct,
@@ -12,12 +12,12 @@ import type {
   SuratCreateLog,
   SuratLabelMappingConfig,
   SuratTrackingLog,
-} from '../types/cargoflow'
+} from '../types/cargoflow.ts'
 import {
   extractTrackingNumberFromTakipUrl,
   verifySuratShipment,
-} from './suratVerification'
-import { resolveNormalizedDesi } from './desi'
+} from './suratVerification.ts'
+import { resolveNormalizedDesi } from './desi.ts'
 
 export interface LabelDataItem {
   productName: string
@@ -828,10 +828,39 @@ export function resolveRecipientPhone(
   shipment?: Shipment,
 ): { phone: string; source: string; reason: string } {
   const effectiveShipment = shipment ?? order?.shipment
+  const candidates: Array<[string, unknown]> = [
+    ...recipientPhoneCandidates(order),
+    [
+      // YALNIZ ETİKET: önceki create isteğine bakmak, create'i KURARKEN
+      // döngü olurdu. Bu yüzden giden (outbound) çözümde YOKTUR.
+      'create.TelefonCep',
+      extractTelefonCepFromRawRequest(
+        effectiveShipment?.suratCreateLog?.rawRequest,
+      ),
+    ],
+  ]
+  for (const [source, value] of candidates) {
+    const normalized = normalizeRecipientPhone(value)
+    if (normalized) return { phone: normalized, source, reason: '' }
+  }
+  return { phone: '', source: 'none', reason: 'PHONE_NOT_PROVIDED_BY_MARKETPLACE' }
+}
+
+/**
+ * TELEFON ADAY ZİNCİRİ — TEK KAYNAK.
+ *
+ * Etiket sunumu ve TAŞIYICIYA GİDEN create isteği AYNI adayları kullanır.
+ * Ayrı listeler tutmak, üretimde görülen hataya yol açmıştı: telefon
+ * `shipmentAddress.phone` içinde varken etikete basılıyor ama create'e
+ * KONULMUYORDU; sonuçta gönderi Serendip'e telefonsuz düşüyordu.
+ */
+function recipientPhoneCandidates(
+  order?: CargoOrder,
+): Array<[string, unknown]> {
   const rawOrder = (order as CargoOrder & { rawOrder?: unknown })?.rawOrder
   const rawPackage = (order as CargoOrder & { rawPackage?: unknown })
     ?.rawPackage
-  const candidates: Array<[string, unknown]> = [
+  return [
     [
       'order.shipmentAddress.phone',
       readUnknown(order?.shipmentAddress, ['phone']),
@@ -865,18 +894,43 @@ export function resolveRecipientPhone(
       'rawOrder.invoiceAddress.phone',
       readUnknown(readUnknown(rawOrder, ['invoiceAddress']), ['phone']),
     ],
-    [
-      'create.TelefonCep',
-      extractTelefonCepFromRawRequest(
-        effectiveShipment?.suratCreateLog?.rawRequest,
-      ),
-    ],
   ]
-  for (const [source, value] of candidates) {
+}
+
+/**
+ * TAŞIYICIYA GİDECEK alıcı telefonu.
+ *
+ * ═══ NEDEN AYRI FONKSİYON ════════════════════════════════════════════════
+ * Etiket sunumu ile giden veri AYNI adaylardan beslenir ama iki farklı kural
+ * uygular:
+ *
+ *   · MASKELİ DEĞER GÖNDERİLMEZ. Pazaryeri `538*******` döndürdüğünde bu
+ *     etikette gösterilebilir (operatör görsün diye) ama taşıyıcıya GERÇEK
+ *     telefon gibi göndermek ÇÖP VERİDİR: Serendip'te aranamayan bir kayıt
+ *     oluşur ve "telefon var" sanılır.
+ *   · SON create isteği aday DEĞİLDİR (döngü olurdu).
+ *
+ * Değer normalize edilir (+90 / 0090 / 0 önekleri ve ayraçlar temizlenir);
+ * geçerli telefon yoksa '' döner ve çağıran alanı HİÇ göndermez — sahte
+ * numara ÜRETİLMEZ.
+ */
+export function resolveOutboundRecipientPhone(
+  order?: CargoOrder,
+): { phone: string; source: string; reason: string } {
+  for (const [source, value] of recipientPhoneCandidates(order)) {
     const normalized = normalizeRecipientPhone(value)
-    if (normalized) return { phone: normalized, source, reason: '' }
+    if (!normalized) continue
+    if (normalized.includes('*')) {
+      // Maskeli aday ATLANIR; belki daha aşağıda gerçek numara vardır.
+      continue
+    }
+    return { phone: normalized.replace(/\s+/g, ''), source, reason: '' }
   }
-  return { phone: '', source: 'none', reason: 'PHONE_NOT_PROVIDED_BY_MARKETPLACE' }
+  return {
+    phone: '',
+    source: 'none',
+    reason: 'PHONE_NOT_PROVIDED_BY_MARKETPLACE',
+  }
 }
 
 export function normalizeRecipientPhone(value: unknown): string {

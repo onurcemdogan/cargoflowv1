@@ -55,6 +55,7 @@ type Db = any
 export type RepairOutcome =
   | 'repaired'
   | 'already_augmented'
+  | 'still_outdated_geometry'
   | 'no_persisted_artifact'
   | 'no_source_zpl'
   | 'source_hash_mismatch'
@@ -314,8 +315,22 @@ export async function repairSourceOnlyPrintZpl(
       continue
     }
     const persistedPrintZpl = String(artifact.printZpl ?? '')
-    if (persistedPrintZpl !== sourceZpl) {
-      // Ürün satırı ZATEN var — DOKUNULMAZ.
+    const persistedVersion = String(artifact.printZplVersion ?? '')
+    const sourceOnly = persistedPrintZpl === sourceZpl
+    // ═══ İKİNCİ ADAY SINIFI: ESKİ GEOMETRİ SÖZLEŞMESİ ══════════════════
+    //
+    // Kalıcı artefakt DEĞİŞMEZDİR (aynı gönderi tekrar basıldığında aynı
+    // baytlar). Ama composer'ın geometrisi düzeltildiğinde — bozuk `^BQ`
+    // token'ı yüzünden 21×21 dot basılan QR, kenara sıfırlanmış dikey
+    // referans — ESKİ artefaktı olduğu gibi bırakmak, o gönderilerin
+    // SONSUZA DEK okunamayan etiketle basılması demektir.
+    //
+    // Bu yüzden `printZplVersion` yürürlükteki sözleşmeden ESKİYSE gönderi
+    // adaydır. Yeniden türetme DOKUNULMAMIŞ `technicalZpl`'den yapılır;
+    // kaynak baytlar KUTSAL kalır. Araç yine opt-in ve dry-run varsayılandır.
+    const outdatedGeometry = !sourceOnly && persistedVersion !== PRINT_ZPL_VERSION
+    if (!sourceOnly && !outdatedGeometry) {
+      // Ürün satırı ZATEN var ve geometri güncel — DOKUNULMAZ.
       entries.push({ packageId, marketplace, outcome: 'already_augmented' })
       continue
     }
@@ -339,6 +354,23 @@ export async function repairSourceOnlyPrintZpl(
     )
     const derived = deriveAugmentedSuratZplWithHashes(sourceZpl, items)
     const geometry = describeGeometry(sourceZpl, items)
+    // GERİLEME YASAĞI: ZATEN ürün satırı taşıyan bir artefakt, yeniden
+    // türetme başarısız olduğu için ürün satırsız bir çıktıyla ASLA
+    // değiştirilmez. Böyle bir durumda satır AYNEN bırakılır ve sebep
+    // raporlanır — sessiz veri kaybı YOKTUR.
+    if (outdatedGeometry && !derived.augmented) {
+      entries.push({
+        packageId,
+        marketplace,
+        outcome: 'still_outdated_geometry',
+        itemCount: items.length,
+        detail:
+          'Geometri sürümü eski ama yeniden türetme ürün satırı üretemedi; ' +
+          `mevcut artefakt KORUNDU (${derived.fallbackReason ?? 'bilinmiyor'}).`,
+        geometry,
+      })
+      continue
+    }
     if (!derived.augmented) {
       const outcome: RepairOutcome =
         derived.fallbackReason === 'unsupported_template'
@@ -366,7 +398,9 @@ export async function repairSourceOnlyPrintZpl(
         itemCount: items.length,
         printZplSha256: derived.printZplSha256,
         footerProfile: derived.printZplFooterProfile ?? null,
-        detail: 'DRY-RUN: yazılmadı.',
+        detail: outdatedGeometry
+          ? `DRY-RUN: yazılmadı (eski geometri sürümü: ${persistedVersion || 'yok'}).`
+          : 'DRY-RUN: yazılmadı.',
         geometry,
       })
       repaired += 1

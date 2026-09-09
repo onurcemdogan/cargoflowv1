@@ -44,6 +44,7 @@
   "server/surat-real-template-flow.test.mjs",
   "server/surat-composer-flow.test.mjs",
   "server/surat-composer-render-flow.test.mjs",
+  "server/surat-label-geometry-fix-flow.test.mjs",
   "server/surat-composer-wiring-flow.test.mjs",
   "server/surat-product-detail-flow.test.mjs",
   "server/surat-label-bundle-flow.test.mjs",

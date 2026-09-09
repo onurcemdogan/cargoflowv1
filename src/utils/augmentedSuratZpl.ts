@@ -38,7 +38,20 @@ import {
   type SuratComposeMode,
 } from './suratDurusoftComposer.ts'
 
-export const PRINT_ZPL_VERSION = 'surat-product-line-v1'
+/**
+ * KALICI ARTEFAKTIN GEOMETRİ SÖZLEŞMESİ.
+ *
+ * Türetilmiş `printZpl`'in ÜRETİLDİĞİ kuralların sürümüdür. Composer'ın
+ * çıktı geometrisi değiştiğinde BURASI da değişir; böylece daha eski
+ * sürümle üretilmiş artefaktlar onarım aracı tarafından AYIRT EDİLEBİLİR.
+ *
+ * v2 ile gelen geometri değişiklikleri:
+ *   · taşıyıcının bozuk `^BQ` magnification token'ı normalize edilir ve QR
+ *     okunabilir modül boyutuna çıkarılır (21×21 dot → 105×105 dot),
+ *   · sol dikey sipariş referansı, kırpılma payı için taşıyıcının kendi
+ *     yerleşiminin izin verdiği kadar sağa alınır.
+ */
+export const PRINT_ZPL_VERSION = 'surat-product-line-v2-geometry'
 
 export type AugmentedZplFallbackReason =
   | 'no_source'
