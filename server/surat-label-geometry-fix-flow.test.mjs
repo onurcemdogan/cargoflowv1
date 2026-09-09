@@ -479,3 +479,138 @@ test('GEO-18: göç, serbest şeridi referans sütununun DIŞINDA arar', async (
     'şerit referans sütununa girmemeli',
   )
 })
+
+// ═══ GEO-19: İNSAN-OKUNUR SATIR BASILAN BARKODA ORTALI ══════════════════
+//
+// SAHA ŞİKÂYETİ: "barkodun yeri hatalı" — barkodun altındaki numara
+// barkodun merkezinden belirgin biçimde solda duruyordu.
+//
+// KÖK NEDEN: ortalama bloğu ZPL SPESİFİKASYONUNUN modül sayısıyla (`>:`
+// subset C) hesaplanıyordu. Basılan şey ise ham ZPL değil, ondan üretilen
+// PNG'dir ve render motoru `>:` önekini UYGULAMAZ — kağıttaki barkod subset
+// B genişliğindedir. Ölçülen kayma 14 haneli yükte 134 dot (≈17 mm) idi.
+//
+// Bu test ölçüyü RENDER'DAN alır; hiçbir sabit koordinata dayanmaz.
+
+/** Barkod bandındaki çubukların yatay sınırı (sol kenar rayı hariç). */
+function barcodeSpan(bm) {
+  let first = -1
+  let last = -1
+  for (let x = 40; x < 799; x += 1) {
+    let ink = 0
+    for (let y = 170; y < 290; y += 1) if (bm.dark[y][x]) ink += 1
+    if (ink > 110) {
+      if (first < 0) first = x
+      last = x
+    }
+  }
+  return first < 0 ? null : { first, last, center: (first + last) / 2 }
+}
+
+test('GEO-19: barkod altı numara BASILAN barkoda ortalanır', async () => {
+  // İki yük uzunluğu: fixture (14 hane) ve sahadaki etiket (11 hane).
+  for (const payload of ['01249704068000', '01267226437']) {
+    const source = V2_ZPL.replace(
+      '^FD>:01249704068000^FS',
+      `^FD>:${payload}^FS`,
+    )
+    const composed = compose(source)
+    assert.equal(composed.mode, 'durusoft_composed', payload)
+
+    const bm = await bitmap(composed.zpl)
+    const bars = barcodeSpan(bm)
+    assert.ok(bars, `${payload}: barkod çubukları bulunmalı`)
+    const text = box(bm, 0, 302, 799, 32)
+    assert.ok(text, `${payload}: insan-okunur metin basılmalı`)
+
+    const textCenter = text.x + text.width / 2
+    const drift = Math.abs(textCenter - bars.center)
+    // Ortalama TAM olmalı; 2 dot pay yalnız glif kenar yuvarlamasıdır.
+    assert.ok(
+      drift <= 2,
+      `${payload}: metin barkod merkezinden ${drift} dot kaymış ` +
+        `(barkod ${bars.first}..${bars.last}, metin ${text.x}..${text.x + text.width - 1})`,
+    )
+    // Metin barkod bandının DIŞINA taşmaz.
+    assert.ok(text.x >= bars.first, `${payload}: metin barkodun solundan taşmış`)
+    assert.ok(
+      text.x + text.width - 1 <= bars.last,
+      `${payload}: metin barkodun sağından taşmış`,
+    )
+  }
+})
+
+test('GEO-20: barkod GÖVDESİ ve konumu composer tarafından DEĞİŞTİRİLMEZ', async () => {
+  const composed = compose(V2_ZPL)
+  const readCode128 = (zpl) => {
+    const fields = collectZplFields(parseZplDocument(zpl))
+    const field = fields.find((f) => f.kind === 'code128')
+    return {
+      x: field.x,
+      y: field.y,
+      data: field.data,
+      by: field.byCommand?.args ?? null,
+    }
+  }
+  const before = readCode128(V2_ZPL)
+  const after = readCode128(composed.zpl)
+  assert.equal(after.data, before.data, 'barkod gövdesi birebir aynı')
+  assert.equal(after.x, before.x, 'barkod x konumu DEĞİŞMEZ')
+  assert.equal(after.y, before.y, 'barkod y konumu DEĞİŞMEZ')
+  assert.equal(after.by, before.by, '^BY modül genişliği/yüksekliği DEĞİŞMEZ')
+
+  // Çubukların render'daki yeri de birebir aynı kalmalı.
+  const spanBefore = barcodeSpan(await bitmap(V2_ZPL))
+  const spanAfter = barcodeSpan(await bitmap(composed.zpl))
+  assert.deepEqual(spanAfter, spanBefore, 'çubuklar aynı piksellerde')
+})
+
+// ═══ GEO-21: ETİKETTEKİ İKİ TELEFON — CARGOFLOW EKLEMİYOR ═══════════════
+//
+// Etikette iki `TEL:` görünür: üstte GÖNDERİCİ (şube) telefonu, adres
+// bloğunda ALICI telefonu. İkisi de TAŞIYICININ kendi alanlarıdır ve farklı
+// kişilere aittir. Composer bunlardan hiçbirini eklemez, silmez, taşımaz —
+// aksi bir değişiklik "aynı kişi için iki numara" izlenimi yaratırdı.
+test('GEO-21: composer telefon alanlarına DOKUNMAZ', async () => {
+  const composed = compose(V2_ZPL)
+  const model = resolveSuratSemanticModel(V2_ZPL)
+  const out = resolveSuratSemanticModel(composed.zpl)
+
+  // İki alan AYRI slotlardır ve gövdeleri korunur.
+  assert.ok(model.fields.senderPhone, 'gönderici telefonu slotu')
+  assert.ok(model.fields.recipientPhone, 'alıcı telefonu slotu')
+  assert.equal(out.fields.senderPhone.raw, model.fields.senderPhone.raw)
+  assert.equal(out.fields.recipientPhone.raw, model.fields.recipientPhone.raw)
+  assert.notEqual(
+    model.fields.senderPhone.field.y,
+    model.fields.recipientPhone.field.y,
+    'iki telefon AYRI bloklardadır (gönderici üstte, alıcı adres bloğunda)',
+  )
+
+  // Render'da da tek dot değişmez.
+  const before = await bitmap(V2_ZPL)
+  const after = await bitmap(composed.zpl)
+  assert.deepEqual(
+    box(after, 400, 130, 399, 26),
+    box(before, 400, 130, 399, 26),
+    'gönderici telefon bandı DEĞİŞMEZ',
+  )
+  assert.deepEqual(
+    box(after, 60, 440, 340, 30),
+    box(before, 60, 440, 340, 30),
+    'alıcı telefon bandı DEĞİŞMEZ',
+  )
+
+  // Composer ZPL'e ÜÇÜNCÜ bir telefon alanı EKLEMEZ.
+  //
+  // Ölçüt maskeli telefon biçimidir (`055*******`): barkodun insan-okunur
+  // satırı gibi uzun sayısal alanlarla karışmaz — o alan maske taşımaz.
+  const maskedPhones = (zpl) =>
+    collectZplFields(parseZplDocument(zpl))
+      .map((f) => String(f.data ?? '').trim())
+      .filter((d) => /^[0-9]{3}\*{3,}$/.test(d))
+  const before2 = maskedPhones(V2_ZPL)
+  const after2 = maskedPhones(composed.zpl)
+  assert.deepEqual(after2, before2, 'maskeli telefon alanları AYNEN kalır')
+  assert.equal(after2.length, 2, 'gönderici + alıcı: tam olarak iki telefon')
+})

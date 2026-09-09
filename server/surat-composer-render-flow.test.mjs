@@ -523,19 +523,25 @@ async function composedBitmap(source, items) {
   }
 }
 
-test('VISUAL-BARCODE: küçük metin subset-C merkezine oturur, boşluklar güvenli', async () => {
-  const { bitmap, diagnostics } = await composedBitmap(zpl)
+test('VISUAL-BARCODE: küçük metin BASILAN barkodun merkezine oturur', async () => {
+  const { bitmap } = await composedBitmap(zpl)
   const body = box(bitmap, 46, 157, 750, 144)
   const text = box(bitmap, 46, 302, 750, 34)
   assert.ok(body && text)
 
-  // Merkez, GERÇEK YAZICI (subset C) genişliğinden TÜRETİLİR — renderer'ın
-  // subset-B genişliğinden değil. Teorik merkez = barkod sol + genişlik/2.
-  const theoreticalCentre = body.x + diagnostics.barcodeWidth / 2
+  // ═══ MERKEZ ARTIK ÖLÇÜLÜR, TÜRETİLMEZ ═════════════════════════════
+  // Bu iddia önce merkezi `diagnostics.barcodeWidth` (ZPL spesifikasyonu,
+  // subset C) üzerinden hesaplıyordu. Ama bu render'daki çubuklarla
+  // ÖRTÜŞMÜYOR: motor `>:` önekini uygulamaz ve barkodu subset B
+  // genişliğinde çizer. Sahadaki şikâyetin sebebi tam olarak buydu.
+  //
+  // Merkez artık RENDER EDİLEN çubukların kendisinden okunur; hangi
+  // kodlayıcının geçerli olduğu varsayılmaz.
   const renderedCentre = text.x + text.width / 2
+  const barcodeCentre = body.x + body.width / 2
   assert.ok(
-    Math.abs(renderedCentre - theoreticalCentre) <= 2,
-    `metin merkezi ±2 dot: ${renderedCentre} / ${theoreticalCentre}`,
+    Math.abs(renderedCentre - barcodeCentre) <= 2,
+    `metin merkezi ±2 dot: ${renderedCentre} / ${barcodeCentre}`,
   )
   // Dahili yorum satırından belirgin küçük ve barkod bandı içinde.
   assert.ok(text.height <= 20, `metin yüksekliği: ${text.height}`)

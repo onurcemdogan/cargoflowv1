@@ -24,6 +24,7 @@ import type {
   OrdersSortKey,
 } from '../utils/ordersWorkspace'
 import { verifySuratShipment } from '../utils/suratVerification'
+import { resolveRecipientPhone } from '../utils/labelData'
 import { ProductImageThumb } from './ProductImageThumb'
 import { StatusBadge } from './StatusBadge'
 
@@ -441,7 +442,11 @@ function ExpandedOrderSummary({
       <section className="orders-expanded-card">
         <h3>Teslimat Bilgisi</h3>
         <SummaryLine label="Alıcı" value={order.customerName || '-'} />
-        <SummaryLine label="Telefon" value={order.customerPhone || '-'} />
+        {/* Telefon: etiket/create ile AYNI aday zinciri (bkz. labelData). */}
+        <SummaryLine
+          label="Telefon"
+          value={resolveRecipientPhone(order).phone || '-'}
+        />
         <SummaryLine label="Adres" value={order.address || '-'} />
         <SummaryLine label="İl" value={order.city || '-'} />
         <SummaryLine label="İlçe" value={order.district || '-'} />

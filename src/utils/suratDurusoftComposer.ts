@@ -356,6 +356,22 @@ export function estimateA0Width(text: string, fontWidth: number): number {
 export function code128ModuleCount(rawFieldData: string): {
   digits: string
   modules: number
+  /**
+   * BASILAN ARTEFAKTIN modül sayısı — `>:` öneki UYGULANMADIĞINDA.
+   *
+   * ═══ NEDEN İKİ SAYI ═══════════════════════════════════════════════════
+   * `modules` ZPL SPESİFİKASYONUNU izler: `>:` subset C'yi başlatır ve
+   * haneler İKİŞER kodlanır. Gerçek bir Zebra bunu uygular.
+   *
+   * Ne var ki CargoFlow'un bastığı şey ham ZPL değil, o ZPL'den ÜRETİLEN
+   * PNG'dir (tarayıcı baskı yolu görüntüyü basar). Render motoru `>:`
+   * önekini UYGULAMAZ ve her zaman subset B kodlar — yani KAĞIDA DÜŞEN
+   * barkod bu sayıya göre GENİŞTİR.
+   *
+   * İnsan-okunur satırın ortalanması KAĞITTAKİ genişliğe göre yapılmalıdır;
+   * aksi halde metin, basılan barkodun merkezinden onlarca dot sola kayar.
+   */
+  printedModules: number
 } | null {
   const subsetC = rawFieldData.startsWith('>:')
   const digits = subsetC ? rawFieldData.slice(2) : rawFieldData
@@ -367,7 +383,12 @@ export function code128ModuleCount(rawFieldData: string): {
       ? n / 2
       : (n - 1) / 2 + 2 // subset B'ye geçiş + son hane
     : n
-  return { digits, modules: 11 + 11 * dataSymbols + 11 + 13 }
+  // Basılan (render edilen) hâlde `>:` yok sayılır: her karakter 1 sembol.
+  return {
+    digits,
+    modules: 11 + 11 * dataSymbols + 11 + 13,
+    printedModules: 11 + 11 * n + 11 + 13,
+  }
 }
 
 export interface ZplDiff {
@@ -875,6 +896,25 @@ export function composeSuratDurusoftLabel(
   }
   const barcodeWidth = counted.modules * moduleWidth
   const barcodeLeft = code128.field.x
+  // ═══ İNSAN-OKUNUR SATIR KAĞITTAKİ BARKODA GÖRE ORTALANIR ═══════════
+  //
+  // SAHA ŞİKÂYETİ: "barkodun yeri hatalı" — barkodun altındaki numara,
+  // barkodun merkezinden belirgin biçimde SOLDA duruyordu.
+  //
+  // KÖK NEDEN: ortalama bloğu `counted.modules` (ZPL spesifikasyonu,
+  // subset C) ile hesaplanıyordu. Ama basılan şey ham ZPL değil, ondan
+  // üretilen PNG'dir ve render motoru `>:` önekini uygulamaz — kağıttaki
+  // barkod subset B genişliğindedir. 14 haneli gerçek bir gönderide fark
+  // ölçüldü: barkod merkezi 423 dot, metin merkezi 272 dot → 151 dot
+  // (≈19 mm) sola kayma.
+  //
+  // Ortalama artık KAĞITTAKİ genişliği esas alır. Blok etiket kenarını
+  // aşamaz: `^FB` genişliği kalan alana kırpılır, aksi halde metin
+  // görünmez biçimde dışarı taşardı.
+  const printedBarcodeWidth = Math.min(
+    counted.printedModules * moduleWidth,
+    LABEL_EDGE - barcodeLeft,
+  )
   const humanTextTop = code128.field.y + HUMAN_TEXT_GAP
   const humanTextWidth = estimateA0Width(counted.digits, HUMAN_TEXT_WIDTH)
 
@@ -1082,7 +1122,7 @@ export function composeSuratDurusoftLabel(
     ...zplCommands(
       `^FO${barcodeLeft},${humanTextTop}` +
         `^A0N,${HUMAN_TEXT_HEIGHT},${HUMAN_TEXT_WIDTH}` +
-        `^FB${barcodeWidth},1,0,C` +
+        `^FB${printedBarcodeWidth},1,0,C` +
         `^FD${counted.digits}^FS`,
     ),
   )
@@ -1331,7 +1371,7 @@ export function composeSuratDurusoftLabel(
       barcodeModules: counted.modules,
       barcodeWidth,
       humanTextTop,
-      humanTextBlockWidth: barcodeWidth,
+      humanTextBlockWidth: printedBarcodeWidth,
       boldAddressLines: addressLines.length,
       qrSource: qrFits ? qr.source : null,
       qrRejection: qr.payload === null ? qr.rejection : null,

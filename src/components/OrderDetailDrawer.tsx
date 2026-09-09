@@ -21,6 +21,7 @@ import {
   canMarkPrinted,
 } from '../utils/orderStatus'
 import { verifySuratShipment } from '../utils/suratVerification'
+import { resolveRecipientPhone } from '../utils/labelData'
 import { detectOrderLineDuplication } from '../utils/orderLineIntegrity'
 import {
   resolveSuratPrintEligibility,
@@ -365,7 +366,19 @@ export function OrderDetailDrawer({
               <div className="customer-columns">
                 <div className="detail-grid customer-column">
                   <Detail label="Alıcı" value={order.customerName} />
-                  <Detail label="Telefon" value={order.customerPhone} />
+                  {/*
+                    TELEFON — ETİKET VE CREATE İLE AYNI ZİNCİR.
+
+                    Bu alan YALNIZ `order.customerPhone` okuyordu. Trendyol
+                    telefonu çoğu pakette `shipmentAddress.phone` içinde
+                    döndürdüğü için ekran "-" gösterirken etikette ve
+                    taşıyıcıya giden istekte telefon VARDI. Aynı siparişin
+                    telefonu iki ekranda iki farklı cevap veremez.
+                  */}
+                  <Detail
+                    label="Telefon"
+                    value={resolveRecipientPhone(order).phone}
+                  />
                   <Detail label="E-posta" value={order.customerEmail} />
                 </div>
                 <div className="customer-column">

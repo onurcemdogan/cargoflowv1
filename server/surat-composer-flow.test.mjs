@@ -473,27 +473,46 @@ test('CF-25: Code128 dahili yorum satırı KAPANIR, gövde DEĞİŞMEZ', async (
   assert.ok(out.includes('^FD>:18529630741^FS'), 'Code128 gövdesi değişmez')
 })
 
-test('CF-26: ayrı insan-okunur metin, ZPL subset-C geometrisiyle ortalanır', async () => {
+test('CF-26: ayrı insan-okunur metin BASILAN barkod geometrisiyle ortalanır', async () => {
+  // ═══ REFERANS NEDEN DEĞİŞTİ ════════════════════════════════════════
+  // Bu test önce ortalamayı ZPL SPESİFİKASYONUNUN (subset C) genişliğine
+  // bağlıyordu; gerekçe "gerçek Zebra `>:` önekini uygular" idi. Doğru,
+  // ama CargoFlow'un tarayıcı baskı yolunda KAĞIDA DÜŞEN şey ham ZPL
+  // değil, ondan üretilen PNG'dir ve render motoru `>:` önekini UYGULAMAZ.
+  //
+  // Sahadan gelen etikette sonuç ölçüldü: numara barkodun merkezinden 88
+  // dot (≈11 mm) solda basılıyordu. Ortalama artık BASILAN genişliği esas
+  // alır; spesifikasyon bilgisi aşağıda ayrıca kilitli kalır.
   const { composeSuratDurusoftLabel, code128ModuleCount } = await composer()
   const result = composeSuratDurusoftLabel(zpl, {})
   // Görüntülenen sayı = kodlanan gövde (kontrol öneki HARİÇ).
   assert.ok(result.zpl.includes('^FD18529630741^FS'))
-  // Ortalama bloğu barkodun GERÇEK YAZICI genişliğine göre kurulur.
+
   const counted = code128ModuleCount('>:18529630741')
+  // ZPL spesifikasyonu (gerçek Zebra, subset C) — bilgi KAYBOLMAZ.
   assert.equal(counted.modules, 112, '11 hane: subset C + tek hane için B geçişi')
   assert.equal(result.diagnostics.barcodeWidth, 112 * 4)
+  // Basılan artefakt (render, subset B) — ortalama bunu esas alır.
+  assert.equal(counted.printedModules, 156, '11 hane subset B: 11 veri sembolü')
   assert.ok(
-    result.zpl.includes(`^FO48,306^A0N,20,20^FB${112 * 4},1,0,C`),
-    'blok barkodun sol kenarından başlar ve ortalar',
+    result.zpl.includes(`^FO48,306^A0N,20,20^FB${156 * 4},1,0,C`),
+    'blok barkodun sol kenarından başlar ve BASILAN genişliğe ortalar',
   )
+  assert.equal(result.diagnostics.humanTextBlockWidth, 156 * 4)
+  // İki kodlayıcının ayrıştığı AÇIKÇA kayıtlıdır.
+  assert.notEqual(counted.modules, counted.printedModules)
+
   // Deterministik: aynı girdi → aynı X/genişlik.
   assert.equal(
-    composeSuratDurusoftLabel(zpl, {}).diagnostics.barcodeWidth,
-    result.diagnostics.barcodeWidth,
+    composeSuratDurusoftLabel(zpl, {}).diagnostics.humanTextBlockWidth,
+    result.diagnostics.humanTextBlockWidth,
   )
   // Çift hane subset C'de tam yarıya iner; önek yoksa subset B.
   assert.equal(code128ModuleCount('>:012345678901').modules, 101)
   assert.equal(code128ModuleCount('012345678901').modules, 167)
+  // Önek YOKSA iki sayı EŞİTTİR: ayrışma yalnız `>:` ile doğar.
+  const plain = code128ModuleCount('012345678901')
+  assert.equal(plain.modules, plain.printedModules)
 })
 
 test('CF-27: bold adres kaynağın KENDİ satır ve baytlarını kullanır', async () => {
@@ -834,8 +853,9 @@ test('CF-40: fark raporu mutasyon / ekleme / silme AYRI verir', async () => {
   assert.ok(result.diagnostics.orderReferenceShift, 'referans normalize edildi')
   assert.ok(diff.insertions > 0, 'yeni alanlar eklenir')
   // Ekleme bileşimi: barkod metni + bold adres vuruşları + QR durum/QR.
+  // Blok genişliği BASILAN barkoda göredir (bkz. CF-26).
   assert.equal(
-    result.zpl.includes('^FO48,306^A0N,20,20^FB448,1,0,C^FD18529630741^FS'),
+    result.zpl.includes('^FO48,306^A0N,20,20^FB624,1,0,C^FD18529630741^FS'),
     true,
   )
   assert.equal(result.diagnostics.boldAddressLines, 2)
