@@ -146,9 +146,13 @@ test('GEO-02: composed QR 105×105 dot — modül kenarı 0.625 mm', async () =>
     await bitmap(composed.zpl),
     (x, y) => x > 640 && y > 440,
   )
-  assert.ok(delta.removed, 'eski küçük QR kalkmalı')
-  assert.equal(delta.removed.width, 21, 'kalkan kutu eski QR olmalı')
-  assert.equal(delta.removed.height, 21)
+  // KAYNAKTAKİ küçük QR'ın ölçüsü DOĞRUDAN ham render'dan okunur.
+  // "Kalkan mürekkep" ile ölçmek KIRILGANDIR: büyütülen QR alt hizaya
+  // çıpalandıktan sonra eski konumu KISMEN örtüyor ve fark kutusu
+  // sessizce küçülüyordu (ölçüldü: 21 yerine 19).
+  const sourceQr = box(await bitmap(V2_ZPL), 660, 600, 120, 90)
+  assert.equal(sourceQr.width, 21, 'kaynak QR 21 dot olmalı')
+  assert.equal(sourceQr.height, 21)
   assert.ok(delta.added, 'yeni QR basılmalı')
   assert.equal(delta.added.width, 105, `yeni QR 105 dot olmalı: ${delta.added.width}`)
   assert.equal(delta.added.height, 105)

@@ -14644,9 +14644,11 @@ function normalizeTrendyolOrderLines(lines, orderId) {
       productCode: String(
         line.productCode ?? line.contentId ?? line.productId ?? '',
       ),
-      desi: toPositiveNumber(
-        line.dimensionalWeight ?? line.desi ?? line.volumetricWeight,
-      ),
+      // Pazaryerinin `dimensionalWeight`/`volumetricWeight` alanlari, satici
+      // boyut girmediginde YER TUTUCU (tipik 1) gelir ve DESI DEGILDIR.
+      // Satir desisi olarak yalniz satirin KENDI acik alani kullanilir;
+      // ham degerler `rawLine` icinde teshis icin AYNEN durur.
+      desi: toPositiveNumber(line.desi),
       weightKg: toPositiveNumber(line.weight ?? line.kg ?? line.weightKg),
       lengthCm: toPositiveNumber(line.length ?? line.lengthCm),
       widthCm: toPositiveNumber(line.width ?? line.widthCm),

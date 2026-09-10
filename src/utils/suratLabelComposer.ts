@@ -590,10 +590,27 @@ function withQrMagnification(args: string, magnification: number): string {
   return parts.join(',')
 }
 
+/**
+ * `^FT` ile konumlanan `^BQ`'nun ALT mürekkep kenarı ile taban çizgisi
+ * arasındaki fark (büyütme başına 7 dot + 1 — ölçüldü).
+ *
+ *   ^FT665,741 (mag 5) → mürekkep 601..705  →  alt kenar = y − 36
+ */
+const QR_FT_BOTTOM_INSET_PER_MAGNIFICATION = QR_FT_LIFT_PER_MAGNIFICATION
+const QR_FT_BOTTOM_INSET_CONSTANT = 1
+
 export function resolveCarrierQrEnlargement(
   qrField: ZplField | undefined,
   occupancy: readonly QrOccupancyBox[],
   dataMatrixLeft: number = SURAT_GRID.boxLeft,
+  /**
+   * DİKEY ÇIPA — yanındaki büyük aktarma merkezi metninin taban çizgisi.
+   *
+   * QR, o metin bloğuyla ALT HİZADA olmalıdır. Slot yalnız ÜST kenardan
+   * tanımlandığında alt hiza tesadüfe kalıyordu (ölçüldü: QR 5 dot daha
+   * aşağıda bitiyordu). Çıpa verilmezse eski slot davranışı korunur.
+   */
+  bottomAnchorY: number | null = null,
 ): CarrierQrEnlargement | null {
   if (!qrField?.codeCommand || qrField.positionType !== 'FT') return null
   const effective = effectiveQrMagnification(qrField.codeCommand.args)
@@ -624,11 +641,19 @@ export function resolveCarrierQrEnlargement(
     // Hedef konum TAHMİN EDİLMEZ: composer'ın KENDİ QR'ı için zaten kabul
     // edilmiş slottan türetilir (`QR_CANDIDATES` + `preferredQrLeft`).
     // Böylece taşıyıcının QR'ı ile composer'ın ürettiği QR AYNI yere düşer.
-    const slotRenderTop = QR_SLOT_Y + QR_RENDER_Y_OFFSET
-    const bandTop = slotRenderTop
-    const bandBottom = slotRenderTop + size
-    // `^FT` y'si, kutunun ALT kenarı slotun altına gelecek biçimde çözülür.
-    const baselineY = bandBottom + QR_FT_LIFT_PER_MAGNIFICATION * magnification
+    // Çıpa varsa QR'ın ALT mürekkep kenarı ona eşitlenir; yoksa slotun üst
+    // kenarından hesaplanır (eski davranış).
+    const baselineY =
+      bottomAnchorY != null
+        ? bottomAnchorY +
+          QR_FT_BOTTOM_INSET_PER_MAGNIFICATION * magnification +
+          QR_FT_BOTTOM_INSET_CONSTANT
+        : QR_SLOT_Y +
+          QR_RENDER_Y_OFFSET +
+          size +
+          QR_FT_LIFT_PER_MAGNIFICATION * magnification
+    const bandBottom = baselineY - QR_FT_LIFT_PER_MAGNIFICATION * magnification
+    const bandTop = bandBottom - size
     if (bandTop - quietZone < 0) continue
     if (bandBottom + quietZone > LABEL_EDGE) continue
     // Taban çizgisi etiket dışına taşarsa komut geçersizdir.
@@ -1097,6 +1122,8 @@ export function composeSuratLabel(
     carrierQrField,
     buildOccupancy(transferWidth),
     dataMatrixLeft,
+    // Aktarma merkezi metninin taban çizgisi = QR'ın alt hiza çıpası.
+    transfer.field.y,
   )
 
   // ── 5) SOL DİKEY SİPARİŞ REFERANSI: GÜVENLİ BASKI KENARI ─────────────

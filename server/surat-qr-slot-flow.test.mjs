@@ -149,10 +149,24 @@ test('QR-GEO-1: QR ayrılmış SAĞ-ALT slotta ve kenar payları güvenli', asyn
   const box = await qrBox(result.zpl)
   const quietZone = 4 * result.diagnostics.carrierQr.magnification
 
-  // Slot, composer'ın KENDİ QR'ı için kabul edilmiş banttır: `^FO` y'si 596,
-  // renderer +10 kaydırır → üst 606; yükseklik 105 → alt 710.
-  assert.equal(box.top, 606, `slot üst kenarı: ${box.top}`)
-  assert.equal(box.bottom, 710, `slot alt kenarı: ${box.bottom}`)
+  // ═══ SLOT ARTIK ALT HİZADAN ÇIPALANIR ══════════════════════════════
+  // Bu iddia önce slotu ÜST kenardan sabitliyordu (606..710). Alt hiza o
+  // durumda tesadüfe kalıyor ve QR, yanındaki aktarma metin bloğundan
+  // 5 dot daha aşağıda bitiyordu. Beklenti artık ÇIPADAN türetilir:
+  // alt kenar = aktarma metninin alt mürekkep hizası (bkz. QR-GEO-12).
+  const anchor = measureInkBox(box.bitmap, {
+    x: 170,
+    y: 630,
+    width: 430,
+    height: 90,
+  })
+  const anchorBottom = anchor.y + anchor.height - 1
+  assert.equal(box.bottom, anchorBottom, `slot alt kenarı: ${box.bottom}`)
+  assert.equal(
+    box.top,
+    anchorBottom - result.diagnostics.carrierQr.size + 1,
+    `slot üst kenarı: ${box.top}`,
+  )
 
   // SAĞ yarıda ve ALT yarıda.
   assert.ok(box.left > 799 / 2, `QR sağ yarıda olmalı: left=${box.left}`)
@@ -327,4 +341,39 @@ test('QR-GEO-11: etiket ölçüsü ve whitelist sözleşmesi DEĞİŞMEZ', async
   assert.equal(render.heightPx, 799)
   assert.equal(result.diagnostics.diff.deletions, 0)
   assert.equal(result.diagnostics.diff.unexpectedMutations, 0)
+})
+
+// ═══ QR-GEO-12: ALT HİZA — AKTARMA MERKEZİ METİN BLOĞU ══════════════════
+//
+// SAHA ŞİKÂYETİ: QR sağ altta ama alt kenarı, yanındaki büyük aktarma
+// merkezi metin bloğunun alt hizasıyla aynı seviyede değildi (ölçüldü:
+// QR 5 dot daha aşağıda bitiyordu).
+//
+// KÖK NEDEN: slot yalnız ÜST kenardan (`QR_SLOT_Y`) tanımlanıyordu; alt
+// hiza, QR boyutunun tesadüfi bir sonucuydu. QR artık aktarma metninin
+// TABAN ÇİZGİSİNE çıpalanır.
+test('QR-GEO-12: QR alt kenarı aktarma metin bloğuyla AYNI hizada', async () => {
+  const result = composed()
+  const box = await qrBox(result.zpl)
+  // Aktarma merkezi metninin mürekkep kutusu — QR'ın SOL komşusu.
+  const transfer = measureInkBox(box.bitmap, {
+    x: 170,
+    y: 630,
+    width: 430,
+    height: 90,
+  })
+  assert.ok(transfer, 'aktarma merkezi metni bulunmalı')
+  const transferBottom = transfer.y + transfer.height - 1
+  const delta = Math.abs(box.bottom - transferBottom)
+  assert.ok(
+    delta <= 2,
+    `alt hiza farkı ${delta} dot (QR ${box.bottom}, aktarma ${transferBottom})`,
+  )
+  // Hiza düzeltmesi QR'ı slotun DIŞINA taşımaz.
+  assert.ok(box.left > 799 / 2, 'QR sağ yarıda kalmalı')
+  assert.ok(box.top > 799 / 2, 'QR alt yarıda kalmalı')
+  // Ölçü ve büyütme DEĞİŞMEZ.
+  assert.equal(box.width, result.diagnostics.carrierQr.size)
+  assert.equal(box.height, result.diagnostics.carrierQr.size)
+  assert.equal(result.diagnostics.carrierQr.magnification, 5)
 })

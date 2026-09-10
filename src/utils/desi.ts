@@ -25,12 +25,20 @@ export function resolveNormalizedDesi(
   const orderDesi = positiveNumber(order?.desi)
   const shipmentDesi = positiveNumber(shipment?.desi)
   // Manuel giriş = TOPLAM koli desisi (quantity ile tekrar çarpılmaz).
+  // ═══ SAHTE "MANUEL" DAMGASI YOK ═══════════════════════════════════
+  // Buradaki `(!source && orderDesi != null)` dalı, KAYNAĞI BİLİNMEYEN
+  // kalıcı bir `order.desi` değerini kullanıcının ELLE girdiği toplam gibi
+  // raporluyordu. Oysa o değer türetilmiş de olabilir: kalıcılık katmanı
+  // etiketin "Top Ds/Kg" alanından geri okuyup `order.desi`'ye yazıyor.
+  // Türetilmiş bir değere "manuel" demek, dökümde YANLIŞ köken göstermek
+  // ve daha düşük öncelikli kaynakları haksız yere ezmektir.
   const manualDesi =
-    source === 'manual' ||
-    source === 'manual_total' ||
-    (!source && orderDesi != null)
+    source === 'manual' || source === 'manual_total'
       ? orderDesi ?? shipmentDesi
       : null
+  // Kaynağı bilinmeyen kalıcı değer YOK SAYILMAZ; yalnız "manuel" iddiası
+  // taşımaz ve en sona, açık kaynaklardan SONRA düşer.
+  const unsourcedPersistedDesi = !source ? (orderDesi ?? shipmentDesi) : null
   // Ürün bazlı desi = sum(quantity × satır birim desisi). Eski davranış
   // (ilk ürünün desisini tüm siparişe yazmak) çok ürünlü siparişlerde
   // yanlıştı; herhangi bir satırın birim desisi yoksa toplam HESAPLANMAZ.
@@ -48,7 +56,7 @@ export function resolveNormalizedDesi(
   )
   const calculatedDesi = firstNumber(
     source === 'calculated' ? orderDesi : null,
-    calculatePackageDesi(order, weightKg),
+    calculatePackageDesi(order),
   )
   const apiRequestDesi = firstNumber(
     positiveNumber(shipment?.apiRequestDesi),
@@ -93,6 +101,10 @@ export function resolveNormalizedDesi(
   }
   if (apiDesi != null) {
     return result(apiDesi, 'api')
+  }
+  if (unsourcedPersistedDesi != null) {
+    // Köken bilinmiyor: değeri gösteririz ama kaynağı UYDURMAYIZ.
+    return result(unsourcedPersistedDesi, null)
   }
   return result(null, null)
 
@@ -176,9 +188,9 @@ function sumOrderLineDesi(
     seen.add(lineId)
     const quantity = Math.max(0, Math.round(Number(item.quantity) || 0))
     if (quantity <= 0) continue
+    // Pazaryeri `dimensionalWeight` alanı DESİ DEĞİLDİR (bkz. orderDesi.ts).
     const unit = firstNumber(
       positiveNumber(item.desi),
-      positiveNumber(readNested(item.rawLine, ['dimensionalWeight'])),
       positiveNumber(readNested(item.rawLine, ['desi'])),
     )
     if (unit == null) return null
@@ -188,10 +200,13 @@ function sumOrderLineDesi(
   return counted > 0 ? roundDesi(total) : null
 }
 
-function calculatePackageDesi(
-  order: CargoOrder | undefined,
-  weightKg: number | null,
-): number | null {
+/**
+ * Paket desisi — YALNIZ hacimden.
+ *
+ * Ağırlık (kg) BİLEREK parametre değildir: farklı bir birimdir ve desi
+ * yerine kullanılamaz (bkz. aşağıdaki not).
+ */
+function calculatePackageDesi(order: CargoOrder | undefined): number | null {
   const itemValues = (order?.items ?? []).map((item) => {
     const length = firstNumber(
       positiveNumber(item.lengthCm),
@@ -217,8 +232,13 @@ function calculatePackageDesi(
         (total, value) => total + (value ?? 0),
         0,
       )
-  const calculated = Math.max(volumetric ?? 0, weightKg ?? 0)
-  return calculated > 0 ? roundDesi(calculated) : null
+  // ═══ KİLOGRAM DESİ DEĞİLDİR ═══════════════════════════════════════
+  // Burada eskiden `Math.max(volumetric, weightKg)` vardı: boyut yoksa
+  // AĞIRLIK doğrudan desi olarak dönüyordu. 1.00 kg'lık bir gönderi
+  // "1.00 desi" gibi raporlanıyordu — farklı birim, dönüşüm yok.
+  // Desi YALNIZ hacimden (en × boy × yükseklik / 3000) hesaplanır;
+  // hacim bilinmiyorsa desi BİLİNMİYOR demektir (uydurma yapılmaz).
+  return volumetric != null && volumetric > 0 ? roundDesi(volumetric) : null
 }
 
 function positiveNumber(value: unknown): number | null {

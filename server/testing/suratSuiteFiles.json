@@ -129,6 +129,7 @@
   "server/persistence-flow.test.mjs",
   "server/local-config-flow.test.mjs",
   "server/desi-flow.test.mjs",
+  "server/desi-tenant-default-flow.test.mjs",
   "server/desi-multiplier-setting-flow.test.mjs",
   "server/label-variant-metadata-flow.test.mjs",
   "server/external-processing-flow.test.mjs",

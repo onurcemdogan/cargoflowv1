@@ -141,7 +141,14 @@ export async function resolveShipmentDesi(params: {
       multiplyByItemQuantity: defaults.multiplyByItemQuantity,
     } as never,
   )
-  const resolved = positive(calculation?.calculatedTotalDesi)
+  // ═══ ELLE YOL İLE WORKER AYNI SONUCU VERİR ════════════════════════
+  // Burada eskiden `calculatedTotalDesi` okunuyordu. O alan, kabul edilmiş
+  // MANUEL TOPLAM override'ını (finalDesiSource === 'manual_total') YOK
+  // SAYAR. Tarayıcı yolu ise `finalDesi` gönderiyordu: aynı sipariş elle
+  // basıldığında override'lı değeri, arka plan worker'ı basıldığında
+  // hesaplanan değeri alıyordu — tek bir siparişin iki farklı desisi.
+  // Öncelik kuralı BURADA yeniden yazılmaz; kanonik `finalDesi` okunur.
+  const resolved = positive(calculation?.finalDesi)
   const lineSources = Array.isArray(calculation?.lines)
     ? (calculation.lines as { unitDesiSource?: unknown }[])
         .map((line) => String(line.unitDesiSource ?? 'none'))

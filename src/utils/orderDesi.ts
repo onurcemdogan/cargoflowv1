@@ -80,9 +80,14 @@ export function resolveLineUnitDesi(
   products: CargoProduct[],
   desiConfig: TenantDesiConfig,
 ): { unitDesi: number | null; unitDesiSource: LineDesiSource | null } {
+  // ═══ PAZARYERİ "boyutsal ağırlığı" DESİ DEĞİLDİR ═══════════════════
+  // Pazaryeri, satıcı boyut girmediğinde `dimensionalWeight` alanını yer
+  // tutucu bir değerle (tipik olarak 1) doldurur. Bunu OTORİTER satır
+  // desisi saymak, kiracının kendi "Varsayılan Gönderi Desisi" ayarını
+  // SESSİZCE eziyordu: ayar 2 iken gönderi 1.00 desiden işlem görüyordu.
+  // Yalnız satırın KENDİ açık desi alanı satır kaynağı sayılır.
   const lineDesi = firstNumber(
     positiveNumber(item.desi),
-    positiveNumber(readDeep(item.rawLine, ['dimensionalWeight'])),
     positiveNumber(readDeep(item.rawLine, ['desi'])),
   )
   if (lineDesi != null) {

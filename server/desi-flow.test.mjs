@@ -216,9 +216,30 @@ test('Ürün bazlı desi hesabı 12 senaryoluk sözleşmeyi karşılar', async (
   )
   assert.equal(rounding.calculatedTotalDesi, 0.99)
   assert.equal(rounding.parcelCount, 1)
-  // resolveLineUnitDesi rawLine.dimensionalWeight değerini satır kaynağı sayar.
-  const rawLineUnit = resolveLineUnitDesi(
+  // ═══ PAZARYERİ "boyutsal ağırlığı" SATIR KAYNAĞI DEĞİLDİR ═══════════
+  // Bu iddia eskiden `rawLine.dimensionalWeight` değerini otoriter satır
+  // desisi sayıyordu. Pazaryeri, satıcı boyut girmediğinde o alanı yer
+  // tutucu bir değerle (tipik olarak 1) doldurur; otoriter saymak kiracının
+  // "Varsayılan Gönderi Desisi" ayarını SESSİZCE eziyordu (üretimde
+  // gözlendi: ayar 2 iken gönderi 1.00 desiden işlem gördü).
+  const dimensionalWeightUnit = resolveLineUnitDesi(
     line({ rawLine: { dimensionalWeight: '1,5' } }),
+    [],
+    normalizeTenantDesiConfig(null),
+  )
+  assert.equal(dimensionalWeightUnit.unitDesi, null)
+  assert.equal(dimensionalWeightUnit.unitDesiSource, null)
+  // Kiracı varsayılanı VARSA yer tutucu onu EZMEZ.
+  const dimensionalWeightWithDefault = resolveLineUnitDesi(
+    line({ rawLine: { dimensionalWeight: '1' } }),
+    [],
+    normalizeTenantDesiConfig({ defaultUnitDesi: 2 }),
+  )
+  assert.equal(dimensionalWeightWithDefault.unitDesi, 2)
+  assert.equal(dimensionalWeightWithDefault.unitDesiSource, 'tenant_default')
+  // Satırın KENDİ açık desi alanı ise satır kaynağı olmaya DEVAM eder.
+  const rawLineUnit = resolveLineUnitDesi(
+    line({ rawLine: { desi: '1,5' } }),
     [],
     normalizeTenantDesiConfig(null),
   )
