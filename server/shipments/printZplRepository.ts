@@ -25,6 +25,10 @@ import {
   encryptShipmentPayload,
 } from './shipmentEncryption.ts'
 import type { TenantBlock } from '../../src/utils/labelTenantBlocks.ts'
+import {
+  normalizeComposeMode,
+  normalizeRenderContract,
+} from './legacyRenderContract.ts'
 import type { ProductLineParts } from '../../src/utils/suratZplProductLine.ts'
 import {
   deriveAugmentedSuratZplWithHashes,
@@ -238,12 +242,17 @@ function readPersisted(
     ...(typeof block.augmentationReason === 'string'
       ? { augmentationReason: block.augmentationReason as DomainAugmentationStatus }
       : {}),
-    ...(block.renderContract === 'carrier_composed' ||
-    block.renderContract === 'official_augmented'
-      ? { renderContract: block.renderContract }
+    // ═══ ESKİ AYIRICI KAYBOLMAZ ═══════════════════════════════════════
+    // Sözleşme adı yeniden adlandırılmadan ÖNCE yazılmış kayıtlar eski
+    // ayırıcıyı taşır. Tanımamak, composer'dan geçmiş bir gönderiyi
+    // "yalnız augmentation" gibi YANLIŞ sınıflandırmak demekti.
+    // Normalize edici eskiyi kanonik ada çevirir; GERÇEKTEN bilinmeyen
+    // değer null döner ve alan eskisi gibi düşer.
+    ...(normalizeRenderContract(block.renderContract)
+      ? { renderContract: normalizeRenderContract(block.renderContract)! }
       : {}),
-    ...(typeof block.composeMode === 'string'
-      ? { composeMode: block.composeMode }
+    ...(normalizeComposeMode(block.composeMode)
+      ? { composeMode: normalizeComposeMode(block.composeMode)! }
       : {}),
     // BUNDLE ALANLARI — eski kayıtlarda YOKTUR. Burada ASLA sentezlenmez:
     // ek sayfa üretmek YALNIZ ilk artefakt oluşturmanın işidir.

@@ -57,6 +57,7 @@
   "server/surat-client-print-precedence-flow.test.mjs",
   "server/surat-official-zpl-product-line-flow.test.mjs",
   "server/print-zpl-persistence-flow.test.mjs",
+  "server/render-contract-compat-flow.test.mjs",
   "server/sync-resilience-flow.test.mjs",
   "server/analytics-cache-flow.test.mjs",
   "server/label-ready-flow.test.mjs",
