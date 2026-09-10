@@ -159,9 +159,17 @@ interface SuratQrCandidate {
   readonly size: number
   readonly y: number
 }
+/**
+ * SAĞ-ALT QR SLOTUNUN ÜST KENARI (`^FO` y'si).
+ *
+ * Tüm adaylar AYNI slotu paylaşır: yalnız modül boyutu değişir, bant değil.
+ * Değer TEK KAYNAKTIR — composer'ın ürettiği QR ile taşıyıcının büyütülen
+ * QR'ı aynı yere düşsün diye ikisi de buradan beslenir.
+ */
+const QR_SLOT_Y = 596
 const QR_CANDIDATES: readonly SuratQrCandidate[] = [
-  { magnification: 5, size: 105, y: 596 },
-  { magnification: 4, size: 84, y: 596 },
+  { magnification: 5, size: 105, y: QR_SLOT_Y },
+  { magnification: 4, size: 84, y: QR_SLOT_Y },
 ]
 /**
  * ZEBRASH SAPMASI: yerel renderer `^BQ`'yu `^FO y + yürürlükteki ^BY yüksekliği`
@@ -585,6 +593,7 @@ function withQrMagnification(args: string, magnification: number): string {
 export function resolveCarrierQrEnlargement(
   qrField: ZplField | undefined,
   occupancy: readonly QrOccupancyBox[],
+  dataMatrixLeft: number = SURAT_GRID.boxLeft,
 ): CarrierQrEnlargement | null {
   if (!qrField?.codeCommand || qrField.positionType !== 'FT') return null
   const effective = effectiveQrMagnification(qrField.codeCommand.args)
@@ -602,13 +611,28 @@ export function resolveCarrierQrEnlargement(
     if (magnification <= effective) continue
     const size = CARRIER_QR_MODULES * magnification
     const quietZone = QR_QUIET_MODULES * magnification
-    // ^FT yorumu belirsizdir (kutu tabanı mı, tabandan 7×m yukarısı mı);
-    // band İKİSİNİ DE kapsar, böylece hangi yorum geçerli olursa olsun
-    // çakışma kontrolü GEÇERLİDİR.
-    const bandTop = qrField.y - size - QR_FT_LIFT_PER_MAGNIFICATION * magnification
-    const bandBottom = qrField.y
+
+    // ═══ BÜYÜTÜLEN QR AYRILMIŞ SAĞ-ALT SLOTA OTURTULUR ════════════════
+    //
+    // KÖK NEDEN: `^FT` taban çizgisidir ve kutu YUKARI doğru büyür
+    // (render: [y − size − 7×m, y − 7×m]). Taşıyıcının etkin büyütmesi 1
+    // iken kutu 21 dot olduğu için taban çizgisinde kalıyor ve alt banda
+    // düşüyordu. Büyütme uygulanınca kutu YUKARI genişledi ve QR, ayrılmış
+    // sağ-alt slottan çıkıp orta-sağ bölgeye — ödeme/parça satırlarının
+    // hizasına — tırmandı.
+    //
+    // Hedef konum TAHMİN EDİLMEZ: composer'ın KENDİ QR'ı için zaten kabul
+    // edilmiş slottan türetilir (`QR_CANDIDATES` + `preferredQrLeft`).
+    // Böylece taşıyıcının QR'ı ile composer'ın ürettiği QR AYNI yere düşer.
+    const slotRenderTop = QR_SLOT_Y + QR_RENDER_Y_OFFSET
+    const bandTop = slotRenderTop
+    const bandBottom = slotRenderTop + size
+    // `^FT` y'si, kutunun ALT kenarı slotun altına gelecek biçimde çözülür.
+    const baselineY = bandBottom + QR_FT_LIFT_PER_MAGNIFICATION * magnification
     if (bandTop - quietZone < 0) continue
     if (bandBottom + quietZone > LABEL_EDGE) continue
+    // Taban çizgisi etiket dışına taşarsa komut geçersizdir.
+    if (baselineY > LABEL_EDGE) continue
 
     const maxLeft = LABEL_EDGE - quietZone - size
     let requiredLeft = 0
@@ -618,14 +642,17 @@ export function resolveCarrierQrEnlargement(
       requiredLeft = Math.max(requiredLeft, box.right + quietZone)
     }
     if (requiredLeft > maxLeft) continue
-    // Mevcut yerinden GÖRSEL olarak kaymaması için EN SAĞ güvenli konum
-    // tercih edilir; QR yalnız BÜYÜR.
-    const x = Math.min(Math.max(qrField.x, requiredLeft), maxLeft)
+    // Slotun kendi sol kenarı tercih edilir; komşu daha sağa itiyorsa ona
+    // uyulur. Sığmıyorsa taşıyıcının QR'ı AYNEN korunur.
+    const x = Math.min(
+      Math.max(preferredQrLeft(size, dataMatrixLeft), requiredLeft),
+      maxLeft,
+    )
     if (x < requiredLeft) continue
 
     return {
       x,
-      y: qrField.y,
+      y: baselineY,
       magnification,
       size,
       effectiveMagnification: effective,
@@ -1069,6 +1096,7 @@ export function composeSuratLabel(
   const carrierQrEnlargement = resolveCarrierQrEnlargement(
     carrierQrField,
     buildOccupancy(transferWidth),
+    dataMatrixLeft,
   )
 
   // ── 5) SOL DİKEY SİPARİŞ REFERANSI: GÜVENLİ BASKI KENARI ─────────────
