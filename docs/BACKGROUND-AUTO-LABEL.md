@@ -140,3 +140,74 @@ alınır (BOUNDARY-2); üretici iki kez çalışsa da mükerrer iş doğmaz
 üretici hem durum hem akış senkronuna bağlıdır (BOUNDARY-7).
 
 Politika tarafı: `surat-auto-label-policy-flow` AUTO-BOUNDARY-1…4.
+
+---
+
+## `Created` paketler ve arka planda Picking geçişi
+
+### Ölçülen durum
+
+Worker ve akış senkronu açık, PM2 günlüğünde *"arka plan etiket worker
+etkin"* yazıyor — ama `QUEUED_TOTAL = 0`. Altı yeni `Created` sipariş
+hiçbir zaman sıraya girmedi.
+
+### Kök neden: üç katman, üç farklı gerçek
+
+| katman | fonksiyon | `Created` kararı |
+| --- | --- | --- |
+| üretici | `classifyMarketplaceLifecycle` | `NOT_YET` → sıraya **almaz** |
+| worker hazırlığı | `canCallSurat` | `false` → `NOT_ELIGIBLE` |
+| create orkestrasyonu | `ensureTrendyolPickingBeforeSurat` | Picking'e **alır** |
+
+Elle buton aynı paket için `Created → Picking` geçişini **zaten**
+yapıyordu; arka plan yol o yeteneğe ulaşmadan iki kapı önce
+reddediliyordu.
+
+### Çözüm
+
+`Created` kapısı **silinmedi**. Yaşam döngüsü sınıfı hâlâ `NOT_YET`'tir.
+Değişen tek şey: `resolveBackgroundPreparationGate` artık çağırana
+*"geçişi yapmaya yetkili misin?"* diye sorar. Yetki yoksa sonuç bugünküyle
+**aynıdır**.
+
+Geçişi yapan yer değişmedi: elle butonun kullandığı kanonik create
+orkestrasyonu. **İkinci bir Picking uygulaması yoktur** — worker create
+handler'ın kendisini sentetik istekle çalıştırır.
+
+### İkinci aktivasyon sınırı — neden
+
+Bu bir **pazaryeri mutasyonudur**. Otomatik etiketin açık olması bunun
+onayı sayılmaz: aksi hâlde kod dağıtıldığı an, `activatedAt` sonrası
+görülmüş ve `Created` diye **bekleyen** paketler topluca Picking'e
+alınırdı.
+
+Bu yüzden `autoLabel.backgroundPicking` kendi `activatedAt` damgasını
+taşır ve geçerli sınır **iki damganın geç olanıdır**. Varsayılan
+**kapalı**; ayar yoksa davranış bugünküyle birebir aynıdır.
+
+### Operatör komutları
+
+```
+npm run auto-label:activation:inspect -- --name "<org>"
+npm run auto-label:activation:enable  -- --name "<org>"
+npm run auto-label:activation:enable-background-picking -- --name "<org>"
+```
+
+`inspect` salt-okunurdur. Açma komutları yalnız kiracı ayarını yazar:
+Trendyol'a çağrı yok, Sürat'e çağrı yok, iş satırı yok. Damga daima
+`now`dur; komut geçmişe çekilebilir bir tarih bayrağı kabul etmez.
+
+### Yakalama (catch-up) ile ilişkisi
+
+Yakalama aktivasyon sınırını atlar; **sınırı atlayan bir yol pazaryeri
+statüsünü değiştiremez.** Bu yüzden yakalama `Created` paketleri
+`PICKING_TRANSITION_REQUIRED` ile reddeder. Modülün "yalnız aktivasyon
+sınırı atlanır" sözü böylece gerçekten doğrudur — daha önce değildi.
+
+### Kanıt
+
+`server/auto-label-background-picking-flow.test.mjs`: AUTO-BG-1…10.
+Onay yokken `Created` bloke (AUTO-BG-2b/a); onay varken bile sınırdan önce
+görülmüş paketler dokunulmaz (AUTO-BG-2b/b); terminal paketler yetki
+verilse bile geçmez (AUTO-BG-4); READY etiket varken buton taşıyıcıya
+çıkmaz (AUTO-BG-6) ve kalıcı ZPL'i bayt bayt döndürür (AUTO-BG-7).

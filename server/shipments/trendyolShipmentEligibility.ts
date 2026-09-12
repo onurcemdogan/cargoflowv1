@@ -53,6 +53,19 @@ export interface TrendyolShipmentEligibility {
   readonly existingShipmentDetected: boolean
   readonly canCallGonderiyiKargoyaGonder: boolean
   readonly requiresPickingUpdate: boolean
+  /**
+   * PICKING GECISINDEN SONRA create acilabilir mi?
+   *
+   * `canCallSurat` ile AYNI yuklem listesidir; YALNIZ
+   * `requiresPickingUpdate` disarida birakilir. Yani: "paketin TEK eksigi
+   * Created statusu mu?" sorusunun yanitidir.
+   *
+   * Bu alan bir GEVSETME DEGILDIR: elle create yolu (`index.mjs` ->
+   * `ensureTrendyolPickingBeforeSurat`) paketi Picking'e aldiktan SONRA
+   * uygunlugu YENIDEN turetir ve tam olarak bu sonuca varir. Alan, o
+   * sonucu ONCEDEN gorunur kilar; ikinci bir kural yazmaz.
+   */
+  readonly canCallSuratAfterPickingUpdate: boolean
   readonly pickingUpdatePerformed: boolean
   readonly pickingUpdate: unknown
   readonly diagnostics: readonly string[]
@@ -92,6 +105,17 @@ export type MarketplaceLifecycle =
 export interface MarketplaceLifecycleVerdict {
   readonly lifecycle: MarketplaceLifecycle
   readonly reason: string
+  /** Paket Created/Yeni: Surat oncesi Picking gecisi GEREKIYOR. */
+  readonly requiresPickingUpdate: boolean
+  /**
+   * `NOT_YET` sinifini `ELIGIBLE`e tasiyacak KANONIK gecis mevcut mu?
+   *
+   * "Mevcut" demek: paketin Created disinda BASKA hicbir engeli yok
+   * demektir. Gecisi KIMIN yapabilecegi (elle buton mu, arka plan mi) bir
+   * POLITIKA sorusudur ve burada yanitlanmaz —
+   * `resolveBackgroundPreparationGate` yanitlar.
+   */
+  readonly pickingTransitionAvailable: boolean
 }
 
 /**
@@ -105,28 +129,132 @@ export function classifyMarketplaceLifecycle(
   order: Record<string, any> = {},
 ): MarketplaceLifecycleVerdict {
   const eligibility = buildTrendyolShipmentEligibility(order)
+  const verdict = (
+    lifecycle: MarketplaceLifecycle,
+    reason: string,
+    pickingTransitionAvailable = false,
+  ): MarketplaceLifecycleVerdict => ({
+    lifecycle,
+    reason,
+    requiresPickingUpdate: eligibility.requiresPickingUpdate,
+    pickingTransitionAvailable,
+  })
   if (eligibility.isCancelled) {
-    return { lifecycle: 'TERMINAL', reason: 'Paket iptal/iade statüsünde.' }
+    return verdict('TERMINAL', 'Paket iptal/iade statüsünde.')
   }
   if (eligibility.isDelivered) {
-    return { lifecycle: 'TERMINAL', reason: 'Paket teslim edilmiş.' }
+    return verdict('TERMINAL', 'Paket teslim edilmiş.')
   }
   if (eligibility.isShipped) {
-    return { lifecycle: 'TERMINAL', reason: 'Paket kargoya verilmiş/taşımada.' }
+    return verdict('TERMINAL', 'Paket kargoya verilmiş/taşımada.')
   }
   if (eligibility.existingShipmentDetected) {
-    return { lifecycle: 'TERMINAL', reason: 'Mevcut gönderi izi var.' }
+    return verdict('TERMINAL', 'Mevcut gönderi izi var.')
   }
   if (eligibility.requiresPickingUpdate) {
-    return {
-      lifecycle: 'NOT_YET',
-      reason: 'Paket Yeni/Created; Picking statüsüne geçmeden create açılmaz.',
-    }
+    // SINIF DEGISMEDI: Created hala `NOT_YET`tir ve KENDILIGINDEN create
+    // acmaz. Yalnizca "bu bekleyisi cozecek kanonik gecis var mi?" sorusu
+    // AYRICA yanitlanir. Kapiyi kimin acabilecegini politika belirler.
+    return verdict(
+      'NOT_YET',
+      'Paket Yeni/Created; Picking statüsüne geçmeden create açılmaz.',
+      eligibility.canCallSuratAfterPickingUpdate,
+    )
   }
   if (eligibility.canCallSurat) {
-    return { lifecycle: 'ELIGIBLE', reason: 'Trendyol engeli bulunmadı.' }
+    return verdict('ELIGIBLE', 'Trendyol engeli bulunmadı.')
   }
-  return { lifecycle: 'UNKNOWN', reason: eligibility.reason }
+  return verdict('UNKNOWN', eligibility.reason)
+}
+
+/**
+ * ARKA PLAN HAZIRLIK KAPISI — "bu paket icin create ORKESTRASYONU
+ * baslatilabilir mi?" sorusunun TEK yaniti.
+ *
+ * ═══ OLCULEN KUSUR ═══════════════════════════════════════════════════════
+ * Uretimde `LABEL_WORKER_ENABLED=true`, `TRENDYOL_STREAM_SYNC_ENABLED=true`
+ * ve kiraci otomatik etiketi ACIK oldugu halde `QUEUED_TOTAL=0` idi; alti
+ * yeni `Created` siparis hicbir zaman siraya girmedi.
+ *
+ * Sebep TEK bir eksik degil, UC katmanin AYRI yanit vermesiydi:
+ *
+ *   uretici        `classifyMarketplaceLifecycle`      -> NOT_YET  (siraya almaz)
+ *   worker hazirlik `canCallSurat`                     -> false    (NOT_ELIGIBLE)
+ *   create handler  `ensureTrendyolPickingBeforeSurat` -> Picking'e ALIR
+ *
+ * Yani ELLE BUTON ayni paket icin Created -> Picking gecisini ZATEN
+ * yapiyordu; arka plan yol ise o yetenege ULASMADAN iki kapi once
+ * reddediliyordu. Ayni sipariş icin uc farkli gercek.
+ *
+ * ═══ IKINCI UYGULAMA YAZILMAZ ════════════════════════════════════════════
+ * Bu fonksiyon Picking gecisini YAPMAZ ve nasil yapilacagini BILMEZ.
+ * Gecisi yapan tek yer, elle butonun da kullandigi kanonik create
+ * orkestrasyonudur (`ensureTrendyolPickingBeforeSurat` ->
+ * `callTrendyolUpdatePackageStatus`). Burada YALNIZ "orkestrasyon
+ * baslatilsin mi?" sorusu yanitlanir.
+ *
+ * ═══ CREATED KAPISI SILINMEDI ════════════════════════════════════════════
+ * `NOT_YET` sinifi AYNEN durur. Fark su: cagiran, gecisi yapmaya YETKILI
+ * oldugunu ACIKCA beyan etmedikce `NOT_YET` yine reddedilir. Yetki
+ * varsayilan olarak YOKTUR (`allowPickingTransition` verilmezse `false`).
+ */
+export interface BackgroundPreparationVerdict {
+  /** Create orkestrasyonu baslatilabilir mi? */
+  readonly allowed: boolean
+  /** Orkestrasyon once KANONIK Picking gecisini yapmak zorunda mi? */
+  readonly requiresPickingUpdate: boolean
+  readonly lifecycle: MarketplaceLifecycle
+  readonly reason: string
+  /** Reddedildiyse sayaç/gunluk kodu; kabul edildiyse null. */
+  readonly blockCode: string | null
+}
+
+export function resolveBackgroundPreparationGate(
+  order: Record<string, any> = {},
+  options: { allowPickingTransition?: boolean } = {},
+): BackgroundPreparationVerdict {
+  const verdict = classifyMarketplaceLifecycle(order)
+  const deny = (reason: string): BackgroundPreparationVerdict => ({
+    allowed: false,
+    requiresPickingUpdate: verdict.requiresPickingUpdate,
+    lifecycle: verdict.lifecycle,
+    reason,
+    // Mevcut sayac adlari KORUNUR: `MARKETPLACE_LIFECYCLE_<SINIF>`.
+    blockCode: `MARKETPLACE_LIFECYCLE_${verdict.lifecycle}`,
+  })
+
+  if (verdict.lifecycle === 'ELIGIBLE') {
+    return {
+      allowed: true,
+      requiresPickingUpdate: false,
+      lifecycle: 'ELIGIBLE',
+      reason: verdict.reason,
+      blockCode: null,
+    }
+  }
+  // TERMINAL icin YETKI KAVRAMI YOKTUR: kargoya verilmis, teslim edilmis,
+  // iptal/iade olmus veya zaten gonderi izi olan paket ASLA gecmez.
+  if (verdict.lifecycle !== 'NOT_YET') return deny(verdict.reason)
+  if (!verdict.pickingTransitionAvailable) {
+    return deny(
+      `${verdict.reason} Ayrica Created disinda da engel var: ` +
+        buildTrendyolShipmentEligibility(order).reason,
+    )
+  }
+  if (options.allowPickingTransition !== true) {
+    return deny(
+      `${verdict.reason} Cagiran arka plan Picking gecisine YETKILI degil.`,
+    )
+  }
+  return {
+    allowed: true,
+    requiresPickingUpdate: true,
+    lifecycle: 'NOT_YET',
+    reason:
+      'Paket Created; kanonik Picking gecisi disinda engel yok — create '
+      + 'orkestrasyonu gecisi yapip devam edebilir.',
+    blockCode: null,
+  }
 }
 
 /** Yeni create ASLA açılmayacak sınıflar. */
@@ -389,14 +517,21 @@ export function buildTrendyolShipmentEligibility(
   if (isReadyToShip === false) diagnostics.push('Trendyol isReadyToShip=false döndü.')
   if (suratAssigned === false) diagnostics.push('Sipariş Sürat Kargo’ya atanmış görünmüyor.')
   if (existingShipmentDetected) diagnostics.push('Mevcut cargoTrackingLink/gönderi izi var.')
-  const canCallGonderiyiKargoyaGonder = Boolean(
+  // ═══ TEK YUKLEM LISTESI, IKI OKUMA ═══════════════════════════════════
+  //
+  // Liste BIR KEZ yazilir. `canCallSuratAfterPickingUpdate` Created
+  // kosulunu DISARIDA birakir; gercek karar (`canCall...`) ondan TUREtilir.
+  // Boylece iki cevap ASLA ayrisamaz: ikinci bir kopya YOKTUR.
+  const canCallSuratAfterPickingUpdate = Boolean(
     hasCargoTrackingNumber &&
-      !requiresPickingUpdate &&
       !isCancelled &&
       !isDelivered &&
       !isShipped &&
       isReadyToShip !== false &&
       suratAssigned !== false,
+  )
+  const canCallGonderiyiKargoyaGonder = Boolean(
+    canCallSuratAfterPickingUpdate && !requiresPickingUpdate,
   )
 
   return {
@@ -429,6 +564,7 @@ export function buildTrendyolShipmentEligibility(
     existingShipmentDetected,
     canCallGonderiyiKargoyaGonder,
     requiresPickingUpdate,
+    canCallSuratAfterPickingUpdate,
     pickingUpdatePerformed: Boolean(order.trendyolPickingUpdate?.ok),
     pickingUpdate: order.trendyolPickingUpdate,
     diagnostics,

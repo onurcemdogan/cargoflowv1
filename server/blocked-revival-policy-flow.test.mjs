@@ -467,11 +467,30 @@ test('REVIVAL-INSPECT: salt okunur ve her satir icin GEREKCE verir', async (t) =
 
 test('REVIVAL-REG: her QUEUED gecisi GEREKCELIDIR, genel "retry" YOK', async () => {
   // Uretici artik PAYLASILAN yasam dongusu kapisini kullanir.
+  //
+  // GIRIS NOKTASI DEGISTI, OTORITE DEGISMEDI: uretici artik
+  // `resolveBackgroundPreparationGate` cagirir. O fonksiyon kararini
+  // AYNI `classifyMarketplaceLifecycle` sinifindan turetir ve ustune
+  // yalnizca "cagiran Created->Picking gecisine YETKILI mi?" sorusunu
+  // ekler. Bu iddia, ikinci bir statu tablosu dogmadigini kilitler.
   const producer = readFileSync(
     join(here, 'shipments', 'autoLabelProducer.ts'), 'utf8',
   )
-  assert.match(producer, /classifyMarketplaceLifecycle\(row\)/)
-  assert.match(producer, /lifecycle\.lifecycle !== 'ELIGIBLE'/)
+  assert.match(producer, /resolveBackgroundPreparationGate\(row, \{/)
+  assert.match(producer, /if \(!gate\.allowed\) \{/)
+  const eligibilitySource = readFileSync(
+    join(here, 'shipments', 'trendyolShipmentEligibility.ts'), 'utf8',
+  )
+  const gateBody = eligibilitySource.slice(
+    eligibilitySource.indexOf('export function resolveBackgroundPreparationGate'),
+  )
+  assert.match(
+    gateBody.slice(0, 800),
+    /classifyMarketplaceLifecycle\(order\)/,
+    'kanonik kapi PAYLASILAN yasam dongusu sinifina sormali',
+  )
+  // TERMINAL icin "yetki" diye bir kavram YOKTUR.
+  assert.match(gateBody.slice(0, 2000), /if \(verdict\.lifecycle !== 'NOT_YET'\) return deny/)
   // Canlandirma GUNCEL hazirliga sorar.
   assert.match(producer, /if \(!prepared\.ok\) \{/)
   assert.match(producer, /DEPENDENCY_STILL_BLOCKED/)

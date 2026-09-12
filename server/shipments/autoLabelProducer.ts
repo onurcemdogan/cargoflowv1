@@ -33,7 +33,7 @@ import {
   enqueueLabelJob,
   reactivateDependencyBlockedJob,
 } from './labelJobQueue.ts'
-import { classifyMarketplaceLifecycle } from './trendyolShipmentEligibility.ts'
+import { resolveBackgroundPreparationGate } from './trendyolShipmentEligibility.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -88,11 +88,19 @@ export async function activateAutoLabel(
     .where(eq(organizationSettings.organizationId, organizationId))
     .limit(1)
   const settings = ((rows[0]?.settingsJson ?? {}) as Record<string, unknown>) || {}
+  const previous = (settings[AUTO_LABEL_SETTINGS_KEY] ?? {}) as AutoLabelSettings
   const autoLabel: AutoLabelSettings = {
     enabled: true,
     marketplaces: params.marketplaces,
     carriers: params.carriers,
     activatedAt: params.now,
+    // AYRI KARAR KORUNUR: arka plan Picking onayı otomatik etiketin
+    // yeniden açılmasıyla ne SİLİNİR ne de EDİNİLİR. Geçerli sınır zaten
+    // iki damganın GEÇ olanıdır, bu yüzden burada `activatedAt` ileri
+    // alınması arka planı GEVŞETMEZ.
+    ...(previous.backgroundPicking
+      ? { backgroundPicking: previous.backgroundPicking }
+      : {}),
   }
   // MERGE: etiket şablonu ve stream imleci KORUNUR.
   const next = { ...settings, [AUTO_LABEL_SETTINGS_KEY]: autoLabel }
@@ -106,6 +114,56 @@ export async function activateAutoLabel(
       .set({ settingsJson: next, updatedAt: new Date(params.now) })
       .where(eq(organizationSettings.organizationId, organizationId))
   }
+  return autoLabel
+}
+
+/**
+ * ARKA PLANDA Created → Picking geçişini AÇAR ve KENDİ sınırını `now`
+ * olarak damgalar.
+ *
+ * ═══ NEDEN AYRI BİR AÇMA İŞLEMİ ══════════════════════════════════════════
+ * Bu geçiş bir PAZARYERİ MUTASYONUDUR: worker, kiracının Trendyol
+ * hesabında paket statüsünü değiştirir. Otomatik etiketin açık olması
+ * bunun onayı SAYILMAZ.
+ *
+ * ═══ NEDEN `now` DAMGALANIR ══════════════════════════════════════════════
+ * Damga OLMASAYDI, açıldığı anda `Created` diye BEKLEYEN tüm paketler —
+ * otomatik etiket sınırından sonra görülmüş oldukları için — ilk üretici
+ * turunda TOPLUCA Picking'e alınırdı. Sınır, geçmişi dokunulmaz kılar:
+ * bekleyen paketler operatörün AÇIK kararıyla ele alınır.
+ *
+ * KOD DAĞITIMI BU FONKSİYONU ÇAĞIRMAZ. Ayar yoksa davranış KAPALIDIR.
+ */
+export async function activateBackgroundPicking(
+  db: Db,
+  organizationId: string,
+  params: { now: string },
+): Promise<AutoLabelSettings> {
+  const rows = await db
+    .select()
+    .from(organizationSettings)
+    .where(eq(organizationSettings.organizationId, organizationId))
+    .limit(1)
+  const settings = ((rows[0]?.settingsJson ?? {}) as Record<string, unknown>) || {}
+  const previous = (settings[AUTO_LABEL_SETTINGS_KEY] ?? null) as
+    | AutoLabelSettings
+    | null
+  // Otomatik etiket KAPALIYKEN arka plan Picking AÇILAMAZ: etiketi
+  // üretmeyecek bir yol için pazaryeri statüsü değiştirilmez.
+  if (!previous || previous.enabled !== true) {
+    throw new Error(
+      'Otomatik etiket kapalı; arka plan Created→Picking açılamaz.',
+    )
+  }
+  const autoLabel: AutoLabelSettings = {
+    ...previous,
+    backgroundPicking: { enabled: true, activatedAt: params.now },
+  }
+  const next = { ...settings, [AUTO_LABEL_SETTINGS_KEY]: autoLabel }
+  await db
+    .update(organizationSettings)
+    .set({ settingsJson: next, updatedAt: new Date(params.now) })
+    .where(eq(organizationSettings.organizationId, organizationId))
   return autoLabel
 }
 
@@ -182,9 +240,24 @@ export async function enqueueEligibleAutoLabelJobs(
     // Kapı artık PAYLAŞILAN yaşam döngüsü sınıfına sorar. `TERMINAL`
     // (Shipped/Delivered/Cancelled/Returned/mevcut gönderi izi) için yeni
     // create ASLA açılmaz; `NOT_YET` (Created) beklemede kalır.
-    const lifecycle = classifyMarketplaceLifecycle(row)
-    if (lifecycle.lifecycle !== 'ELIGIBLE') {
-      bump(`MARKETPLACE_LIFECYCLE_${lifecycle.lifecycle}`)
+    //
+    // ═══ `Created` NEDEN ARTIK TÜMDEN REDDEDİLMİYOR ═══════════════════
+    //
+    // Kapı hâlâ `NOT_YET` diyor ve `Created` paket KENDİLİĞİNDEN geçmiyor.
+    // Değişen tek şey: elle butonun ZATEN yaptığı kanonik Picking geçişi
+    // artık arka plan için de MASADA. Geçişi bu modül YAPMAZ; yalnız
+    // "orkestrasyon başlatılabilir mi?" sorusunu sorar. Gerçek geçişi
+    // create orkestrasyonunun içindeki `ensureTrendyolPickingBeforeSurat`
+    // yapar — elle yolla AYNI fonksiyon.
+    //
+    // YETKİ BURADA VERİLMEZ: üretici yalnız "ben aktivasyon sınırına UYAN
+    // yolum" der; geçişin gerçekten açık olup olmadığına politika
+    // (`resolveAutoLabelEnqueue`) kendi ayrı sınırıyla karar verir.
+    const gate = resolveBackgroundPreparationGate(row, {
+      allowPickingTransition: true,
+    })
+    if (!gate.allowed) {
+      bump(gate.blockCode ?? `MARKETPLACE_LIFECYCLE_${gate.lifecycle}`)
       continue
     }
 
@@ -209,6 +282,7 @@ export async function enqueueEligibleAutoLabelJobs(
       hasLabelArtifact: hasCarrierArtifact,
       hasCarrierArtifact,
       previousNetworkCrossed: false,
+      requiresPickingUpdate: gate.requiresPickingUpdate,
       firstSeenAtMs: row.firstSeenAt instanceof Date
         ? row.firstSeenAt.getTime()
         : Date.parse(String(row.firstSeenAt ?? '')),

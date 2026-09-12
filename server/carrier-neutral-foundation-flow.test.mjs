@@ -51,12 +51,41 @@ test('CN-2: gorunen ad dogrulamasi DB anahtari olarak KULLANILMAZ', () => {
 
 /* ═══ SÜRAT YOLU YABANCI GÖNDERİYİ SAHİPLENMEZ ══════════════════════ */
 
+/** Cok satirli `Boolean(` ifadesinin kapanisi. */
+const BLOCK_END = String.fromCharCode(10) + '  )'
+
 test('CN-3: create on kontrolu YABANCI tasiyiciyi ENGELLER', () => {
-  // `suratAssigned === false` create'i kapatan kosullardan BIRIDIR.
+  // `suratAssigned === false` create'i kapatan kosullardan BIRIDIR ve
+  // PAYLASILAN yuklem listesinde yasar.
+  //
+  // YAPISI DEGISTI, NIYET AYNI: liste artik BIR KEZ
+  // `canCallSuratAfterPickingUpdate` icinde yazilir; gercek karar ondan
+  // TURETILIR. Boylece "Created disinda engel var mi?" ile "create
+  // acilabilir mi?" sorulari ASLA ayrisamaz — ikinci bir kopya YOK.
   assert.match(ELIGIBILITY, /suratAssigned !== false,/)
-  const gateAt = ELIGIBILITY.indexOf('const canCallGonderiyiKargoyaGonder = Boolean(')
-  const end = ELIGIBILITY.indexOf(')', ELIGIBILITY.indexOf('suratAssigned !== false,'))
-  assert.ok(gateAt > 0 && end > gateAt, 'create on kontrolu bulunamadi')
+  const sharedAt = ELIGIBILITY.indexOf(
+    'const canCallSuratAfterPickingUpdate = Boolean(',
+  )
+  assert.ok(sharedAt > 0, 'paylasilan yuklem listesi bulunamadi')
+  const sharedEnd = ELIGIBILITY.indexOf(BLOCK_END, sharedAt)
+  const sharedList = ELIGIBILITY.slice(sharedAt, sharedEnd)
+  // Yabanci tasiyici kosulu PAYLASILAN listenin ICINDE.
+  assert.match(sharedList, /suratAssigned !== false,/)
+  // Ve listede `suratAssigned` TEK KEZ gecer: ikinci kopya yok.
+  assert.equal(
+    (ELIGIBILITY.match(/suratAssigned !== false,/g) ?? []).length, 1,
+    'yabanci tasiyici kosulu IKINCI kez kopyalanmis',
+  )
+  // Gercek kapi paylasilan listeden TUREtilir; kendi listesini KURMAZ.
+  const gateAt = ELIGIBILITY.indexOf(
+    'const canCallGonderiyiKargoyaGonder = Boolean(',
+  )
+  assert.ok(gateAt > sharedAt, 'create on kontrolu bulunamadi')
+  assert.match(
+    ELIGIBILITY.slice(gateAt, ELIGIBILITY.indexOf(BLOCK_END, gateAt)),
+    /canCallSuratAfterPickingUpdate && !requiresPickingUpdate,/,
+    'create kapisi paylasilan listeden TURETILMELI',
+  )
   // canCallSurat AYNI degerden turer; ayri/gevsek bir yol OLMAMALI.
   assert.match(ELIGIBILITY, /canCallSurat: canCallGonderiyiKargoyaGonder,/)
   // `index.mjs` IKINCI bir kopya TUTMAZ: kural tek yerde kalmali.

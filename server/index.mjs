@@ -4000,6 +4000,10 @@ async function runLabelJobViaCreateHandler(job) {
     + ` packageId=${packageId}`
     + ` attempt=${Number(job.attemptCount ?? 0)}`
     + ` marketplaceStatus=${prepared.marketplaceStatus ?? '-'}`
+    // Arka planda pazaryeri statüsü DEĞİŞTİRİLECEK mi — bir sonraki üretim
+    // olayında bu satır tahmin yürütmeyi gereksiz kılar.
+    + ` requiresPickingUpdate=${String(prepared.requiresPickingUpdate)}`
+    + ` pickingAuthorized=${String(prepared.pickingTransitionAuthorized)}`
     + ` resolvedDesi=${String(prepared.resolvedDesi)}`
     + ` eligible=${String(prepared.eligibleForCreate)}`
     + ` billingParty=${prepared.billingParty ?? '-'}`

@@ -101,18 +101,25 @@ async function seedTenant(db, options = {}) {
     })
   }
   // ── 19 güncel AÇIK ve UYGUN ──
+  //
+  // STATÜ NEDEN `Picking`: bu paketler "yakalanabilir" olmalı. `Created`
+  // bir paket Sürat'e çıkmadan ÖNCE pazaryeri statüsünün DEĞİŞTİRİLMESİNİ
+  // gerektirir; aktivasyon sınırını atlayan yakalama yolu bunu YAPMAZ
+  // (AUTO-BG-9 bunu kilitler). Bu kurgu, testlerin ÖLÇMEK İSTEDİĞİ şeyi
+  // — tarihsel/açık ayrımı, mükerrerlik, artefakt ve deneme kapıları —
+  // gerçekten uygun bir statüyle ölçer.
   for (let index = 0; index < OPEN_ELIGIBLE; index += 1) {
     rows.push({
       ...mapper.toOrderInsertValues(org.id, {
         marketplace: 'Trendyol',
         packageId: `OPEN-${index}`,
         orderNumber: `ORD-OPEN-${index}`,
-        marketplaceStatus: 'Created',
+        marketplaceStatus: 'Picking',
         cargoTrackingNumber: `7279900${index}`,
         orderDate: BEFORE.toISOString(),
         totalAmount: '250.00',
         // whoPays YOK → TRENDYOL_PAYS (pazaryeri öder) — üretim varsayılanı.
-        rawOrder: { status: 'Created' },
+        rawOrder: { status: 'Picking' },
       }),
       operationStatus: 'NEW',
       firstSeenAt: BEFORE,

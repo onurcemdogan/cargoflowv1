@@ -48,6 +48,12 @@ export const AUTO_LABEL_BLOCK_REASONS = [
   // Aktivasyon sınırından ÖNCE görülmüş paket — geçmiş yığın otomatik
   // etiketlenmez.
   'BEFORE_ACTIVATION_BOUNDARY',
+  // Paket `Created`; arka planda Picking'e alınabilir AMA kiracı bu
+  // davranışı AÇIKÇA açmamış. Varsayılan KAPALI.
+  'BACKGROUND_PICKING_NOT_ACTIVATED',
+  // Arka plan Picking AÇIK ama paket, o davranışın kendi aktivasyon
+  // sınırından ÖNCE görülmüş. Kod dağıtımı geçmişi mutasyona uğratamaz.
+  'BEFORE_BACKGROUND_PICKING_BOUNDARY',
 ] as const
 
 export type AutoLabelBlockReason = (typeof AUTO_LABEL_BLOCK_REASONS)[number]
@@ -75,6 +81,26 @@ export interface AutoLabelSettings {
    * üretirdi. Sınır yoksa politika hiçbir paketi kabul etmez (fail-safe).
    */
   activatedAt?: string
+  /**
+   * ═══ ARKA PLANDA Created → Picking ═══════════════════════════════════
+   *
+   * Elle buton, `Created` bir paketi Sürat'e çıkmadan ÖNCE kanonik
+   * `ensureTrendyolPickingBeforeSurat` ile Picking'e alır. Arka plan
+   * worker'ının AYNI kanonik yolu kullanması bu ayarla açılır.
+   *
+   * NEDEN AYRI BİR SINIR: bu bir PAZARYERİ MUTASYONUDUR. Otomatik etiket
+   * zaten AÇIK olan bir kiracıda, kod dağıtıldığı an sınır `activatedAt`
+   * olsaydı, o sınırdan sonra görülmüş ve `Created` diye BEKLEYEN paketler
+   * dağıtımla birlikte TOPLUCA Picking'e alınırdı. Karar operatörün
+   * olmalıdır, dağıtımın değil.
+   *
+   * Bu yüzden ayrı ve KENDİ `activatedAt` damgası vardır; geçerli sınır
+   * İKİSİNİN GEÇ OLANIDIR. Varsayılan KAPALI (fail-safe).
+   */
+  backgroundPicking?: {
+    enabled?: boolean
+    activatedAt?: string
+  }
 }
 
 /**
@@ -90,6 +116,33 @@ export function resolveActivationBoundary(
   if (!raw) return null
   const parsed = Date.parse(raw)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * ARKA PLAN Created → Picking icin GECERLI sinir (ms).
+ *
+ * Uc kosulun HEPSI saglanmadikca `null` doner ve arka plan HICBIR paketi
+ * Picking'e almaz:
+ *   1. otomatik etiketin kendi aktivasyon siniri GECERLI,
+ *   2. `backgroundPicking.enabled === true`,
+ *   3. `backgroundPicking.activatedAt` okunabilir bir an.
+ *
+ * Sonuc IKI SINIRIN GEC OLANIDIR. Boylece hicbir sinir digerini GERIYE
+ * cekemez: otomatik etiket dun acilmis olsa da arka plan Picking bugun
+ * acildiysa gecerli sinir BUGUNDUR.
+ */
+export function resolveBackgroundPickingBoundary(
+  settings?: AutoLabelSettings | null,
+): number | null {
+  const autoLabelBoundary = resolveActivationBoundary(settings)
+  if (autoLabelBoundary === null) return null
+  const picking = settings?.backgroundPicking
+  if (!picking || picking.enabled !== true) return null
+  const raw = String(picking.activatedAt ?? '').trim()
+  if (!raw) return null
+  const parsed = Date.parse(raw)
+  if (!Number.isFinite(parsed)) return null
+  return Math.max(autoLabelBoundary, parsed)
 }
 
 const norm = (value: unknown): string =>
@@ -172,6 +225,14 @@ export function resolveAutoLabelEnqueue(params: {
    * kapı gevşemez.
    */
   skipActivationBoundary?: boolean
+  /**
+   * Paket `Created` ve create orkestrasyonunun ONCE kanonik Picking
+   * gecisini yapmasi GEREKIYOR mu?
+   *
+   * Otoritesi `resolveBackgroundPreparationGate`tir; burada YENIDEN
+   * turetilmez. `true` ise bu karar AYRI bir aktivasyon sinirina tabidir.
+   */
+  requiresPickingUpdate?: boolean
 }): AutoLabelEnqueueDecision {
   const jobKey = autoLabelJobKey({ ...params.scope, packageId: params.packageId })
   const block = (
@@ -208,6 +269,37 @@ export function resolveAutoLabelEnqueue(params: {
       return block(
         'BEFORE_ACTIVATION_BOUNDARY',
         'Paket aktivasyon sınırından önce görülmüş.',
+      )
+    }
+  }
+  // ═══ ARKA PLAN PAZARYERİ MUTASYONU — AYRI VE AÇIK ONAY ══════════════
+  //
+  // `Created` bir paketi sıraya almak, worker'ın Trendyol'da paket
+  // statüsünü DEĞİŞTİRECEĞİ anlamına gelir. Bu, etiket üretmekten AYRI bir
+  // karardır ve otomatik etiket açık olan bir kiracıda bile VARSAYILAN
+  // OLARAK KAPALIDIR.
+  if (params.requiresPickingUpdate === true) {
+    // Yakalama (catch-up) yolu aktivasyon sınırını atlar; sınırı atlayan
+    // bir yol pazaryeri statüsünü DEĞİŞTİREMEZ. Geçmiş yığının Picking'e
+    // alınması ayrı ve açık bir operatör kararıdır.
+    if (params.skipActivationBoundary === true) {
+      return block(
+        'BACKGROUND_PICKING_NOT_ACTIVATED',
+        'Yakalama yolu pazaryeri statüsünü değiştirmez.',
+      )
+    }
+    const pickingBoundary = resolveBackgroundPickingBoundary(params.settings)
+    if (pickingBoundary === null) {
+      return block(
+        'BACKGROUND_PICKING_NOT_ACTIVATED',
+        'Arka planda Created→Picking geçişi bu kiracıda açık değil.',
+      )
+    }
+    const firstSeen = Number(params.firstSeenAtMs)
+    if (!Number.isFinite(firstSeen) || firstSeen < pickingBoundary) {
+      return block(
+        'BEFORE_BACKGROUND_PICKING_BOUNDARY',
+        'Paket, arka plan Picking aktivasyon sınırından önce görülmüş.',
       )
     }
   }

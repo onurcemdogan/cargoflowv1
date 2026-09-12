@@ -23,6 +23,11 @@
 //   • faturalama/WhoPays çözülemezse    → HAYIR
 //   • iptal/iade/teslim edilmişse       → HAYIR
 //   • kuyrukta zaten iş varsa           → HAYIR (DB tekilliği)
+//   • Created (Picking geçişi gerekli)  → HAYIR
+//
+// Son madde en yenisi ve en önemlisidir: AKTİVASYON SINIRINI ATLAYAN BİR
+// YOL PAZARYERİ STATÜSÜNÜ DEĞİŞTİREMEZ. Geçmiş yığını topluca `Picking`e
+// almak ayrı ve açık bir karardır, yakalamanın yan etkisi değildir.
 //
 // ═══ BU MODÜL TAŞIYICIYA ÇIKMAZ ══════════════════════════════════════════
 // Sürat'i ÇAĞIRMAZ. Yalnız LABEL_PREPARE işi yazar; gerçek create'i
@@ -49,6 +54,7 @@ import { resolveSuratCreateEligibility } from './suratCreateEligibility.ts'
 import { resolveBillingPartyV2 } from './suratRoutingModel.ts'
 import { enqueueLabelJob, LABEL_JOB_TYPE } from './labelJobQueue.ts'
 import { loadAutoLabelSettings } from './autoLabelProducer.ts'
+import { resolveBackgroundPreparationGate } from './trendyolShipmentEligibility.ts'
 import { decryptOrderPayload } from '../orders/orderEncryption.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -68,7 +74,19 @@ export const CATCHUP_OPEN_OPERATION_STATUSES: readonly string[] = [
   'SHIPMENT_PENDING',
 ]
 
-/** Terminal/işlenmemesi gereken pazaryeri durumları. */
+/**
+ * Terminal/işlenmemesi gereken pazaryeri durumları — TEŞHİS LİSTESİ.
+ *
+ * ═══ ARTIK KARAR VERMEZ ══════════════════════════════════════════════════
+ * Bu liste bir zamanlar yakalamanın KENDİ yaşam döngüsü kuralıydı ve
+ * üreticinin kullandığı `classifyMarketplaceLifecycle` ile AYRIŞMIŞTI:
+ * `Created` bu listede olmadığı için yakalama onu "uygun" ilan ediyor,
+ * worker ise aynı paketi hemen BLOKE ediyordu. Modülün başlığındaki
+ * "yalnız aktivasyon sınırı atlanır" sözü GERÇEK DEĞİLDİ.
+ *
+ * Karar artık paylaşılan kanonik kapıdadır. Liste yalnız operatöre
+ * gösterilen okunabilir isimlendirme için durur.
+ */
 export const CATCHUP_EXCLUDED_MARKETPLACE_STATUSES: readonly string[] = [
   'Delivered', 'Shipped', 'AtCollectionPoint',
   'Cancelled', 'UnSupplied', 'Returned', 'UnDelivered',
@@ -77,6 +95,10 @@ export const CATCHUP_EXCLUDED_MARKETPLACE_STATUSES: readonly string[] = [
 export type CatchupBlockReason =
   | 'NOT_OPEN_STATUS'
   | 'TERMINAL_MARKETPLACE_STATUS'
+  /** Paket `Created`: Sürat öncesi Picking geçişi gerekiyor. */
+  | 'PICKING_TRANSITION_REQUIRED'
+  /** Pazaryeri statüsü okunamadı; ihtiyatlı davranılır. */
+  | 'MARKETPLACE_STATUS_UNKNOWN'
   | 'NOT_SALE_DISPOSITION'
   | 'LABEL_ALREADY_READY'
   | 'CARRIER_ARTIFACT_PRESENT'
@@ -225,10 +247,34 @@ export function evaluateCatchupCandidate(params: {
   if (!CATCHUP_OPEN_OPERATION_STATUSES.includes(localStatus)) {
     return deny('NOT_OPEN_STATUS', `Açık/barkod bekleyen durum değil (${localStatus}).`)
   }
-  if (CATCHUP_EXCLUDED_MARKETPLACE_STATUSES.includes(providerStatus)) {
+  // ═══ YAŞAM DÖNGÜSÜ — ÜRETİCİYLE AYNI KANONİK KAPI ═══════════════════
+  //
+  // `allowPickingTransition: false` bir gevşetme değil, bir SÖZDÜR:
+  // AKTİVASYON SINIRINI ATLAYAN BİR YOL PAZARYERİ STATÜSÜNÜ DEĞİŞTİREMEZ.
+  // Yakalama geçmiş yığını hedefler; o yığını topluca `Picking`e almak
+  // ayrı ve açık bir karardır, yakalamanın yan etkisi değildir.
+  //
+  // Bu yüzden `Created` paketler artık "uygun" DİYE RAPORLANMAZ: worker
+  // onları zaten reddediyordu, yakalama da aynı gerçeği söyler.
+  const lifecycleGate = resolveBackgroundPreparationGate(row, {
+    allowPickingTransition: false,
+  })
+  if (!lifecycleGate.allowed) {
+    if (lifecycleGate.lifecycle === 'NOT_YET') {
+      return deny(
+        'PICKING_TRANSITION_REQUIRED',
+        `Paket Picking statüsüne alınmadan create açılmaz (${providerStatus}).`,
+      )
+    }
+    if (lifecycleGate.lifecycle === 'UNKNOWN') {
+      return deny(
+        'MARKETPLACE_STATUS_UNKNOWN',
+        `Pazaryeri statüsü çözülemedi (${providerStatus}): ${lifecycleGate.reason}`,
+      )
+    }
     return deny(
       'TERMINAL_MARKETPLACE_STATUS',
-      `Pazaryeri durumu terminal (${providerStatus}).`,
+      `Pazaryeri yaşam döngüsü terminal (${providerStatus}): ${lifecycleGate.reason}`,
     )
   }
   // Kanonik sınıflandırma: iptal/iade olan hiçbir paket yakalanmaz.
@@ -291,6 +337,9 @@ export function evaluateCatchupCandidate(params: {
   }
 
   // ── POLİTİKA: yalnız aktivasyon sınırı atlanır ──────────────────────
+  //
+  // Bu söz ARTIK DOĞRUDUR: yaşam döngüsü kararı yukarıda kanonik kapıdan
+  // geçti ve `requiresPickingUpdate` DAİMA `false`tur.
   const decision = resolveAutoLabelEnqueue({
     scope,
     packageId,
@@ -301,6 +350,7 @@ export function evaluateCatchupCandidate(params: {
     hasLabelArtifact: false,
     hasCarrierArtifact: false,
     previousNetworkCrossed: false,
+    requiresPickingUpdate: false,
     skipActivationBoundary: true,
   })
   if (!decision.enqueue) {

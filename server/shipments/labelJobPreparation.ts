@@ -47,6 +47,7 @@ import { and, eq } from 'drizzle-orm'
 import { labelJobs, shipments } from '../db/schema.ts'
 import {
   buildTrendyolShipmentEligibility,
+  resolveBackgroundPreparationGate,
   TRENDYOL_NOT_ELIGIBLE_CODE,
   type TrendyolShipmentEligibility,
 } from './trendyolShipmentEligibility.ts'
@@ -195,6 +196,15 @@ export interface PreparedLabelJob {
   readonly marketplaceStatus: string | null
   readonly eligibility: TrendyolShipmentEligibility | null
   readonly eligibleForCreate: boolean | null
+  /**
+   * Create orkestrasyonu, taşıyıcıya çıkmadan ÖNCE kanonik Trendyol
+   * Picking geçişini yapacak mı? (`ensureTrendyolPickingBeforeSurat`)
+   */
+  readonly requiresPickingUpdate: boolean
+  /** Kiracı, arka planda Created→Picking geçişine AÇIKÇA onay verdi mi? */
+  readonly pickingTransitionAuthorized: boolean
+  /** Paketin yerel olarak ilk görüldüğü an (ms) — sınır karşılaştırması. */
+  readonly firstSeenAtMs: number | null
 
   readonly billingParty: string | null
   readonly expectedWhoPays: number | null
@@ -271,17 +281,33 @@ function describeError(error: unknown): string {
  */
 async function loadOrder(
   db: Db, organizationId: string, marketplace: string, packageId: string,
-): Promise<Record<string, unknown> | null> {
+): Promise<{
+  order: Record<string, unknown> | null
+  /**
+   * Paketin YEREL olarak ilk görüldüğü an. Aktivasyon sınırlarıyla
+   * karşılaştırılır; hidrasyonlu sipariş nesnesi bu alanı TAŞIMAZ, bu
+   * yüzden ham satırdan okunur.
+   */
+  firstSeenAtMs: number | null
+}> {
   const repository = await import('../orders/orderRepository.ts')
   const row = await repository.findOrderByPackageId(
     db, organizationId, marketplace, packageId,
   )
-  if (!row) return null
+  if (!row) return { order: null, firstSeenAtMs: null }
+  const rawFirstSeen = (row as Record<string, unknown>).firstSeenAt
+  const firstSeenAtMs =
+    rawFirstSeen instanceof Date
+      ? rawFirstSeen.getTime()
+      : Date.parse(String(rawFirstSeen ?? ''))
   const persistence = await import('../orders/orderPersistenceService.ts')
   const order = await persistence.getOrder(
     db, organizationId, String((row as { id: string }).id),
   )
-  return (order ?? null) as Record<string, unknown> | null
+  return {
+    order: (order ?? null) as Record<string, unknown> | null,
+    firstSeenAtMs: Number.isFinite(firstSeenAtMs) ? firstSeenAtMs : null,
+  }
 }
 
 /**
@@ -322,6 +348,9 @@ export async function prepareLabelJob(
   let marketplaceStatus: string | null = null
   let eligibility: TrendyolShipmentEligibility | null = null
   let eligibleForCreate: boolean | null = null
+  let firstSeenAtMs: number | null = null
+  let requiresPickingUpdate = false
+  let pickingTransitionAuthorized = false
   let billingParty: string | null = null
   let expectedWhoPays: number | null = null
   let credentialRole: string | null = null
@@ -339,9 +368,11 @@ export async function prepareLabelJob(
   try {
     // ── 1. SİPARİŞ ────────────────────────────────────────────────────
     stage = 'LOAD_ORDER'
-    order = await loadOrder(
+    const loaded = await loadOrder(
       db, params.organizationId, marketplace, params.packageId,
     )
+    order = loaded.order
+    firstSeenAtMs = loaded.firstSeenAtMs
     if (!order) {
       blockers.push(PREPARATION_BLOCKER_CODES.ORDER_MISSING)
     } else {
@@ -390,8 +421,38 @@ export async function prepareLabelJob(
       stage = 'ELIGIBILITY'
       eligibility = buildTrendyolShipmentEligibility(order)
       marketplaceStatus = eligibility.marketplaceStatus || null
-      eligibleForCreate = eligibility.canCallSurat
-      if (!eligibility.canCallSurat) {
+
+      // ═══ `Created` PAKET: HAZIRLIK ARTIK GERÇEĞİ SÖYLER ═════════════
+      //
+      // ÖLÇÜLEN AYRIŞMA: hazırlık `canCallSurat` okuyup `Created` paketi
+      // `NOT_ELIGIBLE` yazıyordu; oysa create orkestrasyonu AYNI paketi
+      // kanonik `ensureTrendyolPickingBeforeSurat` ile Picking'e alıp
+      // devam ediyordu. Aynı paket için iki farklı gerçek — modülün
+      // başlığındaki kusurun ta kendisi.
+      //
+      // Hazırlık orkestrasyonun YAPACAĞINI raporlamalıdır. Ama bu bir
+      // gevşetme değildir: geçişin gerçekten yapılabilmesi kiracının AÇIK
+      // onayına ve KENDİ aktivasyon sınırına bağlıdır. Onay yoksa sonuç
+      // BUGÜNKÜNÜN AYNISIDIR (`NOT_ELIGIBLE`).
+      const producer = await import('./autoLabelProducer.ts')
+      const policy = await import('./suratAutoLabelPolicy.ts')
+      const autoLabelSettings = await producer.loadAutoLabelSettings(
+        db, params.organizationId,
+      )
+      const pickingBoundary = policy.resolveBackgroundPickingBoundary(
+        autoLabelSettings,
+      )
+      pickingTransitionAuthorized = Boolean(
+        pickingBoundary !== null
+          && firstSeenAtMs !== null
+          && firstSeenAtMs >= pickingBoundary,
+      )
+      const backgroundGate = resolveBackgroundPreparationGate(order, {
+        allowPickingTransition: pickingTransitionAuthorized,
+      })
+      requiresPickingUpdate = backgroundGate.requiresPickingUpdate
+      eligibleForCreate = backgroundGate.allowed
+      if (!backgroundGate.allowed) {
         blockers.push(PREPARATION_BLOCKER_CODES.NOT_ELIGIBLE)
       }
 
@@ -497,6 +558,9 @@ export async function prepareLabelJob(
     marketplaceStatus,
     eligibility,
     eligibleForCreate,
+    requiresPickingUpdate,
+    pickingTransitionAuthorized,
+    firstSeenAtMs,
     billingParty,
     expectedWhoPays,
     credentialRole,
