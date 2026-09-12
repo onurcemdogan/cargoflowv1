@@ -113,6 +113,42 @@ export function isSuratRecordPreassignedReady(
   return hasZpl
 }
 
+/**
+ * Kalıcı payload'a PAZARYERİ SİPARİŞ ZAMANINI yazar.
+ *
+ * Kaynak TEK: `orders.order_date` — `timestamp with time zone`, Trendyol'un
+ * `orderDate` epoch milisaniyesinden TEK adımda türetilmiştir.
+ *
+ * KULLANILMAYAN alanlar bilerek sayılıyor: `first_seen_at` / `last_seen_at`
+ * CargoFlow'un paketi gördüğü andır (senkron), sipariş zamanı DEĞİLDİR.
+ *
+ * BEST-EFFORT: okunamazsa payload AYNEN döner ve etiket bu alan olmadan
+ * üretilir. Baskı akışı bu yüzden BOZULMAZ.
+ */
+async function withCanonicalOrderDate(
+  db: ServiceDb,
+  organizationId: string,
+  marketplace: string,
+  packageId: string,
+  record: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  try {
+    const repository = await import('../orders/orderRepository.ts')
+    const row = await repository.findOrderByPackageId(
+      db, organizationId, marketplace, packageId,
+    )
+    const raw = (row as Record<string, unknown> | null)?.orderDate
+    if (!raw) return record
+    const instant = raw instanceof Date ? raw : new Date(String(raw))
+    if (!Number.isFinite(instant.getTime())) return record
+    // OFFSET-AWARE olarak yazılır (`...Z`); biçimlendirme etiket katmanında
+    // TEK adımda Europe/Istanbul'a çevrilir — çift dönüşüm YOK.
+    return { ...record, orderDate: instant.toISOString() }
+  } catch {
+    return record
+  }
+}
+
 // Carrier payload'a türetilmiş printZpl artifact'ini ekler. Kaynak alanlara
 // (technicalZpl, technicalZplSha256, technicalZplLength) DOKUNULMAZ.
 async function withPrintZplArtifact(
@@ -135,9 +171,20 @@ async function withPrintZplArtifact(
       marketplace,
       packageId,
     )
-    if (items.length === 0 && tenant.blocks.length === 0) return record
+    // ═══ SİPARİŞ TARİH-SAATİ: KANONİK KOLONDAN ════════════════════════
+    //
+    // `orders.order_date` pazaryeri sipariş zamanıdır (Trendyol `orderDate`
+    // epoch ms → UTC an). `first_seen_at` (senkron anı) ve baskı anı ASLA
+    // kullanılmaz. Okuma başarısızsa alan çizilmez; etiket bugünkü hâliyle
+    // üretilir — uydurma saat basılmaz.
+    const recordWithOrderDate = await withCanonicalOrderDate(
+      db, organizationId, marketplace, packageId, record,
+    )
+    if (items.length === 0 && tenant.blocks.length === 0) {
+      return recordWithOrderDate
+    }
     return attachPrintZplArtifact(
-      record,
+      recordWithOrderDate,
       items,
       new Date().toISOString(),
       tenant.blocks,

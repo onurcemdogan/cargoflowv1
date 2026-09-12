@@ -112,6 +112,81 @@ export const SURAT_FOOTER_PROFILES: SuratFooterProfile[] = [
   { key: 'wrapped-micro', fontHeight: 12, fontWidth: 10, maxLinesPerItem: 2, lineGap: 1 },
 ]
 
+// ═══ ALANA GÖRE MAKSİMAL FONT — DETERMİNİSTİK AZALAN ARAMA ══════════════
+//
+// ═══ ÜRETİMDE ÖLÇÜLEN KUSUR ══════════════════════════════════════════════
+// Tek ürünlü etiketlerde, ürün bandında bol boş alan KALMASINA rağmen ürün
+// metni gereksiz küçük basılıyordu.
+//
+// Sebep yukarıdaki SABİT merdivendi. Alan hesabı (`resolveFooterArea`)
+// zaten gerçek geometriden türüyordu; kusur ADAY KÜMESİNDEYDİ:
+//
+//   1. TAVAN 20 dot'ta sabitti. Bant 93 dot boş olsa bile 20'den büyük bir
+//      font HİÇ denenmiyordu — kullanılabilir alanın üçte ikisi boş kalıyordu.
+//   2. `maxLinesPerItem` her profilde ≤ 2 idi. 3 satır RAHATÇA sığarken
+//      içerik 20 dot'tan 12 dot'a düşürülüyordu; oysa 20 dot üç satır hem
+//      sığıyor hem çok daha okunaklı.
+//
+// ═══ YENİ KURAL ══════════════════════════════════════════════════════════
+// Soru artık "sığıyor mu?" değil, "BU BÖLGEYE SIĞAN EN BÜYÜK okunabilir
+// font hangisi?" Yükseklikler TAVANDAN TABANA taranır; her aday için satır
+// sayısı ÖLÇÜLÜR (karakter sayısı eşiğiyle TAHMİN EDİLMEZ) ve gerçek
+// yükseklik alana sığıyorsa O aday seçilir. İlk sığan = en büyük sığan.
+//
+// Satır tavanı ARTIK PROFİLDEN GELMEZ: sınırı alanın kendisi koyar. Eski
+// `maxLinesPerItem` kapağı, alan uygunken bile büyük fontu reddeden şeydi.
+//
+// ═══ MEVCUT ÇIKTI NEDEN BOZULMAZ ═════════════════════════════════════════
+// ≤ 20 dot yükseklikler için genişlik/aralık tablosu eski profillerin
+// DEĞERLERİNİ birebir üretir (20→20/4, 18→16/3, 16→14/2, 14→12/2, 12→10/1).
+// Dar bantlarda (ör. ölçülen 66 dot) 20 dot üç satır 75 dot tutar ve yine
+// REDDEDİLİR — o etiketlerin çıktısı AYNEN kalır. Değişen yalnız GERÇEKTEN
+// boş alanı olan etiketlerdir.
+
+/** Fiziksel baskıda kabul edilen ALT okunabilirlik sınırı (dot @203 dpi). */
+export const FOOTER_MIN_FONT_HEIGHT = 12
+
+/**
+ * ÜST sınır (dot @203 dpi ≈ 3,2 mm).
+ *
+ * NEDEN 26: etiketin kendi görsel hiyerarşisi korunur. Taşıyıcının aktarma
+ * merkezi metni 34–38 dot ile en baskın bloktur; ürün satırı YARDIMCI
+ * bilgidir ve ondan belirgin biçimde küçük kalmalıdır. 26 dot, bugünkü
+ * 20 dot'tan %30 daha okunaklıdır ama rota bloğunun önüne GEÇMEZ.
+ */
+export const FOOTER_MAX_FONT_HEIGHT = 26
+
+/** Yükseklikten genişlik — ≤ 20 için eski profillerin AYNI değerleri. */
+export function footerFontWidthFor(fontHeight: number): number {
+  if (fontHeight >= 20) return fontHeight
+  if (fontHeight >= 18) return 16
+  if (fontHeight >= 16) return 14
+  if (fontHeight >= 14) return 12
+  return 10
+}
+
+/** Yükseklikten satır aralığı — ≤ 20 için eski profillerin AYNI değerleri. */
+export function footerLineGapFor(fontHeight: number): number {
+  if (fontHeight >= 20) return 4
+  if (fontHeight >= 18) return 3
+  if (fontHeight >= 14) return 2
+  return 1
+}
+
+/** Bir yükseklik adayı için satır yüksekliği (dot). */
+export function footerLineHeightFor(fontHeight: number): number {
+  return Math.round(fontHeight * 1.05) + footerLineGapFor(fontHeight)
+}
+
+/** Taranacak yükseklik adayları — TAVANDAN TABANA, deterministik. */
+export function footerFontCandidates(): number[] {
+  const out: number[] = []
+  for (let h = FOOTER_MAX_FONT_HEIGHT; h >= FOOTER_MIN_FONT_HEIGHT; h -= 1) {
+    out.push(h)
+  }
+  return out
+}
+
 // ── Metin ────────────────────────────────────────────────────────────────
 function clean(value: unknown): string {
   return String(value ?? '').replace(/\s+/g, ' ').trim()
@@ -378,6 +453,77 @@ export interface SuratFooterPlan {
   reason?: string
 }
 
+/**
+ * TEK ADAY İÇİN ÖLÇÜM — maksimallik kanıtının dayanağı.
+ *
+ * Verilen font yüksekliğinde ürün metninin GERÇEKTEN kaç satır sardığını ve
+ * ne kadar dikey yer tuttuğunu döner. `planSuratFooter` bunu tavandan tabana
+ * çağırır; testler de "bir sonraki BÜYÜK font da sığıyor mu?" sorusunu AYNI
+ * fonksiyonla sorar — yani kanıt, seçimle aynı ölçümden gelir.
+ */
+export interface FooterFitMeasurement {
+  readonly fontHeight: number
+  readonly fontWidth: number
+  readonly lineHeight: number
+  readonly totalLines: number
+  readonly usedHeight: number
+  readonly fits: boolean
+  readonly blocks: SuratFooterBlockLine[][]
+}
+
+export function measureFooterFit(
+  source: readonly SuratProductLineItem[],
+  area: SuratFooterArea,
+  fontHeight: number,
+  parts?: ProductLineParts,
+): FooterFitMeasurement {
+  const fontWidth = footerFontWidthFor(fontHeight)
+  const lineHeight = footerLineHeightFor(fontHeight)
+  const blocks: SuratFooterBlockLine[][] = []
+  let totalLines = 0
+  for (const item of source) {
+    const full = buildProductLineText(item, parts)
+    const lines = estimateLines(full, fontWidth, area.width)
+    blocks.push([{ text: full, lines }])
+    totalLines += lines
+  }
+  const usedHeight = totalLines * lineHeight
+  return {
+    fontHeight,
+    fontWidth,
+    lineHeight,
+    totalLines,
+    usedHeight,
+    fits: totalLines > 0 && usedHeight <= area.height,
+    blocks,
+  }
+}
+
+/**
+ * Tanısal profil anahtarı.
+ *
+ * Anahtar artık SEÇİMİ yönlendirmez (seçim ölçüme dayanır); yalnız izlerde
+ * ve raporlarda okunabilir bir ad taşır. Mevcut sözlük KORUNUR.
+ */
+export function footerProfileKeyFor(
+  fontHeight: number,
+  totalLines: number,
+  itemCount: number,
+): SuratFooterProfileKey {
+  const wrapped = totalLines > itemCount
+  if (fontHeight >= 20) {
+    return wrapped ? 'wrapped-standard' : 'single-line-standard'
+  }
+  if (fontHeight >= 18) {
+    return wrapped ? 'wrapped-compact' : 'single-line-compact'
+  }
+  if (fontHeight >= 16) {
+    return wrapped ? 'wrapped-dense' : 'single-line-dense'
+  }
+  if (fontHeight >= 14) return 'wrapped-mid'
+  return wrapped ? 'wrapped-micro' : 'single-line-micro'
+}
+
 export function planSuratFooter(
   items: SuratProductLineItem[],
   geometry: ZplGeometry,
@@ -399,57 +545,36 @@ export function planSuratFooter(
   // Bir ürün bloğunun kaplayabileceği EN FAZLA fiziksel satır. Ürün adı
   // kesilmez; gerekirse ad kendi içinde sarar (^FB), meta ayrı satırda kalır.
 
-  for (const profile of SURAT_FOOTER_PROFILES) {
-    const lineHeight = Math.round(profile.fontHeight * 1.05) + profile.lineGap
-    const blocks: SuratFooterBlockLine[][] = []
-    let fits = true
-    for (const item of source) {
-      const full = buildProductLineText(item, parts)
-      const singleLines = estimateLines(full, profile.fontWidth, area.width)
-      if (singleLines === 1) {
-        // referans kanıtı: mümkün olduğunda TEK kompakt satır.
-        blocks.push([{ text: full, lines: 1 }])
-        continue
-      }
-      if (profile.maxLinesPerItem < 2) {
-        fits = false
-        break
-      }
-      // SÜREKLİ AKIŞ (referans çıktı): başlık ile meta arasına ZORLA
-      // satır sonu KOYULMAZ. Tek bir ^FB bloğu metni doğal olarak sarar —
-      // "1 x Ürün Adı (Renk: X, Beden: Y)" ilk satırı doldurur, artan
-      // "[SKU]" alt satıra akar. Eski iki-bloklu biçim ilk satırı yarım
-      // bırakıyordu.
-      //
-      // SATIR TAVANI PROFİLİN KENDİSİNDEN GELİR — KATI.
-      //
-      // KÖK NEDEN (ölçüldü): burada GLOBAL bir `MAX_PHYSICAL_LINES_PER_ITEM`
-      // (3) kullanılıyordu ve `profile.maxLinesPerItem` yalnız "sarabilir
-      // mi?" ikili kontrolüne indirgenmişti. Sonuç: `maxLinesPerItem: 2`
-      // diyen bir profil GERÇEKTE 3 satır üretebiliyordu — 20 dot'ta
-      // 75 dot yer tutuyor ve 66 dot'luk gerçek Sürat footer bandını
-      // AŞIYORDU.
-      //
-      // Artık profil kendi tavanını dayatır: 2 satıra sığmayan içerik bu
-      // profili REDDEDER ve merdiven bir sonraki (daha küçük fontlu)
-      // profile geçer. Kelime ortasından kesme YOK; içerik hiç sığmıyorsa
-      // plan `ok:false` döner ve çağıran katman bunu AÇIK overflow olarak
-      // raporlar (sessiz ürün satırı düşürme YOK).
-      if (singleLines > profile.maxLinesPerItem) {
-        fits = false
-        break
-      }
-      blocks.push([{ text: full, lines: singleLines }])
+  // ═══ MAKSİMAL FIT — "sığan EN BÜYÜK font" ═════════════════════════════
+  //
+  // Adaylar TAVANDAN TABANA taranır; ilk sığan aday AYNI ZAMANDA en büyük
+  // sığan adaydır. Satır sayısı tahmin edilmez, ÖLÇÜLÜR; satır tavanını
+  // alanın kendi yüksekliği koyar.
+  for (const fontHeight of footerFontCandidates()) {
+    const fit = measureFooterFit(source, area, fontHeight, parts)
+    // TEK KAPI: gerçek yükseklik gerçek alana sığıyor mu? Kelime ortasından
+    // kesme YOK; hiçbir aday sığmazsa plan `ok:false` döner ve çağıran katman
+    // bunu AÇIK overflow olarak raporlar (sessiz düşürme YOK).
+    if (!fit.fits) continue
+    return {
+      ok: true,
+      profile: {
+        key: footerProfileKeyFor(fontHeight, fit.totalLines, source.length),
+        fontHeight,
+        fontWidth: fit.fontWidth,
+        // Seçilen adayda ürün başına GERÇEKTEN kullanılan en yüksek satır
+        // sayısı — tanı ve regresyon için taşınır.
+        maxLinesPerItem: fit.blocks.reduce(
+          (max, block) =>
+            Math.max(max, block.reduce((sum, entry) => sum + entry.lines, 0)),
+          1,
+        ),
+        lineGap: footerLineGapFor(fontHeight),
+      },
+      area,
+      blocks: fit.blocks,
+      usedHeight: fit.usedHeight,
     }
-    if (!fits) continue
-    const totalLines = blocks.reduce(
-      (total, block) =>
-        total + block.reduce((sum, entry) => sum + entry.lines, 0),
-      0,
-    )
-    const usedHeight = totalLines * lineHeight
-    if (usedHeight > area.height) continue
-    return { ok: true, profile, area, blocks, usedHeight }
   }
 
   return { ok: false, area, reason: PRODUCT_LINE_OVERFLOW_MESSAGE }

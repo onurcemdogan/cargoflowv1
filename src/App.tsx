@@ -91,6 +91,10 @@ import {
   buildPrintAdapter,
 } from './services/suratOrchestratorDeps'
 import { resolveSelectionAfterBatch } from './utils/selectedOrderSnapshot'
+import {
+  describeReprintNotice,
+  resolveExplicitPrintSelectionIntent,
+} from './utils/printSelectionIntent'
 // Host SENKRON olmak zorunda; ama artik AGIR renderer'i getirmeyen
 // kucuk modulden gelir (JsBarcode/qrcode ilk yukte DEGIL).
 import { prepareSuratPrintHostSynchronously } from './utils/suratPrintHost'
@@ -1398,12 +1402,16 @@ function App() {
     const selectedOrders = orders.filter((order) =>
       orderIds.includes(order.id),
     )
-    const allPreviouslyPrinted =
-      selectedOrders.length > 0 &&
-      selectedOrders.every(
-        (order) =>
-          order.labelStatus === 'PRINTED' && Boolean(order.label?.printedAt),
-      )
+    // ═══ AÇIK SEÇİM = AÇIK NİYET ══════════════════════════════════════
+    //
+    // Eskiden bayrak `selectedOrders.every(basılmış)` idi. KARIŞIK seçimde
+    // (basılmış + yeni) `false` çıkıyor, `printLabels` basılmış olanları
+    // aday listesinden DÜŞÜRÜYOR ve belgeye TEK sayfa giriyordu — "toplu
+    // yazdırdım, pencere açıldı, tek sayfa var" kusurunun kaynağı buydu.
+    // Tekli baskı tek elemanlı `every()` ile daima `true` ürettiği için
+    // hiç bozulmuyordu: tekli ve toplu yol TAM BURADA ayrışıyordu.
+    const printSelectionIntent =
+      resolveExplicitPrintSelectionIntent(selectedOrders)
     // Saglayici secimi TEK kaynaktan: kullanicinin gercek yazici ayari.
     const effectivePrinterSettings = printerSettings
     // Şablon kararı BASKIDAN ÖNCE; açık seçim uygulanamıyorsa baskı YAPILMAZ.
@@ -1426,7 +1434,8 @@ function App() {
     suratPrintTrace('PRINT_BUTTON_CLICK', {
       orderNumbers: selectedOrders.map((order) => order.orderNumber),
       orderIds,
-      allPreviouslyPrinted,
+      includePreviouslyPrinted: printSelectionIntent.includePreviouslyPrinted,
+      reprintCount: printSelectionIntent.reprintOrderNumbers.length,
     })
     // Render ile click aynı helper'ı kullanır; sonuç click anında loglanır.
     for (const order of selectedOrders) {
@@ -1469,7 +1478,7 @@ function App() {
         {
           confirmedAt,
           printedBy: 'local user',
-          includePreviouslyPrinted: allPreviouslyPrinted,
+          includePreviouslyPrinted: printSelectionIntent.includePreviouslyPrinted,
           labelPrintTemplate: printTemplateDecision.template,
           labelDocument: activeLabelDocument ?? undefined,
         },
@@ -1478,12 +1487,15 @@ function App() {
         unresolved.length > 0
           ? ` Kayıtlı etiket alınamayan sipariş(ler): ${unresolved.join(', ')}.`
           : ''
+      // SESSİZ TEKRAR BASKI YOK: hangi siparişlerin yeniden basıldığı
+      // operatöre AÇIKÇA söylenir.
+      const reprintNote = describeReprintNotice(printSelectionIntent)
       setOrdersState((current) => ({
         ...current,
         orders: response.orders,
         ordersMessage: {
           ...response.result,
-          message: `${response.result.message}${unresolvedNote}`,
+          message: `${response.result.message}${unresolvedNote}${reprintNote}`,
         },
       }))
     } catch (error) {

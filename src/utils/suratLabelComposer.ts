@@ -40,6 +40,7 @@
 
 import {
   applyZplEdits,
+  collectZplFields,
   parseZplDocument,
   serializeZplDocument,
   zplCommands,
@@ -261,12 +262,45 @@ export const INVARIANT_KEYS: readonly SuratSemanticKey[] = [
   'transferCenter',
 ]
 
+import { formatLabelOrderDateTime } from './labelOrderDateTime.ts'
+
 export interface SuratComposeInput {
   /** order.cargoTrackingNumber — QR adayı. */
   readonly cargoTrackingNumber?: unknown
   /** shipment.ozelKargoTakipNo — QR adayı. */
   readonly ozelKargoTakipNo?: unknown
+  /**
+   * PAZARYERİ SİPARİŞ ZAMANI — `orders.order_date` (offset-aware an).
+   *
+   * Baskı anı DEĞİL, senkron anı DEĞİL. Çözülemezse alan ÇİZİLMEZ; uydurma
+   * saat basılmaz. Biçimlendirme `labelOrderDateTime` içindedir.
+   */
+  readonly orderDate?: unknown
 }
+
+// ═══ SİPARİŞ TARİH-SAATİ — ÖLÇÜLMÜŞ ÜST BANT ════════════════════════════
+//
+// Yerleşim TAHMİN DEĞİLDİR. Gerçek taşıyıcı fixture'ının 799 × 799
+// render'ında satır bazında mürekkep sayıldı; TAMAMEN boş yatay bantlar:
+//
+//   y   0.. 56   57 dot (7.1 mm)  ← ÜST BANT, tüm genişlikte sıfır mürekkep
+//   y 300..305    6 dot           (okunabilir metin için ince)
+//   y 321..335   15 dot (1.9 mm)  (okunabilir metin için ince)
+//   y 706..798   93 dot           ← ÜRÜN FOOTER'I buraya ekleniyor; DOLU
+//
+// Üst bant tek güvenli adaydır: başlık satırı y = 57'de başlar, altındaki
+// hiçbir kabul edilmiş blok (barkod, barkod altı numara, QR, DataMatrix,
+// 727/Sipariş No, adres, telefon, desi, aktarma) oraya uzanmaz.
+//
+// KABUL EDİLMİŞ GEOMETRİ KAYDIRILMAZ: bu alan bir EKLEMEDİR (insertion).
+// Hiçbir taşıyıcı komutu silinmez veya taşınmaz; `deletions = 0` ve
+// `unexpectedMutations = 0` değişmez.
+const ORDER_DATE_X = 64
+const ORDER_DATE_Y = 16
+const ORDER_DATE_FONT_HEIGHT = 28
+const ORDER_DATE_FONT_WIDTH = 28
+/** Üst bandın altındaki ilk taşıyıcı mürekkebi (ölçüldü). */
+const ORDER_DATE_BAND_BOTTOM = 56
 
 export interface SuratComposeDiagnostics {
   readonly fingerprint: string
@@ -1172,6 +1206,38 @@ export function composeSuratLabel(
   }
 
   const tail: ZplCommand[] = []
+  // (whitelist 9) PAZARYERİ SİPARİŞ TARİH-SAATİ — ölçülmüş üst bant.
+  //
+  // KAYNAK TEK: `orders.order_date`. Baskı anı veya senkron anı ASLA
+  // kullanılmaz; çözülemeyen değer için alan ÇİZİLMEZ.
+  //
+  // ŞABLON GÜVENLİĞİ: üst bandın boş olduğu ÖLÇÜLDÜ, ama bu ölçüm tek bir
+  // taşıyıcı şablonundadır. Başka bir şablon oraya içerik koyuyorsa alan
+  // çizilmez — kabul edilmiş hiçbir bloğun üstüne yazılmaz.
+  const orderDateText = formatLabelOrderDateTime(input.orderDate)
+  // MÜREKKEP ÜRETMEYEN ALAN BANDI İŞGAL ETMEZ.
+  //
+  // Ölçümde üst bant TAMAMEN boştu, ama şablonda orada BİLDİRİLMİŞ bir alan
+  // var: `^FT360,49` — verisi BOŞ olan dikey "ALICI" başlığı. Yalnız konuma
+  // bakan bir kontrol, hiç çizilmeyen bu alan yüzünden tarihi susturuyordu.
+  // Kriter bildirim değil, GERÇEKTEN çizilen içeriktir.
+  const topBandOccupied = collectZplFields(document).some((field) => {
+    if (field.y > ORDER_DATE_BAND_BOTTOM) return false
+    if (field.kind === 'text') return String(field.data ?? '').trim().length > 0
+    // Barkod/matris/grafik alanları veri taşımasa bile ÇİZEBİLİR: ihtiyatlı
+    // davranılır ve bant işgal edilmiş sayılır.
+    return true
+  })
+  const orderDateDrawn = Boolean(orderDateText) && !topBandOccupied
+  if (orderDateDrawn) {
+    tail.push(
+      ...zplCommands(
+        `^FO${ORDER_DATE_X},${ORDER_DATE_Y}` +
+          `^A0N,${ORDER_DATE_FONT_HEIGHT},${ORDER_DATE_FONT_WIDTH}` +
+          `^FD${orderDateText}^FS`,
+      ),
+    )
+  }
   // (whitelist 2) Code128 insan-okunur metni — barkod bandında ortalanmış.
   tail.push(
     ...zplCommands(

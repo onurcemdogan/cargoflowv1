@@ -79,6 +79,29 @@ const LIVE_ITEM = {
 
 // ═══ TF-1..TF-2: ÖLÇÜM (^FT taban çizgisi) ══════════════════════════════
 
+/**
+ * MAKSİMALLİK — "sığan EN BÜYÜK font" sözleşmesinin kanıtı.
+ *
+ * Sabit bir font literali beklemek, merdivenin O GÜNKÜ TAVANINI teste
+ * gömerdi. Korunan davranış bir sayı değil: "yer varsa daha büyük font
+ * seçilmeli". Bu yüzden iddia, seçimin kullandığı ÖLÇÜM fonksiyonuyla
+ * kurulur — bir büyüğü sığıyorsa test BAŞARISIZ olur.
+ */
+async function assertMaximalFit(plan, items) {
+  const line = await load('/src/utils/suratZplProductLine.ts')
+  assert.equal(plan.ok, true, 'plan üretilemedi')
+  assert.ok(plan.usedHeight <= plan.area.height, 'banda sığmalı')
+  const bigger = plan.profile.fontHeight + 1
+  if (bigger > line.FOOTER_MAX_FONT_HEIGHT) return
+  const next = line.measureFooterFit(items, plan.area, bigger)
+  assert.equal(
+    next.fits,
+    false,
+    `MAKSİMAL DEĞİL: ${bigger} dot da sığıyor `
+      + `(${next.usedHeight}/${plan.area.height})`,
+  )
+}
+
 test('TF-1: ^FT TABAN ÇİZGİSİ sayılır; contentBottom şişmez', async () => {
   const { parseSuratZplGeometry } = await load('/src/utils/suratZplGeometry.ts')
   const geometry = parseSuratZplGeometry(TIGHT_ZPL)
@@ -142,9 +165,15 @@ test('TF-3: kompakt kademeler merdivenin SONUNDA; mevcut seçimler DEĞİŞMEZ',
     leftRailRight: 48, contentBottom: 700,
   }
   const roomyPlan = planSuratFooter([LIVE_ITEM], roomy)
-  assert.equal(roomyPlan.profile.key, 'wrapped-standard')
-  assert.equal(roomyPlan.profile.fontHeight, 20)
-  assert.ok(roomyPlan.usedHeight <= roomyPlan.area.height, 'banda sığar')
+  // Bu iddia eskiden `fontHeight === 20` idi; 20 O GÜNKÜ TAVANDI. Testin
+  // koruduğu şey "son çare kademeleri mevcut seçimleri ÖNE GEÇMESİN" —
+  // yani geniş alanda KÜÇÜK bir kademeye düşülmesin. Literal yerine aynı
+  // niyeti daha güçlü koruyan iki iddia:
+  assert.ok(
+    roomyPlan.profile.fontHeight >= 20,
+    `geniş alanda küçük kademeye düşüldü: ${roomyPlan.profile.fontHeight}`,
+  )
+  await assertMaximalFit(roomyPlan, [LIVE_ITEM])
 })
 
 test('TF-4: dar alanda kompakt kademe devreye girer', async () => {
@@ -389,15 +418,24 @@ test('TF-17: sürekli akış — yer varken EN BÜYÜK font, taşma YOK', async 
   const plan = planSuratFooter([LONG_ITEM], ROOMY)
   // Tek sürekli blok korunur (başlık/meta ZORLA ayrılmaz).
   assert.equal(plan.blocks[0].length, 1)
-  // EN BÜYÜK OKUNUR font seçilir — AMA satır tavanı KATIDIR. Bu içerik
-  // 20 dot'ta 2 satıra sığmadığı için `wrapped-standard` REDDEDİLİR ve
-  // merdiven 18 dot'a düşer; 3. satır AÇILMAZ.
-  assert.equal(plan.profile.key, 'wrapped-compact')
-  assert.equal(plan.profile.fontHeight, 18)
-  // Profil kendi tavanını dayatır.
+  // EN BÜYÜK OKUNUR font seçilir.
+  //
+  // Eski iddia `wrapped-compact` / 18 dot bekliyordu. O değerler, satır
+  // tavanının PROFİLDEN geldiği dönemin sonucuydu: `maxLinesPerItem <= 2`
+  // olduğu için 3. satır açılamıyor ve içerik daha küçük fonta düşüyordu.
+  //
+  // Satır tavanını artık ALANIN KENDİSİ koyar; taşma doğrudan yükseklik
+  // karşılaştırmasıyla engellenir. Tavanın asıl KORUDUĞU ŞEY — banttan
+  // taşmama — aşağıda DOĞRUDAN ölçülür, dolaylı bir sayı üzerinden değil.
   assert.ok(
-    plan.blocks[0][0].lines <= plan.profile.maxLinesPerItem,
-    `tavan aşıldı: ${plan.blocks[0][0].lines} > ${plan.profile.maxLinesPerItem}`,
+    plan.profile.fontHeight >= 18,
+    `gereksiz küçültüldü: ${plan.profile.fontHeight}`,
+  )
+  await assertMaximalFit(plan, [LONG_ITEM])
+  // TAŞMA YOK — testin adındaki asıl şart.
+  assert.ok(
+    plan.area.top + plan.usedHeight <= plan.area.bottom,
+    `bant taşması: ${plan.area.top + plan.usedHeight} > ${plan.area.bottom}`,
   )
   assert.ok(
     plan.usedHeight <= plan.area.height,
@@ -437,9 +475,14 @@ test('TF-18: dar alanda ara kademe DAHA BÜYÜK fontu tercih eder', async () => 
   const tight = parseTight()
   const plan = planSuratFooter([LIVE_SHORT_ITEM], tight)
   assert.equal(plan.ok, true)
-  assert.equal(plan.profile.fontHeight, 14, 'daha büyük okunur font seçildi')
-  assert.equal(plan.profile.key, 'wrapped-mid')
-  assert.ok(plan.usedHeight <= plan.area.height)
+  // Eski iddia `=== 14` idi ("eskiden 12 dot'luk micro seçiliyordu").
+  // Korunan niyet: DAR alanda bile mümkün olan EN BÜYÜK okunur font.
+  // Literal yerine alt sınır + maksimallik:
+  assert.ok(
+    plan.profile.fontHeight >= 14,
+    `dar alanda küçük fonta düşüldü: ${plan.profile.fontHeight}`,
+  )
+  await assertMaximalFit(plan, [LIVE_SHORT_ITEM])
 })
 
 test('TF-19: cila turu OVERFLOW çözümünü BOZMAZ', async () => {

@@ -418,13 +418,25 @@ function readCandidate(
   return undefined
 }
 
-/** Kalıcı payload'dan Sürat etiket composer girdisini çözer. */
+/**
+ * Kalıcı payload'dan Sürat etiket composer girdisini çözer.
+ *
+ * `orderDate` PAZARYERİ SİPARİŞ ZAMANIDIR (`orders.order_date`). Baskı anı
+ * veya senkron anı BURAYA GİRMEZ: payload'da yoksa alan çizilmez ve etiket
+ * bugünkü hâliyle üretilir. Kalıcı artefaktlar DEĞİŞTİRİLMEZ — bu alan
+ * yalnız BUNDAN SONRA compose edilen etiketlerde görünür.
+ */
 export function resolveComposeInput(
   payload: Record<string, unknown>,
-): { cargoTrackingNumber?: string; ozelKargoTakipNo?: string } {
+): {
+  cargoTrackingNumber?: string
+  ozelKargoTakipNo?: string
+  orderDate?: string
+} {
   return {
     cargoTrackingNumber: readCandidate(payload, 'cargoTrackingNumber'),
     ozelKargoTakipNo: readCandidate(payload, 'ozelKargoTakipNo'),
+    orderDate: readCandidate(payload, 'orderDate'),
   }
 }
 
@@ -447,7 +459,10 @@ export function buildPrintZplArtifact(
   sourceZpl: string,
   items: SuratProductLineItem[],
   createdAt: string,
-  compose?: { cargoTrackingNumber?: string; ozelKargoTakipNo?: string },
+  // TİP, TAŞINAN ALANLARIN TAMAMINI SÖYLER. Daha dar bir tip, `orderDate`
+  // çalışma zamanında akmaya devam ederken sözleşmede GÖRÜNMEZ kalırdı;
+  // ileride biri bu nesneyi destructure ettiğinde alan sessizce düşerdi.
+  compose?: ReturnType<typeof resolveComposeInput>,
   productContext?: ProductDetailContext,
   // Kodsuz düzenleyicinin bu org için açtığı bloklar. Verilmezse çıktı
   // eskisiyle BİREBİR aynıdır.

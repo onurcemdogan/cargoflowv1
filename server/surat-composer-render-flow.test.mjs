@@ -39,6 +39,8 @@ const VERIFIED_727 = '7271234567890'
 let _vite
 let renderZplToPng
 let composeSuratLabel
+let parseSuratZplGeometry
+let resolveFooterArea
 let deriveAugmentedSuratZplWithHashes
 
 before(async () => {
@@ -55,6 +57,12 @@ before(async () => {
   })
   ;({ renderZplToPng } = await _vite.ssrLoadModule(
     '/server/labels/zplRenderService.ts',
+  ))
+  ;({ parseSuratZplGeometry } = await _vite.ssrLoadModule(
+    '/src/utils/suratZplGeometry.ts',
+  ))
+  ;({ resolveFooterArea } = await _vite.ssrLoadModule(
+    '/src/utils/suratZplProductLine.ts',
   ))
   ;({ composeSuratLabel } = await _vite.ssrLoadModule(
     '/src/utils/suratLabelComposer.ts',
@@ -342,8 +350,51 @@ test('CR-11: uyarlanabilir QR yerleşimi gerçek render’da ÇAKIŞMAZ', async 
     assert.equal(qrMagnification, expectedMagnification, `${name} ölçeği`)
 
     const bitmap = (await render(derived.printZpl)).bitmap
-    const qr = box(bitmap, qrBox.x - 25, qrBox.y - 25, qrBox.size + 60, qrBox.size + 60)
+    // ═══ ÖLÇÜM PENCERESİ ÜRÜN BANDINA UZANMAMALI ══════════════════════
+    //
+    // Pencere `qrBox.size + 60` yüksekliğindeydi ve ÜRÜN BANDININ ilk
+    // satırlarını yutuyordu. Ürün metni alana göre maksimal fontla
+    // büyütüldüğünde o mürekkep pencereye girdi ve ÖLÇÜLEN QR kutusu
+    // 105 yerine 130 çıktı — QR'ın kendisi değişmemişti.
+    //
+    // Pencere artık ürün bandının BAŞLANGICINDA durur. Kaybolan örtük
+    // kontrol AÇIK hale getirildi: QR ile ürün bandının çakışmadığı
+    // aşağıda AYRICA ve ölçümle doğrulanır.
+    const footerArea = resolveFooterArea(parseSuratZplGeometry(composed.zpl))
+    const qrWindowTop = qrBox.y - 25
+    const qrWindowHeight = Math.min(
+      qrBox.size + 60,
+      Math.max(1, footerArea.top - qrWindowTop),
+    )
+    const qr = box(bitmap, qrBox.x - 25, qrWindowTop, qrBox.size + 60, qrWindowHeight)
     assert.ok(qr, `${name}: QR mürekkebi`)
+
+    // ═══ QR ↔ ÜRÜN BANDI: ÇAKIŞMA YOK (açık kanıt) ════════════════════
+    //
+    // ÇAPA QR'IN KENDİ MÜREKKEBİDİR. Yukarıdaki `qr` ölçümü QR'ı kapsayan
+    // GENİŞ pencereden gelir ve QR'ın hemen altındaki aktarma metnini de
+    // içerir; ondan ölçmek yanlış bir mesafe verirdi.
+    const qrInk = box(
+      bitmap,
+      qrBox.x,
+      qrBox.y + qrRenderYOffset,
+      qrBox.size,
+      qrBox.size,
+    )
+    const footerInk = box(bitmap, 0, footerArea.top, 799, footerArea.bottom - footerArea.top)
+    if (qrInk && footerInk) {
+      // ASIL GÜVENLİK ÖZELLİĞİ: bantlar ÜST ÜSTE BİNMEZ.
+      assert.ok(
+        footerInk.y > bottom(qrInk),
+        `${name}: ürün bandı QR'a giriyor (${footerInk.y} <= ${bottom(qrInk)})`,
+      )
+      // Ve bitişik değil: 203 dpi'de 8 dot ≈ 1 mm fiziksel ayrım.
+      assert.ok(
+        footerInk.y - bottom(qrInk) >= 8,
+        `${name}: QR ile ürün bandı arası ayrım yetersiz `
+          + `(${footerInk.y - bottom(qrInk)} dot)`,
+      )
+    }
     assert.equal(qr.width, qrBox.size, `${name}: modül boyutu`)
     assert.equal(qr.x, qrBox.x, `${name}: X tam ^FO konumunda`)
 

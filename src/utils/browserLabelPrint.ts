@@ -815,7 +815,9 @@ export async function printOfficialSuratDocument(
       new Set(documentModel.pages.map((page) => page.orderNumber)),
     )
     // Güvenli önizleme: ham ZPL veya PII TAŞIMAZ.
-    debug.printableContentPreview = `surat-official-png pages=${documentModel.pages.length}`
+    debug.printableContentPreview =
+      `surat-official-png pages=${documentModel.pages.length}`
+      + ` page=${documentModel.pageSizeMm.widthMm}x${documentModel.pageSizeMm.heightMm}mm`
     return await dispatchPrintDocument(
       documentModel.html,
       debug,

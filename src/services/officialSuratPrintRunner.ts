@@ -18,9 +18,10 @@ import {
   suratPrintTrace,
 } from '../utils/browserLabelPrint'
 import { SURAT_ONLY_TEMPLATE_MESSAGE } from '../utils/labelPrintTemplateRouting'
-import type {
-  OfficialSuratPage,
-  OfficialSuratSkip,
+import {
+  DEFAULT_PRINT_PAGE_SIZE_MM,
+  type OfficialSuratPage,
+  type OfficialSuratSkip,
 } from '../utils/officialSuratPrintDocument'
 import type { BrowserLabelPrintDebug } from '../utils/browserLabelPrint'
 
@@ -160,6 +161,10 @@ export async function printOfficialSuratLabels(
     skipCount: skipped.length,
     productDetailWarningCount: productDetailWarnings.length,
     physicalPageCount: pages.length,
+    // Sayfa kutusu FİZİKSEL stoktur; render artefaktının türetilmiş mm'si
+    // DEĞİL (bkz. officialSuratPrintDocument başlığı).
+    pageSizeMm:
+      `${DEFAULT_PRINT_PAGE_SIZE_MM.widthMm}x${DEFAULT_PRINT_PAGE_SIZE_MM.heightMm}`,
   })
 
   const debug = await printOfficialSuratDocument(pages, skipped)

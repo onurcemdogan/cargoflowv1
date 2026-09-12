@@ -218,5 +218,7 @@
   "server/label-base-layer-overlay-flow.test.mjs",
   "server/surat-official-label-overlap-flow.test.mjs",
   "server/label-overlay-migration-flow.test.mjs",
-  "server/auto-label-background-picking-flow.test.mjs"
+  "server/auto-label-background-picking-flow.test.mjs",
+  "server/label-datestamp-geometry-flow.test.mjs",
+  "server/product-text-fit-flow.test.mjs"
 ]

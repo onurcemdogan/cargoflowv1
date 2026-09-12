@@ -72,6 +72,27 @@ test('FOOTER-READABILITY-1: kısa ürün → tek satır, en büyük font', async
   assert.ok(mm(plan.profile.fontHeight) >= 2.2, 'fiziksel yükseklik >= 2,2 mm')
 })
 
+/**
+ * MAKSİMALLİK KANITI.
+ *
+ * "Sığıyor" yeterli DEĞİLDİR: bir sonraki BÜYÜK font da sığıyorsa seçim
+ * hatalıdır. Kanıt, seçimin kullandığı ÖLÇÜM FONKSİYONUNUN kendisiyle
+ * üretilir — ikinci bir hesap yazılmaz.
+ */
+async function assertMaximal(plan, items) {
+  const line = await load('/src/utils/suratZplProductLine.ts')
+  assert.equal(plan.ok, true)
+  const bigger = plan.profile.fontHeight + 1
+  if (bigger > line.FOOTER_MAX_FONT_HEIGHT) return
+  const next = line.measureFooterFit(items, plan.area, bigger)
+  assert.equal(
+    next.fits,
+    false,
+    `MAKSİMAL DEĞİL: ${bigger} dot da sığıyor `
+      + `(${next.usedHeight}/${plan.area.height}, ${next.totalLines} satır)`,
+  )
+}
+
 // ═══ FOOTER-READABILITY-2: ORTA (referansa benzer) ═══════════════════════
 
 test('FOOTER-READABILITY-2: referansa benzer orta uzunluk → 20 dot, iki satır', async () => {
@@ -79,13 +100,24 @@ test('FOOTER-READABILITY-2: referansa benzer orta uzunluk → 20 dot, iki satır
   // ESKİ davranış: 18 dot TEK satır (fiziksel olarak küçük kalıyordu).
   const plan = await planFor([item()])
   assert.equal(plan.ok, true)
-  assert.equal(
-    plan.profile.fontHeight,
-    20,
-    `referans görünüm 20 dot bekler, ${plan.profile.fontHeight} geldi`,
+  // ═══ SABİT 20 YERİNE "SIĞAN EN BÜYÜK" ═══════════════════════════════
+  //
+  // Bu iddia eskiden `fontHeight === 20` idi. 20, O GÜNKÜ TAVANDI: merdiven
+  // 20 dot'un üstünde aday TAŞIMIYORDU. Testin koruduğu şey bir sayı değil,
+  // bir DAVRANIŞTI — "küçültme değil sarma; ürün satırı fiziksel baskıda
+  // okunaklı kalsın".
+  //
+  // Seçim artık alandan türeyen maksimal fit olduğu için literal tavan
+  // anlamını yitirdi. Yerine AYNI NİYETİ DAHA GÜÇLÜ koruyan iki iddia:
+  //   1. Kabul edilmiş referansın ALTINA asla düşülmez (>= 20).
+  //   2. Seçim MAKSİMALDİR: bir büyüğü sığsaydı o seçilirdi.
+  assert.ok(
+    plan.profile.fontHeight >= 20,
+    `referans altına düşüldü: ${plan.profile.fontHeight}`,
   )
-  // KÜÇÜLTME DEĞİL SARMA.
-  assert.equal(plan.profile.maxLinesPerItem, 2)
+  await assertMaximal(plan, [item()])
+  // KÜÇÜLTME DEĞİL SARMA: içerik tek satıra sığmıyorsa sarılır.
+  assert.ok(plan.profile.maxLinesPerItem >= 2)
   assert.ok(mm(plan.profile.fontHeight) >= 2.4, 'fiziksel yükseklik >= 2,4 mm')
   assert.ok(plan.usedHeight <= plan.area.height, 'banda sığmalı')
 })
@@ -345,8 +377,14 @@ test('FOOTER-BOUND-1: kısa içerik gerçek bandın İÇİNDE', async () => {
 test('FOOTER-BOUND-2: referans görünüm → 20 dot, EN FAZLA 2 satır, bant içinde', async () => {
   const box = await renderedFooterBox([item()])
   assertInsideBand(box, 'normal')
-  assert.equal(box.profile.fontHeight, 20, 'referans görünüm 20 dot')
-  assert.ok(box.maxLines <= 2, `2 satır sınırı aşıldı: ${box.maxLines}`)
+  // Literal 20 eski TAVANDI (bkz. FOOTER-READABILITY-2 gerekçesi). Korunan
+  // davranış: referans altına düşme + banttan taşmama. İkisi de daha güçlü
+  // biçimde doğrulanır; üstelik taşmama artık GERÇEK render kutusundan gelir.
+  assert.ok(
+    box.profile.fontHeight >= 20,
+    `referans altına düşüldü: ${box.profile.fontHeight}`,
+  )
+  await assertMaximal(await planFor([item()]), [item()])
 })
 
 test('FOOTER-BOUND-3: aşırı uzun içerik 3. SATIRA ÇIKMAZ, banttan taşmaz', async () => {
