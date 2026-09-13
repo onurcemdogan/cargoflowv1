@@ -379,14 +379,24 @@ test('PAG-16: sekme sınıflandırma iş kuralları DEĞİŞMEDİ', async () => 
   }
   assert.equal(
     orderMatchesQuickTab(classifyOrderForTabs(base), 'newOrders'), true)
+  // MİMARİ DEĞİŞİKLİK: "Etiket Hazır" KULLANICI durumudur; arka planda
+  // hazırlanmış artefakt tek başına bu sekmeye SOKMAZ. Fixture'a açık
+  // kullanıcı aktivasyon damgası eklendi.
+  const activated = {
+    ...base,
+    operationStatus: 'LABEL_READY',
+    userLabelActivatedAt: '2026-09-01T10:00:00.000Z',
+  }
   assert.equal(
-    orderMatchesQuickTab(
-      classifyOrderForTabs({ ...base, operationStatus: 'LABEL_READY' }),
-      'labelStage'), true)
+    orderMatchesQuickTab(classifyOrderForTabs(activated), 'labelStage'), true)
   assert.equal(
-    orderMatchesQuickTab(
-      classifyOrderForTabs({ ...base, operationStatus: 'LABEL_READY' }),
-      'newOrders'), false)
+    orderMatchesQuickTab(classifyOrderForTabs(activated), 'newOrders'), false)
+  // GÜÇLENDİRME: damgasız sipariş Yeni Siparişler'de KALIR.
+  const preparedOnly = { ...base, operationStatus: 'LABEL_READY' }
+  assert.equal(
+    orderMatchesQuickTab(classifyOrderForTabs(preparedOnly), 'labelStage'), false)
+  assert.equal(
+    orderMatchesQuickTab(classifyOrderForTabs(preparedOnly), 'newOrders'), true)
   assert.equal(
     orderMatchesQuickTab(
       classifyOrderForTabs({ ...base, marketplaceStatus: 'Shipped' }),

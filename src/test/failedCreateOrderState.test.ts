@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   classifyOrderForTabs, resolveDashboardOperationStage,
 } from '../utils/orderClassification'
+import { resolveLabelWorkflowActivation } from '../utils/labelWorkflowActivation'
 import type { CargoOrder } from '../types/cargoflow'
 
 // BAŞARISIZ CREATE SONRASI SİPARİŞ DURUMU.
@@ -60,14 +61,34 @@ describe('CREATE_FAILED siparis durumu', () => {
     expect(classifyOrderForTabs(order).hasError).toBe(true)
   })
 
+  // MİMARİ DEĞİŞİKLİK (kullanıcı etiket aktivasyonu): "gerçek başarılı etiket"
+  // artık YALNIZ artefakt demek DEĞİLDİR. Arka plan worker'ı artefaktı önceden
+  // hazırlayabilir; o sipariş kullanıcı için hâlâ "Barkod Bekliyor"dur. Bu
+  // yüzden fixture'a AÇIK kullanıcı aktivasyon damgası eklendi ve testin
+  // koruduğu ayrım GÜÇLENDİRİLDİ: aynı artefakt damgasız iken başarı-benzeri
+  // aşamaya DÜŞMEMELİ. (Eski hâli yalnız "damgalı" tarafı ölçüyordu.)
+  const readyArtifact = {
+    trackingNumber: '7270036019076954', barcodeValue: 'BC1',
+    printZpl: '^XA^XZ',
+  }
+
   it('gercek basarili etiket AYRISIR — kapi asiri genis degil', () => {
     const ok = {
       ...base, operationStatus: 'LABEL_READY',
-      shipment: {
-        trackingNumber: '7270036019076954', barcodeValue: 'BC1',
-        printZpl: '^XA^XZ',
-      },
+      userLabelActivatedAt: '2026-09-01T10:00:00.000Z',
+      shipment: readyArtifact,
     } as unknown as CargoOrder
     expect(SUCCESS_LIKE).toContain(stageOf(ok))
+  })
+
+  it('AYNI artefakt kullanici aktivasyonu YOKKEN basari-benzeri DEGILDIR', () => {
+    const preparedOnly = {
+      ...base, operationStatus: 'LABEL_READY',
+      shipment: readyArtifact,
+    } as unknown as CargoOrder
+    expect(SUCCESS_LIKE).not.toContain(stageOf(preparedOnly))
+    expect(stageOf(preparedOnly)).toBe('barcodeWaiting')
+    // Ayrımı yapan şey artefaktın varlığı DEĞİL, kullanıcı aktivasyonudur.
+    expect(resolveLabelWorkflowActivation(preparedOnly).activated).toBe(false)
   })
 })

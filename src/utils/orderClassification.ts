@@ -14,6 +14,10 @@ import {
 import { verifySuratShipment } from './suratVerification.ts'
 import { isExternallyProcessed } from './externalProcessing.ts'
 import {
+  hasPreparedLabelArtifact,
+  resolveLabelWorkflowActivation,
+} from './labelWorkflowActivation.ts'
+import {
   buildRepeatedProductOrderIds,
   type SameProductFilter,
 } from './orderProductFamily.ts'
@@ -35,6 +39,10 @@ export interface OrderTabClassification {
   isSuratVerificationWaiting: boolean
   isLabelReady: boolean
   isLabelPrinted: boolean
+  // DAHİLİ hazırlık durumu: arka planda üretilmiş, anında kullanılabilir
+  // taşıyıcı artefakt VAR. KULLANICI DURUMU DEĞİLDİR — tek başına asla
+  // "Etiket Hazır" göstermez; operasyon/debug görünürlüğü içindir.
+  isLabelPrepared: boolean
   isReadyForCargo: boolean
   isHandedToCargo: boolean
   isDelivered: boolean
@@ -173,7 +181,21 @@ function computeOrderTabClassification(
   // (basıldığında LABEL_PRINTED) yapar. Bu KANITLI durum, kısmen persistlenen
   // shipment payload'ından bağımsız olarak siparişin "Etiket Hazır/Basıldı"
   // grubuna girmesini sağlar; sayfa yenilenince (DB re-read) korunur.
-  const canonicalLabelReady = operationStatus === 'labelready'
+  // ═══ KULLANICI AKTİVASYONU — DAHİLİ HAZIRLIKTAN AYRIM ═══════════════
+  //
+  // `order.operationStatus` BU NOKTADA TÜRETİLMİŞ olabilir: hem istemci
+  // (orderWorkflowService) hem sunucu projeksiyonu (ordersWorkspaceService)
+  // `withDerivedOperationStatus` uygular ve o, DOĞRULANMIŞ ARTEFAKTTAN
+  // 'LABEL_READY' üretir. Arka plan worker'ı artefaktı önceden hazırladığında
+  // kullanıcı hiç dokunmamış sipariş "Etiket Hazır" görünüyordu.
+  //
+  // Bu yüzden canonical etiket-hazır kabulü AÇIK KULLANICI AKTİVASYONUYLA
+  // kapılanır. `labelprinted` kapılanmaz: basıldı kanıtı (label.printedAt /
+  // canonical LABEL_PRINTED) zaten YALNIZ kullanıcı yolundan doğar.
+  const activation = resolveLabelWorkflowActivation(order)
+  const labelWorkflowActivated = activation.activated
+  const canonicalLabelReady =
+    operationStatus === 'labelready' && labelWorkflowActivated
   const canonicalLabelPrinted = operationStatus === 'labelprinted'
   const marketplaceStatus = String(order.marketplaceStatus ?? '').trim()
   const marketplaceDelivered = marketplaceStatus === 'Delivered'
@@ -298,15 +320,30 @@ function computeOrderTabClassification(
       explicitlyClosed,
   )
   const isOpenOperation = !processClosed
+  // DAHİLİ hazırlık: basılabilir kalıcı artefakt var mı? (kullanıcı durumu DEĞİL)
+  const isLabelPrepared = hasPreparedLabelArtifact(order)
+  // Worker hazırladı (veya durum LABEL_READY'ye TÜRETİLDİ) ama kullanıcı
+  // HENÜZ ALMADI → sipariş "Barkod Bekliyor"dur. Türetilmiş `labelready`
+  // sinyali de sayılır: artefaktın kanıtlanamadığı (ör. kısmi payload)
+  // durumlarda sipariş aksi hâlde "Açık Operasyon"a düşerdi — oysa kullanıcı
+  // için tek doğru yanıt "Barkod Bekliyor"dur.
+  const preparedButNotActivated = Boolean(
+    (isLabelPrepared || operationStatus === 'labelready') &&
+      !labelWorkflowActivated,
+  )
   const isBarcodeWaiting = Boolean(
     isOpenOperation &&
       // Canonical etiket-hazır/basıldı durumu "barkod bekliyor" DEĞİLDİR (aksi
       // hâlde hem bu sekmede hem Etiket Hazır'da çift sayılırdı).
       !canonicalLabelReady &&
       !canonicalLabelPrinted &&
-      !printableShipment &&
-      (!dispatchRegistrationConfirmed || !barcodeRaw) &&
-      !isLabelPrinted,
+      !isLabelPrinted &&
+      // İki ayrı "barkod bekliyor" gerekçesi:
+      //   (a) arka planda hazırlanmış ama KULLANICI ALMAMIŞ artefakt (YENİ),
+      //   (b) hazır artefakt YOK (mevcut, değişmeyen kural).
+      (preparedButNotActivated ||
+        (!printableShipment &&
+          (!dispatchRegistrationConfirmed || !barcodeRaw))),
   )
   const isShipmentCreateRequired = Boolean(
     isBarcodeWaiting &&
@@ -328,6 +365,8 @@ function computeOrderTabClassification(
   const isLabelReady = Boolean(
     isOpenOperation &&
       !isLabelPrinted &&
+      // KULLANICI KAPISI: hazır artefakt TEK BAŞINA "Etiket Hazır" DEĞİLDİR.
+      labelWorkflowActivated &&
       // Canonical LABEL_READY (DB'de kalıcı, backend-doğrulamalı) tek başına
       // yeterlidir: kısmi persistlenen shipment payload'ından printableShipment
       // türetilemese bile sipariş Etiket Hazır grubundadır. Aksi hâlde eski
@@ -349,6 +388,7 @@ function computeOrderTabClassification(
     isSuratVerificationWaiting,
     isLabelReady,
     isLabelPrinted,
+    isLabelPrepared,
     isReadyForCargo,
     isHandedToCargo,
     isDelivered,

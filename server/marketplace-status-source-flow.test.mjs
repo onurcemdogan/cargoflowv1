@@ -2,6 +2,17 @@ import assert from 'node:assert/strict'
 import test, { after, before } from 'node:test'
 import { createServer } from 'vite'
 
+// ═══ FIXTURE NOTU — KULLANICI ETIKET AKTIVASYONU ════════════════════════
+//
+// "Etiket Hazir" artik KULLANICI durumudur. Arka plan worker'i tasiyici
+// artefakti ONCEDEN hazirlayinca projeksiyon `operationStatus`u LABEL_READY'ye
+// TURETIR; kullanici o siparise hic dokunmamis olabilir ve o sipariş
+// "Barkod Bekliyor"dur. Bu dosyadaki LABEL_READY fixture'lari KULLANICININ
+// olusturdugu etiketi temsil ettigi icin ACIK aktivasyon damgasi tasir.
+// (Damgasiz -yalniz hazirlanmis- durumun testleri: server/label-ux-state-flow.test.mjs)
+const USER_LABEL_ACTIVATED_AT = '2026-08-01T09:00:00.000Z'
+
+
 // "KARGOYA VERİLDİ" KAYNAK SÖZLEŞMESİ.
 //
 // Kanıtlanan zincir (dosya/fonksiyon):
@@ -266,7 +277,7 @@ test('TRENDYOL-HANDED-1: LABEL_READY + Shipped → Kargoya Verildi', async () =>
   const { state, stage } = await stageOf(
     order({
       marketplaceStatus: 'Shipped',
-      operationStatus: 'LABEL_READY',
+      operationStatus: 'LABEL_READY', userLabelActivatedAt: USER_LABEL_ACTIVATED_AT,
       labelStatus: 'READY',
     }),
   )
@@ -307,7 +318,7 @@ test('TRENDYOL-HANDED-4: Picking → LABEL_READY/LABEL_PRINTED KORUNUR', async (
   const ready = await stageOf(
     order({
       marketplaceStatus: 'Picking',
-      operationStatus: 'LABEL_READY',
+      operationStatus: 'LABEL_READY', userLabelActivatedAt: USER_LABEL_ACTIVATED_AT,
       labelStatus: 'READY',
     }),
   )

@@ -85,6 +85,13 @@
       "when": 1787872096984,
       "tag": "0011_sales_disposition",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789297507844,
+      "tag": "0012_user_label_activation",
+      "breakpoints": true
     }
   ]
 }

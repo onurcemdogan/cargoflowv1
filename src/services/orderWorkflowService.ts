@@ -98,6 +98,10 @@ import {
   operationStatusFromMarketplaceStatus,
   withDerivedOperationStatus,
 } from '../utils/orderStatus'
+import {
+  canActivateLabelWorkflow,
+  resolveLabelWorkflowActivation,
+} from '../utils/labelWorkflowActivation'
 import { loadFromStorage, saveToStorage } from '../utils/storage'
 import { verifySuratShipment } from '../utils/suratVerification'
 import {
@@ -1725,7 +1729,23 @@ export class OrderWorkflowService {
       (stored) => stored.shipment,
     )
 
+    // ═══ HAZIR ARTEFAKT HIZLI YOLU ════════════════════════════════════
+    //
+    // Arka plan worker'i etiketi ONCEDEN hazirlamis olabilir. O siparişte
+    // "Barkod Oluştur" ARTIK taşıyıcı create demek DEĞİLDİR; anlamı
+    // "bu siparişin etiketini kullanıcı iş akışına AL"dır.
+    //
+    // Bu siparişler döngüde HİÇ işlenmez: `/api/shipments/surat` isteği bile
+    // ATILMAZ → taşıyıcı create = 0, pazaryeri mutasyonu = 0, yeni artefakt
+    // = 0. Aşağıdaki canonical `persistLabelReady` turu (auth modu) ve yerel
+    // damga YALNIZ kullanıcı aktivasyonunu yazar.
+    const activationOnlyIds = new Set<string>()
+
     for (const order of selectedOrders(orders, selectedIds)) {
+      if (canActivateLabelWorkflow(order)) {
+        activationOnlyIds.add(order.id)
+        continue
+      }
       if (!order.shipment) {
         const storedCounterpart = findMatchingOperationalOrder(
           order,
@@ -1912,6 +1932,15 @@ export class OrderWorkflowService {
           'Etiket başarıyla oluşturuldu ve yazdırmaya hazır.'
         const responseOrder: CargoOrder = {
           ...normalizedOrder,
+          // KULLANICI AKTİVASYONU: bu create'i kullanıcı AÇIKÇA başlattı.
+          // Etiket hazır hâle geldiyse sipariş aynı anda kullanıcı iş
+          // akışına da alınır (manuel yol ile arka plan yolu AYNI kullanıcı
+          // sonucunu üretir). Auth modda kalıcı damgayı `persistLabelReady`
+          // yazar; buradaki değer optimistic kopyadır. İDEMPOTENT: mevcut
+          // damga KORUNUR.
+          userLabelActivatedAt: labelReadyState
+            ? (normalizedOrder.userLabelActivatedAt ?? new Date().toISOString())
+            : normalizedOrder.userLabelActivatedAt,
           shipment: {
             ...shipment,
             verifiedShipment: verification.verifiedShipment,
@@ -2200,17 +2229,29 @@ export class OrderWorkflowService {
         const wasFreshReady = target.operationStatus === 'LABEL_READY'
         try {
           await this.persistLabelReady(target.id)
+          // AKTİVASYON DAMGASI: aynı canonical yazım (markOrderLabelReady)
+          // sunucuda `user_label_activated_at`i de yazar. Optimistic kopya
+          // sayfa yenilenene kadar aynı gerçeği taşımalı; yoksa tıklamadan
+          // hemen sonra sipariş "Barkod Bekliyor" görünürdü.
+          //
+          // İDEMPOTENT: mevcut damga KORUNUR (çift tıklamada oynamaz).
+          const activatedAt =
+            resolveLabelWorkflowActivation(target).activatedAt ??
+            new Date().toISOString()
           // Persist DB tarafından doğrulandı: retry-repair'de yerel durumu da
           // canonical LABEL_READY'ye getir (önceki 'Hata'/UNVERIFIED'dan).
-          if (!wasFreshReady) {
-            nextOrders = replaceOrder(nextOrders, {
-              ...target,
-              status: 'Etiket Hazır',
-              operationStatus: 'LABEL_READY',
-              printEnabled: true,
-              errorMessage: undefined,
-            })
-          }
+          nextOrders = replaceOrder(nextOrders, {
+            ...target,
+            userLabelActivatedAt: activatedAt,
+            ...(wasFreshReady
+              ? {}
+              : {
+                  status: 'Etiket Hazır' as const,
+                  operationStatus: 'LABEL_READY' as const,
+                  printEnabled: true,
+                  errorMessage: undefined,
+                }),
+          })
         } catch (error) {
           const message =
             error instanceof Error
@@ -2242,7 +2283,46 @@ export class OrderWorkflowService {
       }
     }
 
+    // ═══ AKTİVASYON MUHASEBESİ ════════════════════════════════════════
+    //
+    // Hızlı yoldaki siparişler ATLANMADI — kullanıcı onları AÇIKÇA iş
+    // akışına aldı. Bu yüzden "zaten oluşturulmuş" uyarısı DEĞİL, başarı
+    // sayılırlar. Legacy (auth dışı) modda arka plan worker'ı YOKTUR;
+    // damga yine de burada yazılır ki tek kaynak korunsun.
+    const activatedOrderNumbers: string[] = []
+    for (const id of activationOnlyIds) {
+      const target = nextOrders.find((candidate) => candidate.id === id)
+      if (!target) continue
+      const stamped = resolveLabelWorkflowActivation(target).activated
+      if (!stamped) {
+        if (this.authMode) continue // persist başarısız: durum DEĞİŞMEZ
+        nextOrders = replaceOrder(nextOrders, {
+          ...target,
+          userLabelActivatedAt: new Date().toISOString(),
+          status: 'Etiket Hazır',
+          operationStatus: 'LABEL_READY',
+          printEnabled: true,
+          errorMessage: undefined,
+        })
+      }
+      successCount += 1
+      activatedOrderNumbers.push(target.orderNumber)
+      processedOrderNumbers.push(target.orderNumber)
+      this.auditLogService.append({
+        action: 'Gönderi oluşturuldu',
+        level: 'success',
+        details:
+          'Önceden hazırlanmış etiket kullanıcı iş akışına alındı. Taşıyıcı create ve pazaryeri güncellemesi YAPILMADI.',
+        orderNumber: target.orderNumber,
+      })
+    }
+
     this.persistOrders(nextOrders)
+
+    const activationNote =
+      activatedOrderNumbers.length > 0
+        ? ` ${activatedOrderNumbers.length} sipariş önceden hazırlanmış etiketiyle iş akışına alındı (yeni gönderi oluşturulmadı).`
+        : ''
 
     return {
       orders: nextOrders,
@@ -2256,12 +2336,12 @@ export class OrderWorkflowService {
         message:
           failedBarcodeCount > 0
             ? `${failedBarcodeCount} siparişte Sürat etiketi oluşturulamadı (yazdırılabilir ZPL alınamadı veya gönderi reddedildi). Etiket basılamaz.`
-            : buildShipmentCreationResultMessage({
+            : `${buildShipmentCreationResultMessage({
                 successCount,
                 skippedCount,
                 skippedReasons,
                 createdShipments,
-              }),
+              })}${activationNote}`,
         bulkActionDebug: buildBulkActionDebug(
           'CREATE_COMMON_BARCODE',
           selectedOrders(nextOrders, selectedIds),
@@ -2851,6 +2931,17 @@ export class OrderWorkflowService {
     if (this.authMode) {
       for (const printedOrder of successfulPrintableOrders) {
         try {
+          // ÖNCE AKTİVASYON: baskı da AÇIK bir kullanıcı aksiyonudur ve
+          // etiketi kullanıcı iş akışına ALIR. Arka planda hazırlanmış ama
+          // kullanıcı "Barkod Oluştur"a hiç basmamış bir sipariş doğrudan
+          // yazdırılabilir; o hâlde canonical durum LABEL_READY DEĞİLDİR ve
+          // `markOrderLabelPrinted` `label_required` ile REDDEDERDİ —
+          // baskı yapılır, "Etiket Basıldı" ise DB'ye hiç yazılmazdı.
+          //
+          // İkisi de idempotent + no-regress; zaten LABEL_READY/PRINTED olan
+          // siparişte bu çağrı durumu ve aktivasyon damgasını DEĞİŞTİRMEZ.
+          // Yeni shipment/barkod OLUŞMAZ, provider ÇAĞRILMAZ.
+          await this.persistLabelReady(printedOrder.id)
           await this.persistLabelPrinted(printedOrder.id)
         } catch {
           // yut: baskı başarılı; DB persistence en fazla bir sonraki senkronda düzelir.

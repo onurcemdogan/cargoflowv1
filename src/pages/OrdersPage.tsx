@@ -29,6 +29,7 @@ import {
   canMarkHandedToCargo,
   canMarkPrinted,
 } from '../utils/orderStatus'
+import { canActivateLabelWorkflow } from '../utils/labelWorkflowActivation'
 import { type SameProductFilter } from '../utils/orderProductFamily'
 import {
   buildOrdersWorkspaceResult,
@@ -430,7 +431,14 @@ export function OrdersPage({
     () => orders.filter((order) => selectedIds.includes(order.id)),
     [orders, selectedIds],
   )
-  const hasShipmentCreatableSelection = selectedOrders.some(canCreateShipment)
+  // "Barkod Oluştur" ARTIK yalnız taşıyıcı create demek DEĞİLDİR: arka planda
+  // hazırlanmış etiketi kullanıcı iş akışına ALMAK da bu butonun işidir.
+  // `canCreateShipment` o siparişte false döner (ikinci create AÇILMAZ) — bu
+  // yüzden aktivasyon yeteneği AYRICA sorulur; yoksa buton pasif kalır ve
+  // kullanıcı siparişi hiçbir şekilde ilerletemezdi.
+  const hasShipmentCreatableSelection = selectedOrders.some(
+    (order) => canCreateShipment(order) || canActivateLabelWorkflow(order),
+  )
   const hasZplDownloadableSelection = selectedOrders.some(canDownloadZpl)
   const hasPrintableSelection = selectedOrders.some(canMarkPrinted)
   const hasHandedToCargoSelection = selectedOrders.some(canMarkHandedToCargo)

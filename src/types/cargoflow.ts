@@ -843,6 +843,14 @@ export interface CargoOrder {
   // ZPL artifact) var mı? attachShipment tarafından operation payload'ından
   // hesaplanır; geçici tarayıcı state'ine bağlı DEĞİLDİR (sayfa yenilemesinde korunur).
   hasPrintableLabel?: boolean
+  // ═══ KULLANICI ETİKET AKTİVASYONU ═════════════════════════════════════
+  //
+  // "Bu siparişin etiketi kullanıcının iş akışına ALINDI" anı (ISO). Arka plan
+  // worker'ının hazırladığı READY artefakt bu alanı ÜRETEMEZ; kaynağı yalnız
+  // açık kullanıcı aksiyonudur (bkz. utils/labelWorkflowActivation.ts).
+  //
+  // NULL/undefined → UI durumu "Barkod Bekliyor" (artefakt hazır olsa bile).
+  userLabelActivatedAt?: string | null
   matchStatus?: boolean
   matchReason?: string
   error?: string

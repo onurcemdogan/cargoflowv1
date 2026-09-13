@@ -220,5 +220,7 @@
   "server/label-overlay-migration-flow.test.mjs",
   "server/auto-label-background-picking-flow.test.mjs",
   "server/label-datestamp-geometry-flow.test.mjs",
-  "server/product-text-fit-flow.test.mjs"
+  "server/product-text-fit-flow.test.mjs",
+  "server/label-ux-state-flow.test.mjs",
+  "server/label-user-activation-flow.test.mjs"
 ]

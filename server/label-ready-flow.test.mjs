@@ -271,12 +271,17 @@ test('3 & 4 & 10) Canonical LABEL_READY sipariş Etiket Hazır sekmesinde görü
     createdAt: '2026-07-10T08:00:00.000Z',
     items: [{ id: 'i1', productName: 'Ürün', barcode: 'BRC', quantity: 1 }],
   }
+  // MİMARİ DEĞİŞİKLİK (kullanıcı etiket aktivasyonu): "Etiket Hazır" KULLANICI
+  // durumudur. Sunucu okuma yolu (orderMapper) canonical LABEL_READY satırını
+  // `userLabelActivatedAt` ile birlikte döndürür — geçmiş kayıtlarda bu damga
+  // canonical durumdan telafi edilir. Bu fixture O ŞEKLİ temsil eder.
   const readyOrder = {
     ...base,
     id: 'o-ready',
     orderNumber: 'RDY-1',
     packageId: 'PKG-RDY',
     operationStatus: 'LABEL_READY',
+    userLabelActivatedAt: '2026-07-11T09:00:00.000Z',
     shipment: { trackingNumber: '2512361562501', barcode: '0123990557601' },
   }
   const cls = classifyOrderForTabs(readyOrder)
@@ -300,4 +305,18 @@ test('3 & 4 & 10) Canonical LABEL_READY sipariş Etiket Hazır sekmesinde görü
   })
   assert.equal(before.debug.uniquePackageCount, 1, 'Etiket Hazır sayacı yalnız canonical ready siparişi içerir')
   assert.equal(before.visibleOrders[0].id, 'o-ready')
+
+  // GÜÇLENDİRME: AYNI canonical durum + AYNI artefakt, aktivasyon damgası YOK
+  // (arka planda hazırlanmış, kullanıcı hiç dokunmamış) → Etiket Hazır sekmesi
+  // BOŞ kalır ve sipariş barkod-bekleyendir.
+  const preparedOnly = { ...readyOrder, userLabelActivatedAt: undefined }
+  const preparedCls = classifyOrderForTabs(preparedOnly)
+  assert.equal(preparedCls.isLabelReady, false)
+  assert.equal(preparedCls.isBarcodeWaiting, true)
+  const preparedList = buildVisibleOrders({
+    persistentOrders: [preparedOnly], selectedTab: 'labelStage', marketplaceFilter: 'all',
+    operationStatusFilter: 'all', cargoFilter: 'all', dateFilter: { preset: 'all' },
+    searchQuery: '', now: new Date('2026-07-12T00:00:00.000Z'),
+  })
+  assert.equal(preparedList.visibleOrders.length, 0)
 })

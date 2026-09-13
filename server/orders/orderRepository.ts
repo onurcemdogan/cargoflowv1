@@ -545,6 +545,16 @@ export async function markOrderLabelReady(
       operationStatus: LABEL_READY_OPERATION_STATUS,
       // RETENTION SAATİ: gerçek operasyon geçişi.
       lastOperationalActivityAt: new Date(),
+      // ═══ KULLANICI AKTİVASYONU — TEK YAZAR, TEK YAZIM ════════════════
+      //
+      // Bu fonksiyona YALNIZ POST /api/orders/:id/label-ready ulaşır; o da
+      // yalnız kullanıcının AÇIK aksiyonuyla çağrılır. Arka plan worker'ı
+      // `orders` tablosuna HİÇ yazmaz, dolayısıyla bu damgayı ÜRETEMEZ.
+      //
+      // `COALESCE` İDEMPOTENSİ: çift tıklamada damga OYNAMAZ — ilk açık
+      // niyet anı korunur (denetlenebilirlik). Aynı UPDATE içinde olduğu
+      // için ayrı bir yazım/transaction GEREKMEZ.
+      userLabelActivatedAt: sql`coalesce(${orders.userLabelActivatedAt}, now())`,
       updatedAt: new Date(),
     })
     .where(

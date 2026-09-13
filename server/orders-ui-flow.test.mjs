@@ -4,6 +4,17 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { createServer } from 'vite'
 
+// ═══ FIXTURE NOTU — KULLANICI ETIKET AKTIVASYONU ════════════════════════
+//
+// "Etiket Hazir" artik KULLANICI durumudur. Arka plan worker'i tasiyici
+// artefakti ONCEDEN hazirlayinca projeksiyon `operationStatus`u LABEL_READY'ye
+// TURETIR; kullanici o siparise hic dokunmamis olabilir ve o sipariş
+// "Barkod Bekliyor"dur. Bu dosyadaki LABEL_READY fixture'lari KULLANICININ
+// olusturdugu etiketi temsil ettigi icin ACIK aktivasyon damgasi tasir.
+// (Damgasiz -yalniz hazirlanmis- durumun testleri: server/label-ux-state-flow.test.mjs)
+const USER_LABEL_ACTIVATED_AT = '2026-08-01T09:00:00.000Z'
+
+
 test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünürdür', async (t) => {
   const vite = await createServer({
     appType: 'custom',
@@ -390,7 +401,7 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
     ...buildOrder(),
     cargoTrackingNumber: '7270033990557601',
     status: 'Etiket Hazır',
-    operationStatus: 'LABEL_READY',
+    operationStatus: 'LABEL_READY', userLabelActivatedAt: USER_LABEL_ACTIVATED_AT,
     labelStatus: 'READY',
     matchStatus: true,
     shipment: {

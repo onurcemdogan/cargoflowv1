@@ -229,6 +229,27 @@ export function toLineInsertValues(
 
 // DB satırları → frontend order view-model (CargoOrder benzeri). Adres/raw
 // çözülür; shipment linkage çağıran tarafından eklenir.
+// Kullanıcı aktivasyon damgası: açık kolon, yoksa canonical durum kanıtı.
+// Yalnız OKUMA yolunda çalışır (bkz. rowToOrder içindeki gerekçe).
+const USER_ACTIVATED_CANONICAL_STATES = new Set([
+  'LABEL_READY',
+  'LABEL_PRINTED',
+])
+
+function resolveUserLabelActivatedAt(
+  orderRow: Record<string, unknown>,
+): string | null {
+  const explicit = orderRow.userLabelActivatedAt
+  if (explicit) return new Date(String(explicit)).toISOString()
+  if (!USER_ACTIVATED_CANONICAL_STATES.has(str(orderRow.operationStatus))) {
+    return null
+  }
+  // Geçmiş aktivasyonun EN İYİ bilinen anı: son operasyonel hareket, yoksa
+  // satırın son güncellenme anı. Uydurulmuş bir "şimdi" YAZILMAZ.
+  const fallback = orderRow.lastOperationalActivityAt ?? orderRow.updatedAt
+  return fallback ? new Date(String(fallback)).toISOString() : null
+}
+
 export function rowToOrder(
   orderRow: Record<string, unknown>,
   lineRows: Record<string, unknown>[],
@@ -262,6 +283,23 @@ export function rowToOrder(
     customerEmail: str(orderRow.customerEmail),
     marketplaceStatus: str(orderRow.marketplaceStatus),
     operationStatus: str(orderRow.operationStatus),
+    // ═══ KULLANICI ETİKET AKTİVASYONU — OKUMA YOLU ═════════════════════
+    //
+    // Bu alan, DAHİLİ hazırlık (arka planda üretilmiş READY artefakt) ile
+    // KULLANICI iş akışı durumunu ayıran TEK sinyaldir. İstemci tarafında
+    // `operationStatus` TÜRETİLEBİLİR (withDerivedOperationStatus artefakttan
+    // LABEL_READY üretir) — bu yüzden ayrım bu alanla taşınır, o alanla
+    // DEĞİL.
+    //
+    // ESKİ KAYIT TELAFİSİ (VERİ MUTASYONU DEĞİL, OKUMA ZAMANI):
+    // kolon eklenmeden ÖNCE kullanıcı tarafından gerçekten aktive edilmiş
+    // kayıtların damgası NULL'dur. Ancak canonical `operation_status`
+    // LABEL_READY/LABEL_PRINTED değerini TARİHTE YALNIZ kullanıcı yolu
+    // yazabilmiştir (`markOrderLabelReady` → POST /label-ready; worker
+    // `orders` tablosuna hiç yazmaz). Bu yüzden o değerin kendisi geçmiş
+    // kullanıcı aksiyonunun KANITIDIR ve damga okuma anında telafi edilir.
+    // DB'ye hiçbir şey yazılmaz; production verisi DEĞİŞMEZ.
+    userLabelActivatedAt: resolveUserLabelActivatedAt(orderRow),
     // SON SENKRONİZASYON DAMGASI. `lastSeenAt` kolonu, siparişin EN SON
     // başarılı pazaryeri sync'inde görüldüğü andır (marketplaceUpdateSet her
     // sync'te yazar). Bu alan okuma yolunda ÜRETİLMEDİĞİ için auth modunda

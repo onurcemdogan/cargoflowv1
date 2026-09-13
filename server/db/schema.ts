@@ -322,6 +322,29 @@ export const orders = pgTable(
     lastOperationalActivityAt: timestamp('last_operational_activity_at', {
       withTimezone: true,
     }),
+    // ═══ KULLANICI ETİKET AKTİVASYONU (AÇIK NİYET DAMGASI) ═════════════
+    //
+    // ARKA PLAN HAZIRLIĞI ≠ KULLANICI DURUMU. Arka plan worker'ı yeni siparişin
+    // taşıyıcı etiketini ÖNCEDEN hazırlar (kalıcı printZpl / READY artefakt).
+    // Bu DAHİLİ bir hazırlık durumudur; kullanıcı o siparişe HİÇ dokunmamış
+    // olabilir. Bu kolon YALNIZ kullanıcının AÇIK aksiyonuyla (Barkod Oluştur /
+    // Yazdır) yazılır ve "bu etiket kullanıcının iş akışına ALINDI" der.
+    //
+    // TEK YAZAR: `markOrderLabelReady` (server/orders/orderRepository.ts) —
+    // ona da YALNIZ POST /api/orders/:id/label-ready üzerinden ulaşılır.
+    // Worker/producer/queue/preparation yollarının HİÇBİRİ `orders` tablosuna
+    // YAZMAZ (server/shipments/* içinde `update(orders)` YOKTUR).
+    //
+    // BOOLEAN DEĞİL ZAMAN DAMGASI: "ne zaman alındı" denetlenebilir olsun ve
+    // çift tıklama damgayı OYNATMASIN (yalnız NULL iken yazılır).
+    //
+    // NULL = kullanıcı henüz almadı. Eski (bu kolondan önceki) kayıtlarda da
+    // NULL'dur; okuma yolunda canonical `operation_status` kanıtıyla
+    // tamamlanır (bkz. orderMapper.rowToOrder). Geçmiş veri MUTASYONA
+    // UĞRATILMAZ.
+    userLabelActivatedAt: timestamp('user_label_activated_at', {
+      withTimezone: true,
+    }),
     rawPayloadEncrypted: text('raw_payload_encrypted'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()

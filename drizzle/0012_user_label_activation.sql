@@ -1,0 +1,1 @@
+ALTER TABLE "orders" ADD COLUMN "user_label_activated_at" timestamp with time zone;

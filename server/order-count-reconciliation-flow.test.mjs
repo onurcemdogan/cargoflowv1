@@ -104,9 +104,22 @@ test('OCR-2: Yeni Siparişler / Etiket Hazır tanımları gerçek classifier\'da
   assert.equal(isNew(mk({})), true)
   assert.equal(isLabel(mk({})), false)
   // LABEL_READY → Etiket Hazır, Yeni Siparişler DEĞİL (çift sayım yok)
-  const ready = mk({ operationStatus: 'LABEL_READY' })
+  //
+  // MİMARİ DEĞİŞİKLİK (kullanıcı etiket aktivasyonu): "Etiket Hazır" artık
+  // KULLANICI durumudur. Arka plan worker'ı artefaktı önceden hazırlayınca
+  // `operationStatus` LABEL_READY'ye TÜRETİLİR; kullanıcı o siparişe hiç
+  // dokunmamış olabilir. Bu yüzden fixture'a AÇIK aktivasyon damgası eklendi.
+  const ready = mk({
+    operationStatus: 'LABEL_READY',
+    userLabelActivatedAt: '2026-09-01T10:00:00.000Z',
+  })
   assert.equal(isLabel(ready), true)
   assert.equal(isNew(ready), false)
+  // GÜÇLENDİRME: damgasız (yalnız arka planda hazırlanmış) sipariş Etiket
+  // Hazır'a GİRMEZ ve Yeni Siparişler'de KALIR — çift sayım yine YOK.
+  const preparedOnly = mk({ operationStatus: 'LABEL_READY' })
+  assert.equal(isLabel(preparedOnly), false)
+  assert.equal(isNew(preparedOnly), true)
   // Shipped → ikisi de değil (processClosed)
   const shipped = mk({ marketplaceStatus: 'Shipped' })
   assert.equal(isNew(shipped), false)

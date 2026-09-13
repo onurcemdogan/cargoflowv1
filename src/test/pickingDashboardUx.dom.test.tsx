@@ -46,6 +46,11 @@ function order(
     marketplaceStatus: 'Created',
     operationStatus: 'LABEL_READY',
     labelStatus: 'READY',
+    // Bu fabrika "KULLANICI etiketi oluşturmuş" siparişi temsil eder. Yeni
+    // durum modelinde artefakt hazırlığı TEK BAŞINA "Etiket Hazır" DEĞİLDİR;
+    // kullanıcı aktivasyon damgası canonical sinyaldir (arka plan worker'ı
+    // onu üretemez). Damga olmadan bu sipariş "Barkod Bekliyor" olurdu.
+    userLabelActivatedAt: '2026-08-01T11:00:00.000Z',
     items,
     shipment: {
       provider: 'surat-kargo',
@@ -220,4 +225,17 @@ test('PICKING-UX-8: operasyon aşama özeti kanonik etiketlerden gelir', () => {
   // Yeni/uydurma iş durumu YOK.
   expect(stages).not.toContain('Toplandı')
   expect(stages).not.toContain('SDP')
+})
+
+// YENİ DURUM MODELİ: arka planda hazırlanmış etiket, kullanıcı onu iş akışına
+// ALMADIKÇA aşama özetinde "Etiket Hazır" SAYILMAZ.
+test('PICKING-UX-8b: arka planda hazirlanan etiket kullanici almadan "Etiket Hazir" SAYILMAZ', () => {
+  renderCard([
+    order('prepared', [line({ size: '36' })], {
+      userLabelActivatedAt: undefined,
+    }),
+  ])
+  const stages = document.querySelector('.picking-row-stages')?.textContent ?? ''
+  expect(stages).not.toContain('Etiket Hazır')
+  expect(stages).toContain('Barkod Bekliyor: 1')
 })

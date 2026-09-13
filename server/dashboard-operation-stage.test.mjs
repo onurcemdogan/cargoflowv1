@@ -89,12 +89,35 @@ test('FAZ2-B: LABEL_READY → stage labelReady; asla open/barcodeWaiting değil'
     id: 'ready',
     operationStatus: 'LABEL_READY',
     labelStatus: 'READY',
+    // MİMARİ DEĞİŞİKLİK: "Etiket Hazır" KULLANICI durumudur. Arka planda
+    // hazırlanmış artefakt `operationStatus`ü LABEL_READY'ye TÜRETSE bile
+    // kullanıcı aktivasyon damgası yoksa sipariş "Barkod Bekliyor"dur.
+    // Bu fixture KULLANICININ oluşturduğu etiketi temsil eder.
+    userLabelActivatedAt: '2026-07-19T09:00:00.000Z',
   })
   const result = classifyDashboardOperationStage(order)
   assert.equal(result.stage, 'labelReady')
   assert.equal(result.label, 'Etiket Hazır')
   assert.notEqual(result.stage, 'open')
   assert.notEqual(result.stage, 'barcodeWaiting')
+})
+
+test('FAZ2-B2: arka planda hazirlanmis (damgasiz) LABEL_READY → barcodeWaiting', async (t) => {
+  const vite = await withVite(t)
+  const { classifyDashboardOperationStage } = await vite.ssrLoadModule(
+    '/src/utils/orderClassification.ts',
+  )
+  // AYNI artefakt, aktivasyon damgası YOK: kullanıcı bu siparişe hiç
+  // dokunmadı. Dahili hazırlık kullanıcı durumunu ilerletemez.
+  const order = baseOrder({
+    id: 'prepared',
+    operationStatus: 'LABEL_READY',
+    labelStatus: 'READY',
+  })
+  const result = classifyDashboardOperationStage(order)
+  assert.equal(result.stage, 'barcodeWaiting')
+  assert.equal(result.label, 'Barkod Bekliyor')
+  assert.notEqual(result.stage, 'labelReady')
 })
 
 test('FAZ2-C: barkod bekleyen sipariş (shipment yok) → stage barcodeWaiting', async (t) => {
@@ -224,6 +247,11 @@ test('FAZ2-J: "Açık Operasyon" dönem filtresinden bağımsızdır ve LABEL_RE
     id: 'rdy',
     operationStatus: 'LABEL_READY',
     labelStatus: 'READY',
+    // MİMARİ DEĞİŞİKLİK: "Etiket Hazır" KULLANICI durumudur. Arka planda
+    // hazırlanmış artefakt `operationStatus`ü LABEL_READY'ye TÜRETSE bile
+    // kullanıcı aktivasyon damgası yoksa sipariş "Barkod Bekliyor"dur.
+    // Bu fixture KULLANICININ oluşturduğu etiketi temsil eder.
+    userLabelActivatedAt: '2026-07-19T09:00:00.000Z',
   })
   const printed = printedOrder({ id: 'prn' })
   const model = buildDashboardViewModel({

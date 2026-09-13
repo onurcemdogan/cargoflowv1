@@ -90,9 +90,16 @@ test('1,2,4,5: rozet canonical operationStatus önceliğini kullanır', async (t
   const { withDerivedOperationStatus } = await vite.ssrLoadModule('/src/utils/orderStatus.ts')
 
   // Ön-atanmış (verifiedShipment=false) ama canonical LABEL_READY sipariş.
+  //
+  // MİMARİ DEĞİŞİKLİK (kullanıcı etiket aktivasyonu): rozet "Etiket Hazır"
+  // artık KULLANICI durumudur. Arka plan worker'ı artefaktı önceden
+  // hazırladığında `operationStatus` LABEL_READY'ye TÜRETİLİR ama kullanıcı
+  // siparişe hiç dokunmamıştır. Fixture KULLANICININ oluşturduğu etiketi
+  // temsil ettiği için açık aktivasyon damgası taşır.
   const labelReadyOrder = {
     id: 'o1', orderNumber: 'O1', marketplace: 'Trendyol', marketplaceStatus: 'Created',
     operationStatus: 'LABEL_READY', labelStatus: 'READY', items: [],
+    userLabelActivatedAt: '2026-08-01T09:00:00.000Z',
     shipment: {
       id: 's1', barcodeRaw: '^XA^FD01252765588^FS^XZ', printEnabled: true,
       verifiedShipment: false, dispatchRegistrationConfirmed: false,
@@ -115,6 +122,13 @@ test('1,2,4,5: rozet canonical operationStatus önceliğini kullanır', async (t
   assert.equal(mapOperationStatus(reloaded).label, 'Etiket Basıldı')
   // LABEL_READY sipariş de yenilemede korunur.
   assert.equal(withDerivedOperationStatus(labelReadyOrder).operationStatus, 'LABEL_READY')
+
+  // GÜÇLENDİRME: AYNI artefakt, aktivasyon damgası YOK → rozet "Barkod
+  // Bekliyor". Rozet artık dahili hazırlıktan DEĞİL kullanıcı durumundan
+  // türer. (Eski hâl bu ayrımı hiç ölçmüyordu.)
+  const preparedOnly = { ...labelReadyOrder, id: 'o3', userLabelActivatedAt: undefined }
+  assert.equal(mapOperationStatus(preparedOnly).label, 'Barkod Bekliyor')
+  assert.notEqual(mapOperationStatus(preparedOnly).label, 'Etiket Hazır')
 })
 
 // ---- Backend geçiş: markLabelPrinted (atomik, idempotent, no-regress, tenant) ----

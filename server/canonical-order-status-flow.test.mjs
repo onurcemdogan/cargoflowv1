@@ -9,6 +9,17 @@ import { drizzle } from 'drizzle-orm/pglite'
 import { eq } from 'drizzle-orm'
 import { createServer } from 'vite'
 
+// ═══ FIXTURE NOTU — KULLANICI ETIKET AKTIVASYONU ════════════════════════
+//
+// "Etiket Hazir" artik KULLANICI durumudur. Arka plan worker'i tasiyici
+// artefakti ONCEDEN hazirlayinca projeksiyon `operationStatus`u LABEL_READY'ye
+// TURETIR; kullanici o siparise hic dokunmamis olabilir ve o sipariş
+// "Barkod Bekliyor"dur. Bu dosyadaki LABEL_READY fixture'lari KULLANICININ
+// olusturdugu etiketi temsil ettigi icin ACIK aktivasyon damgasi tasir.
+// (Damgasiz -yalniz hazirlanmis- durumun testleri: server/label-ux-state-flow.test.mjs)
+const USER_LABEL_ACTIVATED_AT = '2026-08-01T09:00:00.000Z'
+
+
 // TEK CANONICAL sipariş statü sınıflandırması.
 // Her sipariş TEK canonical operasyon kovasında bulunur; tablo rozeti (Tümü),
 // sekmeler, detay ve Dashboard AYNI classifyCanonicalOrderStatus'ten beslenir.
@@ -82,7 +93,7 @@ test('CAN-1: aktif Created + etiket yok → BARCODE_WAITING (başka kovada deği
 
 test('CAN-2: LABEL_READY → LABEL_READY (Barkod Bekliyor değil)', async (t) => {
   const { classifyCanonicalOrderStatus } = await classifier(await withVite(t))
-  const order = baseOrder({ id: '2', operationStatus: 'LABEL_READY', labelStatus: 'READY' })
+  const order = baseOrder({ id: '2', operationStatus: 'LABEL_READY', userLabelActivatedAt: USER_LABEL_ACTIVATED_AT, labelStatus: 'READY' })
   assert.equal(classifyCanonicalOrderStatus(order).status, 'LABEL_READY')
   assert.equal(classifyCanonicalOrderStatus(order).label, 'Etiket Hazır')
 })
@@ -172,7 +183,7 @@ test('CAN-11: Tümü tablo rozeti = canonical (mapOperationStatus === classifyCa
   )
   const cases = [
     baseOrder({ id: 'a', operationStatus: 'NEW' }),
-    baseOrder({ id: 'b', operationStatus: 'LABEL_READY', labelStatus: 'READY' }),
+    baseOrder({ id: 'b', operationStatus: 'LABEL_READY', userLabelActivatedAt: USER_LABEL_ACTIVATED_AT, labelStatus: 'READY' }),
     baseOrder({ id: 'c', operationStatus: 'LABEL_PRINTED', labelStatus: 'PRINTED', hasPrintableLabel: true, shipment: printedShipment() }),
     baseOrder({ id: 'd', marketplaceStatus: 'Shipped', operationStatus: 'HANDED_TO_CARGO' }),
     baseOrder({ id: 'e', marketplaceStatus: 'Delivered', operationStatus: 'DELIVERED' }),
@@ -208,7 +219,7 @@ test('CAN-13: Dashboard sayaçları canonical bucket sayılarıyla eşleşir', a
   )
   const orders = [
     baseOrder({ id: 'bw', operationStatus: 'NEW' }),
-    baseOrder({ id: 'lr', operationStatus: 'LABEL_READY', labelStatus: 'READY' }),
+    baseOrder({ id: 'lr', operationStatus: 'LABEL_READY', userLabelActivatedAt: USER_LABEL_ACTIVATED_AT, labelStatus: 'READY' }),
     baseOrder({ id: 'lp', operationStatus: 'LABEL_PRINTED', labelStatus: 'PRINTED', hasPrintableLabel: true, shipment: printedShipment() }),
     baseOrder({ id: 'hc', marketplaceStatus: 'Shipped', operationStatus: 'HANDED_TO_CARGO' }),
   ]

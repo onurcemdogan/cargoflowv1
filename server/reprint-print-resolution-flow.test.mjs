@@ -240,8 +240,16 @@ test('REP-8: statusPresentation — LABEL_PRINTED ve LABEL_READY mesajları gün
     printed.description,
     'Etiket basıldı. Gerektiğinde tekrar yazdırabilirsiniz.',
   )
+  // MİMARİ DEĞİŞİKLİK (kullanıcı etiket aktivasyonu): "Etiket Hazır" rozeti
+  // KULLANICI durumudur; arka planda hazırlanmış artefakt onu üretemez. Bu
+  // fixture kullanıcının oluşturduğu etiketi temsil ettiği için açık
+  // aktivasyon damgası taşır.
   const ready = mapOperationStatus(
-    reprintOrder({ operationStatus: 'LABEL_READY', labelStatus: 'READY' }),
+    reprintOrder({
+      operationStatus: 'LABEL_READY',
+      labelStatus: 'READY',
+      userLabelActivatedAt: '2026-07-26T09:00:00Z',
+    }),
   )
   assert.equal(ready.description, 'Etiket hazır ve yazdırılabilir.')
 })
