@@ -43,7 +43,12 @@ import {
   type OperationTabFilter,
   type QuickTab,
 } from '../utils/ordersTabs'
-import { mapMarketplaceStatus } from '../utils/statusPresentation'
+import {
+  ORDERS_OPERATION_TAB_OPTIONS,
+  ORDERS_STATUS_FILTER_GROUPS,
+  ordersStatusFilterLabel,
+  ordersStatusFilterOptionsForGroup,
+} from '../utils/ordersFilterOptions'
 import { formatDisplayDate } from '../utils/formatters'
 import {
   visiblePageNumbers,
@@ -59,10 +64,7 @@ import type {
 import { buildOrdersDateRange } from '../utils/orderDateRange'
 import { SuratCreatePrintControls } from '../components/SuratCreatePrintControls'
 import type { LabelPrintTemplate } from '../utils/labelPrintTemplateRouting'
-import {
-  EXTERNAL_PROCESSING_LABEL,
-  isExternallyProcessed,
-} from '../utils/externalProcessing'
+import { isExternallyProcessed } from '../utils/externalProcessing'
 
 interface OrdersPageProps {
   /**
@@ -156,27 +158,6 @@ const marketplaces: Array<'all' | MarketplaceName> = [
   'Manuel',
 ]
 
-const statusOptions: OrderStatusFilter[] = [
-  'all',
-  'Yeni',
-  'Created',
-  'Picking',
-  'Invoiced',
-  'Shipped',
-  'Delivered',
-  'Cancelled',
-  'Returned',
-  'UnDelivered',
-  'UnSupplied',
-  'AtCollectionPoint',
-  'Unknown',
-  'Ön Kayıt Yapıldı',
-  'Kargo Oluşturuldu',
-  'Etiket Hazır',
-  'Etiket Oluşturuldu',
-  'Etiket Basıldı',
-  'Hata',
-]
 
 const cargoOptions: CargoFilter[] = ['all', 'Sürat Kargo', 'Bekliyor', 'Hatalı']
 
@@ -188,20 +169,8 @@ const cargoOptions: CargoFilter[] = ['all', 'Sürat Kargo', 'Bekliyor', 'Hatalı
 // oradan hesaplanır. İki ayrı tanım olsaydı sekme sayacı ile liste kayardı.
 const quickTabs = ORDERS_QUICK_TABS
 
-// "İşlem Durumu" filtresi seçenekleri: teknik yaşam-döngüsü durumlarına
-// (mevcut classifier'lar) kullanıcı dostu etiketlerle erişim.
-const operationTabOptions: Array<{ key: OperationTabFilter; label: string }> = [
-  { key: 'all', label: 'Tüm İşlem Durumları' },
-  { key: 'barcodePending', label: 'Barkod Bekliyor' },
-  { key: 'shipmentPending', label: 'Kargo Oluşturulacak' },
-  { key: 'suratVerificationPending', label: 'Doğrulama Bekliyor' },
-  { key: 'labelReady', label: 'Etiket Basılacak' },
-  { key: 'labelPrinted', label: 'Etiket Basıldı' },
-  { key: 'archive', label: 'Arşiv' },
-  // YEREL arşiv: kullanıcının manuel işaretlediği, başka bir entegrasyon
-  // programında işlenen siparişler. Buradan geri alınabilirler.
-  { key: 'externallyProcessed', label: EXTERNAL_PROCESSING_LABEL },
-]
+const operationTabOptions = ORDERS_OPERATION_TAB_OPTIONS
+
 
 /**
  * Serbest metin aramasında sunucuya gitmeden önce beklenen süre (ms).
@@ -491,6 +460,9 @@ export function OrdersPage({
     setCity('all')
     setDistrict('all')
     setMultiProductFilter('all')
+    // "Aynı Ürün Siparişi" SIFIRLANMIYORDU: temizlemeden sonra liste sessizce
+    // daraltılmış kalıyor ve kullanıcı nedenini göremiyordu.
+    setSameProductFilter('all')
     setActionFilter('all')
     setQuery('')
     setCustomerQuery('')
@@ -512,6 +484,9 @@ export function OrdersPage({
     setCity('all')
     setDistrict('all')
     setMultiProductFilter('all')
+    // "Aynı Ürün Siparişi" SIFIRLANMIYORDU: temizlemeden sonra liste sessizce
+    // daraltılmış kalıyor ve kullanıcı nedenini göremiyordu.
+    setSameProductFilter('all')
     setActionFilter('all')
     setQuery('')
     setCustomerQuery('')
@@ -641,10 +616,18 @@ export function OrdersPage({
               setCurrentPage(1)
             }}
           >
-            {statusOptions.map((item) => (
-              <option key={item} value={item}>
-                {statusOptionLabel(item)}
-              </option>
+            {/* YALNIZ SUNUM: gruplar ana seçenek dizisinden SÜZÜLEREK
+                üretilir; ikinci bir seçenek listesi YOKTUR. `value`lar ve
+                sorgu semantiği DEĞİŞMEZ. */}
+            <option value="all">{ordersStatusFilterLabel('all')}</option>
+            {ORDERS_STATUS_FILTER_GROUPS.map((group) => (
+              <optgroup key={group.key} label={group.label}>
+                {ordersStatusFilterOptionsForGroup(group.key).map((item) => (
+                  <option key={item} value={item}>
+                    {ordersStatusFilterLabel(item)}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
         </label>
@@ -913,7 +896,7 @@ export function OrdersPage({
             ? [
                 `Tab: ${quickTabs.find((tab) => tab.key === activeQuickTab)?.label ?? activeQuickTab}`,
                 `Pazaryeri: ${marketplace === 'all' ? 'Tümü' : marketplace}`,
-                `Statü: ${status === 'all' ? 'Tümü' : statusOptionLabel(status)}`,
+                `Statü: ${status === 'all' ? 'Tümü' : ordersStatusFilterLabel(status)}`,
                 `Kargo: ${cargo === 'all' ? 'Tümü' : cargo}`,
                 `Tarih: ${dateRangeOptions.find((item) => item.key === datePreset)?.label ?? datePreset}`,
                 `Arama: ${query || '-'}`,
@@ -1049,22 +1032,3 @@ function bulkDisabledReason(
   return undefined
 }
 
-function statusOptionLabel(item: OrderStatusFilter): string {
-  if (item === 'all') return 'Tümü'
-  const marketplaceStatuses = [
-    'Created',
-    'Picking',
-    'Invoiced',
-    'Shipped',
-    'Delivered',
-    'Cancelled',
-    'Returned',
-    'UnDelivered',
-    'UnSupplied',
-    'AtCollectionPoint',
-    'Unknown',
-  ]
-  return marketplaceStatuses.includes(item)
-    ? mapMarketplaceStatus('trendyol', item).label
-    : item
-}

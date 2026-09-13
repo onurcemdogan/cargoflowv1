@@ -661,6 +661,12 @@ export function buildVisibleOrders({
   const beforeOperationStatusFilter = current
   if (!isAllFilter(operationStatusFilter)) {
     const expectedStatus = normalizedToken(operationStatusFilter)
+    // Seçilen değerin KALICI canonical karşılığı da kabul edilir (bkz.
+    // STATUS_FILTER_ALIASES). Mevcut eşleşme kuralı DEĞİŞMEZ; küme GENİŞLER.
+    const acceptedStatuses = new Set<string>([
+      expectedStatus,
+      ...(STATUS_FILTER_ALIASES[expectedStatus] ?? []),
+    ])
     current = current.filter((order) =>
       [
         order.status,
@@ -669,7 +675,7 @@ export function buildVisibleOrders({
         order.labelStatus,
       ]
         .map(normalizedToken)
-        .includes(expectedStatus),
+        .some((token) => acceptedStatuses.has(token)),
     )
   }
   recordRemovedOrders(
@@ -1180,6 +1186,24 @@ export function classifyCanonicalOrderStatus(order: CargoOrder): {
     status: STAGE_TO_CANONICAL_STATUS[stage],
     label: DASHBOARD_OPERATION_STAGE_LABELS[stage],
   }
+}
+
+// ═══ STATÜ FİLTRESİ — KALICI KARŞILIK (ALIAS) ══════════════════════════
+//
+// ÖLÇÜLEN KUSUR: `order.status` HİÇBİR YERDE KALICI DEĞİLDİR — auth modda
+// `rowToOrder` her satıra 'Yeni' yazar ve yalnız türetme onu 'Etiket Hazır'/
+// 'Etiket Basıldı' yapar. Bu yüzden "Hata" seçeneği YALNIZ aynı oturumda,
+// başarısız bir create'ten hemen sonra iş görüyordu; sayfa yenilenince
+// (DB'den yeniden okuma) 0 sonuç dönüyordu.
+//
+// Kalıcı canonical karşılık `operation_status = 'ERROR'`tür: sync bunu
+// iptal/iade/teslim edilemedi/tedarik edilemedi paketlerine yazar.
+//
+// GEÇİCİ DAVRANIŞ BOZULMAZ: alias yalnız KABUL EDİLEN token kümesini
+// genişletir; `status === 'Hata'` eşleşmesi aynen sürer. Anahtarlar
+// `normalizedToken` biçimindedir.
+const STATUS_FILTER_ALIASES: Record<string, readonly string[]> = {
+  hata: ['error'],
 }
 
 function isAllFilter(value?: string): boolean {
