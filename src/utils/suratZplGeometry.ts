@@ -68,6 +68,67 @@ function visibleLength(data: string): number {
   return data.replace(/_[0-9a-fA-F]{2}/g, 'x').length
 }
 
+// ═══ ^BQ (QR) RENDER GEOMETRİSİ — ÖLÇÜLDÜ, VARSAYILMADI ══════════════════
+//
+// ÖLÇÜLEN KUSUR: bu modül `^BQ`yu "kenar = büyütme × 25, `^FT` y = ALT kenar"
+// diye modelliyordu. Composer ise AYNI komut için BAŞKA bir model kullanıyor
+// (`QR_FT_LIFT_PER_MAGNIFICATION = 7`). İki modül, tek komut, İKİ MODEL.
+//
+// 799×799 gerçek render'da taşıyıcı slotunda (taban çizgisi 741) ölçüldü:
+//
+//   büyütme | kenar (dot) | alt mürekkep | taban − alt
+//        1  |     21      |     733      |      8
+//        2  |     42      |     726      |     15
+//        4  |     84      |     712      |     29
+//        5  |    105      |     705      |     36
+//        6  |    126      |     698      |     43
+//
+// Yani: kenar = 21 × büyütme  ve  alt = taban − (7 × büyütme + 1).
+// Eski model büyütme 5'te alt kenarı 741 diyordu; GERÇEK 705. Aradaki
+// 36 dot HAYALET İÇERİKTİR ve doğrudan ürün footer'ından çalınıyordu
+// (footer 44 dot; fiziksel boş bant 93 dot).
+//
+// MODÜL SAYISI VARSAYIMI KANITLANIR: 21 modül YALNIZ Version-1'e sığdığı
+// KESİN olan kısa sayısal yükte geçerlidir. Daha uzun yük daha çok modül
+// demektir; o durumda ESKİ muhafazakâr tahmin (25 × büyütme) KORUNUR —
+// ölçü asla EKSİK çıkmaz, footer resmî alana binmez.
+//
+// KAPSAM — YALNIZ `^FT`: düzeltme `^FT` ile konumlanan `^BQ`ya uygulanır.
+// Gerçek taşıyıcı şablonlarının TAMAMI (ve her iki canlı vaka) bu biçimi
+// kullanır. `^FO` dalı AYNEN korunur: yerel renderer orada `^BQ`yu aşağı
+// kaydırıyor ama kayma miktarı ölçümlerde TUTARSIZ çıktı (bir kurulumda
+// +10 dot, bir başkasında +75). İki veri noktasından model uydurmak yerine
+// o dal DEĞİŞTİRİLMEDİ — mevcut tahmin (25 × büyütme, `^FO` y'den aşağı)
+// gerçek kutudan (21 × büyütme, +10) BÜYÜKTÜR, yani muhafazakâr kalır ve
+// footer QR'ın üstüne binmez (ölçüldü: parser alt 670, render alt 663).
+const QR_V1_MODULES = 21
+/** Version-1 QR (ECC Q) sayısal kapasitesi — üstünde modül sayısı ARTAR. */
+const QR_MAX_NUMERIC_V1 = 27
+/** `^FT` ile konumlanan `^BQ`nun taban çizgisinden alt mürekkebe payı. */
+const QR_FT_BOTTOM_INSET_PER_MAGNIFICATION = 7
+const QR_FT_BOTTOM_INSET_CONSTANT = 1
+
+function resolveQrRenderBox(params: {
+  magnification: number
+  data: string
+  baseline: boolean
+  cursorY: number
+}): { top: number; height: number; side: number } | null {
+  // `^FO` dalı DEĞİŞMEDİ — çağıran eski modeli kullanır.
+  if (!params.baseline) return null
+  const digits = String(params.data ?? '').replace(/^[A-Za-z]{1,2},/, '')
+  // Yük Version-1'e sığmıyorsa modül sayısı BİLİNMEZ → eski muhafazakâr
+  // tahmin (çağıranda) korunur; ölçü asla EKSİK çıkmaz.
+  if (!/^\d+$/.test(digits) || digits.length > QR_MAX_NUMERIC_V1) return null
+  const side = QR_V1_MODULES * params.magnification
+  const inset =
+    QR_FT_BOTTOM_INSET_PER_MAGNIFICATION * params.magnification +
+    QR_FT_BOTTOM_INSET_CONSTANT
+  const bottom = Math.max(0, params.cursorY - inset)
+  const top = Math.max(0, bottom - side)
+  return { top, height: bottom - top, side }
+}
+
 export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
   const zpl = String(rawZpl ?? '')
   const empty: ZplGeometry = {
@@ -118,6 +179,9 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
   let barcodeHeight = 0
   let blockWidth = 0
   let blockLines = 1
+  // ^BQ (QR) DURUMU — DataMatrix'ten AYRILIR: ikisi de `pending='qr'` üretir
+  // ama render geometrileri FARKLIDIR (aşağıdaki ölçüm tablosu).
+  let qrMagnification = 0
   let pending: ZplElementBox['kind'] = 'text'
 
   for (const token of tokens) {
@@ -189,7 +253,10 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
     if (command === 'BQ') {
       const parts = args.split(',')
       const magnification = num(parts[2], 4)
+      // Kaba tahmin KORUNUR (yük Version-1'e sığmıyorsa kullanılır); gerçek
+      // ölçüm ^FD anında yapılır.
       barcodeHeight = magnification * 25
+      qrMagnification = magnification > 0 ? magnification : 1
       barcodeInterpretationBelow = false
       pending = 'qr'
       continue
@@ -198,6 +265,8 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
       const parts = args.split(',')
       const moduleHeight = num(parts[1], 6)
       barcodeHeight = moduleHeight * 24
+      // DataMatrix ^BQ DEĞİLDİR: QR'a özgü ölçüm modeli UYGULANMAZ.
+      qrMagnification = 0
       barcodeInterpretationBelow = false
       pending = 'qr'
       continue
@@ -242,18 +311,26 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
           rotated: fieldRotated,
         })
       } else if (pending === 'qr') {
-        const side = barcodeHeight || 100
         // KÖK NEDEN (canlı 4057121401 — contentBottom 898): ^FT ile
         // konumlanan DataMatrix (^BXN,8,200 → 8 × 24 = 192 dot) AŞAĞI doğru
         // sayılıyordu: 706 + 192 = 898. Oysa ^FT matris/QR kodu da TABAN
         // çizgisinden konumlandırır — kod YUKARI uzar, aşağıya taşmaz
         // (2D sembolde yorum satırı YOKTUR).
         const baselineCode = cursorIsBaseline && !fieldRotated
+        const qr = qrMagnification > 0
+          ? resolveQrRenderBox({
+              magnification: qrMagnification,
+              data,
+              baseline: baselineCode,
+              cursorY,
+            })
+          : null
+        const side = qr ? qr.side : barcodeHeight || 100
         elements.push({
           x: cursorX,
-          y: baselineCode ? Math.max(0, cursorY - side) : cursorY,
+          y: qr ? qr.top : baselineCode ? Math.max(0, cursorY - side) : cursorY,
           width: side,
-          height: side,
+          height: qr ? qr.height : side,
           kind: 'qr',
           rotated: fieldRotated,
         })

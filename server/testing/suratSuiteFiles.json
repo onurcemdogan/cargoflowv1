@@ -223,5 +223,6 @@
   "server/product-text-fit-flow.test.mjs",
   "server/label-ux-state-flow.test.mjs",
   "server/label-user-activation-flow.test.mjs",
-  "server/orders-filter-audit-flow.test.mjs"
+  "server/orders-filter-audit-flow.test.mjs",
+  "server/live-label-footer-consistency-flow.test.mjs"
 ]
