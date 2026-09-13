@@ -843,6 +843,11 @@ export interface CargoOrder {
   // ZPL artifact) var mı? attachShipment tarafından operation payload'ından
   // hesaplanır; geçici tarayıcı state'ine bağlı DEĞİLDİR (sayfa yenilemesinde korunur).
   hasPrintableLabel?: boolean
+  /**
+   * Siparişin para birimi. `orders.currency` kolonunda KALICIDIR ama okuma
+   * yolunda ÜRETİLMİYORDU; sipariş detayı sabit "TRY" yazıyordu.
+   */
+  currency?: string
   // ═══ KULLANICI ETİKET AKTİVASYONU ═════════════════════════════════════
   //
   // "Bu siparişin etiketi kullanıcının iş akışına ALINDI" anı (ISO). Arka plan

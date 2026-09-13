@@ -7,6 +7,7 @@ import type {
   TenantDesiConfig,
 } from '../types/cargoflow'
 import { formatCurrency, formatDisplayDate } from '../utils/formatters'
+import { classifyOrderForTabs } from '../utils/orderClassification'
 import {
   buildProductMatchDebug,
   resolveProductImage,
@@ -147,19 +148,38 @@ export function OrderDetailDrawer({
       )
     }
   }, [order])
+  // Planlanan teslim: gerçek değer yoksa alan HİÇ çizilmez (bkz. aşağıda).
+  const plannedDeliveryRaw = formatDisplayDate(order.deliveryDate)
+  const plannedDeliveryLabel =
+    plannedDeliveryRaw && plannedDeliveryRaw !== '-' ? plannedDeliveryRaw : ''
   const packageCountLabel = `${Math.max(1, Math.round(order.packageCount ?? 1))} paket`
-  const labelStatusLabel =
-    order.labelStatus === 'PRINTED'
-      ? 'Etiket Basıldı'
-      : printEligibility.canPrint
-        ? 'Etiket Hazır'
-        : 'Etiket Bekliyor'
+  // ═══ ÖZET KARTLARI SATIRLA AYNI CANONICAL KAYNAKTAN ═══════════════════
+  //
+  // ÖLÇÜLEN KUSUR: "Etiket Durumu" `printEligibility.canPrint`ten geliyordu —
+  // yani ARTEFAKT hazırlığından. Arka planda hazırlanmış ama kullanıcının
+  // almadığı sipariş listede "Barkod Bekliyor" iken detayda "Etiket Hazır"
+  // görünüyordu (ab1b228 sözleşmesinin ihlali). Artık satır rozetiyle AYNI
+  // sınıflandırıcıdan gelir.
+  const classification = classifyOrderForTabs(order)
+  const labelStatusLabel = classification.isLabelPrinted
+    ? 'Etiket Basıldı'
+    : classification.isLabelReady
+      ? 'Etiket Hazır'
+      : 'Barkod Bekliyor'
   // Kargo durumu alanında fiziksel Sürat kabulü (SDP) bekleme metni GÖSTERİLMEZ;
   // etiket hazır/basılıyken SDP kabulü CargoFlow kriteri değildir.
-  const cargoStatusLabel = resolvedStatus.delivered
+  //
+  // ÖLÇÜLEN KUSUR: pazaryeri "Shipped" derken taşıyıcı takip kaydı yoksa bu
+  // alan "Bekliyor" yazıyordu — liste "Kargoya Verildi" derken. Canonical
+  // kanıt artık burada da okunur.
+  const cargoStatusLabel = classification.isDelivered
     ? 'Teslim Edildi'
     : order.shipment?.carrierStatusLabel ||
-      (order.shipment ? 'Takip Bekleniyor' : 'Bekliyor')
+      (classification.isHandedToCargo
+        ? 'Kargoya Verildi'
+        : order.shipment
+          ? 'Takip Bekleniyor'
+          : 'Bekliyor')
   const printSourceLabel =
     printSource.source === 'carrier_zpl'
       ? 'Taşıyıcı ZPL etiketi'
@@ -279,12 +299,12 @@ export function OrderDetailDrawer({
                 <SummaryCard
                   label="Etiket Durumu"
                   value={labelStatusLabel}
-                  tone={printEligibility.canPrint ? 'ready' : 'waiting'}
+                  tone={classification.isLabelPrinted || classification.isLabelReady ? 'ready' : 'waiting'}
                 />
                 <SummaryCard
                   label="Kargo Durumu"
                   value={cargoStatusLabel}
-                  tone={resolvedStatus.delivered ? 'done' : 'waiting'}
+                  tone={classification.isDelivered ? 'done' : 'waiting'}
                 />
                 <SummaryCard
                   label="Toplam Desi"
@@ -323,10 +343,12 @@ export function OrderDetailDrawer({
                   label="Sipariş Tarihi"
                   value={formatDisplayDate(order.orderDate || order.createdAt)}
                 />
-                <Detail
-                  label="Planlanan Teslim"
-                  value={formatDisplayDate(order.deliveryDate)}
-                />
+                {/* KOŞULLU: planlanan teslim tarihi pazaryeri senkronunda
+                    gelir ama KALICI KOLONU YOKTUR — sayfa yenilendikten sonra
+                    okunamaz. Boşken "-" basmak yerine alan GİZLENİR. */}
+                {plannedDeliveryLabel ? (
+                  <Detail label="Planlanan Teslim" value={plannedDeliveryLabel} />
+                ) : null}
                 {resolvedStatus.delivered && order.shipment?.deliveredAt ? (
                   <Detail
                     label="Gerçek Teslim Tarihi"
@@ -337,24 +359,24 @@ export function OrderDetailDrawer({
                   label="Toplam Tutar"
                   value={formatCurrency(order.totalAmount)}
                 />
-                <Detail label="Para Birimi" value="TRY" />
-                <Detail
-                  label="Kaynak Sipariş No"
-                  value={sourceOrderNumber(order) || order.externalOrderId}
-                />
+                {/* Canonical alan: sabit "TRY" yazılıyordu; sipariş kendi
+                    para birimini TAŞIR. */}
+                <Detail label="Para Birimi" value={order.currency || 'TRY'} />
+                {/* KOŞULLU: yalnız görünen numaradan FARKLIYSA anlamlıdır. */}
+                {sourceOrderNumber(order) || order.externalOrderId ? (
+                  <Detail
+                    label="Kaynak Sipariş No"
+                    value={sourceOrderNumber(order) || order.externalOrderId}
+                  />
+                ) : null}
+                {/* Pazaryeri kargo referansı TEK alanda toplandı: ham
+                    `OzelKargoTakipNo` aynı değeri ikinci kez gösteriyordu.
+                    Sağlayıcı alan adları Teknik Durum'a taşındı. */}
                 <Detail
                   label="Trendyol Takip / QR No"
-                  value={order.cargoTrackingNumber}
-                />
-                <Detail
-                  label="OzelKargoTakipNo"
-                  value={order.shipment?.ozelKargoTakipNo}
-                />
-                <Detail
-                  label="ReferansNo"
                   value={
-                    order.shipment?.shipmentReference ||
-                    order.shipment?.shipmentCode
+                    order.cargoTrackingNumber ||
+                    order.shipment?.ozelKargoTakipNo
                   }
                 />
               </div>
@@ -455,18 +477,8 @@ export function OrderDetailDrawer({
                       : order.cargoProviderName || 'Bekliyor'
                   }
                 />
-                <Detail
-                  label="Paket ID"
-                  value={order.packageId || order.shipmentPackageId}
-                />
-                <Detail
-                  label="Servis Modu"
-                  value={suratVerification.serviceMode}
-                />
-                <Detail
-                  label="Operasyon Adı"
-                  value={suratVerification.operationName}
-                />
+                {/* "Paket ID" Sipariş Bilgileri'nde ZATEN var; "Servis Modu"
+                    ve "Operasyon Adı" sağlayıcı iç alanlarıdır → Teknik Durum. */}
                 <Detail label="Sürat T.No" value={printEligibility.trackingNumber || suratVerification.tNo} />
                 <Detail
                   label="Sürat Barkod"
@@ -475,13 +487,7 @@ export function OrderDetailDrawer({
                     suratVerification.officialBarcodeValue
                   }
                 />
-                <Detail
-                  label="Trendyol Takip / QR No"
-                  value={
-                    order.shipment?.ozelKargoTakipNo ||
-                    order.cargoTrackingNumber
-                  }
-                />
+                {/* Trendyol takip numarası Sipariş Bilgileri'nde ZATEN var. */}
                 <Detail
                   label="Toplam Desi"
                   value={formatDesi(
@@ -499,24 +505,10 @@ export function OrderDetailDrawer({
                   }
                 />
                 <Detail label="Adet (Koli)" value={packageCountLabel} />
-                <Detail label="ZPL Durumu" value={zplStatusLabel} />
-                <Detail label="Print Kaynağı" value={printSourceLabel} />
-                <Detail
-                  label="Takip Doğrulama"
-                  value={trackingVerificationLabel}
-                />
-                {order.shipment?.candidateTNo ? (
-                  <Detail
-                    label="Aday T.No"
-                    value={order.shipment.candidateTNo}
-                  />
-                ) : null}
-                {order.shipment?.candidateBarkodNo ? (
-                  <Detail
-                    label="Aday Barkod"
-                    value={order.shipment.candidateBarkodNo}
-                  />
-                ) : null}
+                {/* ZPL Durumu · Print Kaynağı · Takip Doğrulama · Aday kodlar
+                    OPERASYON KARARINDA kullanılmaz (baskı yetkisi butonların
+                    kendi durumundan okunur) ve normal yaşam döngüsünde
+                    çoğunlukla teknik/boş değerdir → Teknik Durum. */}
               </div>
               {printSource.source === 'canonical_html' ? (
                 <div className="detail-warning" role="status">
@@ -589,6 +581,44 @@ export function OrderDetailDrawer({
               <details className="technical-status raw-line-details">
                 <summary>Teknik Durum</summary>
                 <div className="detail-grid">
+                  {/* ANA DETAYDAN TAŞINANLAR — teknik / sağlayıcı alanları. */}
+                  <Detail label="ZPL Durumu" value={zplStatusLabel} />
+                  <Detail label="Print Kaynağı" value={printSourceLabel} />
+                  <Detail
+                    label="Takip Doğrulama"
+                    value={trackingVerificationLabel}
+                  />
+                  <Detail
+                    label="Servis Modu"
+                    value={suratVerification.serviceMode}
+                  />
+                  <Detail
+                    label="Operasyon Adı"
+                    value={suratVerification.operationName}
+                  />
+                  <Detail
+                    label="OzelKargoTakipNo"
+                    value={order.shipment?.ozelKargoTakipNo}
+                  />
+                  <Detail
+                    label="ReferansNo"
+                    value={
+                      order.shipment?.shipmentReference ||
+                      order.shipment?.shipmentCode
+                    }
+                  />
+                  {order.shipment?.candidateTNo ? (
+                    <Detail
+                      label="Aday T.No"
+                      value={order.shipment.candidateTNo}
+                    />
+                  ) : null}
+                  {order.shipment?.candidateBarkodNo ? (
+                    <Detail
+                      label="Aday Barkod"
+                      value={order.shipment.candidateBarkodNo}
+                    />
+                  ) : null}
                   <Detail
                     label="lifecycleStatus"
                     value={order.shipment?.lifecycleStatus}

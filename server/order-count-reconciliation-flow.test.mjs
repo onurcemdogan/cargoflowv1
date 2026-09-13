@@ -98,7 +98,9 @@ test('OCR-2: Yeni Siparişler / Etiket Hazır tanımları gerçek classifier\'da
     marketplaceStatus: 'Created', operationStatus: 'NEW', items: [], ...over,
   })
   const isNew = (o) => orderMatchesQuickTab(classifyOrderForTabs(o), 'newOrders')
-  const isLabel = (o) => orderMatchesQuickTab(classifyOrderForTabs(o), 'labelStage')
+  // MİMARİ DEĞİŞİKLİK: ikinci ana sekme artık YALNIZ "Etiket Basıldı".
+  const isPrintedTab = (o) => orderMatchesQuickTab(classifyOrderForTabs(o), 'labelPrinted')
+  const isLabel = isPrintedTab
 
   // Açık ve etiketsiz → Yeni Siparişler
   assert.equal(isNew(mk({})), true)
@@ -109,12 +111,22 @@ test('OCR-2: Yeni Siparişler / Etiket Hazır tanımları gerçek classifier\'da
   // KULLANICI durumudur. Arka plan worker'ı artefaktı önceden hazırlayınca
   // `operationStatus` LABEL_READY'ye TÜRETİLİR; kullanıcı o siparişe hiç
   // dokunmamış olabilir. Bu yüzden fixture'a AÇIK aktivasyon damgası eklendi.
+  // Aktive edilmis ama BASILMAMIS: "Etiket Basildi" sekmesine GIRMEZ ve
+  // kapsama bosluğu olmasin diye "Yeni Siparisler"de KALIR.
   const ready = mk({
     operationStatus: 'LABEL_READY',
     userLabelActivatedAt: '2026-09-01T10:00:00.000Z',
   })
-  assert.equal(isLabel(ready), true)
-  assert.equal(isNew(ready), false)
+  assert.equal(isLabel(ready), false)
+  assert.equal(isNew(ready), true)
+  // BASILMIS siparis: sekmeye GIRER, "Yeni Siparisler"den DUSER.
+  const printed = mk({
+    operationStatus: 'LABEL_PRINTED',
+    labelStatus: 'PRINTED',
+    label: { printedAt: '2026-09-02T10:00:00.000Z' },
+  })
+  assert.equal(isLabel(printed), true)
+  assert.equal(isNew(printed), false)
   // GÜÇLENDİRME: damgasız (yalnız arka planda hazırlanmış) sipariş Etiket
   // Hazır'a GİRMEZ ve Yeni Siparişler'de KALIR — çift sayım yine YOK.
   const preparedOnly = mk({ operationStatus: 'LABEL_READY' })

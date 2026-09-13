@@ -52,7 +52,19 @@ import {
  */
 export const ORDERS_QUICK_TABS: ReadonlyArray<{ key: QuickTab; label: string }> = [
   { key: 'newOrders', label: 'Yeni Siparişler' },
-  { key: 'labelStage', label: 'Etiket Hazır' },
+  // ═══ "ETİKET BASILDI" — RENAME DEĞİL, YÜKLEM DÜZELTMESİ ═══════════════
+  //
+  // Bu sekme `labelStage` (= isLabelReady ∪ isLabelPrinted) idi ve adı
+  // "Etiket Hazır"dı. Kullanıcı aktivasyon semantiği geldikten sonra bu
+  // İKİ AYRI kullanıcı durumunu tek sekmede birleştiriyordu: sekmeye
+  // "Etiket Hazır" girip içeride "Etiket Basıldı" satırları görülüyordu.
+  //
+  // Artık sekme TEK durumu temsil eder ve üyelik canonical `isLabelPrinted`
+  // yükleminden gelir — yalnız etiket DEĞİŞMEDİ, yüklem de değişti.
+  //
+  // "Etiket Hazır" kullanıcı durumu SİLİNMEDİ: rozet, İşlem Durumu filtresi
+  // ve Statü filtresinde aynen durur; üst sekme olmak zorunda değildir.
+  { key: 'labelPrinted', label: 'Etiket Basıldı' },
   { key: 'handedToCargo', label: 'Kargoya Verildi' },
   { key: 'delivered', label: 'Teslim Edildi' },
   { key: 'cancelReturn', label: 'İptal / İade' },

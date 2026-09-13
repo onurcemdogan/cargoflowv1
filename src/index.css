@@ -4099,6 +4099,19 @@ button:disabled {
   border-color: #b91c1c;
 }
 
+/* KAYIT YOK — adım ne tamamlandı ne bekliyor: CargoFlow'da bu adıma ait kanıt
+   yok (gönderi harici bir sistemde hazırlanmış olabilir). Kesikli çerçeve
+   "bilinmiyor"u "henüz olmadı"dan AYIRIR; sahte tamamlanma gösterilmez. */
+.surat-timeline-unknown .surat-timeline-dot {
+  background: var(--surface);
+  border-style: dashed;
+  border-color: var(--muted-border, var(--border));
+}
+
+.surat-timeline-unknown .surat-timeline-description {
+  font-style: italic;
+}
+
 .surat-timeline-copy { min-width: 0; display: grid; gap: 2px; }
 
 .surat-timeline-head {

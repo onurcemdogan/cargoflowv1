@@ -739,7 +739,11 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
   // Siparişler sekmesi + Barkod Bekliyor işlem filtresi). Ana sekme sayaçları
   // aşama toplamını gösterir (teknik alt-filtreden etkilenmez).
   assert.match(ordersHtml, /Yeni Siparişler \(12\)/)
-  assert.match(ordersHtml, /Etiket Hazır \(0\)/)
+  // MİMARİ DEĞİŞİKLİK: ikinci ana sekme artık "Etiket Basıldı" ve üyeliği
+  // canonical `isLabelPrinted`. Eskiden adı "Etiket Hazır" iken içeriği
+  // hazır ∪ basılmış idi; sekmeye girip "Etiket Basıldı" satırları görülüyordu.
+  assert.match(ordersHtml, /Etiket Basıldı \(0\)/)
+  assert.doesNotMatch(ordersHtml, /quick-tabs[^]*?Etiket Hazır \(/)
   assert.match(ordersHtml, /Kargoya Verildi \(4\)/)
   assert.match(ordersHtml, /Teslim Edildi \(0\)/)
   assert.match(ordersHtml, /Tümü \(16\)/)

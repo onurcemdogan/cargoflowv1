@@ -5,7 +5,10 @@ import {
   isPreassignedAwaitingAcceptance,
   resolveSuratPrintEligibility,
 } from './suratPrintEligibility'
-import { resolveOrderStatus } from './shipmentStatus'
+import {
+  describeShippingEvidence,
+  resolveOrderShippingEvidence,
+} from './orderShippingEvidence'
 
 // Salt-okunur zaman çizelgesi modeli: yalnız mevcut order/shipment verisinden
 // üretilir. API çağrısı, create veya Serendip doğrulaması TETİKLEMEZ.
@@ -14,6 +17,13 @@ export type SuratTimelineStepStatus =
   | 'active'
   | 'pending'
   | 'error'
+  /**
+   * KAYIT YOK — adım ne tamamlandı ne bekliyor: CargoFlow'da bu adıma ait
+   * KANIT bulunmuyor. Sipariş harici bir sistemde hazırlanıp kargoya
+   * verilmiş olabilir. Sahte "tamamlandı" YAZMAK YERİNE bilinmezlik açıkça
+   * gösterilir (doğrusal olmayan kanıt).
+   */
+  | 'unknown'
 
 export interface SuratTimelineStep {
   key:
@@ -34,18 +44,20 @@ export function buildSuratShipmentTimeline(
   const shipment = order.shipment
   const verification = verifySuratShipment(order)
   const eligibility = resolveSuratPrintEligibility(order)
-  const resolved = resolveOrderStatus(order)
 
-  const delivered = Boolean(
-    resolved.delivered ||
-      order.marketplaceStatus === 'Delivered' ||
-      shipment?.deliveredAt,
-  )
+  // ═══ TEK CANONICAL KANIT ═══════════════════════════════════════════════
+  //
+  // Liste/rozet/sekme ile AYNI çözücü. Eskiden burada DAHA DAR bir kümeye
+  // bakılıyordu (pazaryeri `Shipped` ve `shippedAt` HİÇ okunmuyordu), bu
+  // yüzden satır "Kargoya Verildi" derken çizelge "Henüz aktif takip yok"
+  // diyebiliyordu.
+  const evidence = resolveOrderShippingEvidence(order)
+  const delivered = evidence.delivered
   const trackingActive = Boolean(
     delivered ||
+      evidence.handedToCargo ||
       verification.verifiedShipment ||
       shipment?.verifiedShipment ||
-      order.operationStatus === 'HANDED_TO_CARGO' ||
       ['TRACKING_ACTIVE', 'VERIFIED'].includes(
         String(shipment?.lifecycleStatus ?? ''),
       ),
@@ -57,9 +69,22 @@ export function buildSuratShipmentTimeline(
       (isPreassignedAwaitingAcceptance(shipment) ||
         eligibility.awaitingAcceptance),
   )
-  const labelCreated = Boolean(
-    trackingActive || awaitingAcceptance || eligibility.canPrint,
+  // ═══ GEÇMİŞ UYDURULMAZ ═════════════════════════════════════════════════
+  //
+  // "Etiket Oluşturuldu" ARTIK `trackingActive`ten TÜRETİLMEZ. Sipariş harici
+  // bir sistemde hazırlanıp kargoya verilmiş olabilir; o zaman CargoFlow'da
+  // etiket artefaktı YOKTUR ve adımı "tamamlandı" göstermek sahte geçmiş
+  // yazmak olurdu. Adım YALNIZ gerçek CargoFlow etiket kanıtıyla tamamlanır.
+  const hasLabelArtifact = Boolean(
+    eligibility.canPrint ||
+      awaitingAcceptance ||
+      verification.verifiedShipment ||
+      shipment?.barcodeRaw ||
+      order.hasPrintableLabel === true,
   )
+  const labelCreated = hasLabelArtifact
+  // Kargoya verilmiş ama CargoFlow etiket kanıtı YOK → "kayıt yok".
+  const labelHistoryUnknown = Boolean(!hasLabelArtifact && trackingActive)
   const realCreateError = Boolean(
     !labelCreated &&
       (order.operationStatus === 'ERROR' ||
@@ -80,8 +105,8 @@ export function buildSuratShipmentTimeline(
         ),
       )
     : ''
-  const deliveredTimestamp = shipment?.deliveredAt
-    ? cleanDate(formatDisplayDate(shipment.deliveredAt))
+  const deliveredTimestamp = evidence.deliveredAt
+    ? cleanDate(formatDisplayDate(evidence.deliveredAt))
     : ''
 
   return [
@@ -97,30 +122,38 @@ export function buildSuratShipmentTimeline(
       label: 'Etiket Oluşturuldu',
       status: labelCreated
         ? 'completed'
-        : realCreateError
-          ? 'error'
-          : shipment
-            ? 'active'
-            : 'pending',
+        : labelHistoryUnknown
+          ? 'unknown'
+          : realCreateError
+            ? 'error'
+            : shipment
+              ? 'active'
+              : 'pending',
       timestamp: labelCreated ? labelTimestamp || undefined : undefined,
       description: labelCreated
         ? 'T.No ve barkod üretildi.'
-        : realCreateError
-          ? order.errorMessage ||
-            'Sürat create hatası; kayıt incelenmeli.'
-          : 'Sürat gönderisi henüz oluşturulmadı.',
+        : labelHistoryUnknown
+          ? 'CargoFlow kaydı yok; gönderi harici bir sistemde hazırlanmış olabilir.'
+          : realCreateError
+            ? order.errorMessage ||
+              'Sürat create hatası; kayıt incelenmeli.'
+            : 'Sürat gönderisi henüz oluşturulmadı.',
     },
     {
       key: 'awaitingAcceptance',
       label: 'Etiket Hazır',
-      status: trackingActive
-        ? 'completed'
-        : awaitingAcceptance
-          ? 'active'
-          : 'pending',
-      description: trackingActive
-        ? 'Etiket hazır; kargo süreci ilerledi.'
-        : 'Etiket hazır ve yazdırılabilir.',
+      status: labelHistoryUnknown
+        ? 'unknown'
+        : trackingActive
+          ? 'completed'
+          : awaitingAcceptance
+            ? 'active'
+            : 'pending',
+      description: labelHistoryUnknown
+        ? 'CargoFlow kaydı yok.'
+        : trackingActive
+          ? 'Etiket hazır; kargo süreci ilerledi.'
+          : 'Etiket hazır ve yazdırılabilir.',
     },
     {
       key: 'trackingActive',
@@ -130,9 +163,19 @@ export function buildSuratShipmentTimeline(
         : trackingActive
           ? 'active'
           : 'pending',
-      description: trackingActive
+      timestamp: evidence.shippedAt
+        ? cleanDate(formatDisplayDate(evidence.shippedAt)) || undefined
+        : undefined,
+      // GEREKÇE KANITIN KAYNAĞINDAN GELİR: taşıyıcı doğrulaması yokken
+      // "Sürat takip kaydı doğrulandı" YAZILMAZ.
+      description: verification.verifiedShipment
         ? 'Sürat takip kaydı doğrulandı.'
-        : 'Henüz aktif takip yok.',
+        : describeShippingEvidence(
+            // Teslim edilmiş gönderide "kargoya verildi" kanıtı ayrıca
+            // kaydedilmemiş olabilir; gerekçe teslim kanıtının KAYNAĞINDAN
+            // gelir. (Sınıflandırma yüklemi DEĞİŞMEZ — bkz. evidence modülü.)
+            evidence.handedToCargoSource ?? evidence.deliveredSource,
+          ),
     },
     {
       key: 'delivered',

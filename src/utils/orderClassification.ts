@@ -17,6 +17,7 @@ import {
   hasPreparedLabelArtifact,
   resolveLabelWorkflowActivation,
 } from './labelWorkflowActivation.ts'
+import { resolveOrderShippingEvidence } from './orderShippingEvidence.ts'
 import {
   buildRepeatedProductOrderIds,
   type SameProductFilter,
@@ -198,10 +199,6 @@ function computeOrderTabClassification(
     operationStatus === 'labelready' && labelWorkflowActivated
   const canonicalLabelPrinted = operationStatus === 'labelprinted'
   const marketplaceStatus = String(order.marketplaceStatus ?? '').trim()
-  const marketplaceDelivered = marketplaceStatus === 'Delivered'
-  const marketplaceHandedToCargo = ['Shipped', 'AtCollectionPoint'].includes(
-    marketplaceStatus,
-  )
   const marketplaceCanceledOrReturned = [
     'Cancelled',
     'Returned',
@@ -209,38 +206,26 @@ function computeOrderTabClassification(
     'UnSupplied',
   ].includes(marketplaceStatus)
   const resolvedStatus = resolveOrderStatus(order)
-  // Persist edilmiş taşıyıcı zaman damgaları GÜÇLÜ kanıttır: yalnız eski tarih,
-  // 727 referansı, packageId veya kargo firma adı DEĞİL. shippedAt/deliveredAt
-  // (ve handedToCargoAt) → gerçek "Kargoya Verildi / Teslim".
-  const shipmentShippedAt = firstString(
-    readString(shipment, 'shippedAt'),
-    readString(shipment, 'handedToCargoAt'),
-  )
-  const shipmentDeliveredAt = readString(shipment, 'deliveredAt')
-  // Canonical (DB'de kalıcı) forward operationStatus da güçlü kanıttır: pazaryeri
-  // status'ü operationStatus'ü körlemesine ezmez; birlikte kullanılır.
-  const canonicalDelivered = ['delivered', 'deliveredspecial'].includes(
-    operationStatus,
-  )
-  const canonicalShipped = ['shipped', 'handedtocargo'].includes(operationStatus)
+  // NOT: "kargoya verildi / teslim" kanıtları (pazaryeri statüsü, kalıcı
+  // taşıyıcı zaman damgaları, canonical forward operasyon durumu) ARTIK
+  // `resolveOrderShippingEvidence` içinde TEK YERDE toplanır; aşağıda
+  // kullanılır. Kural DEĞİŞMEDİ, yeri değişti.
   const canonicalReturning = operationStatus === 'returning'
   const isCanceledOrReturned = Boolean(
     resolvedStatus.canceledOrReturned ||
       marketplaceCanceledOrReturned ||
       canonicalReturning,
   )
-  const isDelivered = Boolean(
-    resolvedStatus.delivered ||
-      marketplaceDelivered ||
-      shipmentDeliveredAt ||
-      canonicalDelivered,
-  )
-  const isHandedToCargo = Boolean(
-    resolvedStatus.shipped ||
-      marketplaceHandedToCargo ||
-      shipmentShippedAt ||
-      canonicalShipped,
-  )
+  // ═══ TEK CANONICAL KANIT ═══════════════════════════════════════════
+  //
+  // "Kargoya verildi / teslim edildi" sorusu ARTIK TEK YERDE yanıtlanır
+  // (`resolveOrderShippingEvidence`). Yüklem kümesi BİREBİR aynıdır —
+  // değişen tek şey, AYNI yanıtı sipariş detayındaki zaman çizelgesinin de
+  // kullanmasıdır. Önceden çizelge daha DAR bir kanıt kümesi kullanıyor ve
+  // liste "Kargoya Verildi" derken "Henüz aktif takip yok" diyordu.
+  const shippingEvidence = resolveOrderShippingEvidence(order)
+  const isDelivered = shippingEvidence.delivered
+  const isHandedToCargo = shippingEvidence.handedToCargo
   const isArchived = Boolean(
     readBoolean(record, 'archived') ||
       readBoolean(record, 'isArchived') ||
@@ -425,12 +410,18 @@ export function orderMatchesQuickTab(
     // Yeni Siparişler: aktif açık ama henüz etiket hazır/basılı olmayanlar
     // (barkod bekleyen, kargo oluşturulacak, doğrulama bekleyen ve diğer
     // açık siparişlerin birleşimi). Mevcut bayrakların türevi; yeni kural yok.
+    // ═══ KAPSAMA BOŞLUĞU KAPATILDI ═══════════════════════════════════════
+    //
+    // İkinci ana sekme artık YALNIZ "Etiket Basıldı"yı temsil ediyor. Eski
+    // yüklem (`!isLabelReady && !isLabelPrinted`) korunsaydı, kullanıcının
+    // aktive ettiği ama HENÜZ BASMADIĞI sipariş HİÇBİR ana sekmede
+    // görünmezdi (yalnız "Tümü"de) — operatör basılacak işi kaybederdi.
+    //
+    // "Yeni Siparişler" artık "açık ve HENÜZ BASILMAMIŞ" demektir; iki ana
+    // sekme açık popülasyonu basılmışlığa göre TAM böler. Barkod bekleyen ve
+    // etiket hazır ayrımı İşlem Durumu filtresinde AYNEN durur.
     case 'newOrders':
-      return (
-        classification.isOpenOperation &&
-        !classification.isLabelReady &&
-        !classification.isLabelPrinted
-      )
+      return classification.isOpenOperation && !classification.isLabelPrinted
     // Etiket Hazır sekmesi: hazır + basılmış kayıtların birleşimi.
     case 'labelStage':
       return classification.isLabelReady || classification.isLabelPrinted

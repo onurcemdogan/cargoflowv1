@@ -7,7 +7,10 @@ import {
 export type QuickTab =
   // Sadeleştirilmiş görünür sekmeler (mevcut classifier'ların birleşimi):
   | 'newOrders' // aktif açık, henüz etiket hazır/basılı olmayan siparişler
-  | 'labelStage' // Etiket Hazır: labelReady ∪ labelPrinted
+  // ESKİ birleşik sekme (labelReady ∪ labelPrinted). Üst sekme olmaktan
+  // ÇIKARILDI; yalnız kaydedilmiş eski seçimler güvenle çözülsün diye
+  // anahtar KORUNUR (bkz. resolveLegacyTab).
+  | 'labelStage'
   // Mevcut (teknik) key'ler korunur; filtre ve compat için kullanılır.
   | 'currentSync'
   | 'today'
@@ -44,15 +47,19 @@ export function resolveLegacyTab(tab: QuickTab | undefined): {
 } {
   switch (tab) {
     case 'newOrders':
-    case 'labelStage':
     case 'handedToCargo':
     case 'delivered':
     case 'cancelReturn':
     case 'all':
       return { tab, operationTab: 'all' }
-    case 'labelReady':
+    // İkinci ana sekme artık `labelPrinted`. Eskiden kaydedilmiş `labelStage`
+    // seçimi AYNI SLOTTAKİ sekmeye taşınır; kullanıcı bastığı sekmeyi bulur.
+    case 'labelStage':
     case 'labelPrinted':
-      return { tab: 'labelStage', operationTab: tab }
+      return { tab: 'labelPrinted', operationTab: 'all' }
+    // "Etiket Hazır" üst sekme DEĞİL; İşlem Durumu filtresiyle erişilir.
+    case 'labelReady':
+      return { tab: 'all', operationTab: 'labelReady' }
     case 'barcodePending':
     case 'shipmentPending':
     case 'suratVerificationPending':

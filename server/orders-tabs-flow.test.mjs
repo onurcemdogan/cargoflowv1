@@ -32,8 +32,13 @@ test('sipariş sekmeleri sadeleştirme sözleşmesi', async (t) => {
   assert.deepEqual(map('barcodePending'), { tab: 'newOrders', operationTab: 'barcodePending' })
   assert.deepEqual(map('shipmentPending'), { tab: 'newOrders', operationTab: 'shipmentPending' })
   assert.deepEqual(map('suratVerificationPending'), { tab: 'newOrders', operationTab: 'suratVerificationPending' })
-  assert.deepEqual(map('labelReady'), { tab: 'labelStage', operationTab: 'labelReady' })
-  assert.deepEqual(map('labelPrinted'), { tab: 'labelStage', operationTab: 'labelPrinted' })
+  // MİMARİ DEĞİŞİKLİK: ikinci ana sekme artık `labelPrinted` ("Etiket
+  // Basıldı"). "Etiket Hazır" bir KULLANICI DURUMUDUR ama üst sekme değildir;
+  // İşlem Durumu filtresiyle erişilir.
+  assert.deepEqual(map('labelReady'), { tab: 'all', operationTab: 'labelReady' })
+  assert.deepEqual(map('labelPrinted'), { tab: 'labelPrinted', operationTab: 'all' })
+  // Kaydedilmiş ESKİ birleşik seçim aynı slottaki sekmeye taşınır.
+  assert.deepEqual(map('labelStage'), { tab: 'labelPrinted', operationTab: 'all' })
   assert.deepEqual(map('handedToCargo'), { tab: 'handedToCargo', operationTab: 'all' })
   assert.deepEqual(map('delivered'), { tab: 'delivered', operationTab: 'all' })
   assert.deepEqual(map('cancelReturn'), { tab: 'cancelReturn', operationTab: 'all' })
@@ -48,15 +53,21 @@ test('sipariş sekmeleri sadeleştirme sözleşmesi', async (t) => {
     isLabelPrinted: false,
     ...over,
   })
-  // newOrders = açık && !labelReady && !labelPrinted
+  // newOrders = açık && !labelPrinted
+  //
+  // MİMARİ DEĞİŞİKLİK: ikinci sekme artık YALNIZ basılmışları gösterdiği için
+  // "etiket hazır ama basılmamış" sipariş eskisi gibi dışlansaydı HİÇBİR ana
+  // sekmede görünmezdi. İki sekme açık popülasyonu basılmışlığa göre TAM böler.
   assert.equal(orderMatchesQuickTab(cls({ isOpenOperation: true }), 'newOrders'), true)
-  assert.equal(orderMatchesQuickTab(cls({ isOpenOperation: true, isLabelReady: true }), 'newOrders'), false)
+  assert.equal(orderMatchesQuickTab(cls({ isOpenOperation: true, isLabelReady: true }), 'newOrders'), true)
   assert.equal(orderMatchesQuickTab(cls({ isOpenOperation: true, isLabelPrinted: true }), 'newOrders'), false)
   assert.equal(orderMatchesQuickTab(cls({ isOpenOperation: false }), 'newOrders'), false)
-  // labelStage = labelReady || labelPrinted
+  // İkinci ana sekme = YALNIZ basılmış (canonical `isLabelPrinted`).
+  assert.equal(orderMatchesQuickTab(cls({ isLabelReady: true }), 'labelPrinted'), false)
+  assert.equal(orderMatchesQuickTab(cls({ isLabelPrinted: true }), 'labelPrinted'), true)
+  assert.equal(orderMatchesQuickTab(cls({}), 'labelPrinted'), false)
+  // Eski birleşik anahtar KORUNDU (kaydedilmiş state güvenle çözülsün).
   assert.equal(orderMatchesQuickTab(cls({ isLabelReady: true }), 'labelStage'), true)
-  assert.equal(orderMatchesQuickTab(cls({ isLabelPrinted: true }), 'labelStage'), true)
-  assert.equal(orderMatchesQuickTab(cls({}), 'labelStage'), false)
 
   // --- buildVisibleOrders entegrasyonu ---
   const baseFilters = {
@@ -82,8 +93,8 @@ test('sipariş sekmeleri sadeleştirme sözleşmesi', async (t) => {
 
   // Yeni Siparişler: aktif açık paketler, duplicate yok (PKG-A tek).
   assert.equal(count({ selectedTab: 'newOrders' }), 1)
-  // Etiket Hazır: hazır + basılı (PKG-C).
-  assert.equal(count({ selectedTab: 'labelStage' }), 1)
+  // Etiket Basıldı: YALNIZ basılı (PKG-C).
+  assert.equal(count({ selectedTab: 'labelPrinted' }), 1)
   // Tümü: distinct packageId (A, C, D) = 3, duplicate A elendi.
   assert.equal(count({ selectedTab: 'all' }), 3)
   // "İşlem Durumu" filtresi mevcut classifier'ı kullanır.

@@ -321,6 +321,9 @@ export function rowToOrder(
     cargoTrackingLink: str(orderRow.cargoTrackingLink),
     totalAmount: Number(orderRow.totalAmount ?? 0),
     totalPrice: Number(orderRow.totalAmount ?? 0),
+    // KALICI ama OKUNMAYAN alan: kolon doluydu, okuma yolunda üretilmediği
+    // için sipariş detayı para birimini SABİT "TRY" yazıyordu.
+    currency: str(orderRow.currency),
     orderDate: orderRow.orderDate
       ? new Date(String(orderRow.orderDate)).toISOString()
       : new Date(0).toISOString(),

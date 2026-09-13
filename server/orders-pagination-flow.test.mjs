@@ -387,14 +387,26 @@ test('PAG-16: sekme sınıflandırma iş kuralları DEĞİŞMEDİ', async () => 
     operationStatus: 'LABEL_READY',
     userLabelActivatedAt: '2026-09-01T10:00:00.000Z',
   }
+  // MİMARİ DEĞİŞİKLİK: ikinci ana sekme artık YALNIZ "Etiket Basıldı".
+  // Aktive edilmiş ama basılmamış sipariş o sekmeye GİRMEZ; kapsama boşluğu
+  // olmasın diye "Yeni Siparişler"de KALIR.
   assert.equal(
-    orderMatchesQuickTab(classifyOrderForTabs(activated), 'labelStage'), true)
+    orderMatchesQuickTab(classifyOrderForTabs(activated), 'labelPrinted'), false)
   assert.equal(
-    orderMatchesQuickTab(classifyOrderForTabs(activated), 'newOrders'), false)
-  // GÜÇLENDİRME: damgasız sipariş Yeni Siparişler'de KALIR.
+    orderMatchesQuickTab(classifyOrderForTabs(activated), 'newOrders'), true)
+  // BASILMIŞ sipariş sekmeye GİRER ve "Yeni Siparişler"den DÜŞER.
+  const printed = {
+    ...base, operationStatus: 'LABEL_PRINTED', labelStatus: 'PRINTED',
+    label: { printedAt: '2026-09-02T10:00:00.000Z' },
+  }
+  assert.equal(
+    orderMatchesQuickTab(classifyOrderForTabs(printed), 'labelPrinted'), true)
+  assert.equal(
+    orderMatchesQuickTab(classifyOrderForTabs(printed), 'newOrders'), false)
+  // GÜÇLENDİRME: damgasız (yalnız hazırlanmış) sipariş Yeni Siparişler'de KALIR.
   const preparedOnly = { ...base, operationStatus: 'LABEL_READY' }
   assert.equal(
-    orderMatchesQuickTab(classifyOrderForTabs(preparedOnly), 'labelStage'), false)
+    orderMatchesQuickTab(classifyOrderForTabs(preparedOnly), 'labelPrinted'), false)
   assert.equal(
     orderMatchesQuickTab(classifyOrderForTabs(preparedOnly), 'newOrders'), true)
   assert.equal(
