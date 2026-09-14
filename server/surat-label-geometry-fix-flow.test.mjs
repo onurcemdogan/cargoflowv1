@@ -201,13 +201,15 @@ test('GEO-05: geometri izin vermiyorsa QR AYNEN korunur', () => {
   const fields = collectZplFields(parseZplDocument(V2_ZPL))
   const qrField = fields.find((field) => field.kind === 'qr')
   assert.ok(qrField, 'fixture QR taşımalı')
-  const blocked = resolveCarrierQrEnlargement(qrField, [
-    { right: 780, top: 0, bottom: 799 },
-  ])
+  // PRINT-GEOMETRY-002: işgal listesi artık METNİN GENİŞLİĞİNİN FONKSİYONU
+  // olarak geçilir (sabit dizi DEĞİL) ve denenecek genişlik kademeleri ayrıca
+  // verilir. İDDİA AYNI: tüm kademelerde sığmayan bir engel varsa büyütme YOK.
+  const blockedEverywhere = () => [{ right: 780, top: 0, bottom: 799 }]
+  const blocked = resolveCarrierQrEnlargement(qrField, blockedEverywhere, [50, 46, 43, 40])
   assert.equal(blocked, null, 'sığmıyorsa büyütme YAPILMAZ')
   // Aynı alan, boş işgal listesiyle büyütülebilir olmalı — testin kendisi
   // "her koşulda null" diye yanlış geçmesin.
-  assert.ok(resolveCarrierQrEnlargement(qrField, []))
+  assert.ok(resolveCarrierQrEnlargement(qrField, () => [], [50]))
 })
 
 test('GEO-06: Version-1 kapasitesini aşan yükte büyütme YAPILMAZ', () => {
@@ -215,7 +217,7 @@ test('GEO-06: Version-1 kapasitesini aşan yükte büyütme YAPILMAZ', () => {
   const qrField = fields.find((field) => field.kind === 'qr')
   // 21 modül varsayımı yalnız kısa sayısal yük için geçerlidir.
   const longPayload = { ...qrField, data: `QA,${'7'.repeat(40)}` }
-  assert.equal(resolveCarrierQrEnlargement(longPayload, []), null)
+  assert.equal(resolveCarrierQrEnlargement(longPayload, () => [], [50]), null)
 })
 
 // ═══ GEO-07..GEO-10: SOL DİKEY REFERANS ═════════════════════════════════

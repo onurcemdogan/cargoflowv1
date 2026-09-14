@@ -168,9 +168,19 @@ interface SuratQrCandidate {
  * QR'ı aynı yere düşsün diye ikisi de buradan beslenir.
  */
 const QR_SLOT_Y = 596
+/**
+ * COMPOSER'IN KENDİ QR ADAYI — TEK KANONİK BOY.
+ *
+ * Önceden ikinci bir aday vardı (mag 4 = 84 dot) ve uzun aktarma metninde
+ * ONA DÜŞÜLÜYORDU: ölçüldü, 105 → 84 dot (13.13 → 10.50 mm). Yani
+ * opsiyonel metin QR'ı küçültüyordu — çakışma önceliğinin tersi.
+ *
+ * Aday artık TEKTİR. Metin sığmıyorsa ÖNCE metin daralır (aşağıdaki
+ * genişlik merdiveni); o da yetmezse composer FAIL-CLOSED reddeder.
+ * KÜÇÜK QR BASMAK ARTIK BİR SEÇENEK DEĞİLDİR.
+ */
 const QR_CANDIDATES: readonly SuratQrCandidate[] = [
   { magnification: 5, size: 105, y: QR_SLOT_Y },
-  { magnification: 4, size: 84, y: QR_SLOT_Y },
 ]
 /**
  * ZEBRASH SAPMASI: yerel renderer `^BQ`'yu `^FO y + yürürlükteki ^BY yüksekliği`
@@ -581,7 +591,26 @@ const CARRIER_QR_MAX_NUMERIC_V1 = 27
 /** Geçersiz parametrede ayrıştırıcının düştüğü büyütme (ölçüldü). */
 const QR_DEFAULT_MAGNIFICATION = 1
 /** Büyükten küçüğe denenir; ilk GÜVENLİ olan uygulanır. */
-const CARRIER_QR_MAGNIFICATION_CANDIDATES: readonly number[] = [6, 5]
+/**
+ * KANONİK BÜYÜTME — İÇERİKTEN BAĞIMSIZ TEK HEDEF.
+ *
+ * Önceden aday listesi `[6, 5]` idi ve ilk SIĞAN seçiliyordu; yani kısa
+ * aktarma metninde 6 (126 dot), uzun metinde 5 ya da HİÇBİRİ seçiliyordu.
+ * Seçimin İÇERİĞE bağlı olması ihlalin ta kendisiydi.
+ *
+ * Hedef artık TEKTİR: 21 modül × 5 = 105 dot = 13.125 mm @ 203 dpi —
+ * `labelTemplateGeometry.surat_official_zpl.largeQr` ile AYNI değer ve
+ * composer'ın KENDİ QR'ıyla (V1) AYNI fiziksel boy.
+ *
+ * Kısa metinli V2 etiketleri eskiden 126 dot alıyordu; artık 105 alır. Bu
+ * BİLİNÇLİ bir tekilleştirmedir: aynı şablonun iki etiketi farklı boyda QR
+ * TAŞIYAMAZ. 105 dot okunabilir tabanın (15.5 mm değil, 13.125 mm — bkz.
+ * registry) ÜZERİNDEDİR ve V1 ile birebir aynıdır.
+ */
+const CARRIER_QR_CANONICAL_MAGNIFICATION = 5
+const CARRIER_QR_MAGNIFICATION_CANDIDATES: readonly number[] = [
+  CARRIER_QR_CANONICAL_MAGNIFICATION,
+]
 /**
  * `^FT` ile konumlanan `^BQ`'nun render'da kutunun ÜSTÜNE eklediği pay
  * (büyütme başına 7 dot — ölçüldü). Band hesabı iki yorumu da KAPSAR.
@@ -595,6 +624,13 @@ export interface CarrierQrEnlargement {
   readonly size: number
   /** Kaynak token bozuk olduğu için yazıcının GERÇEKTEN kullandığı değer. */
   readonly effectiveMagnification: number
+  /**
+   * Bu büyütmenin sığması için gereken aktarma metni font GENİŞLİĞİ.
+   *
+   * ÖZGÜN genişlikse metin DOKUNULMADAN sığmıştır. Küçükse: QR'a yer açmak
+   * için DARALAN ŞEY METİNDİR, QR değil.
+   */
+  readonly transferWidth: number
 }
 
 /** `^BQ` argümanlarındaki magnification TOKEN'ı (3. parametre), ham haliyle. */
@@ -635,7 +671,16 @@ const QR_FT_BOTTOM_INSET_CONSTANT = 1
 
 export function resolveCarrierQrEnlargement(
   qrField: ZplField | undefined,
-  occupancy: readonly QrOccupancyBox[],
+  /**
+   * İşgal listesi, aktarma font GENİŞLİĞİNİN fonksiyonu olarak.
+   *
+   * SABİT liste geçilirse metin daraltma HİÇ denenemez ve büyütme
+   * reddedilince QR taşıyıcının YERLİ (21 dot) boyutunda kalır — ölçülen
+   * üretim kusuru buydu.
+   */
+  occupancyFor: (transferWidth: number) => readonly QrOccupancyBox[],
+  /** Denenecek aktarma genişlikleri — ÖZGÜN önce, sonra daraltılmışlar. */
+  transferWidthSteps: readonly number[],
   dataMatrixLeft: number = SURAT_GRID.boxLeft,
   /**
    * DİKEY ÇIPA — yanındaki büyük aktarma merkezi metninin taban çizgisi.
@@ -662,6 +707,10 @@ export function resolveCarrierQrEnlargement(
     if (magnification <= effective) continue
     const size = CARRIER_QR_MODULES * magnification
     const quietZone = QR_QUIET_MODULES * magnification
+    // METİN MERDİVENİ BU BÜYÜTME İÇİN TÜKETİLİR: önce metin daralır.
+    let fitted: CarrierQrEnlargement | null = null
+    for (const transferWidth of transferWidthSteps) {
+      const occupancy = occupancyFor(transferWidth)
 
     // ═══ BÜYÜTÜLEN QR AYRILMIŞ SAĞ-ALT SLOTA OTURTULUR ════════════════
     //
@@ -677,45 +726,49 @@ export function resolveCarrierQrEnlargement(
     // Böylece taşıyıcının QR'ı ile composer'ın ürettiği QR AYNI yere düşer.
     // Çıpa varsa QR'ın ALT mürekkep kenarı ona eşitlenir; yoksa slotun üst
     // kenarından hesaplanır (eski davranış).
-    const baselineY =
-      bottomAnchorY != null
-        ? bottomAnchorY +
-          QR_FT_BOTTOM_INSET_PER_MAGNIFICATION * magnification +
-          QR_FT_BOTTOM_INSET_CONSTANT
-        : QR_SLOT_Y +
-          QR_RENDER_Y_OFFSET +
-          size +
-          QR_FT_LIFT_PER_MAGNIFICATION * magnification
-    const bandBottom = baselineY - QR_FT_LIFT_PER_MAGNIFICATION * magnification
-    const bandTop = bandBottom - size
-    if (bandTop - quietZone < 0) continue
-    if (bandBottom + quietZone > LABEL_EDGE) continue
-    // Taban çizgisi etiket dışına taşarsa komut geçersizdir.
-    if (baselineY > LABEL_EDGE) continue
+      const baselineY =
+        bottomAnchorY != null
+          ? bottomAnchorY +
+            QR_FT_BOTTOM_INSET_PER_MAGNIFICATION * magnification +
+            QR_FT_BOTTOM_INSET_CONSTANT
+          : QR_SLOT_Y +
+            QR_RENDER_Y_OFFSET +
+            size +
+            QR_FT_LIFT_PER_MAGNIFICATION * magnification
+      const bandBottom =
+        baselineY - QR_FT_LIFT_PER_MAGNIFICATION * magnification
+      const bandTop = bandBottom - size
+      if (bandTop - quietZone < 0) continue
+      if (bandBottom + quietZone > LABEL_EDGE) continue
+      // Taban çizgisi etiket dışına taşarsa komut geçersizdir.
+      if (baselineY > LABEL_EDGE) continue
 
-    const maxLeft = LABEL_EDGE - quietZone - size
-    let requiredLeft = 0
-    for (const box of occupancy) {
-      const intersectsVertically = box.top <= bandBottom && bandTop <= box.bottom
-      if (!intersectsVertically) continue
-      requiredLeft = Math.max(requiredLeft, box.right + quietZone)
-    }
-    if (requiredLeft > maxLeft) continue
-    // Slotun kendi sol kenarı tercih edilir; komşu daha sağa itiyorsa ona
-    // uyulur. Sığmıyorsa taşıyıcının QR'ı AYNEN korunur.
-    const x = Math.min(
-      Math.max(preferredQrLeft(size, dataMatrixLeft), requiredLeft),
-      maxLeft,
-    )
-    if (x < requiredLeft) continue
+      const maxLeft = LABEL_EDGE - quietZone - size
+      let requiredLeft = 0
+      for (const box of occupancy) {
+        const intersectsVertically =
+          box.top <= bandBottom && bandTop <= box.bottom
+        if (!intersectsVertically) continue
+        requiredLeft = Math.max(requiredLeft, box.right + quietZone)
+      }
+      if (requiredLeft > maxLeft) continue
+      const x = Math.min(
+        Math.max(preferredQrLeft(size, dataMatrixLeft), requiredLeft),
+        maxLeft,
+      )
+      if (x < requiredLeft) continue
 
-    return {
-      x,
-      y: baselineY,
-      magnification,
-      size,
-      effectiveMagnification: effective,
+      fitted = {
+        x,
+        y: baselineY,
+        magnification,
+        size,
+        effectiveMagnification: effective,
+        transferWidth,
+      }
+      break
     }
+    if (fitted) return fitted
   }
   return null
 }
@@ -1116,6 +1169,17 @@ export function composeSuratLabel(
     transferNativeWidth,
     ...TRANSFER_FONT_WIDTH_STEPS.filter((step) => step < transferNativeWidth),
   ]
+  //
+  // ═══ ARAMA SIRASI: QR ÖNCE, METİN SONRA ═════════════════════════════
+  //
+  // Aday listesi artık TEK kanonik büyütme taşıdığı için bu döngü yalnız
+  // METİN genişliğini dener. Önceden liste iki boy taşıyordu ve `resolveQrPlacement`
+  // İÇERİDE boydan boya iniyordu: özgün genişlikte mag 4, daraltılmış
+  // genişlikte mag 5'ten ÖNCE kazanıyordu. Yani "metni daraltmaktansa QR'ı
+  // küçült" sırası geçerliydi — ölçülen 105 → 84 dot düşüşünün sebebi budur.
+  //
+  // Artık: kanonik QR SABİT, metin kademeli daralır, hiçbiri sığmazsa
+  // composer REDDEDER (aşağıdaki E dalı). KÜÇÜK QR SEÇENEĞİ YOK.
   let placement: SuratQrPlacement | null = null
   let transferWidth = transferNativeWidth
   for (const candidateWidth of widthSteps) {
@@ -1154,7 +1218,10 @@ export function composeSuratLabel(
     : undefined
   const carrierQrEnlargement = resolveCarrierQrEnlargement(
     carrierQrField,
-    buildOccupancy(transferWidth),
+    // İŞGAL LİSTESİ SABİT DEĞİL, METİN GENİŞLİĞİNİN FONKSİYONU.
+    // Böylece büyütme araması metin merdivenini KENDİSİ tüketir.
+    buildOccupancy,
+    widthSteps,
     dataMatrixLeft,
     // Aktarma merkezi metninin taban çizgisi = QR'ın alt hiza çıpası.
     transfer.field.y,
@@ -1284,9 +1351,23 @@ export function composeSuratLabel(
   // (whitelist 5) Aktarma metninin font GENİŞLİĞİ daraltıldıysa uygula.
   // Yükseklik, konum ve gövde DEĞİŞMEZ.
   const transferFontCommand = transfer.field.fontCommand
+  //
+  // ═══ TEK UYGULANAN GENİŞLİK ═════════════════════════════════════
+  //
+  // ÖNCEKİ DENEME BURADA DevRİLDİ: yayılan ZPL bir değişkenden
+  // (`carrierQrEnlargement.transferWidth`), whitelist doğrulaması BAŞKA bir
+  // değişkenden (`transferWidth`) besleniyordu. İkisi ayrışınca `from/to`
+  // eşleşmedi ve muhafız haklı olarak "beklenmeyen taşıyıcı mutasyonu (^A0)"
+  // dedi. MUHAFIZ DOĞRUYDU; yama tutarsızdı.
+  //
+  // Artık TEK değer vardır ve emit, whitelist ve invariant doğrulamasının
+  // ÜÇÜ DE ondan beslenir. Muhafız GEVŞETİLMEDİ.
+  const appliedTransferWidth = carrierQrEnlargement
+    ? carrierQrEnlargement.transferWidth
+    : transferWidth
   if (
-    qrFits &&
-    transferWidth !== transferNativeWidth &&
+    (qrFits || carrierQrEnlargement !== null) &&
+    appliedTransferWidth !== transferNativeWidth &&
     transferFontCommand &&
     transfer.field.font
   ) {
@@ -1297,7 +1378,7 @@ export function composeSuratLabel(
       commands: [
         {
           name: transferFontCommand.name,
-          args: `${orientation ?? 'N'},${height},${transferWidth}`,
+          args: `${orientation ?? 'N'},${height},${appliedTransferWidth}`,
         },
       ],
     })
@@ -1401,11 +1482,15 @@ export function composeSuratLabel(
       sourceZpl,
     )
   }
+  // WHİTELİST, EMİT İLE AYNI DEĞERDEN TÜRER (bkz. appliedTransferWidth).
+  // Kapsam DEĞİŞMEDİ: yalnız AYNI alanın AYNI yükseklikte DARALMASI, birebir
+  // `from`/`to` dizgisiyle. Yeni komut türü, yeni alan veya koordinat
+  // serbestisi EKLENMEDİ.
   const allowedTransferFont =
-    transferWidth !== transferNativeWidth && transfer.field.font
+    appliedTransferWidth !== transferNativeWidth && transfer.field.font
       ? {
           from: `${transfer.field.font.orientation ?? 'N'},${transfer.field.font.height},${transferNativeWidth}`,
-          to: `${transfer.field.font.orientation ?? 'N'},${transfer.field.font.height},${transferWidth}`,
+          to: `${transfer.field.font.orientation ?? 'N'},${transfer.field.font.height},${appliedTransferWidth}`,
         }
       : null
   const unexpected = diff.mutations.filter((mutation) => {
@@ -1475,7 +1560,7 @@ export function composeSuratLabel(
 
   // ── B) SEMANTIC INVARIANT DOĞRULAMASI ─────────────────────────────────
   const verdict = verifySuratOutputInvariants(semantic, outputZpl, qr.payload, {
-    transferFontWidth: transferWidth,
+    transferFontWidth: appliedTransferWidth,
   })
   if (!verdict.ok) {
     return fallback('fallback_invariant_failure', verdict.reason, sourceZpl)

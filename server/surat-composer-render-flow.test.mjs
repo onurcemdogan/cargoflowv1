@@ -331,10 +331,11 @@ test('CR-11: uyarlanabilir QR yerleşimi gerçek render’da ÇAKIŞMAZ', async 
       `^FT220,705^A0N,70,50^FH${BS}^FD${value}^FS`,
     )
   // "IKITELLI AKTARMA" üretimde fallback veren sınıftır; "ERZURUM AKTARMA"
-  // ise ölçek küçültmeyi tetikler. İkisi de render’da doğrulanır.
+  // eskiden ÖLÇEK KÜÇÜLTMEYİ tetikliyordu (mag 4). PRINT-GEOMETRY-002 ile
+  // ölçek KANONİK sabitlendi ve daralan şey METİN oldu; ikisi de artık mag 5.
   for (const [name, expectedMagnification] of [
     ['IKITELLI AKTARMA', 5],
-    ['ERZURUM AKTARMA', 4],
+    ['ERZURUM AKTARMA', 5],
   ]) {
     const source = withTransfer(name)
     const derived = deriveAugmentedSuratZplWithHashes(
@@ -699,14 +700,18 @@ test('VISUAL-TOP: üst blok ortak raylarda', async () => {
 })
 
 test('VISUAL-QR-POLICY: ölçek sınıf bazında deterministik', async () => {
-  // POLİTİKA: common sınıflar mag5 (fiziksel olarak doğrulanmış), geometri
-  // kısıtlı sınıflar mag4, gerçekten sığmayan ad fallback.
-  // Sırf görsel parity için mag5 mag4'e ÇEKİLMEZ (readability > parity).
+  // POLİTİKA (PRINT-GEOMETRY-002): compose edilen HER etiket mag5'tir.
+  // Önce aktarma metni kademeli daralır; hiçbir kademe sığdıramazsa fallback.
+  // QR, opsiyonel metne yer açmak için ASLA küçültülmez.
+  // PRINT-GEOMETRY-002: polİtİka TEKLEŞTİ. Eskiden "geometri kısıtlı
+  // sınıflar mag4" deniyordu; bu, opsiyonel metnin QR'ı küçültmesine izin
+  // veren daldı. Artık compose EDILEBİLEN her etiket mag 5'tir; sığmayan ad
+  // (son satır) AYNEN fallback'tir. İDDİA DARALDI: iki değer yerine TEK değer.
   const expected = [
     ['GEBZE AKTARMA', 5],
     ['IKITELLI AKTARMA', 5],
-    ['ERZURUM AKTARMA', 4],
-    ['DIYARBAKIR AKTARMA', 4],
+    ['ERZURUM AKTARMA', 5],
+    ['DIYARBAKIR AKTARMA', 5],
     ['ISTANBUL ANADOLU AKTARMA MERKEZI', null],
   ]
   for (const [name, magnification] of expected) {

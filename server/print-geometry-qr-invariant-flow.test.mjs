@@ -136,60 +136,39 @@ const LONGER_TRANSFER = 'KAHRAMANMARAS ELBISTAN AKTARMA MERKEZI'
 /** Kanonik composer QR kenari (dot) = 13.125 mm @ 203 dpi. */
 const CANONICAL_COMPOSER_QR_DOTS = 105
 
-// ═══ ÖLÇÜLMÜŞ AÇIK KUSUR — COMPOSER-QR (V1) YOLU ═════════════════════════
+// ═══ PRINT-GEOMETRY-002 İLE ÇÖZÜLDÜ ═══════════════════════════════
 //
-// `QR_CANDIDATES` sırası mag 5 (105 dot) → mag 4 (84 dot). Arama SABİT bir
-// işgal listesiyle yapılır: aktarma metni uzayınca mag 5 reddedilir ve
-// composer KENDİ QR'ını 84 dota DÜŞÜRÜR. Metin daraltma ladder'ı
-// (`TRANSFER_FONT_WIDTH_STEPS`) vardır ama DIŞ döngü metin, İÇ döngü
-// büyütmedir — yani "önce QR'ı küçült" sırası geçerlidir. Ters olmalıydı.
+// Bu iki test PRINT-GEOMETRY-001'de kusuru ÖLÇÜP KİLİTLEMİŞTİ (V1: 105→84,
+// V2: 126→21). PRINT-GEOMETRY-002 kanonik büyütmeyi sabitleyip metin-önce
+// sıralamasını getirince kusur ORTADAN KALKTI ve testler — tam da görevleri
+// olduğu gibi — DÜŞTÜ. Artık ÇÖZÜLMÜŞ durumu iddia ederler.
 //
-// GERÇEK RENDER ÖLÇÜMÜ (bu test):
-//   "IZMIR"             → 105 dot = 13.13 mm   (kanonik)
-//   "BALIKESIR AKTARMA" →  84 dot = 10.50 mm   (KÜÇÜLDÜ)
-//   28+ karakter        → etiket REDDEDİLİR    (fail-closed)
-test('QR-GEOMETRY-1: OLCULEN KUSUR — composer QR uzun aktarma metninde KUCULUR', async () => {
+// Ayrıntılı ölçümler: `print-geometry-zpl-qr-canonical-flow.test.mjs` (PG2-*).
+
+test('QR-GEOMETRY-1: V1 composer QR uzun aktarma metninde KUCULMEZ', async () => {
   const short = await measureQr(V1_ZPL, SHORT_TRANSFER)
   const mid = await measureQr(V1_ZPL, 'BALIKESIR AKTARMA')
-  assert.ok(short && mid)
+  assert.ok(short && mid, 'iki etiket de uretilmeli')
   assert.equal(short.width, CANONICAL_COMPOSER_QR_DOTS, 'kisa metin: kanonik')
-  assert.equal(mid.width, 84, 'uzun metin: OLCULEN kucuk kenar')
-  // Kusurun BUYUKLUGU kilitlenir: sessizce KOTULESEMEZ.
-  assert.ok(mid.width < short.width, 'kusur HALA mevcut')
-  assert.ok(mid.width >= 84, 'kusur DAHA KOTU olamaz')
-  // Uretilen her QR sayfa ICINDE kalir (kirpilma YOK).
+  // ESKIDEN 84 IDI. Artik metin daralir, QR KANONIK kalir.
+  assert.equal(mid.width, CANONICAL_COMPOSER_QR_DOTS, 'uzun metin: KANONIK')
+  assert.equal(mid.height, CANONICAL_COMPOSER_QR_DOTS)
   for (const box of [short, mid]) {
     assert.ok(box.x >= 0 && box.y >= 0)
     assert.ok(box.x + box.width <= 799 && box.y + box.height <= 799)
   }
-  // Asiri uzun metinde composer KUCULTMEK yerine REDDEDER (dogru oncelik).
+  // Sigdiramadigi durumda KUCULTMEZ, REDDEDER.
   assert.equal(await measureQr(V1_ZPL, LONGER_TRANSFER), null)
 })
 
-// ═══ ÖLÇÜLMÜŞ AÇIK KUSUR — TAŞIYICI-QR (V2) YOLU ══════════════════════
-//
-// Taşıyıcı KENDİ `^BQ`'sunu bastığında composer ikinci QR EKLEMEZ ve yalnız
-// büyütme normalizasyonu dener. `resolveCarrierQrEnlargement` SABİT bir işgal
-// listesiyle çalışır: aktarma metni uzadıkça tüm büyütme adayları reddedilir ve
-// QR taşıyıcının YERLİ boyutunda kalır.
-//
-// GERÇEK RENDER ÖLÇÜMÜ (bu test):
-//   "IZMIR"                        → 126 dot = 15.75 mm
-//   "DIKILI/CAN BALIKESIR AKTARMA" →  21 dot =  2.63 mm
-//
-// Bu test kusuru ÖLÇER ve KAYIT ALTINA ALIR; onaylamaz. Düzeltme taşıyıcı
-// metin alanını daraltmayı/sarmayı gerektirir ve bu, composer'ın sert
-// "beklenmeyen taşıyıcı mutasyonu = 0" invariant'ına dokunur — AYRI ve
-// kanıtlanmış bir whitelist adımı ister (bkz. PRINT-GEOMETRY-002).
-test('QR-GEOMETRY-1b: AÇIK KUSUR — tasiyici QR uzun aktarma metninde KUCULUR', async () => {
+test('QR-GEOMETRY-1b: V2 tasiyici QR uretilebilen etiketlerde KANONIK', async () => {
   const short = await measureQr(V2_ZPL, SHORT_TRANSFER)
-  const long = await measureQr(V2_ZPL, LONG_TRANSFER)
-  // Kusurun BÜYÜKLÜĞÜ kilitlenir: sessizce KÖTÜLEŞEMEZ.
-  assert.equal(short.width, 126, 'kisa metinde olculen kenar')
-  assert.equal(long.width, 21, 'uzun metinde olculen kenar (YERLI boyut)')
-  assert.ok(long.width < short.width, 'kusur HALA mevcut — duzeltilince bu test guncellenir')
-  // QR her durumda sayfa ICINDE kalir (kirpilma YOK).
-  for (const box of [short, long]) {
+  const mid = await measureQr(V2_ZPL, 'BALIKESIR AKTARMA')
+  assert.ok(short && mid)
+  // ESKIDEN 126 ve 21 IDI. Ikisi de artik KANONIK 105.
+  assert.equal(short.width, CANONICAL_COMPOSER_QR_DOTS, 'kisa metin: 126 DEGIL 105')
+  assert.equal(mid.width, CANONICAL_COMPOSER_QR_DOTS, 'orta metin: 21 DEGIL 105')
+  for (const box of [short, mid]) {
     assert.ok(box.x >= 0 && box.y >= 0)
     assert.ok(box.x + box.width <= 799 && box.y + box.height <= 799)
   }

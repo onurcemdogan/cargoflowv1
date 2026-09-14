@@ -431,7 +431,7 @@ test('CW-13: eşik KARAKTER SAYISINA değil GERÇEK GENİŞLİĞE bağlı', asyn
   )
 })
 
-test('CW-14: uzun aktarma adında ölçek küçülür, quiet-zone korunur', async () => {
+test('CW-14: uzun aktarma adında METİN daralır, ölçek KANONİK kalır', async () => {
   const { composeSuratLabel } = await load(
     '/src/utils/suratLabelComposer.ts')
   const short = composeSuratLabel(withTransferCenter('VAN AKTARMA'), {
@@ -440,10 +440,16 @@ test('CW-14: uzun aktarma adında ölçek küçülür, quiet-zone korunur', asyn
   const long = composeSuratLabel(withTransferCenter('ERZURUM AKTARMA'), {
     cargoTrackingNumber: VERIFIED_727,
   }).diagnostics
-  assert.equal(short.qrMagnification, 5, 'kısa ad → ideal ölçek')
+  // PRINT-GEOMETRY-002: ölçek artık İÇERİKTEN BAĞIMSIZ. Eskiden uzun ad
+  // mag 4'e (84 dot) düşüyordu — yani opsiyonel metin QR'ı küçültüyordu.
+  // Artık ÖNCE aktarma fontu daralır (50 → 46), QR KANONİK kalır.
+  // İDDİA GEVŞEMEDİ: eskiden "5 ya da 4" kabul ediliyordu, şimdi YALNIZ 5.
+  assert.equal(short.qrMagnification, 5, 'kısa ad → kanonik ölçek')
   assert.equal(short.qrCandidateIndex, 0)
-  assert.equal(long.qrMagnification, 4, 'uzun ad → küçültülmüş ölçek')
-  assert.equal(long.qrCandidateIndex, 1)
+  assert.equal(long.qrMagnification, 5, 'uzun ad → AYNI kanonik ölçek')
+  assert.equal(long.qrCandidateIndex, 0)
+  assert.equal(long.transferFontWidth < short.transferFontWidth, true,
+    'küçülen şey METİN olmalı')
   // Her iki durumda da etiket içinde ve sağ kenarda quiet-zone var.
   for (const diagnostics of [short, long]) {
     const quiet = 4 * diagnostics.qrMagnification
