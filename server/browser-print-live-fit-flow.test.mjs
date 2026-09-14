@@ -127,9 +127,9 @@ test('LIVE-3: ön kontrol siparişi ERKENDEN bloklamaz', async () => {
 })
 
 test('LIVE-4/5/6: ön kontrol, önizleme ve renderer AYNI profili seçer', async () => {
-  const { resolveLabelLayout } = await load('/src/utils/labelLayoutResolver.ts')
+  const { planLabelProductPages } = await load('/src/utils/labelLayoutResolver.ts')
   const { buildCleanLabelDocument } = await load('/src/utils/browserLabelPrint.ts')
-  const expected = resolveLabelLayout(layoutInput()).profile.key
+  const expected = planLabelProductPages(layoutInput()).profile.key
   const doc = buildCleanLabelDocument([liveOrder()], TEMPLATE, {})
   assert.match(doc.html, new RegExp(`data-layout-profile="${expected}"`))
 
@@ -139,9 +139,12 @@ test('LIVE-4/5/6: ön kontrol, önizleme ve renderer AYNI profili seçer', async
     join(here, '..', 'src/components/LabelHtmlPreview.tsx'), 'utf8')
   const printer = readFileSync(
     join(here, '..', 'src/utils/browserLabelPrint.ts'), 'utf8')
+  // PRINT-GEOMETRY-003: tek kaynak ARTIK SAYFALAMA PLANCISIDIR. Iddia AYNI
+  // (uc katman AYNI cozumleyiciyi cagirir); yalniz cozumleyicinin ADI
+  // degisti. `resolveLabelLayoutBlockReason` de plancıya delege eder.
   assert.match(app, /resolveLabelLayoutBlockReason/)
-  assert.match(preview, /resolveLabelLayout\(/)
-  assert.match(printer, /resolveLabelLayout\(/)
+  assert.match(preview, /planLabelProductPages\(/)
+  assert.match(printer, /planLabelProductPages\(/)
   // Profil secimi baska yerde YENIDEN hesaplanmaz.
   assert.equal(/LABEL_LAYOUT_PROFILES/.test(printer), false)
   assert.equal(/LABEL_LAYOUT_PROFILES/.test(app), false)
@@ -217,11 +220,20 @@ test('LIVE-17/18: READY siparişte create YOK, Chrome print çağrılır', async
 test('LIVE-19/20: imkânsız içerik AÇIK hata verir, batch\'i durdurmaz', async () => {
   const { buildCleanLabelDocument } = await load('/src/utils/browserLabelPrint.ts')
   const { PRODUCT_OVERFLOW_MESSAGE } = await load('/src/utils/labelProductFit.ts')
+  // PRINT-GEOMETRY-003 — ESIK TASINDI, SOZLESME AYNI.
+  //
+  // Eskiden "12 x 160 karakterlik ad" imkansiz sayiliyordu; ARTIK degil:
+  // sigmayan satirlar DEVAM SAYFALARINA tasar ve siparis BASILIR. Bu testin
+  // olctugu sozlesme ("imkansiz icerik ACIK hata verir ve batch'i DURDURMAZ")
+  // degismedi; yalnizca gercekten imkansiz bir ornek gerekti.
+  //
+  // Gercekten imkansiz olan: TEK BASINA bir devam sayfasina bile sigmayan
+  // dev bir urun adi. Sessiz kirpma YOK, acik sebep VAR.
   const impossible = {
-    ...liveOrder(Array.from({ length: 12 }, (_, i) => ({
-      id: `x${i}`, quantity: 1, productName: 'Z'.repeat(160),
-      color: 'Lacivert', size: '40', sku: `sku${i}`,
-    }))),
+    ...liveOrder([{
+      id: 'x0', quantity: 1, productName: 'Z'.repeat(4000),
+      color: 'Lacivert', size: '40', sku: 'sku0',
+    }]),
     id: 'o-impossible', orderNumber: '7270035237446595',
   }
   const mixed = buildCleanLabelDocument([liveOrder(), impossible], TEMPLATE, {})

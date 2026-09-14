@@ -102,3 +102,40 @@ export function resolveProductAreaHeightMm(profile: LabelLayoutProfile): number 
     profile.deliveryRowMm
   return Math.max(0, BODY_HEIGHT_MM - fixed - profile.productPaddingMm * 2)
 }
+
+// ═══ ÜRÜN DETAY DEVAM SAYFASI (PRINT-GEOMETRY-003) ═══════════════════════
+//
+// PRINT-GEOMETRY-001 QR'ı içerikten kurtardı; bedeli ÖLÇÜLDÜ: tek sayfaya
+// sığan kalem sayısı 3'e düştü (bu turda YENİDEN ölçüldü — kısa ad, uzun ad,
+// varyantsız, SKU'suz, adet 12 ve Türkçe karakterli içeriklerin HEPSİNDE
+// sınır AYNI: 3 kalem).
+//
+// Kapasiteyi geri kazanmanın QR'a dokunmayan yolu, ZPL yolunda ZATEN var olan
+// ürün detay sayfasına taşmadır (`PRODUCT_DETAIL_THRESHOLD`). Bu sabitler o
+// mekanizmanın HTML karşılığını tanımlar.
+//
+// DEVAM SAYFASI SEVKIYAT ETİKETİ DEĞİLDİR: barkod, adres, rota ve QR YOKTUR;
+// yalnız ürün detayı ve sayfayı siparişe bağlayan kimlik taşır. Bu yüzden
+// dikey bütçesi sayfanın TAMAMIDIR (eksi başlık ve iç boşluk).
+/** Devam sayfası başlığı: "Ürün Detayı" + sipariş kimliği + "Sayfa X / Y". */
+const CONTINUATION_HEADER_MM = 12
+/** Devam sayfasının dikey iç boşluğu (mm, tek taraf). */
+const CONTINUATION_PADDING_MM = 1.5
+
+/**
+ * Bir DEVAM sayfasında ürün satırlarına kalan yükseklik (mm).
+ *
+ * Sayfa 1'in ürün alanından ~6 kat büyüktür; taşma bu yüzden birkaç sayfada
+ * değil, tipik olarak TEK devam sayfasında biter.
+ */
+export function resolveContinuationProductAreaHeightMm(): number {
+  return Math.max(
+    0,
+    BODY_HEIGHT_MM - CONTINUATION_HEADER_MM - CONTINUATION_PADDING_MM * 2,
+  )
+}
+
+export const CONTINUATION_PAGE_METRICS = {
+  headerMm: CONTINUATION_HEADER_MM,
+  paddingMm: CONTINUATION_PADDING_MM,
+} as const

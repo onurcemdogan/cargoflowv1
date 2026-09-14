@@ -925,12 +925,16 @@ test('EDITOR-37: YAYINLANMIŞ belge YOKSA yerleşik yerleşim korunur', async ()
   const source = readFileSync(join(root, 'src/utils/browserLabelPrint.ts'), 'utf8')
   assert.match(
     source,
-    /labelDocument[\s\S]{0,20}\?[\s\S]{0,20}renderDocumentLabelHtml\(/,
+    /labelDocument[\s\S]{0,60}\?[\s\S]{0,120}renderDocumentLabelHtml\(/,
     'belge varsa belge yolu kullanılmalı',
   )
+  // PRINT-GEOMETRY-003: yerlesik yerlesim artik BIR DIZI sayfa dondurur
+  // (sevkiyat + urun detay devam sayfalari). IDDIA AYNI: yayinlanmis belge
+  // YOKSA yerlesik yerlesim kullanilir; yalniz fonksiyonun adi ve donus
+  // tipi degisti.
   assert.match(
     source,
-    /:\s*renderPrintableLabelHtml\(printData\)/,
+    /:\s*renderPrintableLabelPages\(printData\)/,
     'belge yoksa yerleşik yerleşim kullanılmalı',
   )
 })

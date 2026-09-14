@@ -388,16 +388,20 @@ test('Çoklu ürünlü sipariş yazdırılabilir model ve etiket üretir', async
   // eklendikten sonra eski fixture ARTIK SIĞIYOR; testin amacı korunsun
   // diye içerik hiçbir güvenli profile sığmayacak kadar büyütüldü.
   const longName =
-    'Çok Uzun Ürün Adı ' + 'Saten Detaylı Şifon Astarlı Tesettür Abiye '.repeat(40)
+    'Çok Uzun Ürün Adı ' + 'Saten Detaylı Şifon Astarlı Tesettür Abiye '.repeat(400)
+  // PRINT-GEOMETRY-003 — SOZLESME AYNI, ESIK TASINDI.
+  // "Sessiz kirpma YOK, acik hata VAR" iddiasi KORUNUR. Iki uzun kalem ARTIK
+  // imkansiz DEGIL: sigmayan satirlar DEVAM SAYFASINA tasar ve siparis
+  // BASILIR. Gercekten imkansiz olan, TEK BASINA bir devam sayfasina bile
+  // sigmayan dev bir urun adidir.
   assert.throws(
     () =>
       renderPrintableLabelHtml(
         buildLabelData({
           items: [
             { productName: longName, quantity: 2, sku: 'SKU-L1', color: 'Siyah', size: '38' },
-            { productName: `${longName} B`, quantity: 1, sku: 'SKU-L2', color: 'Bordo', size: '40' },
           ],
-          totalQuantity: 3,
+          totalQuantity: 2,
         }),
       ),
     /tek etikete sığmıyor/,

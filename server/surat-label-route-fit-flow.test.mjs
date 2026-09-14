@@ -169,9 +169,11 @@ test('ROUTE-7: önizleme CSS\'i AYNI kademeyi kullanır (preview == print)', () 
   assert.equal(/-webkit-line-clamp/.test(zone), false, 'önizlemede de kırpma yok')
   assert.match(zone, /var\(--label-delivery-route-size/)
   assert.match(zone, /var\(--label-route-line-height/)
-  // Onizleme puntoyu baski ile AYNI TEK cozumleyiciden alir
-  // (resolveLabelLayout -> profil + productFit + routeFit).
-  assert.match(preview, /resolveLabelLayout\(/)
+  // Onizleme puntoyu baski ile AYNI TEK cozumleyiciden alir.
+  // PRINT-GEOMETRY-003: o cozumleyici artik SAYFALAMA plancisidir
+  // (planLabelProductPages -> profil + sayfa dagilimi + routeFit).
+  // IDDIA AYNI: onizleme ile baski AYNI kaynaktan beslenir.
+  assert.match(preview, /planLabelProductPages\(/)
   assert.match(preview, /routeFit\.tier\.destinationPt/)
   assert.match(preview, /routeFit\.tier\.transferPt/)
 })

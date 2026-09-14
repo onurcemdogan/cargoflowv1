@@ -70,7 +70,21 @@ const okItems = (i) => [{
   id: `l-${i}`, quantity: 1, productName: `Saten Elbise ${i}`,
   color: 'Lacivert', size: '40', merchantSku: `SECIL-${300 + i}`,
 }]
+// PRINT-GEOMETRY-003 — ESIK TASINDI, IZOLASYON SOZLESMESI AYNI.
+//
+// Eskiden "iki uzun adli kalem" tek etikete sigmadigi icin siparis ATLANIYORDU.
+// ARTIK atlanmaz: sigmayan satirlar DEVAM SAYFALARINA tasar ve siparis BASILIR
+// (bu biletin amaci tam olarak buydu). Bu dosyanin olctugu sey ise
+// "bir siparisin basarisizligi BATCH'I DURDURMAZ" izolasyonudur ve o sozlesme
+// DEGISMEDI — yalnizca gercekten basarisiz olan bir ornek gerekti.
+//
+// Gercekten imkansiz olan: TEK BASINA bir devam sayfasina bile sigmayan dev
+// bir urun adi. Sessiz kirpma YOK, acik sebep VAR.
 const overflowItems = (i) => [
+  { id: `l-${i}a`, quantity: 1, productName: 'Z'.repeat(4000), color: 'Siyah', size: '38', merchantSku: 'SKU-L1' },
+]
+/** Eskiden ATLANAN, ARTIK sayfalanarak BASILAN icerik. */
+const paginatedItems = (i) => [
   { id: `l-${i}a`, quantity: 1, productName: LONG, color: 'Siyah', size: '38', merchantSku: 'SKU-L1' },
   { id: `l-${i}b`, quantity: 1, productName: `${LONG} B`, color: 'Bordo', size: '40', merchantSku: 'SKU-L2' },
 ]
@@ -127,6 +141,20 @@ test('BP-4: taşan siparişin durumu ve printCount DEĞİŞMEZ', async () => {
   assert.equal(bad.labelStatus, before.status)
   assert.equal(bad.operationStatus, before.op)
   assert.equal(bad.label?.printCount ?? 0, 0, 'printCount artmaz')
+})
+
+test('BP-2b: ESKIDEN atlanan cok kalemli siparis ARTIK sayfalanarak basilir', async () => {
+  // PRINT-GEOMETRY-003 KAZANIMI KILITLENIR: bu icerik onceki taban commit'te
+  // "Urun bilgileri tek etikete sigmiyor." ile ATLANIYORDU.
+  const { buildCleanLabelDocument } = await load('/src/utils/browserLabelPrint.ts')
+  const doc = buildCleanLabelDocument([order(1, paginatedItems(1))], TEMPLATE)
+  assert.equal(doc.skipped.length, 0, 'siparis ARTIK atlanmaz')
+  assert.equal(doc.printable.length, 1, 'MANTIKSAL olarak TEK siparis')
+  // Fiziksel sayfa sayisi mantiksal siparis sayisindan FARKLI olabilir.
+  const shipping = (doc.html.match(/class="label-page"/g) ?? []).length
+  const continuation = (doc.html.match(/label-page-continuation/g) ?? []).length
+  assert.equal(shipping, 1, 'tek sevkiyat sayfasi')
+  assert.ok(continuation >= 1, 'en az bir devam sayfasi')
 })
 
 test('BP-5: aynı sipariş iki kez seçilirse TEK fiziksel etiket', async () => {

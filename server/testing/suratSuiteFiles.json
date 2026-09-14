@@ -24,6 +24,7 @@
   "server/print-geometry-qr-invariant-flow.test.mjs",
   "server/print-geometry-zpl-qr-canonical-flow.test.mjs",
   "server/print-geometry-zpl-transfer-wrap-flow.test.mjs",
+  "server/print-geometry-html-product-pagination-flow.test.mjs",
   "server/browser-print-live-fit-flow.test.mjs",
   "server/surat-label-product-metadata-flow.test.mjs",
   "server/surat-batch-print-isolation-flow.test.mjs",

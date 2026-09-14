@@ -381,16 +381,18 @@ test('REF-20: uzun ürün adı SESSİZCE kırpılmaz; kırpma CSS\'i kaldırıld
 
 test('REF-21: sığmayan içerik SESSİZCE basılmaz, açık hata verir', async () => {
   const { PRODUCT_OVERFLOW_MESSAGE } = await load('/src/utils/labelProductFit.ts')
-  // Adaptif profiller sonrasi iki uzun urun ARTIK SIGIYOR; bu test yalniz
-  // HICBIR guvenli profile sigmayan icerikte acik hata verildigini dogrular.
+  // Adaptif profiller sonrasi iki uzun urun SIGIYORDU; PRINT-GEOMETRY-003
+  // sonrasi SIGMAYANLAR DA artik DEVAM SAYFASINA tasar ve siparis BASILIR.
+  // Bu testin sozlesmesi ("sessiz kirpma YOK, acik hata VAR") DEGISMEDI;
+  // yalniz gercekten imkansiz bir ornek gerekti: TEK BASINA bir devam
+  // sayfasina bile sigmayan dev bir urun adi.
   const LONG =
     'Zara Saten Tesettür Elbise Drapeli Uzun Abiye Elbise Dik Yaka Şık Özel Gün Elbisesi ttzeyna44.40 '.repeat(
-      6,
+      60,
     )
   await assert.rejects(
     () => html([
       { id: 'l1', quantity: 1, productName: LONG, color: 'Lacivert', size: '40', sku: 'uzun1' },
-      { id: 'l2', quantity: 1, productName: LONG + ' IKINCI MODEL', color: 'Kırmızı', size: '38', sku: 'uzun2' },
     ]),
     new RegExp(PRODUCT_OVERFLOW_MESSAGE.replace('.', '\.')),
     'sessiz kırpma yerine açık hata',

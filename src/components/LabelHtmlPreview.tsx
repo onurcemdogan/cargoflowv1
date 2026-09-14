@@ -16,7 +16,7 @@ import {
   PRODUCT_OVERFLOW_MESSAGE,
 } from '../utils/labelProductFit'
 import { ROUTE_FIT_TIERS } from '../utils/labelRouteFit'
-import { resolveLabelLayout } from '../utils/labelLayoutResolver'
+import { planLabelProductPages } from '../utils/labelLayoutResolver'
 
 // Sigmayan durumda yalniz UYARI gosterilir; asagidaki kademe SADECE CSS
 // degiskenleri icin guvenli varsayilandir (etiket zaten basilmaz).
@@ -109,7 +109,11 @@ export function LabelHtmlPreview({
   const transferCenter = overrides?.transferCenter || data.transferCenter
   // Onizleme, on kontrol ve baski AYNI cozumleyiciyi kullanir: ayni siparis
   // icin farkli profil/karar CIKMAZ (preview == preflight == print).
-  const layout = resolveLabelLayout({
+  //
+  // PRINT-GEOMETRY-003: cozumleyici artik SAYFALAMA plancisidir. Onizleme
+  // SAYFA 1'i gosterir; sigmayan urun satirlari devam sayfalarina tasar ve
+  // onizlemede "N urun ek sayfada" olarak BILDIRILIR. Sessizce kaybolmaz.
+  const layout = planLabelProductPages({
     items: (data.items ?? []).map((line) => ({
       productName: String(line.productName ?? ''),
       quantity: Number(line.quantity) || 1,
@@ -120,9 +124,14 @@ export function LabelHtmlPreview({
     destination: routeCenter,
     transfer: transferCenter,
   })
-  const productFit = layout.ok
-    ? layout.productFit
+  const shippingPage = layout.ok ? layout.pages[0] : null
+  const productFit = shippingPage
+    ? shippingPage.fit
     : { fits: false, tier: FALLBACK_PRODUCT_TIER }
+  /** Sayfa 1'e sigmayip devam sayfalarina tasan kalem sayisi. */
+  const overflowItemCount = layout.ok
+    ? layout.pages.slice(1).reduce((total, page) => total + page.items.length, 0)
+    : 0
   const routeFit = layout.ok
     ? layout.routeFit
     : { tier: FALLBACK_ROUTE_TIER }
@@ -257,6 +266,14 @@ export function LabelHtmlPreview({
               <>
                 <strong>{productTitle}</strong>
                 <span>{productMeta}</span>
+                {/* TAŞAN KALEMLER SESSİZCE KAYBOLMAZ: önizleme, kaç kalemin
+                    ek sayfaya gittiğini AÇIKÇA söyler. Baskı da aynı planı
+                    kullanır, bu yüzden önizleme ile kâğıt AYRIŞAMAZ. */}
+                {overflowItemCount > 0 ? (
+                  <span className="surat-product-continued">
+                    {`+${overflowItemCount} ürün ek sayfada`}
+                  </span>
+                ) : null}
               </>
             ) : (
               <strong className="surat-product-overflow">

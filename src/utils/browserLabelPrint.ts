@@ -44,7 +44,13 @@ import {
   buildProductMetaText,
   buildProductTitleText,
 } from './labelProductFit'
-import { resolveLabelLayout } from './labelLayoutResolver'
+import { CONTINUATION_PAGE_METRICS } from './labelLayoutProfile'
+import { LABEL_TEMPLATE_GEOMETRY } from './labelTemplateGeometry'
+import {
+  planLabelProductPages,
+  type LabelProductPage,
+  type LabelProductPagePlan,
+} from './labelLayoutResolver'
 import {
   buildOfficialSuratPrintDocument,
   type OfficialSuratPage,
@@ -937,8 +943,15 @@ export function buildCleanLabelDocument(
   /** Taban yüklenemediyse NEDENİ — atlama mesajına aynen taşınır. */
   baseLayerErrors?: ReadonlyMap<string, string>,
 ): CleanLabelDocument {
-  const widthMm = template.widthMm || 100
-  const heightMm = template.heightMm || 100
+  // ═══ FİZİKSEL SAYFA ÖLÇÜSÜ ŞABLON KAYDINDAN GELİR ═══════════════════
+  //
+  // Varsayılan artık gömülü bir "100" sabiti DEĞİL, `labelTemplateGeometry`
+  // kaydıdır. Böylece sayfa boyutu tarayıcının A4/Letter varsayılanına ya da
+  // buradaki bir sayıya değil, ŞABLONUN İLAN EDİLMİŞ geometrisine bağlıdır —
+  // ve ileride sağlayıcıya ait şablonlar KENDİ ölçüleriyle gelebilir.
+  const htmlGeometry = LABEL_TEMPLATE_GEOMETRY.cargoflow_html
+  const widthMm = template.widthMm || htmlGeometry.pageWidthMm || 100
+  const heightMm = template.heightMm || htmlGeometry.pageHeightMm || 100
   const selection = resolveSuratPrintableSelection(orders, products)
   const skipped: SuratPrintSkip[] = [...selection.skipped]
   const printable: Array<{ order: CargoOrder; model: SuratPrintPageModel }> = []
@@ -977,15 +990,25 @@ export function buildCleanLabelDocument(
         skipped.push({ orderNumber: model.orderNumber, reason })
         continue
       }
-      pages.push(
-        labelDocument
-          ? renderDocumentLabelHtml(labelDocument, {
+      // ═══ TOPLU BASKI SIRASI: SİPARİŞ BLOKLARI HALİNDE ═══════════════
+      //
+      // Bir siparişin TÜM sayfaları, bir sonraki siparişe geçmeden AKIŞA
+      // eklenir. Sonuç: A1, A2, A3, B1, B2, C1 ... Sayfalar "önce tüm
+      // sevkiyatlar, sonra tüm ekler" biçiminde GRUPLANMAZ; operatör bir
+      // siparişin kâğıtlarını destede aramak zorunda kalmaz.
+      //
+      // MANTIKSAL SAYIM DEĞİŞMEZ: `printable` sipariş başına TEK kayıt alır.
+      // Fiziksel sayfa sayısı, basılan SİPARİŞ sayısı DEĞİLDİR.
+      const orderPages = labelDocument
+        ? [
+            renderDocumentLabelHtml(labelDocument, {
               data: printData,
               order,
               baseLayer,
-            })
-          : renderPrintableLabelHtml(printData),
-      )
+            }),
+          ]
+        : renderPrintableLabelPages(printData)
+      pages.push(...orderPages)
       printable.push(entry)
     } catch (error) {
       // Bu siparis atlanir; DIGERLERI etkilenmez. Sebep siparis numarasiyla
@@ -1043,6 +1066,29 @@ export function buildCleanLabelDocument(
       line-height: 1.05;
     }
     .label-page:last-child { break-after: auto; page-break-after: auto; }
+    /* URUN DETAY DEVAM SAYFASI — sevkiyat sayfasiyla AYNI fiziksel kutu.
+       Olcu sayfa kabindan gelir; bu kural yalniz IC yerlesimi tanimlar,
+       sayfa boyutuna DOKUNMAZ. */
+    .label-page-continuation .surat-body {
+      display: grid;
+      grid-template-rows: ${CONTINUATION_PAGE_METRICS.headerMm}mm minmax(0, 1fr);
+      padding: ${CONTINUATION_PAGE_METRICS.paddingMm}mm 2mm;
+      overflow: hidden;
+    }
+    .surat-continuation-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      border-bottom: .4mm solid #000;
+      font-size: 7pt;
+    }
+    .surat-continuation-header b { font-size: 9pt; font-family: var(--label-display); }
+    .surat-continuation-header > div { display: flex; flex-direction: column; }
+    .surat-page-indicator { font-family: var(--label-display); }
+    .surat-continuation-body {
+      align-content: start;
+      overflow: hidden;
+    }
     /* KİRACI YERLEŞİM BELGESİ sayfası: ilkellerin konumlandırma bağlamı.
        Ölçüler renderLabelDocument çıktısından gelir; bu kural yalnız
        fiziksel sayfayı tanımlar.
@@ -1334,9 +1380,60 @@ export function buildCleanLabelHtml(
   return buildCleanLabelDocument(orders, template, mappingConfig, products).html
 }
 
+// ═══ BİR SİPARİŞ, BİR VEYA DAHA ÇOK FİZİKSEL SAYFA ══════════════════════
+//
+// PRINT-GEOMETRY-003: ürün detayı Sayfa 1'e sığmadığında sipariş ARTIK
+// ATLANMAZ; sığmayan satırlar DEVAM SAYFALARINA taşar. Sayfa 1 her koşulda
+// eksiksiz SEVKİYAT etiketidir ve QR'ı KANONİK kalır.
+//
+// Dönen dizi BASKI SIRASINDADIR: [sevkiyat, devam 1, devam 2, ...].
+// Çağıran bu diziyi OLDUĞU GİBİ akışa eklemelidir; böylece toplu baskıda
+// bir siparişin tüm sayfaları PEŞ PEŞE çıkar.
+export function renderPrintableLabelPages(data: LabelData): string[] {
+  const plan = planLabelProductPages({
+    items: (data.items ?? []).map((line) => ({
+      productName: String(line.productName ?? ''),
+      quantity: Number(line.quantity) || 1,
+      color: line.color,
+      size: line.size,
+      sku: line.sku,
+    })),
+    destination:
+      data.routeCenter || [data.city, data.district].filter(Boolean).join(' / '),
+    transfer:
+      data.transferCenter ||
+      data.routeCenter ||
+      [data.city, data.district].filter(Boolean).join(' / '),
+  })
+  if (!plan.ok) {
+    // Sessiz kirpma YOK. Buraya YALNIZ rota sigmadiginda dusulur: rota
+    // sevkiyatin kendisidir, urun detayi opsiyoneldir.
+    throw new Error(plan.reason)
+  }
+  const [shippingPage, ...continuations] = plan.pages
+  const pages = [renderShippingLabelPage(data, plan, shippingPage)]
+  continuations.forEach((page, index) => {
+    pages.push(
+      renderProductContinuationPage(data, page, index + 2, plan.totalPages),
+    )
+  })
+  return pages
+}
+
+/** Geriye donuk cagri: YALNIZ sevkiyat sayfasi (onizleme/tekil kullanim). */
 export function renderPrintableLabelHtml(data: LabelData): string {
+  return renderPrintableLabelPages(data)[0]
+}
+
+function renderShippingLabelPage(
+  data: LabelData,
+  plan: Extract<LabelProductPagePlan, { ok: true }>,
+  page: LabelProductPage,
+): string {
   const barcodeSvg = renderBarcodeSvg(data.barcodeValue)
-  const item = data.items[0]
+  // SAYFA 1'DEKİ ürün satırları — TAMAMI değil, PLANIN verdiği dilim.
+  const pageItems = page.items
+  const item = pageItems[0]
   const leftReference =
     data.leftVerticalReference || data.shipmentReference || data.orderNumber
   const routeCenter =
@@ -1359,30 +1456,16 @@ export function renderPrintableLabelHtml(data: LabelData): string {
   // parça-adedi etiketi + "1/1 Adrese Teslim" satırı ve satır boşlukları
   // düşülür. Sütun genişliği: gövde 93.9 - yatay padding 4 - büyük QR 21 -
   // küçük QR 12.5 - iki boşluk 3.6 = 52.8mm (kötümser 52mm).
-  // Profil secimi ON KONTROL ile AYNI cozumleyiciden gelir (tek kaynak).
-  const layout = resolveLabelLayout({
-    items: (data.items ?? []).map((line) => ({
-      productName: String(line.productName ?? ''),
-      quantity: Number(line.quantity) || 1,
-      color: line.color,
-      size: line.size,
-      sku: line.sku,
-    })),
-    destination: routeCenter,
-    transfer: transferCenter,
-  })
-  if (!layout.ok) {
-    // Sessiz kirpma YOK: hicbir guvenli profil sigdiramadi.
-    throw new Error(layout.reason)
-  }
-  const selectedProfile = layout.profile
-  const routeFit = layout.routeFit
+  // Profil secimi ON KONTROL ile AYNI cozumleyiciden gelir (tek kaynak);
+  // artik o cozumleyici SAYFALAMA plancisidir.
+  const selectedProfile = plan.profile
+  const routeFit = plan.routeFit
   const productTitle = item ? buildProductTitleText(item) : 'Ürün bilgisi yok'
   const productMeta = buildProductMetaText(item ?? {
     productName: '',
     quantity: 1,
   })
-  const productFit = layout.productFit
+  const productFit = page.fit
   const productStyle =
     `--layout-address-row:${selectedProfile.addressRowMm}mm;` +
     `--layout-delivery-row:${selectedProfile.deliveryRowMm}mm;` +
@@ -1399,10 +1482,10 @@ export function renderPrintableLabelHtml(data: LabelData): string {
     `--route-line-height:${routeFit.tier.lineHeight}`
   // Çoklu ürün: tüm satırlar footer'da listelenir (kayıpsız, sarmalı).
   // Tekli sipariş markup'ı regression baseline'dır ve birebir korunur.
-  const multipleItems = data.items.length > 1
+  const multipleItems = pageItems.length > 1
   const productFooter = multipleItems
     ? `<footer class="surat-section surat-product surat-product-multi">
-            ${data.items
+            ${pageItems
               .map((line) => {
                 // Çoklu üründe de ÖZET DEĞİL tam detay: ad + adet + renk +
                 // beden + sku. "+X ürün daha" ÜRETİLMEZ.
@@ -1421,7 +1504,16 @@ export function renderPrintableLabelHtml(data: LabelData): string {
               })
               .join('')}
           </footer>`
-    : `<footer class="surat-section surat-product">
+    : pageItems.length === 0 && plan.totalPages > 1
+      ? // SAYFA 1'E HİÇ ÜRÜN SIĞMADI (ör. tek başına çok büyük bir ad).
+        // "Ürün bilgisi yok" YAZILMAZ: ürün VARDIR, yalnız ek sayfadadır.
+        // Yanlış olan bu ifadeyi basmak, operatöre siparişin ürünsüz
+        // olduğunu söylerdi.
+        `<footer class="surat-section surat-product">
+            <strong>Ürün detayı ek sayfada</strong>
+            <span>Sayfa 2 / ${plan.totalPages}</span>
+          </footer>`
+      : `<footer class="surat-section surat-product">
             <strong>${escapeHtml(productTitle)}</strong>
             <span>${escapeHtml(productMeta)}</span>
           </footer>`
@@ -1474,6 +1566,70 @@ export function renderPrintableLabelHtml(data: LabelData): string {
             ${renderQrSvg(data.qrPayload || data.trendyolCargoTrackingNumber || data.shipmentReference, 'surat-qr-small')}
           </section>
           ${productFooter}
+        </div>
+      </article>
+    `
+}
+
+// ═══ ÜRÜN DETAY DEVAM SAYFASI ═══════════════════════════════════════════
+//
+// BU SAYFA SEVKİYAT ETİKETİ DEĞİLDİR. Kargo barkodu, QR'ı, alıcı adı, adresi
+// ve telefonu BİLEREK BASILMAZ:
+//
+//   · Barkod/QR tekrarı, iki sayfanın da taranabilir görünmesine yol açar ve
+//     yanlış sayfanın kargoya yapıştırılması riskini doğurur. Sevkiyat
+//     artefaktı SAYFA 1'DİR.
+//   · Alıcı adı/adresi/telefonu ek sayfada OPERASYONEL olarak gerekmez;
+//     tekrarlamak PII yüzeyini gereksiz büyütür.
+//
+// Taşınan tek şey, sayfayı siparişe bağlayan KİMLİK ve kaçıncı sayfa
+// olduğudur — kopan bir yaprağın hangi siparişe ait olduğu anlaşılsın diye.
+function renderProductContinuationPage(
+  data: LabelData,
+  page: LabelProductPage,
+  pageNumber: number,
+  totalPages: number,
+): string {
+  const reference =
+    data.leftVerticalReference || data.shipmentReference || data.orderNumber
+  const rows = page.items
+    .map((line) => {
+      const meta = buildProductMetaText({
+        productName: String(line.productName ?? ''),
+        quantity: Number(line.quantity) || 1,
+        color: line.color,
+        size: line.size,
+        sku: line.sku,
+      })
+      return `<div class="surat-product-line"><strong>${escapeHtml(
+        `${line.quantity || 1} x ${line.productName}`,
+      )}</strong>${meta ? `<span>${escapeHtml(meta)}</span>` : ''}</div>`
+    })
+    .join('')
+  const style =
+    `--product-title-size:${page.fit.tier.titlePt}pt;` +
+    `--product-meta-size:${page.fit.tier.metaPt}pt;` +
+    `--product-line-height:${page.fit.tier.lineHeight}`
+  return `
+      <article class="label-page label-page-continuation" data-page-kind="product_continuation" style="${style}">
+        <aside class="surat-rail">
+          <strong>URUN DETAYI</strong>
+          <span>Siparis No: ${escapeHtml(reference)}</span>
+        </aside>
+        <div class="surat-body">
+          <header class="surat-section surat-continuation-header">
+            <div>
+              <b>Ürün Detayı</b>
+              <span>Siparis No: ${escapeHtml(data.orderNumber)}</span>
+            </div>
+            <div class="surat-header-right">
+              <span>T.No: <strong>${escapeHtml(data.tNo || data.trackingNumber || '-')}</strong></span>
+              <span class="surat-page-indicator">Sayfa ${pageNumber} / ${totalPages}</span>
+            </div>
+          </header>
+          <footer class="surat-section surat-product surat-product-multi surat-continuation-body">
+            ${rows}
+          </footer>
         </div>
       </article>
     `

@@ -249,8 +249,12 @@ test('MIF-10: hiçbir profil sığdıramazsa AÇIK hata + sipariş izolasyonu', 
     widthDots: 799, heightDots: 799, fields: [],
   }
   const healthy = mk('1', [{ id: 'l1', quantity: 1, productName: 'Basic Tisort' }])
-  const impossible = mk('2', Array.from({ length: 12 }, (_, i) => ({
-    id: `x${i}`, quantity: 1, productName: 'Z'.repeat(160),
+  // PRINT-GEOMETRY-003 — ESIK TASINDI, SOZLESME AYNI.
+  // 12 uzun kalem ARTIK imkansiz DEGIL: devam sayfalarina tasar ve BASILIR.
+  // Gercekten imkansiz olan, TEK BASINA bir devam sayfasina bile sigmayan
+  // dev bir urun adidir. "Acik hata + siparis izolasyonu" iddiasi AYNEN kalir.
+  const impossible = mk('2', Array.from({ length: 1 }, (_, i) => ({
+    id: `x${i}`, quantity: 1, productName: 'Z'.repeat(4000),
     color: 'Lacivert', size: '40', sku: `sku${i}`,
   })))
   const mixed = buildCleanLabelDocument([healthy, impossible], template, {})
