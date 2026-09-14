@@ -21,6 +21,7 @@
   "server/surat-label-route-fit-flow.test.mjs",
   "server/shared-create-print-entry-points-flow.test.mjs",
   "server/multi-item-label-fit-flow.test.mjs",
+  "server/print-geometry-qr-invariant-flow.test.mjs",
   "server/browser-print-live-fit-flow.test.mjs",
   "server/surat-label-product-metadata-flow.test.mjs",
   "server/surat-batch-print-isolation-flow.test.mjs",

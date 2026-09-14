@@ -103,8 +103,8 @@ test('MIF-5/6: hata metni PROVIDER-BAĞIMSIZ, tanı kaydı gerçek yola göre', 
 // ── layout profilleri ────────────────────────────────────────────────────
 
 test('MIF-7: profiller SIRALI, DETERMINISTIK ve güvenli sınırlar içinde', async () => {
-  const { LABEL_LAYOUT_PROFILES, resolveProductAreaHeightMm } = await load(
-    '/src/utils/labelLayoutProfile.ts')
+  const { LABEL_LAYOUT_PROFILES, resolveProductAreaHeightMm, LABEL_QR_SIDES_MM } =
+    await load('/src/utils/labelLayoutProfile.ts')
   assert.deepEqual(
     LABEL_LAYOUT_PROFILES.map((p) => p.key),
     ['standard', 'compact-multi', 'dense-multi'],
@@ -114,9 +114,19 @@ test('MIF-7: profiller SIRALI, DETERMINISTIK ve güvenli sınırlar içinde', as
     const area = resolveProductAreaHeightMm(profile)
     assert.ok(area > previousArea, 'ürün alanı kademeli BÜYÜR')
     previousArea = area
-    // QR'lar okunabilir minimumun ALTINA inmez.
-    assert.ok(profile.largeQrMm >= 15, 'büyük QR >= 15mm')
-    assert.ok(profile.smallQrMm >= 9, 'küçük QR >= 9mm')
+    // QR ARTIK PROFİL ALANI DEĞİLDİR (bkz. labelTemplateGeometry).
+    //
+    // İDDİA GEVŞEMEDİ, GUÇLENDİ: eskiden "her profilde >= 15mm" deniyordu ve
+    // bu, profil ilerledikçe QR'ın 21 → 18 → 15.5'e KÜÇÜLMESİNE izin
+    // veriyordu. Artık QR profile BAĞLI DEĞİLDİR: alanın var olmadığı
+    // kanıtlanır ve kanonik kenar SABİT olduğu ayrıca iddia edilir.
+    assert.equal('largeQrMm' in profile, false, 'QR profil alanı OLMAMALI')
+    assert.equal('smallQrMm' in profile, false, 'QR profil alanı OLMAMALI')
+    // Teslimat satırı büyük QR'ı TAŞIYABİLMELİDİR.
+    assert.ok(
+      profile.deliveryRowMm >= LABEL_QR_SIDES_MM.largeQrMm,
+      'teslimat satırı QR kenarından küçük OLAMAZ',
+    )
     // Barkod satırı ve header HER profilde sabittir (hesaba dahil).
     const fixed = 12 + 20.5 + profile.addressRowMm + 10 + profile.deliveryRowMm
     assert.ok(fixed + area + profile.productPaddingMm * 2 <= 99.35)
@@ -132,8 +142,15 @@ test('MIF-8: iki uzun kalem standard\'a SIĞMAZ, compact-multi\'ye SIĞAR', asyn
   const { resolveProductFit } = await load('/src/utils/labelProductFit.ts')
   const { LABEL_LAYOUT_PROFILES, resolveProductAreaHeightMm } = await load(
     '/src/utils/labelLayoutProfile.ts')
+  // ÖLÇÜLEN KAPASİTE KAYMASI (QR değişmezi): teslimat satırı artık büyük
+  // QR'ı taşıyacak kadar SABİT olduğu için ürün alanı 15.0 → 12.0 mm
+  // (compact) ve 18.9 → 13.4 mm (dense) oldu. Bu testin ÖLÇTÜĞÜ ŞEY
+  // KAPASİTENİN MUTLAK DEĞERİ DEĞİL, "standard sığdıramazsa profil
+  // yükseltmesi çözüyor mu" davranışıdır; fixture o davranışın HÂLÂ
+  // geçerli olduğu ölçüye (82 karakter) taşındı. 100 karakter artık HİÇBİR
+  // profile sığmaz — eskiden yalnız QR KÜÇÜLTÜLEREK sığıyordu.
   const items = Array.from({ length: 2 }, (_, index) => ({
-    productName: 'U'.repeat(100),
+    productName: 'U'.repeat(82),
     quantity: 1, color: 'Lacivert', size: '40', sku: `sku${index}`,
   }))
   const at = (key) => {
@@ -178,9 +195,12 @@ test('MIF-9: render İLK sığan profili seçer ve DOM\'da işaretler', async ()
     template, {})
   assert.match(short.html, /data-layout-profile="standard"/)
 
+  // Bkz. MIF-8: QR değişmezi geldikten sonra ürün alanı daralıyor; ölçülen
+  // geçiş 82 karakterde. İDDİA AYNI (uzun iki kalem → compact-multi, TEK
+  // sayfa, EKSİKSİZ metadata); yalnız fixture gerçek zarfa taşındı.
   const longItems = [
-    { id: 'l1', quantity: 1, productName: 'U'.repeat(100), color: 'Lacivert', size: '40', sku: 'ttzeyna11' },
-    { id: 'l2', quantity: 1, productName: 'V'.repeat(100), color: 'Siyah', size: '38', sku: 'ttpant10' },
+    { id: 'l1', quantity: 1, productName: 'U'.repeat(82), color: 'Lacivert', size: '40', sku: 'ttzeyna11' },
+    { id: 'l2', quantity: 1, productName: 'V'.repeat(82), color: 'Siyah', size: '38', sku: 'ttpant10' },
   ]
   const heavy = buildCleanLabelDocument([order(longItems)], template, {})
   assert.equal(heavy.skipped.length, 0, 'artık ATLANMIYOR')

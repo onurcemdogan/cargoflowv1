@@ -28,6 +28,7 @@ import type {
   LabelTemplate,
   SuratLabelMappingConfig,
 } from '../types/cargoflow'
+import { LABEL_QR_SIDES_MM } from './labelLayoutProfile'
 import { buildLabelData, type LabelData } from './labelData'
 import {
   AUGMENTATION_FALLBACK_WARNING,
@@ -1386,8 +1387,10 @@ export function renderPrintableLabelHtml(data: LabelData): string {
     `--layout-address-row:${selectedProfile.addressRowMm}mm;` +
     `--layout-delivery-row:${selectedProfile.deliveryRowMm}mm;` +
     `--layout-product-padding:${selectedProfile.productPaddingMm}mm;` +
-    `--layout-large-qr:${selectedProfile.largeQrMm}mm;` +
-    `--layout-small-qr:${selectedProfile.smallQrMm}mm;` +
+    // QR KENARI ŞABLON SABİTİDİR. Profil (ve dolayısıyla ürün footer'ı,
+    // kalem sayısı, rota metni) bu iki değeri DEĞİŞTİREMEZ.
+    `--layout-large-qr:${LABEL_QR_SIDES_MM.largeQrMm}mm;` +
+    `--layout-small-qr:${LABEL_QR_SIDES_MM.smallQrMm}mm;` +
     `--product-title-size:${productFit.tier.titlePt}pt;` +
     `--product-meta-size:${productFit.tier.metaPt}pt;` +
     `--product-line-height:${productFit.tier.lineHeight};` +

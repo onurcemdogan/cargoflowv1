@@ -16,6 +16,7 @@ import {
   LABEL_LAYOUT_PROFILES,
   resolveProductAreaHeightMm,
   type LabelLayoutProfile,
+  LABEL_QR_SIDES_MM,
 } from './labelLayoutProfile'
 import {
   PRODUCT_OVERFLOW_MESSAGE,
@@ -107,8 +108,10 @@ export function resolveLabelLayout(input: LabelLayoutInput): LabelLayoutResult {
         routeBudgetMm: profile.routeBudgetMm,
         addressRowMm: profile.addressRowMm,
         deliveryRowMm: profile.deliveryRowMm,
-        largeQrMm: profile.largeQrMm,
-        smallQrMm: profile.smallQrMm,
+        // QR ŞABLONDAN gelir, profilden DEĞİL. İçerik bu iki değeri
+        // DEĞİŞTİREMEZ (bkz. labelTemplateGeometry).
+        largeQrMm: LABEL_QR_SIDES_MM.largeQrMm,
+        smallQrMm: LABEL_QR_SIDES_MM.smallQrMm,
       },
     }
   }
