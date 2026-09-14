@@ -16,6 +16,7 @@ import {
   TRENDYOL_V2_MAX_PAGE_SIZE,
   TRENDYOL_V2_MAX_RANGE_MS,
 } from '../marketplaces/trendyolOrdersEndpoint.ts'
+import { normalizeTrendyolOrderDate } from '../marketplaces/trendyolOrderDate.ts'
 
 // Analitik/backfill için gerekli TÜM statüler (aktif + arşiv).
 export const HISTORICAL_ORDER_STATUSES = [
@@ -196,7 +197,12 @@ export function normalizeHistoricalPackage(
     cargoTrackingNumber: String(item.cargoTrackingNumber ?? ''),
     totalAmount: num(item.grossAmount ?? item.totalPrice ?? item.totalAmount ?? item.amount),
     currency: String(item.currencyCode ?? 'TRY'),
-    orderDate: toIso(item.orderDate) ?? new Date(0).toISOString(),
+    // SAĞLAYICIYA ÖZEL: `orderDate` GMT+3 epoch'tur (resmî sözleşme). Geri
+    // doldurma yolu, canlı sync ile AYNI normalizasyonu kullanmak
+    // ZORUNDADIR; aksi hâlde aynı sipariş hangi yoldan geldiğine göre
+    // 3 saat farklı kaydedilirdi.
+    orderDate:
+      normalizeTrendyolOrderDate(item.orderDate) || new Date(0).toISOString(),
     lastModifiedDate: toIso(item.lastModifiedDate),
     rawOrder: item,
     // Satır id: yalnız GERÇEK provider satır id'si (line.id/orderLineId). Sentetik

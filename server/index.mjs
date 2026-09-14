@@ -36,6 +36,7 @@ import {
   TRENDYOL_V2_MAX_PAGE_SIZE,
   TRENDYOL_V2_MAX_RANGE_MS,
 } from './marketplaces/trendyolOrdersEndpoint.ts'
+import { normalizeTrendyolOrderDate } from './marketplaces/trendyolOrderDate.ts'
 import { buildTrendyolShipmentEligibility } from './shipments/trendyolShipmentEligibility.ts'
 import { resolveOutboundRecipientPhone } from '../src/utils/labelData.ts'
 import {
@@ -14634,7 +14635,17 @@ function normalizeTrendyolOrders(data) {
     const packageId = String(item.packageId ?? item.shipmentPackageId ?? item.id ?? '')
     const shipmentPackageId = String(item.shipmentPackageId ?? item.packageId ?? item.id ?? '')
     const orderId = String(item.orderNumber ?? item.id ?? packageId ?? index)
-    const orderDate = toIsoDate(item.orderDate)
+    // ═══ SAĞLAYICIYA ÖZEL: `orderDate` GMT+3 EPOCH'TUR ═══════════════
+    //
+    // Resmî sözleşme (v3.0 Get Shipment Packages): "The orderDate is in
+    // timestamp (milliseconds) format GMT +3". Genel `toIsoDate` bunu düz
+    // UTC epoch sayıyordu; etiket formatlayıcısı sonra Europe/Istanbul'a
+    // çevirince +03 İKİ KEZ uygulanıyor ve sipariş saati 3 saat İLERİ
+    // görünüyordu (üretimde ölçüldü: 20:36 → 23:36).
+    //
+    // Düzeltme SAĞLAYICI SINIRINDADIR; kanonik `order_date` bundan sonra
+    // gerçek mutlak andır ve aşağı akış (formatlayıcı dâhil) DEĞİŞMEZ.
+    const orderDate = normalizeTrendyolOrderDate(item.orderDate)
     const deliveryDate = toIsoDate(
       item.deliveryDate ?? item.agreedDeliveryDate ?? item.estimatedDeliveryEndDate,
     )
