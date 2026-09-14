@@ -12,8 +12,19 @@
 //   V2  SHORT 105   MED 105 (font 50→46)   LONG  21   VLONG  21
 //
 // Yani: içerik değiştiğinde QR'ın KÜÇÜLMESİ ortadan kalktı, çakışma
-// giderildi ve metin ÖNCE daralıyor. V2'nin uzun metin dalı HÂLÂ taşıyıcının
-// YERLİ 21 dot'unda kalıyor — sebebi aşağıda PG2-3'te açıkça yazılıdır.
+// giderildi ve metin ÖNCE daralıyor.
+//
+// ═══ SONRAKİ BİLET (PRINT-GEOMETRY-002B) SON İKİ SÜTUNU KAPATTI ══════════
+//
+// Yukarıdaki tabloda LONG/VLONG dalları hâlâ 21 dot gösteriyordu. PG2B
+// aktarma metnini `^FB` ile İKİ SATIRA sardı ve o dallar da KANONİK 105
+// oldu; V1'in RET'leri de compose EDİLİR hâle geldi. Bu dosyadaki PG2-3 ve
+// PG2-5 buna göre GÜNCELLENDİ (gevşetilmedi — daha geniş içerik kümesinde
+// AYNI şeyi iddia ediyorlar). Ayrıntı: print-geometry-zpl-transfer-wrap-flow.
+//
+// PG2B AYRICA BU DOSYADAKİ BİR AÇIKLAMA HATASINI DÜZELTTİ: "composer
+// reddediyor, ham ZPL'e düşülüyor" açıklaması ÖLÇÜMLE YALANLANDI — V2 LONG
+// için `composed=true` idi; kusur BAŞARI yolundaydı. Bkz. PG2-3.
 //
 // ═══ MUHAFIZ GEVŞETİLMEDİ ════════════════════════════════════════════════
 //
@@ -47,6 +58,7 @@ const VLONG = 'KAHRAMANMARAS ELBISTAN AKTARMA MERKEZI'
 let _vite
 let renderZplToPng
 let composeSuratLabel
+let deriveAugmentedSuratZpl
 let composerSource
 
 before(async () => {
@@ -57,6 +69,9 @@ before(async () => {
   })
   ;({ renderZplToPng } = await _vite.ssrLoadModule('/server/labels/zplRenderService.ts'))
   ;({ composeSuratLabel } = await _vite.ssrLoadModule('/src/utils/suratLabelComposer.ts'))
+  ;({ deriveAugmentedSuratZpl } = await _vite.ssrLoadModule(
+    '/src/utils/augmentedSuratZpl.ts',
+  ))
   composerSource = readFileSync(
     join(here, '..', 'src', 'utils', 'suratLabelComposer.ts'),
     'utf8',
@@ -174,21 +189,32 @@ test('PG2-2b: V2 SHORT — 126 dotluk QR artik aktarma metniyle CAKISMIYOR', asy
 // Bu dalı kapatmanın TEK yolu aktarma metnini SARMAKTIR (iki satıra bölmek);
 // bu, taşıyıcı metin alanına YENİ bir mutasyon sınıfı eklemek demektir ve bu
 // biletin "mümkün olan EN KÜÇÜK whitelist" kuralının DIŞINDADIR.
-test('PG2-3: V2 uzun metin — 21 dot TASIYICININ YERLI boyudur, CargoFlow kucultmez', async () => {
+// PRINT-GEOMETRY-002B BU DALI KAPATTI — VE PG2'NİN AÇIKLAMASINI DÜZELTTİ.
+//
+// PG2 bu dalı "composer REDDEDİYOR, `deriveAugmentedSuratZpl` ham taşıyıcı
+// ZPL'ine düşüyor" diye açıklamıştı. SONRAKİ ÖLÇÜM BUNU YALANLADI: V2 LONG
+// için `composed=true` idi (renderContract=carrier_composed). Composer
+// reddetmiyor, BAŞARIYLA dönüp taşıyıcının `^BQN,4,4 ` komutunu OLDUĞU GİBİ
+// bırakıyordu. Kusur fallback yolunda DEĞİL, BAŞARI yolundaydı.
+//
+// Artık aktarma metni iki satıra sarılıyor ve QR KANONİK büyütülüyor.
+test('PG2-3: V2 uzun metin — QR artik KANONIK (21 dot yolu KAPANDI)', async () => {
   const long = await compose(V2_ZPL, LONG)
   assert.equal(long.composed, true)
-  // Olculen gercek KILITLENIR: sessizce degisemez.
-  assert.equal(long.qr.width, 21, 'tasiyici yerli QR boyu')
+  // ESKIDEN 21 IDI. Artik kanonik.
+  assert.equal(long.qr.width, CANONICAL_QR_DOTS, 'kanonik QR')
+  assert.notEqual(long.qr.width, 21, '21 dot ARTIK BASILMAZ')
 
-  // KANIT: 21 dot KAYNAKTAN gelir. Ham (compose edilmemis) tasiyici ZPL'i
-  // AYNI 21 dot'u uretir — yani CargoFlow bir seyi kucultmemistir.
+  // KAYNAK HALA 21 DOT TASIR — yani kazanim CargoFlow'un BUYUTMESIDIR.
+  // Bu satir, iyilesmenin nereden geldigini KANITLAR ve fixture'in sessizce
+  // degismedigini dogrular.
   const rawZpl = withTransfer(V2_ZPL, LONG)
   const rawQr = diffBox(
     await render(rawZpl),
     await render(rawZpl.replace(/\^BQ[^\^]*\^FD[^\^]*\^FS/, '^FS')),
   )
-  assert.equal(rawQr.width, 21, 'ham tasiyici etiketi de 21 dot')
-  assert.equal(long.qr.width, rawQr.width, 'compose QR boyunu DEGISTIRMEDI')
+  assert.equal(rawQr.width, 21, 'ham tasiyici etiketi HALA 21 dot')
+  assert.ok(long.qr.width > rawQr.width, 'composer QR"i BUYUTTU')
 })
 
 // ═══ PG2-4 — ÖNCE METİN DARALIR ══════════════════════════════════════════
@@ -208,33 +234,63 @@ test('PG2-4: QR kucultulmeden ONCE aktarma fontu daraltilir', async () => {
 // ═══ PG2-5 — SIĞMAZSA GÜVENLİ RET, KÜÇÜK QR DEĞİL ════════════════════════
 
 test('PG2-5: hicbir kademe sigdiramazsa GUVENLI RET (kucuk QR DEGIL)', async () => {
-  for (const text of [LONG, VLONG]) {
+  // PRINT-GEOMETRY-002B: LONG/VLONG artik IKI SATIRA sarilarak URETILIR.
+  // Ret sozlesmesi DEGISMEDI; yalnizca gercekten sigmayan bir ornek gerekti.
+  // Bolunemez tek token kelime sinirinda sarilamaz (kelime ORTASINDAN bolme
+  // YOKTUR), bu yuzden hicbir kademe onu sigdiramaz.
+  for (const text of [
+    'ISTANBULANADOLUAKTARMAMERKEZIBOLGEMUDURLUGU',
+    'W'.repeat(28),
+  ]) {
     const out = await compose(V1_ZPL, text)
     assert.equal(out.composed, false, `"${text}" icin ret bekleniyor`)
     assert.match(String(out.reason), /QR aday/, 'ret sebebi geometri catismasi')
+  }
+  // VE eski ornekler artik URETILIR — kucuk QR ile DEGIL, KANONIK ile.
+  for (const text of [LONG, VLONG]) {
+    const out = await compose(V1_ZPL, text)
+    assert.equal(out.composed, true, `"${text}" artik sarilarak uretilir`)
+    assert.equal(out.qr.width, CANONICAL_QR_DOTS, `"${text}" kanonik QR`)
   }
 })
 
 // ═══ PG2-6 — ÜRÜN FOOTER'I QR'I ETKİLEMEZ ════════════════════════════════
 
+// ÜRÜNLER GERÇEK YOLDAN VERİLİR — `composeSuratLabel` ONLARI OKUMAZ.
+//
+// ═══ YAKALANAN SAHTE YEŞİL (PRINT-GEOMETRY-002B turunda) ════════════════
+//
+// Bu test ürünleri `composeSuratLabel(zpl, { items })` ile veriyordu.
+// `SuratComposeInput` böyle bir alan TAŞIMIYOR ve composer içinde `items`
+// kelimesi HİÇ GEÇMİYOR — yani üç varyant da AYNI etiketi üretiyor ve test
+// hiçbir şey kanıtlamadan GEÇİYORDU. Footer'ı ekleyen gerçek yol
+// `deriveAugmentedSuratZpl(zpl, items, {compose})`; test oraya taşındı ve
+// footer'ın GERÇEKTEN basıldığı ayrıca doğrulanır.
 test('PG2-6: urun footer varyasyonu QR boyutunu DEGISTIRMEZ', async () => {
   // Composer QR'i urun footer'indan BAGIMSIZ hesaplar: ayni aktarma metniyle
   // farkli urun icerikleri AYNI QR'i uretmelidir.
   const base = withTransfer(V1_ZPL, SHORT)
   const widths = []
-  for (const items of [[], [{ productName: 'Tisort', quantity: 1 }], [
-    { productName: 'Cok Uzun Bir Urun Adi Ornegi Buraya', quantity: 2 },
-    { productName: 'Ikinci Urun', quantity: 1 },
-    { productName: 'Ucuncu Urun', quantity: 3 },
+  for (const items of [[], [{ productName: 'Tisort', quantity: 1, sku: 'S1' }], [
+    { productName: 'Cok Uzun Bir Urun Adi Ornegi Buraya', quantity: 2, sku: 'S2' },
+    { productName: 'Ikinci Urun', quantity: 1, sku: 'S3' },
+    { productName: 'Ucuncu Urun', quantity: 3, sku: 'S4' },
   ]]) {
-    const result = composeSuratLabel(base, {
-      cargoTrackingNumber: VERIFIED_727,
-      items,
+    const result = deriveAugmentedSuratZpl(base, items, {
+      compose: { cargoTrackingNumber: VERIFIED_727 },
     })
-    assert.equal(result.composed, true)
+    assert.equal(result.renderContract, 'carrier_composed')
+    // FOOTER GERCEKTEN BASILDI MI? Bu kontrol olmadan test, urunlerin hic
+    // islenmedigi durumda da GECERDI (yukaridaki sahte yesil tam buydu).
+    for (const item of items) {
+      assert.ok(
+        result.printZpl.includes(item.productName.slice(0, 12)),
+        `"${item.productName}" footer'a girmedi`,
+      )
+    }
     const qr = diffBox(
-      await render(result.zpl),
-      await render(result.zpl.replace(/\^BQ[^\^]*\^FD[^\^]*\^FS/, '^FS')),
+      await render(result.printZpl),
+      await render(result.printZpl.replace(/\^BQ[^\^]*\^FD[^\^]*\^FS/, '^FS')),
     )
     widths.push(qr.width)
   }
@@ -260,8 +316,11 @@ test('PG2-7: whitelist GENISLETILMEDI — izin kumesi AYNI kaldi', async () => {
     /mutation\.from === allowedTransferFont\.from &&\s*mutation\.to === allowedTransferFont\.to/,
   )
   // TEK KAYNAK: emit ve whitelist AYNI degerden beslenir.
-  assert.match(composerSource, /const appliedTransferWidth = carrierQrEnlargement/)
-  assert.match(composerSource, /allowedTransferFont[\s\S]{0,400}appliedTransferWidth/)
+  // PRINT-GEOMETRY-002B: tek deger artik bir GENISLIK degil, tam bir
+  // TIPOGRAFI (yukseklik + genislik + satirlar). Isim degisti, SOZLESME
+  // AYNI: emit, whitelist ve invariant dogrulamasi AYNI degerden beslenir.
+  assert.match(composerSource, /const appliedTransfer: TransferTypography = carrierQrEnlargement/)
+  assert.match(composerSource, /allowedTransferFont[\s\S]{0,400}appliedTransfer\./)
   // Genel bir "QR komutlari degisebilir" izni EKLENMEDI.
   assert.equal(/mutation\.name === 'BQ'\s*\)/.test(composerSource), false)
 })

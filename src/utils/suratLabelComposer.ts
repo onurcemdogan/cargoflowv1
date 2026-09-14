@@ -138,6 +138,122 @@ const BOLD_ADDRESS_RIGHT_LIMIT = 765
  */
 const TRANSFER_FONT_WIDTH_STEPS: readonly number[] = [46, 43, 40]
 
+// ═══ AKTARMA METNİ İKİ SATIRA SARILIR — QR KÜÇÜLMESİN DİYE ═══════════════
+//
+// ÖLÇÜLEN KUSUR (PRINT-GEOMETRY-002B): tek satır merdiveni tükendiğinde
+// V2'de taşıyıcının QR'ı büyütülemiyordu ve etiket taşıyıcının YERLİ 21 dot
+// QR'ıyla BASILABİLİR hâlde kalıyordu (composed=true). Yani "aynı şablon,
+// içeriğe göre farklı QR boyu" ihlali sürüyordu.
+//
+// ÇÖZÜM: metin İKİ SATIRA sarılır. Yatay bütçe yarıya inmez — İKİYE KATLANIR.
+//
+// ═══ NEDEN `^FB`, NEDEN ALANI BÖLMEK DEĞİL ═══════════════════════════════
+//
+// Alanı iki `^FD`'ye bölmek, gövdeyi BİZİM kesmemiz demekti: kelime düşürme,
+// kırpma ve `transferCenter` invariant'ının bozulması riski. Bunun yerine
+// yazıcının KENDİ blok komutu (`^FB`) kullanılır: `^FD` gövdesi BAYT BAYT
+// AYNI kalır, sarmayı yazıcı kelime sınırında yapar. Böylece içerik
+// korunumu YAPISALDIR — doğrulanacak bir birleştirme YOKTUR.
+//
+// ═══ ÖLÇÜLDÜ: `^FB` + `^FT` YUKARI DOĞRU BÜYÜR ═══════════════════════════
+//
+// Gerçek render: `^FT220,668^A0N,33,24^FB434,2,4,L` → mürekkep bantları
+// [606..631] ve [643..667]. Yani SON satır `^FT` taban çizgisinde oturur,
+// önceki satırlar YUKARI eklenir. Bu yüzden taşıyıcının `^FT220,705`
+// konumu HİÇ DEĞİŞMEZ; blok onun üstüne doğru açılır.
+//
+// ═══ DİKEY ZARF TAŞMAZ ═══════════════════════════════════════════════════
+//
+// Ölçülen komşuluk: rota kodu (y=636, h=44) mürekkebi 592..636'da biter;
+// aktarma alanının işgal zarfı [705−70, 705] = [635, 705]'tir. İki satır bu
+// zarfın İÇİNDE kalmalıdır:
+//
+//   2×h + boşluk ≤ 70   →   h = 33, boşluk = 4   →   2×33 + 4 = 70 ✓
+//
+// Satır aralığı ölçümle doğrulandı: bant tepeleri arası 643−606 = 37 = h+4.
+//
+// AŞAĞI DOĞRU BÜYÜTMEK DEĞERLENDİRİLDİ VE REDDEDİLDİ: y 706..798 bandı BOŞ
+// DEĞİLDİR — ÜRÜN FOOTER'I oraya ekleniyor (bkz. üst bant ölçümü). İkinci
+// satırı oraya indirmek footer'la çakışırdı.
+const TRANSFER_WRAP_MAX_LINES = 2
+/** İki satır arasındaki ek boşluk (`^FB` üçüncü parametresi). */
+const TRANSFER_WRAP_LINE_GAP = 4
+
+/**
+ * İki satır modunun font yüksekliği — TAŞIYICININ KENDİ yüksekliğinden TÜRER.
+ * Uydurma sabit değildir: zarfa iki satır sığsın diye tek kısıttan çözülür.
+ */
+function wrapFontHeight(nativeHeight: number): number {
+  return Math.floor((nativeHeight - TRANSFER_WRAP_LINE_GAP) / TRANSFER_WRAP_MAX_LINES)
+}
+
+/**
+ * İki satır modunun font genişliği — AYNI EN-BOY ORANI korunur.
+ * (70,50) → (33,24): 33/70 ölçeği genişliğe de uygulanır, yani harfler
+ * yassılaşmaz, blok olduğu gibi küçülür.
+ */
+function wrapFontWidth(nativeHeight: number, nativeWidth: number, height: number): number {
+  return Math.max(1, Math.round((nativeWidth * height) / nativeHeight))
+}
+
+/**
+ * Aktarma metninin UYGULANAN tipografisi ve ÖLÇÜLEN sağ kenarı.
+ *
+ * Tek satır ve iki satır AYNI tipten türer; QR arama döngüsü ikisini ayırt
+ * etmez, yalnız `blockRight` ile ilgilenir.
+ */
+export interface TransferTypography {
+  readonly fontHeight: number
+  readonly fontWidth: number
+  /** Sarma sonrası satırlar — tek satırda uzunluğu 1'dir. */
+  readonly lines: readonly string[]
+  /** Metnin sağ ucu (dot). İşgal kutusu bundan türer. */
+  readonly blockRight: number
+}
+
+/**
+ * `^FB`'nin YAPACAĞI sarmayı ÖNCEDEN hesaplar (açgözlü, kelime sınırında).
+ *
+ * NİYE ÖNCEDEN: `^FB`, `maxLines`'a sığmayan metni SESSİZCE KIRPAR. Kırpılmış
+ * bir aktarma adı basmak "sessiz truncation" olurdu ve YASAKTIR. Bu yüzden
+ * sarma burada simüle edilir; iki satıra sığmıyorsa aday REDDEDİLİR.
+ *
+ * `estimateA0Width` bir ÜST SINIR olduğu için yön güvenlidir: burada
+ * "sığıyor" diyorsak yazıcıda da sığar.
+ *
+ * Tek kelime blok genişliğinden genişse `null` döner — kelime ORTASINDAN
+ * bölmek YOKTUR.
+ */
+export function planTransferWrap(
+  text: string,
+  fontWidth: number,
+  blockWidth: number,
+  maxLines: number = TRANSFER_WRAP_MAX_LINES,
+): { lines: string[]; widest: number } | null {
+  const words = text.trim().split(/\s+/).filter((word) => word !== '')
+  if (words.length === 0) return null
+  const lines: string[] = []
+  let current = ''
+  for (const word of words) {
+    if (estimateA0Width(word, fontWidth) > blockWidth) return null
+    const merged = current === '' ? word : `${current} ${word}`
+    if (estimateA0Width(merged, fontWidth) <= blockWidth) {
+      current = merged
+      continue
+    }
+    lines.push(current)
+    current = word
+    if (lines.length >= maxLines) return null
+  }
+  if (current !== '') lines.push(current)
+  if (lines.length === 0 || lines.length > maxLines) return null
+  const widest = lines.reduce(
+    (max, line) => Math.max(max, estimateA0Width(line, fontWidth)),
+    0,
+  )
+  return { lines, widest }
+}
+
 /**
  * QR ADAYLARI — deterministik arama sırası.
  *
@@ -258,6 +374,15 @@ export type SuratComposeMode =
   | 'carrier_composed'
   | 'fallback_unknown_template'
   | 'fallback_semantic_failure'
+  /**
+   * TAŞIYICININ KENDİ QR'ı KANONİK BOYA ÇIKARILAMADI.
+   *
+   * Bu mod, diğer fallback'lerden AYRI tutulur çünkü sonucu da AYRIDIR:
+   * öbürlerinde ham taşıyıcı etiketi basmak GÜVENLİDİR, burada DEĞİLDİR —
+   * ham etiket tam da kaçınmak istediğimiz 21 dot'luk QR'ı taşır. Üst
+   * katman bu modu görünce BASILABİLİR ARTEFAKT ÜRETMEZ.
+   */
+  | 'fallback_carrier_qr_unsafe'
   | 'fallback_geometry_failure'
   | 'fallback_invariant_failure'
   | 'fallback_whitelist_violation'
@@ -332,6 +457,24 @@ export interface SuratComposeDiagnostics {
   /** Aktarma metninin uygulanan font genişliği ve özgün değeri. */
   readonly transferFontWidth: number
   readonly transferFontWidthNative: number
+  /** Uygulanan font yüksekliği — iki satır modunda özgünden KÜÇÜKTÜR. */
+  readonly transferFontHeight: number
+  readonly transferFontHeightNative: number
+  /**
+   * Aktarma metninin PLANLANAN satır sayısı (1 veya 2).
+   *
+   * DİKKAT — BU BİR TAHMİNDİR, BASILAN SATIR SAYISI DEĞİL. Sarmayı yazıcı
+   * yapar; `estimateA0Width` ise bilinçli olarak ÜST SINIR verir (ölçüldü:
+   * tahmin ~22 karakter/satır, yazıcı ~30). Bu yüzden yazıcı planlanandan
+   * DAHA AZ satır kullanabilir; DAHA FAZLA kullanamaz. Yön güvenlidir:
+   * "2 satıra sığar" dediğimizde yazıcıda da sığar, kırpılma OLMAZ.
+   *
+   * Geometri güvenliği bu tahmine DAYANMAZ — QR işgal hesabı `^FB` blok
+   * genişliğinden, yani yazıcının aşamayacağı YAPISAL sınırdan beslenir.
+   */
+  readonly transferLines: number
+  /** `^FB` blok genişliği — kanonik QR'dan türetilen yatay bütçe. */
+  readonly transferBlockWidth: number
   /**
    * TAŞIYICININ KENDİ QR'ı büyütüldüyse uygulanan geometri; büyütme
    * güvenli değilse null (kaynak AYNEN korunmuştur).
@@ -625,12 +768,12 @@ export interface CarrierQrEnlargement {
   /** Kaynak token bozuk olduğu için yazıcının GERÇEKTEN kullandığı değer. */
   readonly effectiveMagnification: number
   /**
-   * Bu büyütmenin sığması için gereken aktarma metni font GENİŞLİĞİ.
+   * Bu büyütmenin sığması için gereken aktarma metni TİPOGRAFİSİ.
    *
-   * ÖZGÜN genişlikse metin DOKUNULMADAN sığmıştır. Küçükse: QR'a yer açmak
-   * için DARALAN ŞEY METİNDİR, QR değil.
+   * ÖZGÜN tipografiyse metin DOKUNULMADAN sığmıştır. Daralmış ya da iki
+   * satıra sarılmışsa: QR'a yer açmak için DEĞİŞEN ŞEY METİNDİR, QR değil.
    */
-  readonly transferWidth: number
+  readonly transfer: TransferTypography
 }
 
 /** `^BQ` argümanlarındaki magnification TOKEN'ı (3. parametre), ham haliyle. */
@@ -669,18 +812,48 @@ function withQrMagnification(args: string, magnification: number): string {
 const QR_FT_BOTTOM_INSET_PER_MAGNIFICATION = QR_FT_LIFT_PER_MAGNIFICATION
 const QR_FT_BOTTOM_INSET_CONSTANT = 1
 
+/**
+ * TAŞIYICI QR'ı BÜYÜTÜLEBİLİR Mİ? (yükten gelen ön koşul)
+ *
+ * MODÜL SAYISI VARSAYIMI KANITLANIR: yalnız Version-1'e sığdığı KESİN olan
+ * kısa sayısal yükte büyütülür. Daha uzun yük daha çok modül demektir ve
+ * 21 modül varsayımı sessizce yanlış olurdu.
+ *
+ * ═══ NEDEN AYRI BİR YORDAM ═══════════════════════════════════════════════
+ *
+ * "Büyütemedik" iki AYRI sebepten olur ve SONUÇLARI da ayrıdır:
+ *
+ *   A) YÜK uygun değil  → büyütme zaten hiç DENENEMEZ. Bu, aktarma metniyle
+ *      İLGİSİZ ve bu biletten ÖNCE DE VAR OLAN bir durumdur. Böyle bir
+ *      etiketin baskısını ENGELLEMEK, kapsam dışı bir kesinti olurdu.
+ *   B) Yük uygun ama GEOMETRİ sığmadı → bu biletin konusu olan dal;
+ *      basılabilir küçük QR üretmemek için FAIL-CLOSED gerekir.
+ *
+ * Ayrım bu yordamla yapılır; fail-closed dalı YALNIZ (B) için işler.
+ */
+export function isCarrierQrEnlargeable(qrField: ZplField | undefined): boolean {
+  if (!qrField?.codeCommand || qrField.positionType !== 'FT') return false
+  const payload = String(qrField.data ?? '')
+  const digits = payload.replace(/^[A-Za-z]{1,2},/, '')
+  return /^\d+$/.test(digits) && digits.length <= CARRIER_QR_MAX_NUMERIC_V1
+}
+
 export function resolveCarrierQrEnlargement(
   qrField: ZplField | undefined,
   /**
-   * İşgal listesi, aktarma font GENİŞLİĞİNİN fonksiyonu olarak.
+   * İşgal listesi, aktarma TİPOGRAFİSİNİN fonksiyonu olarak.
    *
    * SABİT liste geçilirse metin daraltma HİÇ denenemez ve büyütme
    * reddedilince QR taşıyıcının YERLİ (21 dot) boyutunda kalır — ölçülen
    * üretim kusuru buydu.
    */
-  occupancyFor: (transferWidth: number) => readonly QrOccupancyBox[],
-  /** Denenecek aktarma genişlikleri — ÖZGÜN önce, sonra daraltılmışlar. */
-  transferWidthSteps: readonly number[],
+  occupancyFor: (transfer: TransferTypography) => readonly QrOccupancyBox[],
+  /**
+   * Denenecek aktarma tipografileri — ÖZGÜN önce, sonra daraltılmışlar,
+   * EN SON iki satıra sarılmışlar. Sıra, "önce metne dokunma, sonra daralt,
+   * sonra sar" önceliğini TAŞIR.
+   */
+  transferSteps: readonly TransferTypography[],
   dataMatrixLeft: number = SURAT_GRID.boxLeft,
   /**
    * DİKEY ÇIPA — yanındaki büyük aktarma merkezi metninin taban çizgisi.
@@ -694,14 +867,7 @@ export function resolveCarrierQrEnlargement(
   if (!qrField?.codeCommand || qrField.positionType !== 'FT') return null
   const effective = effectiveQrMagnification(qrField.codeCommand.args)
 
-  // MODÜL SAYISI VARSAYIMI KANITLANIR: yalnız Version-1'e sığdığı KESİN olan
-  // kısa sayısal yükte büyütülür. Daha uzun yük daha çok modül demektir ve
-  // 21 modül varsayımı sessizce yanlış olurdu.
-  const payload = String(qrField.data ?? '')
-  const digits = payload.replace(/^[A-Za-z]{1,2},/, '')
-  if (!/^\d+$/.test(digits) || digits.length > CARRIER_QR_MAX_NUMERIC_V1) {
-    return null
-  }
+  if (!isCarrierQrEnlargeable(qrField)) return null
 
   for (const magnification of CARRIER_QR_MAGNIFICATION_CANDIDATES) {
     if (magnification <= effective) continue
@@ -709,8 +875,8 @@ export function resolveCarrierQrEnlargement(
     const quietZone = QR_QUIET_MODULES * magnification
     // METİN MERDİVENİ BU BÜYÜTME İÇİN TÜKETİLİR: önce metin daralır.
     let fitted: CarrierQrEnlargement | null = null
-    for (const transferWidth of transferWidthSteps) {
-      const occupancy = occupancyFor(transferWidth)
+    for (const transferStep of transferSteps) {
+      const occupancy = occupancyFor(transferStep)
 
     // ═══ BÜYÜTÜLEN QR AYRILMIŞ SAĞ-ALT SLOTA OTURTULUR ════════════════
     //
@@ -764,7 +930,7 @@ export function resolveCarrierQrEnlargement(
         magnification,
         size,
         effectiveMagnification: effective,
-        transferWidth,
+        transfer: transferStep,
       }
       break
     }
@@ -1136,16 +1302,27 @@ export function composeSuratLabel(
   // Karakter sayısına bağlı sabit eşik YOKTUR: her kutu kendi metni, kendi
   // font genişliği ve kendi `^FT` taban çizgisinden hesaplanır.
   const transferNativeWidth = transfer.field.font?.width ?? 0
-  const buildOccupancy = (transferWidth: number) => {
+  const transferNativeHeight = transfer.field.font?.height ?? 0
+  const buildOccupancy = (transferStep: TransferTypography) => {
     const boxes = [route, transfer, fields.deliveryType, fields.parcelCount]
       .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
       .map((entry) => {
         const font = entry.field.font
         const height = font?.height ?? 0
-        const width =
-          entry === transfer ? transferWidth : (font?.width ?? 0)
+        // ═══ AKTARMA KUTUSU: SAĞ KENAR TİPOGRAFİDEN, DİKEY ZARF ÖZGÜN ═══
+        //
+        // İki satır modunda bile DİKEY zarf ÖZGÜN yüksekliktir: blok
+        // [y − 70, y] içinde kalacak biçimde boyutlandırılmıştır (2h+boşluk
+        // = 70). Zarfı küçültmek, QR'a sahte bir dikey serbestlik verirdi.
+        if (entry === transfer) {
+          return {
+            right: entry.field.x + transferStep.blockRight,
+            top: entry.field.y - transferNativeHeight,
+            bottom: entry.field.y,
+          }
+        }
         return {
-          right: entry.field.x + estimateA0Width(entry.text, width),
+          right: entry.field.x + estimateA0Width(entry.text, font?.width ?? 0),
           top: entry.field.y - height,
           bottom: entry.field.y,
         }
@@ -1165,9 +1342,86 @@ export function composeSuratLabel(
   // Önce ÖZGÜN tipografiyle dene; yalnız QR sığmıyorsa aktarma metnini
   // kademeli daralt. Kısa adlarda hiç daraltma OLMAZ.
   const dataMatrixLeft = fields.dataMatrixPayload?.field.x ?? SURAT_GRID.boxLeft
-  const widthSteps = [
+
+  // ═══ AKTARMA BLOK GENİŞLİĞİ — KANONİK QR'DAN TÜRETİLİR ═══════════════
+  //
+  // Uydurma bir `^FB` genişliği YOKTUR. Metnin ulaşabileceği en sağ nokta,
+  // kanonik QR'ın SOL quiet-zone'unun başladığı yerdir:
+  //
+  //   799 − quiet(20) − QR(105) − quiet(20) − aktarma.x(220) = 434 dot
+  //
+  // `^FB` bu genişliği YAZICI TARAFINDA da zorlar: metin ne olursa olsun
+  // bloğun sağına taşamaz. Yani QR güvenliği YAPISAL olarak garanti edilir.
+  const canonicalQrSize = CARRIER_QR_MODULES * CARRIER_QR_CANONICAL_MAGNIFICATION
+  const canonicalQuietZone = QR_QUIET_MODULES * CARRIER_QR_CANONICAL_MAGNIFICATION
+  const transferBlockWidth =
+    LABEL_EDGE - canonicalQuietZone - canonicalQrSize - canonicalQuietZone - transfer.field.x
+
+  const oneLineStep = (fontWidth: number): TransferTypography => ({
+    fontHeight: transferNativeHeight,
+    fontWidth,
+    lines: [transfer.text],
+    blockRight: estimateA0Width(transfer.text, fontWidth),
+  })
+
+  // İKİ SATIR ADAYLARI — tek satır merdiveni tükendikten SONRA denenir.
+  const wrapHeight = wrapFontHeight(transferNativeHeight)
+  const wrapNativeWidth = wrapFontWidth(
+    transferNativeHeight,
     transferNativeWidth,
-    ...TRANSFER_FONT_WIDTH_STEPS.filter((step) => step < transferNativeWidth),
+    wrapHeight,
+  )
+  // Daraltma merdiveni AYNI ORANLARLA iki satır fontuna uygulanır; yeni bir
+  // sayı dizisi UYDURULMAZ (46/43/40 → ×46/50, ×43/50, ×40/50).
+  const wrapWidths = [
+    wrapNativeWidth,
+    ...TRANSFER_FONT_WIDTH_STEPS.map((step) =>
+      Math.max(1, Math.round((wrapNativeWidth * step) / Math.max(1, transferNativeWidth))),
+    ),
+  ].filter((width, index, all) => all.indexOf(width) === index)
+
+  const twoLineSteps: TransferTypography[] =
+    wrapHeight > 0 && transferNativeHeight > 0
+      ? wrapWidths
+          .map((fontWidth): TransferTypography | null => {
+            const plan = planTransferWrap(
+              transfer.text,
+              fontWidth,
+              transferBlockWidth,
+            )
+            return plan
+              ? {
+                  fontHeight: wrapHeight,
+                  fontWidth,
+                  lines: plan.lines,
+                  // ═══ SAĞ SINIR YAPISALDIR, TAHMİNİ DEĞİL ═════════════
+                  //
+                  // Burada `plan.widest` (tahmin edilen en geniş satır)
+                  // KULLANILMAZ. Sebep ÖLÇÜLDÜ: `estimateA0Width` bir ÜST
+                  // SINIRDIR ve yazıcı bir satıra tahminden DAHA ÇOK metin
+                  // sığdırır (ölçüldü: tahmin ~22 karakter, yazıcı ~30).
+                  // Yani gerçek satır, tahmin edilen en geniş satırı AŞABİLİR.
+                  //
+                  // Yazıcının aşamayacağı TEK sınır `^FB` blok genişliğidir.
+                  // QR işgal hesabı bu yapısal sınırdan beslenir; böylece
+                  // quiet-zone tahmine DEĞİL, komutun kendisine dayanır.
+                  //
+                  // (CW-17 bu kusuru yakaladı: tahmin kullanılırken QR
+                  // x=654'e yerleşiyordu ve metin de 654'e kadar uzanabildiği
+                  // için quiet-zone SIFIRLANABİLİYORDU.)
+                  blockRight: transferBlockWidth,
+                }
+              : null
+          })
+          .filter((step): step is TransferTypography => step !== null)
+      : []
+
+  const transferSteps: readonly TransferTypography[] = [
+    oneLineStep(transferNativeWidth),
+    ...TRANSFER_FONT_WIDTH_STEPS.filter((step) => step < transferNativeWidth).map(
+      oneLineStep,
+    ),
+    ...twoLineSteps,
   ]
   //
   // ═══ ARAMA SIRASI: QR ÖNCE, METİN SONRA ═════════════════════════════
@@ -1181,11 +1435,11 @@ export function composeSuratLabel(
   // Artık: kanonik QR SABİT, metin kademeli daralır, hiçbiri sığmazsa
   // composer REDDEDER (aşağıdaki E dalı). KÜÇÜK QR SEÇENEĞİ YOK.
   let placement: SuratQrPlacement | null = null
-  let transferWidth = transferNativeWidth
-  for (const candidateWidth of widthSteps) {
-    placement = resolveQrPlacement(buildOccupancy(candidateWidth), dataMatrixLeft)
+  let transferStep: TransferTypography = transferSteps[0]
+  for (const candidate of transferSteps) {
+    placement = resolveQrPlacement(buildOccupancy(candidate), dataMatrixLeft)
     if (placement) {
-      transferWidth = candidateWidth
+      transferStep = candidate
       break
     }
   }
@@ -1218,14 +1472,51 @@ export function composeSuratLabel(
     : undefined
   const carrierQrEnlargement = resolveCarrierQrEnlargement(
     carrierQrField,
-    // İŞGAL LİSTESİ SABİT DEĞİL, METİN GENİŞLİĞİNİN FONKSİYONU.
-    // Böylece büyütme araması metin merdivenini KENDİSİ tüketir.
+    // İŞGAL LİSTESİ SABİT DEĞİL, METİN TİPOGRAFİSİNİN FONKSİYONU.
+    // Böylece büyütme araması metin merdivenini KENDİSİ tüketir —
+    // daraltmayı DA, iki satıra sarmayı DA.
     buildOccupancy,
-    widthSteps,
+    transferSteps,
     dataMatrixLeft,
     // Aktarma merkezi metninin taban çizgisi = QR'ın alt hiza çıpası.
     transfer.field.y,
   )
+
+  // ═══ TAŞIYICI QR'ı KANONİK OLAMIYORSA FAIL CLOSED ════════════════════
+  //
+  // ÖLÇÜLEN KUSUR: burada `carrierQrEnlargement === null` olduğunda composer
+  // yine de BAŞARILI dönüyordu (composed=true) ve etiket taşıyıcının YERLİ
+  // 21 dot QR'ıyla BASILABİLİR hâlde kalıyordu. Yani "aynı şablon, içeriğe
+  // göre farklı QR boyu" ihlali tam da BAŞARI yolunda sürüyordu.
+  //
+  // REDDETMEK TEK BAŞINA YETMEZ: ham taşıyıcı ZPL'i de AYNI 21 dot'u taşır.
+  // Bu yüzden mod AYRI tutulur; üst katman (`deriveAugmentedSuratZpl` →
+  // `buildPrintZplArtifact`) bu modu görünce basılabilir artefakt ÜRETMEZ.
+  //
+  // KAPSAM İKİ KOŞULLA DARALTILIR — GEREKSİZ KESİNTİ ÜRETİLMEZ:
+  //
+  //   1) Taşıyıcı QR'ı KÜÇÜK olmalı. Zaten kanonik (ya da daha büyük)
+  //      basıyorsa büyütmeye gerek YOKTUR ve bu dal İŞLEMEZ.
+  //   2) Yük büyütmeye UYGUN olmalı (`isCarrierQrEnlargeable`). Yük uygun
+  //      DEĞİLSE büyütme zaten hiç denenemez; bu, aktarma metniyle İLGİSİZ ve
+  //      bu biletten ÖNCE DE var olan bir durumdur. Öyle bir etiketin
+  //      baskısını engellemek, bu biletin çözmediği bir sorun için KESİNTİ
+  //      üretmek olurdu. Fail-closed YALNIZ "yük uygundu ama geometri
+  //      sığmadı" dalında işler.
+  if (
+    carrierAlreadyPrintsQr &&
+    carrierQrField &&
+    carrierQrEnlargement === null &&
+    isCarrierQrEnlargeable(carrierQrField) &&
+    effectiveQrMagnification(carrierQrField.codeCommand?.args ?? '') <
+      CARRIER_QR_CANONICAL_MAGNIFICATION
+  ) {
+    return fallback(
+      'fallback_carrier_qr_unsafe',
+      'taşıyıcı QR kanonik boya çıkarılamadı (aktarma metni iki satıra da sığmadı)',
+      sourceZpl,
+    )
+  }
 
   // ── 5) SOL DİKEY SİPARİŞ REFERANSI: GÜVENLİ BASKI KENARI ─────────────
   //
@@ -1362,26 +1653,80 @@ export function composeSuratLabel(
   //
   // Artık TEK değer vardır ve emit, whitelist ve invariant doğrulamasının
   // ÜÇÜ DE ondan beslenir. Muhafız GEVŞETİLMEDİ.
-  const appliedTransferWidth = carrierQrEnlargement
-    ? carrierQrEnlargement.transferWidth
-    : transferWidth
+  const appliedTransfer: TransferTypography = carrierQrEnlargement
+    ? carrierQrEnlargement.transfer
+    : transferStep
+  const transferTypographyChanged =
+    appliedTransfer.fontWidth !== transferNativeWidth ||
+    appliedTransfer.fontHeight !== transferNativeHeight
+  // ═══ `^FB` YALNIZ GERÇEKTEN İKİ SATIR VARSA YAZILIR ══════════════════
+  //
+  // ÖLÇÜLDÜ: `^FB`, `^FT` ile `maxLines` kadar satır yüksekliğini YUKARI
+  // doğru REZERVE eder ve metni ÜSTTEN doldurur. Tek satırlık içerik için
+  // `^FB` yazmak, metni bloğun ÜST yarısına iter ve taşıyıcının taban
+  // hizasını (QR ile aynı alt çizgi) BOZAR — ölçüldü: y643..668, beklenen
+  // y680..705. Bu yüzden sarma komutu yalnız satır sayısı 1'den BÜYÜKKEN
+  // eklenir; tek satır her zaman taban çizgisinde kalır.
+  const transferWrapped = appliedTransfer.lines.length > 1
+  // ═══ ONAYLI ARALIK — FAIL CLOSED ═════════════════════════════════════
+  //
+  // Uygulanan tipografi, TÜRETİLMİŞ iki değerden birine eşit OLMAK ZORUNDA.
+  // Serbest bir sayı buraya gelirse composer REDDEDER. Whitelist'in birebir
+  // `from`/`to` eşleşmesi zaten dardır; bu kontrol darlığı EMİTTEN ÖNCE
+  // kanıtlar, böylece "önce yaz sonra doğrula" boşluğu KALMAZ.
+  if (transferTypographyChanged) {
+    const heightOk =
+      appliedTransfer.fontHeight === transferNativeHeight ||
+      appliedTransfer.fontHeight === wrapHeight
+    const widthOk =
+      appliedTransfer.fontWidth > 0 && appliedTransfer.fontWidth <= transferNativeWidth
+    const wrapOk = transferWrapped
+      ? appliedTransfer.lines.length <= TRANSFER_WRAP_MAX_LINES &&
+        appliedTransfer.blockRight <= transferBlockWidth
+      : appliedTransfer.lines.length === 1
+    if (!heightOk || !widthOk || !wrapOk) {
+      return fallback(
+        'fallback_geometry_failure',
+        'aktarma tipografisi onaylı aralığın dışında',
+        sourceZpl,
+      )
+    }
+  }
   if (
     (qrFits || carrierQrEnlargement !== null) &&
-    appliedTransferWidth !== transferNativeWidth &&
+    transferTypographyChanged &&
     transferFontCommand &&
     transfer.field.font
   ) {
-    const { orientation, height } = transfer.field.font
+    const { orientation } = transfer.field.font
     edits.push({
       type: 'replace',
       target: transferFontCommand,
       commands: [
         {
           name: transferFontCommand.name,
-          args: `${orientation ?? 'N'},${height},${appliedTransferWidth}`,
+          args: `${orientation ?? 'N'},${appliedTransfer.fontHeight},${appliedTransfer.fontWidth}`,
         },
       ],
     })
+    // (whitelist 9) İKİ SATIR: `^FB` EKLENİR — gövde DEĞİŞMEZ.
+    //
+    // Bu bir EKLEMEDİR (insertion), mutasyon DEĞİL: kaynakta `^FB` yoktur.
+    // `^FD` baytları, `^FT` konumu ve alanın kimliği AYNEN kalır; sarmayı
+    // yazıcı kelime sınırında yapar. Böylece "içerik korunur" iddiası
+    // doğrulanacak bir birleştirmeye DEĞİL, dokunulmamış gövdeye dayanır.
+    if (transferWrapped) {
+      edits.push({
+        type: 'insertBefore',
+        target: transferFontCommand,
+        commands: [
+          {
+            name: 'FB',
+            args: `${transferBlockWidth},${TRANSFER_WRAP_MAX_LINES},${TRANSFER_WRAP_LINE_GAP},L`,
+          },
+        ],
+      })
+    }
   }
 
   // (whitelist 7) taşıyıcı QR'ının büyütmesi 4 → 5.
@@ -1487,10 +1832,10 @@ export function composeSuratLabel(
   // `from`/`to` dizgisiyle. Yeni komut türü, yeni alan veya koordinat
   // serbestisi EKLENMEDİ.
   const allowedTransferFont =
-    appliedTransferWidth !== transferNativeWidth && transfer.field.font
+    transferTypographyChanged && transfer.field.font
       ? {
-          from: `${transfer.field.font.orientation ?? 'N'},${transfer.field.font.height},${transferNativeWidth}`,
-          to: `${transfer.field.font.orientation ?? 'N'},${transfer.field.font.height},${appliedTransferWidth}`,
+          from: `${transfer.field.font.orientation ?? 'N'},${transferNativeHeight},${transferNativeWidth}`,
+          to: `${transfer.field.font.orientation ?? 'N'},${appliedTransfer.fontHeight},${appliedTransfer.fontWidth}`,
         }
       : null
   const unexpected = diff.mutations.filter((mutation) => {
@@ -1512,7 +1857,9 @@ export function composeSuratLabel(
     ) {
       return false
     }
-    // (5) Aktarma metninin font GENİŞLİĞİ — yalnız DARALMA, aynı yükseklik.
+    // (5) Aktarma metninin FONTU — yalnız TÜRETİLMİŞ tek satır daraltması ya
+    //     da TÜRETİLMİŞ iki satır boyu. Birebir `from`/`to` dizgisi; serbest
+    //     font değişimi YOK (aralık ayrıca emitten ÖNCE kanıtlanır).
     if (
       allowedTransferFont &&
       mutation.name === transferFontCommand?.name &&
@@ -1560,7 +1907,8 @@ export function composeSuratLabel(
 
   // ── B) SEMANTIC INVARIANT DOĞRULAMASI ─────────────────────────────────
   const verdict = verifySuratOutputInvariants(semantic, outputZpl, qr.payload, {
-    transferFontWidth: appliedTransferWidth,
+    transferFontWidth: appliedTransfer.fontWidth,
+    transferFontHeight: appliedTransfer.fontHeight,
   })
   if (!verdict.ok) {
     return fallback('fallback_invariant_failure', verdict.reason, sourceZpl)
@@ -1585,8 +1933,12 @@ export function composeSuratLabel(
       qrRenderYOffset: QR_RENDER_Y_OFFSET,
       qrMagnification: qrFits && placement ? placement.magnification : null,
       qrCandidateIndex: qrFits && placement ? placement.candidateIndex : null,
-      transferFontWidth: qrFits ? transferWidth : transferNativeWidth,
+      transferFontWidth: appliedTransfer.fontWidth,
       transferFontWidthNative: transferNativeWidth,
+      transferFontHeight: appliedTransfer.fontHeight,
+      transferFontHeightNative: transferNativeHeight,
+      transferLines: appliedTransfer.lines.length,
+      transferBlockWidth,
       carrierQr: carrierQrEnlargement
         ? {
             x: carrierQrEnlargement.x,

@@ -129,6 +129,32 @@ export class SupplementalLabelError extends Error {
   }
 }
 
+export const CARRIER_QR_UNSAFE = 'carrier_qr_unsafe'
+
+/**
+ * TAŞIYICI QR'ı KANONİK BOYA ÇIKARILAMADI — BASILABİLİR ARTEFAKT YOK.
+ *
+ * ═══ NEDEN AYRI BİR SINIF, NEDEN `SupplementalLabelError` DEĞİL ═════════
+ *
+ * `SupplementalLabelError` fail-OPEN allowlist'indedir: serving katmanı onu
+ * görünce taşıyıcı etiketini yine de sunar. BURADA İSTENEN TAM TERSİDİR.
+ * Sunulacak "güvenli taşıyıcı etiketi" YOKTUR — ham etiket tam da kaçınmak
+ * istediğimiz küçük QR'ı taşır. Bu yüzden bu hata allowlist'e EKLENMEZ ve
+ * `isSupplementalLabelFailure` onu TANIMAZ; fail-open TETİKLENMEZ.
+ */
+export class CarrierQrUnsafeError extends Error {
+  readonly code = CARRIER_QR_UNSAFE
+  constructor(detail: string) {
+    super(`${CARRIER_QR_UNSAFE}: ${detail}`)
+    this.name = 'CarrierQrUnsafeError'
+  }
+}
+
+export function isCarrierQrUnsafeFailure(error: unknown): error is CarrierQrUnsafeError {
+  const candidate = error as { name?: unknown; code?: unknown } | null
+  return Boolean(candidate) && candidate?.name === 'CarrierQrUnsafeError'
+}
+
 /**
  * Fail-open ALLOWLIST — kapalı sözlük.
  *
@@ -474,6 +500,17 @@ export function buildPrintZplArtifact(
     ...(tenantBlocks && tenantBlocks.length > 0 ? { tenantBlocks } : {}),
     ...(productLineParts ? { productLineParts } : {}),
   })
+  // ── GÜVENSİZ QR: HİÇBİR ŞEY KALICILAŞTIRILMAZ ─────────────────────────
+  //
+  // Composer, taşıyıcının kendi QR'ını kanonik boya çıkaramadığını bildirdi.
+  // Ham taşıyıcı etiketine düşmek bir ÇÖZÜM DEĞİLDİR: o etiket tam da
+  // kaçınmak istediğimiz içeriğe-bağlı küçük QR'ı taşır. Bu yüzden YENİ bir
+  // basılabilir artefakt ÜRETİLMEZ ve YAZILMAZ. Depoda zaten geçerli bir
+  // artefakt varsa ona DOKUNULMAZ (çağıran onu kalıcı yoldan okur).
+  if (derived.carrierQrUnsafe) {
+    throw new CarrierQrUnsafeError(derived.composeReason ?? 'taşıyıcı QR kanonik değil')
+  }
+
   // ── EK ÜRÜN DETAY SAYFALARI ───────────────────────────────────────────
   // ATOMİKLİK: her şey ÖNCE bellekte üretilir ve doğrulanır; artefakt tek bir
   // JSON bloğu olarak TEK yazımda kalıcı olur. Yarım bundle YAZILAMAZ.

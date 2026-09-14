@@ -202,14 +202,24 @@ test('GEO-05: geometri izin vermiyorsa QR AYNEN korunur', () => {
   const qrField = fields.find((field) => field.kind === 'qr')
   assert.ok(qrField, 'fixture QR taşımalı')
   // PRINT-GEOMETRY-002: işgal listesi artık METNİN GENİŞLİĞİNİN FONKSİYONU
-  // olarak geçilir (sabit dizi DEĞİL) ve denenecek genişlik kademeleri ayrıca
-  // verilir. İDDİA AYNI: tüm kademelerde sığmayan bir engel varsa büyütme YOK.
+  // olarak geçilir (sabit dizi DEĞİL) ve denenecek kademeler ayrıca verilir.
+  // PRINT-GEOMETRY-002B: kademeler artık bir SAYI değil, tam bir TİPOGRAFİ
+  // taşır (yükseklik + genişlik + satırlar + blok sağ kenarı) — çünkü uzun
+  // adlarda daralan şey yalnız genişlik değil, satır sayısıdır.
+  // İDDİA AYNI: tüm kademelerde sığmayan bir engel varsa büyütme YOK.
+  const step = (fontHeight, fontWidth, lines = 1, blockRight = 400) => ({
+    fontHeight,
+    fontWidth,
+    lines: Array.from({ length: lines }, () => 'AKTARMA'),
+    blockRight,
+  })
+  const ladder = [step(70, 50), step(70, 46), step(70, 43), step(70, 40), step(33, 24, 2)]
   const blockedEverywhere = () => [{ right: 780, top: 0, bottom: 799 }]
-  const blocked = resolveCarrierQrEnlargement(qrField, blockedEverywhere, [50, 46, 43, 40])
+  const blocked = resolveCarrierQrEnlargement(qrField, blockedEverywhere, ladder)
   assert.equal(blocked, null, 'sığmıyorsa büyütme YAPILMAZ')
   // Aynı alan, boş işgal listesiyle büyütülebilir olmalı — testin kendisi
   // "her koşulda null" diye yanlış geçmesin.
-  assert.ok(resolveCarrierQrEnlargement(qrField, () => [], [50]))
+  assert.ok(resolveCarrierQrEnlargement(qrField, () => [], [step(70, 50)]))
 })
 
 test('GEO-06: Version-1 kapasitesini aşan yükte büyütme YAPILMAZ', () => {
@@ -217,7 +227,13 @@ test('GEO-06: Version-1 kapasitesini aşan yükte büyütme YAPILMAZ', () => {
   const qrField = fields.find((field) => field.kind === 'qr')
   // 21 modül varsayımı yalnız kısa sayısal yük için geçerlidir.
   const longPayload = { ...qrField, data: `QA,${'7'.repeat(40)}` }
-  assert.equal(resolveCarrierQrEnlargement(longPayload, () => [], [50]), null)
+  const nativeStep = {
+    fontHeight: 70,
+    fontWidth: 50,
+    lines: ['AKTARMA'],
+    blockRight: 400,
+  }
+  assert.equal(resolveCarrierQrEnlargement(longPayload, () => [], [nativeStep]), null)
 })
 
 // ═══ GEO-07..GEO-10: SOL DİKEY REFERANS ═════════════════════════════════

@@ -293,12 +293,26 @@ test('CW-7: SEMANTIC başarısızlık → official_augmented, sızıntı YOK', (
   )
 })
 
+// PRINT-GEOMETRY-002B — EŞİK TAŞINDI, SÖZLEŞME AYNI.
+//
+// Eskiden "sığmayan ad" örneği "ISTANBUL ANADOLU AKTARMA MERKEZI" idi. Uzun
+// adlar artık İKİ SATIRA sarıldığı için o ad SIĞIYOR (ölçüldü: 33/24 font,
+// kanonik 105 dot QR). Test edilen SÖZLEŞME değişmedi: "güvenli yerleşim
+// YOKSA composer tümüyle reddeder, QR'sız KISMİ etiket ÜRETİLMEZ".
+//
+// Yeni örnek BOŞLUKSUZ tek bir token'dır: sarma kelime sınırında yapıldığı
+// için tek kelime BÖLÜNEMEZ ve hiçbir kademe sığdıramaz. Kelime ortasından
+// bölmek YOKTUR — bu yüzden bu ad gerçekten imkânsızdır.
+const UNFITTABLE_TRANSFER = 'ISTANBULANADOLUAKTARMAMERKEZIBOLGEMUDURLUGU'
+/** Eskiden sığmayan, ARTIK iki satırla sığan gerçek ad. */
+const WRAPPABLE_TRANSFER = 'ISTANBUL ANADOLU AKTARMA MERKEZI'
+
 test('CW-8: GEÇERLİ 727 + QR geometri çakışması → official_augmented', () => {
   // Aktarma merkezi adı uzarsa QR güvenli alana sığmaz; QR’sız KISMİ referans çıktı
   // etiketi üretmek YASAK → composer tümüyle reddeder.
   const crowded = zpl.replace(
     /\^FT220,705\^A0N,70,50\^FH.\^FD[^^]*\^FS/,
-    `^FT220,705^A0N,70,50^FH${BS}^FDISTANBUL ANADOLU AKTARMA MERKEZI^FS`,
+    `^FT220,705^A0N,70,50^FH${BS}^FD${UNFITTABLE_TRANSFER}^FS`,
   )
   assert.notEqual(crowded, zpl, 'kurgu gerçek fixture ile eşleşmeli')
   const artifact = repo.attachPrintZplArtifact(
@@ -309,6 +323,23 @@ test('CW-8: GEÇERLİ 727 + QR geometri çakışması → official_augmented', (
   assert.equal(artifact.renderContract, 'official_augmented')
   assert.equal(artifact.composeMode, 'fallback_geometry_failure')
   assertNoComposedLeak(artifact.printZpl)
+
+  // YENİ DAVRANIŞ AYRICA KİLİTLENİR: boşluk içeren aynı uzunluktaki ad
+  // artık REDDEDİLMEZ, iki satıra sarılarak compose EDİLİR.
+  const wrapped = zpl.replace(
+    /\^FT220,705\^A0N,70,50\^FH.\^FD[^^]*\^FS/,
+    `^FT220,705^A0N,70,50^FH${BS}^FD${WRAPPABLE_TRANSFER}^FS`,
+  )
+  const wrappedArtifact = repo.attachPrintZplArtifact(
+    carrierPayload(wrapped),
+    ITEMS,
+    NOW,
+  ).printZplArtifact
+  assert.equal(wrappedArtifact.renderContract, 'carrier_composed')
+  assert.ok(
+    wrappedArtifact.printZpl.includes(`^FD${WRAPPABLE_TRANSFER}^FS`),
+    'aktarma gövdesi BAYT BAYT korunur',
+  )
 })
 
 test('CW-9: 727 YOK → composed sürer ama QR BASILMAZ', () => {
@@ -383,8 +414,11 @@ test('CW-12: uzunluk sınıfları — yaygın adlar composed, ekstrem ad fallbac
     ['GEBZE AKTARMA', true],
     ['IKITELLI AKTARMA', true],
     ['ERZURUM AKTARMA', true],
-    // Gerçekten sığmayan ekstrem ad: güvenli yerleşim YOK.
-    ['ISTANBUL ANADOLU AKTARMA MERKEZI', false],
+    // PRINT-GEOMETRY-002B: boşluklu uzun ad artık İKİ SATIRA sarılır ve
+    // compose EDİLİR. Eskiden burada `false` bekleniyordu.
+    [WRAPPABLE_TRANSFER, true],
+    // Gerçekten sığmayan ekstrem ad: BÖLÜNEMEYEN tek token, güvenli yerleşim YOK.
+    [UNFITTABLE_TRANSFER, false],
   ]
   for (const [name, shouldCompose] of expectations) {
     const result = composeSuratLabel(withTransferCenter(name), {
@@ -408,8 +442,15 @@ test('CW-13: eşik KARAKTER SAYISINA değil GERÇEK GENİŞLİĞE bağlı', asyn
   const { composeSuratLabel, estimateA0Width } = await load(
     '/src/utils/suratLabelComposer.ts')
   // Aynı karakter sayısı, çok farklı genişlik: dar harfler vs geniş harfler.
-  const narrow = 'IIIIIIIIIIIIIIII' // 16 karakter, dar
-  const wide = 'WWWWWWWWWWWWWWWW' // 16 karakter, geniş
+  //
+  // PRINT-GEOMETRY-002B — EŞİK TAŞINDI, İDDİA AYNI: iki satır sarma yatay
+  // bütçeyi büyüttüğü için 16 karakterlik geniş token ARTIK SIĞIYOR. Test
+  // edilen şey eşiğin DEĞERİ değil, eşiğin KARAKTER SAYISINA DEĞİL GERÇEK
+  // GENİŞLİĞE bağlı olmasıdır. Bu yüzden uzunluk 16 → 28'e taşındı; iki
+  // dizge HÂLÂ AYNI uzunlukta ve sonuçları HÂLÂ zıt (ölçüldü: I×28 sığar,
+  // W×28 sığmaz).
+  const narrow = 'I'.repeat(28) // 28 karakter, dar
+  const wide = 'W'.repeat(28) // 28 karakter, geniş
   assert.equal(narrow.length, wide.length)
   assert.ok(
     estimateA0Width(wide, 50) > estimateA0Width(narrow, 50) * 2,
@@ -420,14 +461,14 @@ test('CW-13: eşik KARAKTER SAYISINA değil GERÇEK GENİŞLİĞE bağlı', asyn
       cargoTrackingNumber: VERIFIED_727,
     }).composed,
     true,
-    'dar 16 karakter sığar',
+    'dar 28 karakter sığar',
   )
   assert.equal(
     composeSuratLabel(withTransferCenter(wide), {
       cargoTrackingNumber: VERIFIED_727,
     }).composed,
     false,
-    'geniş 16 karakter sığmaz',
+    'geniş 28 karakter sığmaz',
   )
 })
 
@@ -539,7 +580,10 @@ test('CW-17: yaygın aktarma adları compose olur, aşırı uzun ad fallback kal
     ['IKITELLI AKTARMA', true],
     ['ERZURUM AKTARMA', true],
     ['DIYARBAKIR AKTARMA', true],
-    ['ISTANBUL ANADOLU AKTARMA MERKEZI', false],
+    // PRINT-GEOMETRY-002B: boşluklu uzun ad İKİ SATIRA sarılır → compose EDİLİR.
+    [WRAPPABLE_TRANSFER, true],
+    // Bölünemez tek token: hiçbir kademe sığdıramaz → fallback AYNEN.
+    [UNFITTABLE_TRANSFER, false],
   ]
   for (const [name, shouldCompose] of cases) {
     const result = composeSuratLabel(withTransferCenter(name), {
@@ -550,13 +594,42 @@ test('CW-17: yaygın aktarma adları compose olur, aşırı uzun ad fallback kal
       assert.equal(result.mode, 'fallback_geometry_failure')
       continue
     }
-    const { qrBox, transferFontWidth, transferFontWidthNative } = result.diagnostics
+    const {
+      qrBox,
+      transferFontWidth,
+      transferFontWidthNative,
+      transferFontHeight,
+      transferFontHeightNative,
+      transferBlockWidth,
+    } = result.diagnostics
     // Daraltma YALNIZ gerektiğinde ve YALNIZ daralma yönünde.
     assert.ok(transferFontWidth <= transferFontWidthNative, name)
-    assert.ok(transferFontWidth >= 40, `${name}: okunabilirlik tabanı`)
+    assert.ok(transferFontHeight <= transferFontHeightNative, name)
+
+    // ═══ OKUNABİLİRLİK TABANI — MODA GÖRE ═══════════════════════════════
+    //
+    // TEK SATIR: taban 40 (DEĞİŞMEDİ).
+    // İKİ SATIR: glif ORANTILI küçülür (70/50 → 33/24, aynı en-boy oranı),
+    // bu yüzden mutlak genişlik tabanı da orantılı olarak taşınır. Taban
+    // KALDIRILMADI, ölçeğe göre TÜRETİLDİ: 40 × (33/70) ≈ 19.
+    const wrapped = transferFontHeight !== transferFontHeightNative
+    const floor = wrapped
+      ? Math.round((40 * transferFontHeight) / transferFontHeightNative)
+      : 40
+    assert.ok(
+      transferFontWidth >= floor,
+      `${name}: okunabilirlik tabanı (${transferFontWidth} < ${floor})`,
+    )
+
     // ÜÇ KOLON: orta blok QR'ın quiet-zone'undan ÖNCE biter.
+    //
+    // SARILMIŞ MODDA SAĞ SINIR `^FB` İLE YAPISALDIR: metin ne olursa olsun
+    // blok genişliğini AŞAMAZ. Bu yüzden sağ uç, tüm adın tek satır
+    // genişliğinden değil, BLOK GENİŞLİĞİNDEN hesaplanır.
     const { estimateA0Width } = await load('/src/utils/suratLabelComposer.ts')
-    const transferRight = 220 + estimateA0Width(name, transferFontWidth)
+    const transferRight = wrapped
+      ? 220 + transferBlockWidth
+      : 220 + estimateA0Width(name, transferFontWidth)
     const quiet = 4 * result.diagnostics.qrMagnification
     assert.ok(
       transferRight + quiet <= qrBox.x,

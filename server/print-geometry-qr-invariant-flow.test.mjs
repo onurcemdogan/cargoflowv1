@@ -157,8 +157,17 @@ test('QR-GEOMETRY-1: V1 composer QR uzun aktarma metninde KUCULMEZ', async () =>
     assert.ok(box.x >= 0 && box.y >= 0)
     assert.ok(box.x + box.width <= 799 && box.y + box.height <= 799)
   }
-  // Sigdiramadigi durumda KUCULTMEZ, REDDEDER.
-  assert.equal(await measureQr(V1_ZPL, LONGER_TRANSFER), null)
+  // PRINT-GEOMETRY-002B: LONGER_TRANSFER artik IKI SATIRA sarilir ve
+  // KANONIK QR ile uretilir. IDDIA DARALDI: eskiden "uretilmez (null)"
+  // deniyordu, simdi "URETILIR ve QR yine KANONIK" denir — yani QR'in
+  // icerikten bagimsizligi DAHA GENIS bir icerik kumesinde kanitlanir.
+  const longer = await measureQr(V1_ZPL, LONGER_TRANSFER)
+  assert.ok(longer, 'uzun metin artik sarilarak URETILIR')
+  assert.equal(longer.width, CANONICAL_COMPOSER_QR_DOTS, 'sarilmis metin: KANONIK')
+
+  // KUCULTME SECENEGI HALA YOK: gercekten sigmayan (bolunemez tek token)
+  // ad icin composer REDDEDER, kucuk QR BASMAZ.
+  assert.equal(await measureQr(V1_ZPL, 'ISTANBULANADOLUAKTARMAMERKEZIBOLGEMUDURLUGU'), null)
 })
 
 test('QR-GEOMETRY-1b: V2 tasiyici QR uretilebilen etiketlerde KANONIK', async () => {

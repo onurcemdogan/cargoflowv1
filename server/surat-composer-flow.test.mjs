@@ -729,8 +729,14 @@ function withLongTransferCenter(source, value) {
 
 test('CF-36: GEÇERLİ 727 + QR çakışması → composer TÜMÜYLE reddeder', async () => {
   const { composeSuratLabel } = await composer()
-  // 20 karakterlik aktarma merkezi adı QR'ın güvenli bölgesini yer.
-  const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKTARMA MERKEZI')
+  // PRINT-GEOMETRY-002B — EŞİK TAŞINDI, SÖZLEŞME AYNI.
+  //
+  // Eskiden 'ISTANBUL ANADOLU AKTARMA MERKEZI' kullanılıyordu; uzun adlar
+  // artık İKİ SATIRA sarıldığı için o ad SIĞIYOR. Test edilen sözleşme
+  // ("güvenli yerleşim yoksa TÜMÜYLE reddet") DEĞİŞMEDİ; yalnız gerçekten
+  // sığmayan bir örnek gerekti. Bu ad BOŞLUKSUZ tek token olduğu için
+  // kelime sınırında sarılamaz — kelime ORTASINDAN bölme YOKTUR.
+  const crowded = withLongTransferCenter(zpl, 'ISTANBULANADOLUAKTARMAMERKEZIBOLGEMUDURLUGU')
   const result = composeSuratLabel(crowded, {
     cargoTrackingNumber: VERIFIED_727,
   })
@@ -755,7 +761,7 @@ test('CF-36: GEÇERLİ 727 + QR çakışması → composer TÜMÜYLE reddeder', 
 
 test('CF-37: çakışma durumunda augmentation zinciri RT-10A sözleşmesine döner', async () => {
   const { deriveAugmentedSuratZpl } = await augment()
-  const crowded = withLongTransferCenter(zpl, 'ISTANBUL ANADOLU AKTARMA MERKEZI')
+  const crowded = withLongTransferCenter(zpl, 'ISTANBULANADOLUAKTARMAMERKEZIBOLGEMUDURLUGU')
   const derived = deriveAugmentedSuratZpl(
     crowded,
     [{ productName: 'Ornek Urun', quantity: 1, sku: 'SKU-1' }],

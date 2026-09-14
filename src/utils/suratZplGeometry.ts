@@ -363,9 +363,26 @@ export function parseSuratZplGeometry(rawZpl: unknown): ZplGeometry {
         // Böylece ölçü asla EKSİK çıkmaz; footer resmî içeriğe binmez.
         // Döndürülmüş metin (dikey sipariş rayı) DOKUNULMADAN bırakılır.
         const descender = Math.round(fontHeight * 0.2)
+        // ═══ ^FT + ^FB ÇOK SATIRLI BLOK YUKARI DOĞRU BÜYÜR ═══════════════
+        //
+        // ÖLÇÜLDÜ (gerçek render): `^FT220,668^A0N,33,24^FB434,2,4,L` →
+        // mürekkep bantları [606..631] ve [643..667]. Yani SON satır `^FT`
+        // taban çizgisinde oturur, önceki satırlar YUKARI eklenir.
+        //
+        // KÖK NEDEN: üst kenar satır sayısından BAĞIMSIZ hesaplanıyordu
+        // (`cursorY − fontHeight`), yani blok taban çizgisinden AŞAĞI
+        // uzuyormuş gibi ölçülüyordu. Sonuç: iki satırlı bir `^FT` bloğunda
+        // contentBottom bir satır boyu FAZLA çıkıyor (ölçüldü: 750 yerine
+        // ~712) ve ÜRÜN FOOTER'INDAN o kadar alan çalınıyordu — 3 ürünlü
+        // sipariş sahte biçimde "sığmıyor" oluyordu.
+        //
+        // TEK SATIRDA DAVRANIŞ AYNIDIR: `lines = 1` iken çıkarılan terim 0'dır,
+        // yani mevcut hiçbir alanın ölçüsü DEĞİŞMEZ. `^FO` yolu da AYNEN kalır.
+        // (Üretimde `^FT` + çok satırlı `^FB` yalnız aktarma merkezi sarma
+        // alanında vardır; ürün footer'ı ve kiracı blokları `^FO` kullanır.)
         const top =
           cursorIsBaseline && !fieldRotated
-            ? Math.max(0, cursorY - fontHeight)
+            ? Math.max(0, cursorY - fontHeight - (lines - 1) * lineHeight)
             : cursorY
         const height =
           cursorIsBaseline && !fieldRotated

@@ -324,6 +324,14 @@ export interface SuratFieldExpectations {
    * reddeder. Verilmezse kaynaktaki özgün genişlik beklenir.
    */
   readonly transferFontWidth?: number
+  /**
+   * Aktarma merkezi metninin BEKLENEN font YÜKSEKLİĞİ.
+   *
+   * Uzun aktarma adları İKİ SATIRA sarıldığında (transform whitelist madde 5)
+   * yükseklik de kaynaktakinden KÜÇÜLÜR. Genişlikle aynı gerekçe: doğrulayıcı
+   * beklenen değeri bilmezse kendi bilinçli dönüşümümüzü reddeder.
+   */
+  readonly transferFontHeight?: number
 }
 
 export function extractSuratSemanticFields(
@@ -365,12 +373,17 @@ function extractFromZplFields(
   const resolvedSlots: SuratSlotSpec[] = SLOTS.map((baseSlot) => {
     if (
       baseSlot.key === 'transferCenter' &&
-      expectations.transferFontWidth !== undefined &&
-      baseSlot.font
+      baseSlot.font &&
+      (expectations.transferFontWidth !== undefined ||
+        expectations.transferFontHeight !== undefined)
     ) {
       return {
         ...baseSlot,
-        font: { ...baseSlot.font, width: expectations.transferFontWidth },
+        font: {
+          ...baseSlot.font,
+          width: expectations.transferFontWidth ?? baseSlot.font.width,
+          height: expectations.transferFontHeight ?? baseSlot.font.height,
+        },
       }
     }
     return baseSlot

@@ -712,7 +712,14 @@ test('VISUAL-QR-POLICY: ölçek sınıf bazında deterministik', async () => {
     ['IKITELLI AKTARMA', 5],
     ['ERZURUM AKTARMA', 5],
     ['DIYARBAKIR AKTARMA', 5],
-    ['ISTANBUL ANADOLU AKTARMA MERKEZI', null],
+    // PRINT-GEOMETRY-002B: uzun ad artık İKİ SATIRA sarılır ve ölçek YİNE 5
+    // olur. İDDİA BİR KEZ DAHA DARALDI: eskiden bu satır "compose EDİLEMEZ"
+    // diyordu; şimdi "compose EDİLİR ve ölçek AYNI KANONİK değerdir" diyor.
+    // Yani politika artık TEK değer + İSTİSNASIZ kapsamdır.
+    ['ISTANBUL ANADOLU AKTARMA MERKEZI', 5],
+    ['KAHRAMANMARAS ELBISTAN AKTARMA MERKEZI', 5],
+    // Gerçekten sığmayan BÖLÜNEMEZ tek token: fallback AYNEN korunur.
+    ['ISTANBULANADOLUAKTARMAMERKEZIBOLGEMUDURLUGU', null],
   ]
   for (const [name, magnification] of expected) {
     const result = composeSuratLabel(withTransferCenter(name), {

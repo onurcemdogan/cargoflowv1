@@ -106,6 +106,13 @@ export interface AugmentedSuratZpl {
   composeMode: SuratComposeMode | null
   /** Composer fallback'e düştüyse güvenli teknik sebep. */
   composeReason?: string
+  /**
+   * ÇIKTI BASILABİLİR DEĞİL — taşıyıcı QR'ı kanonik boya çıkarılamadı.
+   *
+   * `true` ise `printZpl` KALICILAŞTIRILMAZ ve basılmaz; çağıran açık bir
+   * hata alır. Ham taşıyıcı etiketine düşmek burada bir ÇÖZÜM DEĞİLDİR.
+   */
+  carrierQrUnsafe: boolean
   /** Ek özellik sonucu; baskıyı BLOKLAMAZ. */
   augmentationStatus: AugmentationStatus
   fallbackReason?: AugmentedZplFallbackReason
@@ -183,6 +190,13 @@ export function deriveAugmentedSuratZpl(
     ...(composition && !composed
       ? { composeReason: composition.reason ?? undefined }
       : {}),
+    // ═══ BASILABİLİR ARTEFAKT ÜRETİLEMEZ ═══════════════════════════════
+    //
+    // Diğer tüm fallback'lerde ham taşıyıcı etiketine düşmek GÜVENLİDİR.
+    // BU modda değildir: ham etiket, kaçınmak istediğimiz küçük (taşıyıcı
+    // YERLİSİ) QR'ı taşır. Bu yüzden "composer reddetti" demek YETMEZ —
+    // ÇIKTININ kendisi güvensizdir ve kalıcılaştırılMAMALIDIR.
+    carrierQrUnsafe: composition?.mode === 'fallback_carrier_qr_unsafe',
   }
   const base: AugmentedSuratZpl = {
     printZpl: baseZpl,
