@@ -144,7 +144,9 @@ test('TRACE-QUERY-1: URL kanonik client ile AYNI parametreleri kurar', async () 
     page: 0,
     size: 200,
   })
-  assert.ok(url.includes('/integration/order/sellers/277221/orders?'))
+  assert.ok(url.includes('/integration/order/sellers/277221/v2/orders?'))
+  // EMEKLI UCA CIKILMAZ (15 Ekim 2026).
+  assert.equal(/\/sellers\/277221\/orders\?/.test(url), false)
   for (const param of [
     'startDate=',
     'endDate=',
@@ -165,8 +167,12 @@ test('TRACE-QUERY-1: URL kanonik client ile AYNI parametreleri kurar', async () 
     ),
     'orderNumber parametresi kanonik client sozlesmesinde olmali',
   )
-  assert.ok(
+  // Kanonik client uc noktayi ARTIK ELLE KURMAZ: tek otorite modulu kullanir.
+  assert.ok(ENTRY_SOURCE.includes('buildTrendyolOrdersV2Url({'))
+  assert.equal(
     ENTRY_SOURCE.includes('/integration/order/sellers/${credentials.sellerId}/orders?'),
+    false,
+    'emekli uc noktaya ait dizgi kanonik client icinde KALMAMALI',
   )
 })
 
@@ -179,7 +185,7 @@ test('TRACE-QUERY-2: KANITLANMAMIS parametre UYDURULMAZ', () => {
   assert.equal(ENTRY_SOURCE.includes('shipmentPackageIds'), false)
 })
 
-test('TRACE-QUERY-3: pencere 30 GUNU asamaz ve gelecege tasmaz', async () => {
+test('TRACE-QUERY-3: pencere v2 tek-istek sinirini (14 GUN) asamaz ve gelecege tasmaz', async () => {
   const { resolveTraceWindow } = await vite.ssrLoadModule(TRACE)
   const now = 1_800_000_000_000
   const day = 24 * 60 * 60 * 1000
@@ -190,7 +196,8 @@ test('TRACE-QUERY-3: pencere 30 GUNU asamaz ve gelecege tasmaz', async () => {
   })
   assert.equal(anchored.basis, 'orderDate')
   assert.ok(anchored.endDate <= now, 'gelecege tasmaz')
-  assert.ok(anchored.endDate - anchored.startDate <= 30 * day)
+  // v2: tek istek penceresi EN FAZLA 14 gun.
+  assert.ok(anchored.endDate - anchored.startDate <= 14 * day)
   assert.ok(anchored.startDate < now - 5 * day, 'siparis tarihinden once baslar')
 
   const explicit = resolveTraceWindow({
@@ -199,8 +206,8 @@ test('TRACE-QUERY-3: pencere 30 GUNU asamaz ve gelecege tasmaz', async () => {
     endOverrideMs: now,
   })
   assert.equal(explicit.basis, 'explicit')
-  assert.equal(explicit.clampedTo30Days, true, '90 gun 30 gune KIRPILIR')
-  assert.ok(explicit.endDate - explicit.startDate <= 30 * day)
+  assert.equal(explicit.clampedToMaxWindow, true, '90 gun v2 sinirina KIRPILIR')
+  assert.ok(explicit.endDate - explicit.startDate <= 14 * day)
 
   const fallback = resolveTraceWindow({ nowMs: now, windowDays: 7 })
   assert.equal(fallback.basis, 'now')
@@ -209,7 +216,7 @@ test('TRACE-QUERY-3: pencere 30 GUNU asamaz ve gelecege tasmaz', async () => {
   assert.ok(
     resolveTraceWindow({ nowMs: now, windowDays: 999 }).endDate -
       resolveTraceWindow({ nowMs: now, windowDays: 999 }).startDate <=
-      30 * day,
+      14 * day,
   )
 })
 

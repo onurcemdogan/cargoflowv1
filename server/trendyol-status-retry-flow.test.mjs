@@ -234,8 +234,13 @@ test('SYNC-RETRY-8: PARTIAL veri guvencesi ve reconcile sozlesmesi KORUNUR', () 
   assert.ok(SOURCE.includes('partial: true'))
   assert.ok(SOURCE.includes('Mevcut tam liste korunur.'))
   // Arsiv/reconcile YALNIZ COMPLETE sync'te calisir.
+  //
+  // ORDER V2: KOŞUL GENİŞLEDİ, GEVŞEMEDİ — erişim penceresi (10.000 kayıt)
+  // tükendiyse çekim `ok:true` dönse bile EKSİKTİR; reconcile ÇALIŞMAZ.
   assert.ok(
-    SOURCE.includes("const complete = Boolean(result.ok) && syncStatus === 'COMPLETE'"),
+    /complete =\s+Boolean\(result\.ok\) && syncStatus === 'COMPLETE' && !queryWindowExhausted/.test(
+      SOURCE,
+    ),
   )
   // Arka plan turu reconcile ETMEZ (complete:false) — cadence degismedi.
   assert.ok(SOURCE.includes('complete: false'))

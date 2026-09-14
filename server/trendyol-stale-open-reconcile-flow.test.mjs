@@ -388,7 +388,20 @@ test('OLD-B-WIRING: arka plan turu KANONIK zinciri kullanir', () => {
     .join('\n')
 
   // Salt okunur kanonik sorgu: orderNumber, statu filtresi YOK.
-  assert.ok(body.includes('callTrendyolOrders('))
+  //
+  // ORDER V2 GECISI: cagri artik `callTrendyolOrdersAllPages` uzerindendir.
+  // Sebep DAVRANIS KORUMASIDIR: aranan pencere hala 29 GUNDUR (siparis
+  // tarihinden cok sonra guncellenen paketi gormek icin), ama v2 TEK ISTEKTE
+  // en fazla 14 gun kabul eder. `AllPages` ayni araligi DILIMLEYEREK sorar;
+  // tek-istek fonksiyonuna dogrudan gidilseydi istek REDDEDILIRDI.
+  assert.ok(body.includes('callTrendyolOrdersAllPages('))
+  assert.equal(
+    /callTrendyolOrders\(/.test(body),
+    false,
+    'tek-istek fonksiyonuna DOGRUDAN gidilmez (14 gun siniri)',
+  )
+  // Aranan kapsam DARALTILMADI.
+  assert.ok(body.includes('29 * 24 * 60 * 60 * 1000'), 'pencere kapsami korunur')
   assert.ok(body.includes('orderNumber: candidate.orderNumber'))
   assert.equal(body.includes('status:'), false, 'statu filtresi UYGULANMAZ')
   // Kanonik kalicilastirma; ikinci bir mapping YOK.

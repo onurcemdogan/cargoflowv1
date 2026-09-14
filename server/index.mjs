@@ -24,6 +24,18 @@ import { promisify } from 'node:util'
 
 import { deriveSuratLifecycleState } from './surat-lifecycle.mjs'
 import { loadLocalEnvFile as sharedLoadLocalEnvFile } from './runtime/localEnv.ts'
+// TRENDYOL SİPARİŞ UCU: yol, sayfalama penceresi ve tarih dilimleme TEK
+// otoritede. Bu dosya artık uç nokta dizgisini ELLE KURMAZ — emekliye
+// ayrılan yolun burada tekrar belirmesi imkânsız olsun diye.
+import {
+  buildTrendyolOrdersV2Url,
+  detectQueryWindowCap,
+  isPageReachable,
+  maxReachablePageCount,
+  planTrendyolDateSlices,
+  TRENDYOL_V2_MAX_PAGE_SIZE,
+  TRENDYOL_V2_MAX_RANGE_MS,
+} from './marketplaces/trendyolOrdersEndpoint.ts'
 import { buildTrendyolShipmentEligibility } from './shipments/trendyolShipmentEligibility.ts'
 import { resolveOutboundRecipientPhone } from '../src/utils/labelData.ts'
 import {
@@ -1443,7 +1455,13 @@ app.post('/api/orders/sync', async (request, response) => {
 
     const syncStatus = result.debug?.syncStatus
     const partial = result.partial === true || syncStatus === 'PARTIAL'
-    const complete = Boolean(result.ok) && syncStatus === 'COMPLETE'
+    // TAMAMLANMIŞLIK ÜÇÜNCÜ KOŞULU (Order V2): erişim penceresi tükendiyse
+    // çekim `ok:true` dönse bile EKSİKTİR. `complete` true geçilirse
+    // `archiveMissingOrders` bu pencerede ÇEKİLEMEYEN siparişleri "artık yok"
+    // sayar ve ARŞİVLER. Sinyal üretilip tüketilmezse kusur burada doğar.
+    const queryWindowExhausted = result.queryWindowExhausted === true
+    const complete =
+      Boolean(result.ok) && syncStatus === 'COMPLETE' && !queryWindowExhausted
     // TOTAL_FAILURE (hiçbir statü başarılı değil): gerçek başarısızlık → 502.
     // Mevcut siparişlere DOKUNULMAZ (silme/arşivleme/ezme yok), reconcile yok,
     // lastSuccessfulSyncAt değişmez. PARTIAL bu daldan GEÇMEZ (aşağıda 207).
@@ -2794,7 +2812,12 @@ async function handleTrendyolOrdersFetch(request, response) {
       orders: normalized.orders,
       debug: {
         ...normalized.debug,
-        syncStatus: 'COMPLETE',
+        // SABIT 'COMPLETE' YAZILMAZ: v2 erişim penceresi tükendiyse çekim
+        // `ok:true` dönse bile EKSİKTİR ve bunu görmeyen bir hata ayıklama
+        // yüzeyi operatörü "tamam" sandırırdı.
+        syncStatus:
+          result.queryWindowExhausted === true ? 'PARTIAL' : 'COMPLETE',
+        queryWindowExhausted: result.queryWindowExhausted === true,
         fetchDebug: result.debug,
         statusRequests: result.debug?.statusRequests,
         pageRequests: result.debug?.pageRequests,
@@ -3764,18 +3787,22 @@ async function reconcileStaleOpenForOrganization(policy, organizationId) {
   return reconciler.reconcileStaleOpenOrders(
     policy,
     candidates,
-    // SALT OKUMA: tek sipariş, statü filtresi YOK, tek sayfa. Pencere
-    // sipariş tarihine çapalanır ve Trendyol'un 30 gün sınırını AŞMAZ.
+    // SALT OKUMA: tek sipariş, statü filtresi YOK. Pencere sipariş tarihine
+    // çapalanır.
+    //
+    // KAPSAM KORUNDU, SÖZLEŞMEYE UYULDU: aranan pencere hâlâ 29 gündür —
+    // daraltmak, sipariş tarihinden çok sonra güncellenen paketi GÖRMEMEK
+    // demekti. v2 tek istekte 14 günü aştığı için istek `AllPages` üzerinden
+    // DİLİMLENEREK gönderilir; aranan aralık aynı kalır, istek sayısı artar.
     async (candidate) => {
       const orderDateMs = candidate.orderDate?.getTime?.() ?? now
       const startDate = orderDateMs - 24 * 60 * 60 * 1000
       const endDate = Math.min(now, startDate + 29 * 24 * 60 * 60 * 1000)
-      const response = await callTrendyolOrders(context.credentials, {
+      const response = await callTrendyolOrdersAllPages(context.credentials, {
         orderNumber: candidate.orderNumber,
         startDate,
         endDate,
         size: 200,
-        page: 0,
       })
       if (!response.ok) throw new Error('trendyol_query_failed')
       return getTrendyolOrderPackagesArray(response.data)
@@ -12156,10 +12183,12 @@ async function callTrendyolOrdersByStatuses(credentials, query = {}) {
   )
   const addedCount = Math.max(0, combinedContent.length - filteredContent.length)
   const baseResult = filteredResult.ok ? filteredResult : unfilteredResult
+  const mergedExhausted = anyQueryWindowExhausted(filteredResult, unfilteredResult)
   return {
     ...baseResult,
     ok: true,
     source: 'real',
+    queryWindowExhausted: mergedExhausted,
     message: `${baseResult.message} Unfiltered discovery added ${addedCount} package(s).`,
     data: {
       ...(baseResult.data ?? {}),
@@ -12169,7 +12198,8 @@ async function callTrendyolOrdersByStatuses(credentials, query = {}) {
     },
     debug: {
       ...(filteredResult.debug ?? {}),
-      syncStatus: 'COMPLETE',
+      syncStatus: mergedExhausted ? 'PARTIAL' : 'COMPLETE',
+      queryWindowExhausted: mergedExhausted,
       unfilteredFallback: summarizeTrendyolUnfilteredFallback(
         unfilteredResult,
         unfilteredContent.length,
@@ -12435,10 +12465,14 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
     }
   }
 
+  const statusesExhausted = anyQueryWindowExhausted(
+    ...results.map((entry) => entry.result),
+  )
   return {
     ok: true,
     source: 'real',
     statusCode: successes[0]?.result.statusCode ?? 200,
+    queryWindowExhausted: statusesExhausted,
     message: `Trendyol siparişleri statü bazlı alındı: ${statuses.join(', ')}.`,
     data: {
       ...firstData,
@@ -12447,7 +12481,9 @@ async function callTrendyolOrdersByStatusesFiltered(credentials, query = {}) {
       totalPages: 1,
     },
     debug: {
-      syncStatus: 'COMPLETE',
+      // ERİŞİM PENCERESİ TÜKENDİYSE BU TUR TAM DEĞİLDİR.
+      syncStatus: statusesExhausted ? 'PARTIAL' : 'COMPLETE',
+      queryWindowExhausted: statusesExhausted,
       statusRequests: results.map((entry) => ({
         status: entry.status,
         ok: entry.result.ok,
@@ -12555,8 +12591,12 @@ async function callTrendyolOrdersForStatus(credentials, query, status) {
     message: 'Trendyol status window returned no data.',
     data: {},
   }
+  const exhausted = anyQueryWindowExhausted(
+    ...windowResults.map((entry) => entry.result),
+  )
   return {
     ...firstResult,
+    queryWindowExhausted: exhausted,
     data: {
       ...(firstResult.data ?? {}),
       content,
@@ -12583,7 +12623,7 @@ function summarizeTrendyolStatusWindow(entry) {
   }
 }
 
-async function callTrendyolOrdersAllPages(credentials, query = {}) {
+async function fetchTrendyolOrderSlicePages(credentials, query = {}) {
   const firstPage = Number.isFinite(Number(query.page)) ? Number(query.page) : 0
   const firstResult = await callTrendyolOrders(credentials, {
     ...query,
@@ -12599,7 +12639,36 @@ async function callTrendyolOrdersAllPages(credentials, query = {}) {
     Number.isFinite(rawTotalPages) && rawTotalPages > 0
       ? Math.ceil(rawTotalPages)
       : 1
-  const maxPages = Math.min(totalPages, Number(query.maxPages ?? 100))
+  // ERİŞİM PENCERESİ TESPİTİ (v2). `totalPages` 50'den büyük GÖRÜNEBİLİR;
+  // resmî uyarı bunun tüm sayfaların erişilebilir olduğu anlamına GELMEDİĞİNİ
+  // söyler. Otorite `totalElements`tir.
+  const pageSize = Math.min(
+    Number(query.size ?? 20),
+    TRENDYOL_V2_MAX_PAGE_SIZE,
+  )
+  const baseCap = detectQueryWindowCap({
+    totalElements: firstResult.data?.totalElements,
+    size: pageSize,
+  })
+  const reachablePages = maxReachablePageCount(pageSize)
+  // YEDEK SİNYAL: `totalElements` okunamadığında bile `totalPages` erişilebilir
+  // sayfa sayısını AŞIYORSA sayfalama KESİLMİŞ demektir. Bu dal olmadan
+  // bilinmeyen toplam, sessizce "tamam" gibi davranırdı.
+  const truncatedByPages =
+    baseCap.reason === 'UNKNOWN_TOTAL' && totalPages > reachablePages
+  const windowCap = truncatedByPages
+    ? {
+        ...baseCap,
+        capped: true,
+        reason: 'TOTAL_EXCEEDS_QUERY_WINDOW',
+        requiredSliceCount: Math.max(2, Math.ceil(totalPages / reachablePages)),
+      }
+    : baseCap
+  const maxPages = Math.min(
+    totalPages,
+    reachablePages,
+    Number(query.maxPages ?? 100),
+  )
   const pageRequests = [
     {
       page: firstPage,
@@ -12661,6 +12730,9 @@ async function callTrendyolOrdersAllPages(credentials, query = {}) {
       totalPages > 1
         ? `Trendyol siparişleri ${maxPages} sayfadan alındı.`
         : firstResult.message,
+    // CAP SİNYALİ ÇAĞIRANA TAŞINIR. Bu alan olmadan üst katman "tamamlandı"
+    // sanardı; dilimleme kararı buna bakar.
+    queryWindowCap: windowCap,
     data: {
       ...firstResult.data,
       content: resumedContent,
@@ -12668,15 +12740,183 @@ async function callTrendyolOrdersAllPages(credentials, query = {}) {
       totalPages: 1,
       fetchedPages: maxPages,
       originalTotalPages: totalPages,
+      originalTotalElements: windowCap.totalElements,
     },
     debug: {
       ...firstResult.debug,
       pageRequests,
       fetchedPages: maxPages,
       originalTotalPages: totalPages,
+      reachablePages,
+      queryWindowCapped: windowCap.capped,
+      queryWindowReason: windowCap.reason,
+      unreachableRecords: windowCap.unreachableRecords,
       combinedContentCount: resumedContent.length,
       resumedFromPage: Number.isFinite(Number(query.page)) ? Number(query.page) : 0,
     },
+  }
+}
+
+/**
+ * TARİH DİLİMLİ SİPARİŞ ÇEKİMİ — v2 erişim penceresine karşı tek savunma.
+ *
+ * SÖZLEŞME İKİ SINIR GETİRİR:
+ *   1) tek istekte en geniş aralık 14 gün,
+ *   2) bir filtrenin sayfalamayla erişilebilen azami kaydı 10.000.
+ *
+ * DAVRANIŞ KORUNUMU: aralık zaten sözleşmeye uyuyorsa (mevcut çağıranların
+ * TAMAMI 10 günlük pencerelerle çalışır) tek dilime düşülür ve eski kod
+ * yolu AYNEN çalışır — sayfa devamlılığı (`page`, `carryOverContent`,
+ * `partialContent`, `failedPage`) dahil. Dilimleme YALNIZ sözleşme aşıldığında
+ * veya cap tespit edildiğinde devreye girer.
+ *
+ * SESSİZ BAŞARI YASAK: `totalElements` erişilebilir kaydı aşarsa sonuç
+ * "tamam" SAYILMAZ; dilim, sağlayıcının kendi sayısından türetilen bölme
+ * adediyle yeniden denenir. 1 ms'e kadar bölünüp hâlâ aşılıyorsa sonuç
+ * `queryWindowExhausted` ile AÇIKÇA eksik bildirilir.
+ */
+async function callTrendyolOrdersAllPages(credentials, query = {}) {
+  const startDate = Number(query.startDate)
+  const endDate = Number(query.endDate)
+  const rangeKnown = Number.isFinite(startDate) && Number.isFinite(endDate)
+  const rangeMs = rangeKnown ? endDate - startDate : 0
+
+  // TEK DİLİM DALI — davranış birebir korunur (sayfa devamlılığı dahil).
+  if (!rangeKnown || rangeMs <= TRENDYOL_V2_MAX_RANGE_MS) {
+    const single = await fetchTrendyolOrderSlicePages(credentials, query)
+    if (!single.ok || !single.queryWindowCap?.capped || !rangeKnown) return single
+    return resolveTrendyolCappedSlice(credentials, query, single)
+  }
+
+  const slices = planTrendyolDateSlices({
+    startMs: startDate,
+    endMs: endDate,
+    maxRangeMs: TRENDYOL_V2_MAX_RANGE_MS,
+  })
+  return runTrendyolOrderSlices(credentials, query, slices, 'RANGE_EXCEEDS_CONTRACT')
+}
+
+/**
+ * Cap'e takılan TEK dilimi, sağlayıcının `totalElements` değerinden türetilen
+ * bölme adediyle yeniden çeker.
+ *
+ * Bölme adedi UYDURULMAZ: `ceil(totalElements / erişilebilirKayıt)`. Yoğunluk
+ * düzgün dağılmamışsa alt dilimler kendi cap'lerini yeniden bildirir ve
+ * özyineleme devam eder; 1 ms tabanında durur.
+ */
+async function resolveTrendyolCappedSlice(credentials, query, cappedResult) {
+  const startDate = Number(query.startDate)
+  const endDate = Number(query.endDate)
+  const sliceCount = Math.max(2, Number(cappedResult.queryWindowCap.requiredSliceCount))
+  const slices = planTrendyolDateSlices({
+    startMs: startDate,
+    endMs: endDate,
+    maxRangeMs: TRENDYOL_V2_MAX_RANGE_MS,
+    sliceCount,
+  })
+  // Daha ince bölünemiyorsa (1 ms tabanı) EKSİKLİK BİLDİRİLİR.
+  if (slices.length <= 1) {
+    return {
+      ...cappedResult,
+      queryWindowExhausted: true,
+      message:
+        'Trendyol v2 erişim penceresi tek milisaniyelik aralıkta bile aşıldı; '
+        + `${cappedResult.queryWindowCap.unreachableRecords} paket bu filtreyle `
+        + 'alınamaz. Akış (stream) servisi kullanılmalıdır.',
+      debug: {
+        ...(cappedResult.debug ?? {}),
+        queryWindowExhausted: true,
+      },
+    }
+  }
+  return runTrendyolOrderSlices(credentials, query, slices, 'QUERY_WINDOW_CAP')
+}
+
+async function runTrendyolOrderSlices(credentials, query, slices, sliceReason) {
+  const sliceResults = []
+  const collected = []
+  let exhausted = false
+  for (const slice of slices) {
+    // Dilim içinde sayfa devamlılığı YOKTUR: devralınan içerik farklı bir
+    // tarih aralığına aitti, taşımak mükerrer/kayıp üretirdi.
+    const sliceQuery = {
+      ...query,
+      startDate: slice.startMs,
+      endDate: slice.endMs,
+      page: undefined,
+      carryOverContent: undefined,
+    }
+    let result = await fetchTrendyolOrderSlicePages(credentials, sliceQuery)
+    if (result.ok && result.queryWindowCap?.capped) {
+      result = await resolveTrendyolCappedSlice(credentials, sliceQuery, result)
+    }
+    sliceResults.push({ startDate: slice.startMs, endDate: slice.endMs, result })
+    if (!result.ok) {
+      return {
+        ...result,
+        message: `Trendyol dilimli sipariş çekimi eksik kaldı: ${result.message}`,
+        partialContent: mergeTrendyolPackageCollections(...collected),
+        debug: {
+          ...(result.debug ?? {}),
+          sliceReason,
+          orderSlices: sliceResults.map(summarizeTrendyolOrderSlice),
+        },
+      }
+    }
+    if (result.queryWindowExhausted) exhausted = true
+    collected.push(getTrendyolOrderPackagesArray(result.data))
+  }
+
+  const content = mergeTrendyolPackageCollections(...collected)
+  const firstResult = sliceResults[0]?.result ?? {
+    ok: true,
+    source: 'real',
+    statusCode: 200,
+    message: 'Trendyol slice returned no data.',
+    data: {},
+  }
+  return {
+    ...firstResult,
+    queryWindowExhausted: exhausted,
+    message: `Trendyol siparişleri ${slices.length} tarih diliminden alındı.`,
+    data: {
+      ...(firstResult.data ?? {}),
+      content,
+      totalElements: content.length,
+      totalPages: 1,
+    },
+    debug: {
+      ...(firstResult.debug ?? {}),
+      sliceReason,
+      orderSlices: sliceResults.map(summarizeTrendyolOrderSlice),
+      pageRequests: sliceResults.flatMap(
+        (entry) => entry.result.debug?.pageRequests ?? [],
+      ),
+      combinedContentCount: content.length,
+    },
+  }
+}
+
+/**
+ * ERİŞİM PENCERESİ TÜKENMİŞİĞİ YUKARI TAŞINIR.
+ *
+ * Bir dilim v2 erişim penceresini (10.000 kayıt) aşıp daha ince bölünemediyse
+ * çekim EKSİKTİR. Bu bilgi birleştirme katmanlarında DÜŞERSE sonuç `ok:true`
+ * olduğu için "COMPLETE" sayılır ve `archiveMissingOrders` GERÇEKTE VAR OLAN
+ * ama ÇEKİLEMEMİŞ siparişleri arşivler. Sessiz veri kaybının tam tarifi budur.
+ */
+function anyQueryWindowExhausted(...results) {
+  return results.some((result) => result?.queryWindowExhausted === true)
+}
+
+function summarizeTrendyolOrderSlice(entry) {
+  return {
+    startDate: entry.startDate,
+    endDate: entry.endDate,
+    ok: entry.result.ok,
+    statusCode: entry.result.statusCode,
+    contentCount: getTrendyolOrderPackagesArray(entry.result.data).length,
+    queryWindowCapped: entry.result.queryWindowCap?.capped === true,
   }
 }
 
@@ -12710,7 +12950,11 @@ async function callTrendyolOrders(credentials, query) {
   const now = Date.now()
   const startDate = Number(query.startDate ?? now - 1000 * 60 * 60 * 24 * 7)
   const endDate = Number(query.endDate ?? now)
-  const maxRangeMs = 1000 * 60 * 60 * 24 * 30
+  // v2 SÖZLEŞMESİ: tek istekte en geniş aralık İKİ HAFTADIR (eski uçta 30
+  // gün sanılıyordu). Daha geniş aralık isteyen çağıranlar hata ALMAZ:
+  // `callTrendyolOrdersAllPages` isteği dilimleyip birleştirir. Buradaki
+  // kapı TEK İSTEK sözleşmesini korur.
+  const maxRangeMs = TRENDYOL_V2_MAX_RANGE_MS
 
   if (endDate < startDate) {
     return {
@@ -12725,15 +12969,35 @@ async function callTrendyolOrders(credentials, query) {
     return {
       ok: false,
       source: 'real',
-    message: 'Trendyol tarih aralığı maksimum 30 gün olmalıdır.',
+      message: 'Trendyol tarih aralığı tek istekte maksimum 14 gün olmalıdır.',
+    }
+  }
+
+  const pageSize = Math.min(
+    Number(query.size ?? 20),
+    TRENDYOL_V2_MAX_PAGE_SIZE,
+  )
+  const requestedPage = Number(query.page ?? 0)
+  // ERİŞİM PENCERESİ (maxQueryWindowResult = 10.000). Pencerenin DIŞINDAKİ
+  // sayfayı istemek boş içerik döndürür; bunu "sipariş kalmadı" sanmak
+  // SESSİZ VERİ KAYBIDIR. Bu yüzden istek KURULMAZ ve durum AÇIKÇA bildirilir.
+  if (!isPageReachable({ page: requestedPage, size: pageSize })) {
+    return {
+      ok: false,
+      source: 'real',
+      queryWindowExceeded: true,
+      message:
+        `Trendyol v2 erişim penceresi aşıldı: size=${pageSize} ile en çok `
+        + `${maxReachablePageCount(pageSize)} sayfa okunabilir. Tarih aralığı `
+        + 'daraltılmalı veya akış (stream) servisi kullanılmalıdır.',
     }
   }
 
   const params = new URLSearchParams({
     startDate: String(startDate),
     endDate: String(endDate),
-    page: String(query.page ?? 0),
-    size: String(Math.min(Number(query.size ?? 20), 200)),
+    page: String(requestedPage),
+    size: String(pageSize),
   })
 
   if (query.includeSortParams !== false) {
@@ -12744,7 +13008,11 @@ async function callTrendyolOrders(credentials, query) {
   if (query.status) params.set('status', query.status)
   if (query.orderNumber) params.set('orderNumber', query.orderNumber)
 
-  const url = `${getTrendyolBaseUrl(credentials)}/integration/order/sellers/${credentials.sellerId}/orders?${params}`
+  const url = buildTrendyolOrdersV2Url({
+    baseUrl: getTrendyolBaseUrl(credentials),
+    sellerId: credentials.sellerId,
+    search: params,
+  })
   // Sınırlı (en çok 3) exponential backoff. Prod'da [2000,4000,8000] ms; test
   // ortamı TRENDYOL_ORDER_RETRY_DELAYS_MS ile kısa değerler enjekte edebilir.
   // Değerden bağımsız retry sayısı üst sınırı korunur → sonsuz retry YOK.

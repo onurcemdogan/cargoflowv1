@@ -188,30 +188,42 @@ test('B3P-7: Retry-After yaniti gercekten TASINIR', () => {
 /* ═══ SINIRLI ÇEKİM (bounded pull) ═══════════════════════════════════ */
 
 test('B3P-8: sayfa sayisi UST SINIRLI (sonsuz sayfalama YOK)', () => {
+  // ORDER V2: ust sinir DARALDI. Eski tavan yalnizca istemci tarafi bir
+  // emniyetti (100); artik saglayicinin GERCEK erisim penceresi de
+  // (maxQueryWindowResult = 10.000 kayit) tavana dahildir. Bu iddia
+  // GEVSEMEDI, GUCLENDI: iki tavandan KUCUK olani gecerlidir.
   assert.match(
     SOURCE,
-    /const maxPages = Math\.min\(totalPages, Number\(query\.maxPages \?\? 100\)\)/,
+    /const maxPages = Math\.min\(\s*totalPages,\s*reachablePages,\s*Number\(query\.maxPages \?\? 100\),\s*\)/,
     'sayfalama ust siniri kaldirilmis',
   )
+  assert.match(SOURCE, /const reachablePages = maxReachablePageCount\(pageSize\)/)
   // Dongu maxPages ile sinirlidir; saglayici totalPages sismis dese bile
   // istemci tarafi sinir korunur.
   assert.match(SOURCE, /for \(let page = firstPage \+ 1; page < maxPages; page \+= 1\)/)
 })
 
 test('B3P-9: sayfa boyutu 200 ile KELEPCELENIR', () => {
+  // Kelepce AYNI (200), yalnizca sozlesme sabitinden gelir ve tek yerde
+  // hesaplanip hem URL'de hem erisim penceresi aritmetiginde kullanilir.
   assert.match(
     SOURCE,
-    /size: String\(Math\.min\(Number\(query\.size \?\? 20\), 200\)\)/,
+    /const pageSize = Math\.min\(\s*Number\(query\.size \?\? 20\),\s*TRENDYOL_V2_MAX_PAGE_SIZE,\s*\)/,
     'sayfa boyutu kelepcesi kaldirilmis',
   )
+  assert.match(SOURCE, /size: String\(pageSize\)/)
 })
 
-test('B3P-10: tarih araligi 30 gun ile SINIRLI kalir', () => {
+test('B3P-10: tarih araligi tek istekte SINIRLI kalir', () => {
+  // ORDER V2: tek istek siniri 30 gun DEGIL 14 gundur (resmi sozlesme).
   // Artimli pencere bu sinirin ICINDE kalmali; imlec + emniyet payi bunu
-  // asamaz (24 saat + artimli aralik ≪ 30 gun).
-  assert.match(SOURCE, /const maxRangeMs = 1000 \* 60 \* 60 \* 24 \* 30/)
+  // asamaz (24 saat + artimli aralik ≪ 14 gun). Sinir DARALDI, gevsemedi.
+  assert.match(SOURCE, /const maxRangeMs = TRENDYOL_V2_MAX_RANGE_MS/)
   assert.match(SOURCE, /if \(endDate - startDate > maxRangeMs\)/)
   assert.match(SOURCE, /if \(endDate < startDate\)/)
+  // Daha genis aralik isteyen cagiran HATA ALMAZ: ust katman dilimler.
+  assert.match(SOURCE, /async function callTrendyolOrdersAllPages\(credentials, query = \{\}\) \{/)
+  assert.match(SOURCE, /planTrendyolDateSlices\(\{/)
 })
 
 test('B3P-11: dusen sayfa BASTAN degil KALDIGI yerden devam eder', () => {

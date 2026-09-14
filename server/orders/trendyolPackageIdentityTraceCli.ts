@@ -173,7 +173,7 @@ async function main(): Promise<void> {
   const window = resolveTraceWindow({
     nowMs: Date.now(),
     orderDateMs: persistedRow?.orderDate?.getTime() ?? null,
-    windowDays: Number(parseArg('window-days') ?? 30),
+    windowDays: Number(parseArg('window-days') ?? 14),
     startOverrideMs: parseTimeArg('window-start'),
     endOverrideMs: parseTimeArg('window-end'),
   })
@@ -243,7 +243,7 @@ async function main(): Promise<void> {
       windowStart: new Date(window.startDate).toISOString(),
       windowEnd: new Date(window.endDate).toISOString(),
       windowBasis: window.basis,
-      clampedTo30Days: window.clampedTo30Days,
+      clampedToMaxWindow: window.clampedToMaxWindow,
       ok: queryOk,
       error: queryError,
       pageRequests,

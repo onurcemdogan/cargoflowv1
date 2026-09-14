@@ -175,8 +175,13 @@ test('SYNC-SINGLEFLIGHT-7: retry ve PARTIAL veri guvencesi KORUNUR', () => {
   assert.ok(SOURCE.includes("syncStatus: 'PARTIAL'"))
   assert.ok(SOURCE.includes('Mevcut tam liste korunur.'))
   // Reconcile YALNIZ COMPLETE sync'te.
+  //
+  // ORDER V2: KOŞUL GENİŞLEDİ, GEVŞEMEDİ — erişim penceresi (10.000 kayıt)
+  // tükendiyse çekim `ok:true` dönse bile EKSİKTİR; reconcile ÇALIŞMAZ.
   assert.ok(
-    SOURCE.includes("const complete = Boolean(result.ok) && syncStatus === 'COMPLETE'"),
+    /complete =\s+Boolean\(result\.ok\) && syncStatus === 'COMPLETE' && !queryWindowExhausted/.test(
+      SOURCE,
+    ),
   )
   // Arka plan turu hala reconcile ETMEZ ve hesap kapsamini gecirir.
   assert.ok(SOURCE.includes('complete: false'))

@@ -8,13 +8,22 @@
 // `server/index.mjs` → `callTrendyolOrders` yalnız şu parametreleri kurar:
 //   startDate · endDate · page · size(<=200) · orderByField/orderByDirection
 //   · status (opsiyonel) · orderNumber (opsiyonel)
-// ve tarih aralığı EN FAZLA 30 GÜN olabilir. Bu modül AYNI sözleşmeyi
-// kullanır; `shipmentPackageIds` gibi KANITLANMAMIŞ bir parametre UYDURULMAZ.
+// ve tarih aralığı v2 sözleşmesinde tek istekte EN FAZLA 14 GÜN olabilir.
+// Bu modül AYNI sözleşmeyi kullanır; `shipmentPackageIds` gibi KANITLANMAMIŞ
+// bir parametre UYDURULMAZ.
+//
+// UÇ NOKTA: yol `trendyolOrdersEndpoint.ts`ten gelir. Tanı CLI'ı da emekli
+// uca ÇIKMAZ — 15 Ekim 2026 sonrası sessizce 426 alan bir tanı aracı, arızayı
+// teşhis etmek yerine KENDİSİ arıza olurdu.
 //
 // Bu yüzden "exact package" sorgusu AYRI bir uç değildir: orderNumber
 // sorgusunun sonucu içinde paket kimliği taranır (`orderNumber_scan`).
 // Sonuç boşsa "yok" DENMEZ — `inconclusive` raporlanır (pencere dışında
 // kalmış olabilir).
+import {
+  buildTrendyolOrdersV2Url,
+  TRENDYOL_V2_MAX_RANGE_MS,
+} from '../marketplaces/trendyolOrdersEndpoint.ts'
 
 /** Trendyol paket kaydından PII'siz teknik kimlik alanları. */
 export interface PackageIdentityFields {
@@ -45,7 +54,10 @@ export const FORWARD_MARKETPLACE_STATUSES = [
   'UnSupplied',
 ] as const
 
-const MAX_WINDOW_MS = 1000 * 60 * 60 * 24 * 30
+// v2 SÖZLEŞMESİ: tek istekte en geniş aralık İKİ HAFTADIR. Bu modül tek
+// istek atar (dilimlemez), dolayısıyla pencere DOĞRUDAN o sınıra kırpılır.
+// Eski 30 günlük kırpma v2'de HATA dönerdi.
+const MAX_WINDOW_MS = TRENDYOL_V2_MAX_RANGE_MS
 
 function text(value: unknown): string | null {
   const out = String(value ?? '').trim()
@@ -114,12 +126,12 @@ export interface TraceWindow {
   endDate: number
   /** Pencerenin nasıl seçildiği — raporda görünür, sessiz sihir YOK. */
   basis: 'explicit' | 'orderDate' | 'now'
-  clampedTo30Days: boolean
+  clampedToMaxWindow: boolean
 }
 
 /**
- * Trendyol 30 GÜN sınırını AŞMAYAN bir pencere üretir.
- *   - explicit start/end verilirse o kullanılır (30 günü aşarsa KIRPILIR),
+ * Trendyol v2 tek-istek sınırını (14 GÜN) AŞMAYAN bir pencere üretir.
+ *   - explicit start/end verilirse o kullanılır (sınırı aşarsa KIRPILIR),
  *   - yoksa sipariş tarihine çapalanır (orderDate - 1 gün),
  *   - sipariş tarihi de yoksa şimdiden geriye windowDays.
  * `endDate` gelecekte olamaz (now ile sınırlanır) ve DAİMA >= startDate.
@@ -132,7 +144,8 @@ export function resolveTraceWindow(input: {
   endOverrideMs?: number | null
 }): TraceWindow {
   const now = input.nowMs
-  const days = Math.min(30, Math.max(1, Math.trunc(input.windowDays ?? 30)))
+  const maxDays = Math.floor(TRENDYOL_V2_MAX_RANGE_MS / (1000 * 60 * 60 * 24))
+  const days = Math.min(maxDays, Math.max(1, Math.trunc(input.windowDays ?? maxDays)))
 
   if (
     Number.isFinite(input.startOverrideMs ?? NaN) ||
@@ -152,7 +165,7 @@ export function resolveTraceWindow(input: {
       startDate: Math.min(start, end),
       endDate: end,
       basis: 'explicit',
-      clampedTo30Days: start !== requestedStart,
+      clampedToMaxWindow: start !== requestedStart,
     }
   }
 
@@ -163,7 +176,7 @@ export function resolveTraceWindow(input: {
       startDate: Math.min(anchor, end),
       endDate: end,
       basis: 'orderDate',
-      clampedTo30Days: anchor + MAX_WINDOW_MS > now,
+      clampedToMaxWindow: anchor + MAX_WINDOW_MS > now,
     }
   }
 
@@ -171,7 +184,7 @@ export function resolveTraceWindow(input: {
     startDate: now - days * 24 * 60 * 60 * 1000,
     endDate: now,
     basis: 'now',
-    clampedTo30Days: false,
+    clampedToMaxWindow: false,
   }
 }
 
@@ -197,9 +210,11 @@ export function buildOrdersQueryUrl(input: {
   params.set('orderByField', 'PackageLastModifiedDate')
   params.set('orderByDirection', 'DESC')
   params.set('orderNumber', input.orderNumber)
-  return `${input.baseUrl}/integration/order/sellers/${encodeURIComponent(
-    input.sellerId,
-  )}/orders?${params}`
+  return buildTrendyolOrdersV2Url({
+    baseUrl: input.baseUrl,
+    sellerId: input.sellerId,
+    search: params,
+  })
 }
 
 /** Trendyol sayfalı yanıtından paket dizisi. */

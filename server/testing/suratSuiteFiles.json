@@ -142,6 +142,7 @@
   "server/analytics-claims-flow.test.mjs",
   "server/trendyol-package-merge-flow.test.mjs",
   "server/trendyol-package-identity-trace-flow.test.mjs",
+  "server/trendyol-orders-v2-migration-flow.test.mjs",
   "server/trendyol-sync-account-scope-flow.test.mjs",
   "server/null-write-prevention-flow.test.mjs",
   "server/trendyol-stale-open-reconcile-flow.test.mjs",

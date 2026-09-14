@@ -247,7 +247,15 @@ test('SSC-6: /api/orders/sync — PARTIAL 207 (reconcile YOK) / TOTAL 502 / COMP
   assert.match(block, /failedStatuses: result\.failedStatuses/)
   assert.match(block, /archivedCount: 0/)
   // Reconcile YALNIZ complete=true'da: partial için complete=false threadlenir.
-  assert.match(block, /complete = Boolean\(result\.ok\) && syncStatus === 'COMPLETE'/)
+  //
+  // ORDER V2: ÜÇÜNCÜ KOŞUL EKLENDİ — erişim penceresi (10.000 kayıt) tükendiyse
+  // çekim `ok:true` dönse bile EKSİKTİR. Bu kapı olmadan `archiveMissingOrders`
+  // pencerede GERÇEKTE VAR OLAN ama ÇEKİLEMEMİŞ siparişleri arşivlerdi.
+  assert.match(
+    block,
+    /complete =\s+Boolean\(result\.ok\) && syncStatus === 'COMPLETE' && !queryWindowExhausted/,
+  )
+  assert.match(block, /const queryWindowExhausted = result\.queryWindowExhausted === true/)
   // COMPLETE → 200 ok:true + reconcile sayaçları.
   assert.match(block, /ok: true,\s*\n\s*complete: persistResult\.complete/)
   // lastSuccessfulSyncAt yalnız 'success' (partial değil): status seçimi complete'e bağlı.

@@ -159,6 +159,24 @@ async function main(): Promise<number> {
         'sayılmaz; apply eksik veri yazabilir. Aralığı daraltıp tekrar deneyin.',
     )
   }
+  // ERİŞİM PENCERESİ (v2 maxQueryWindowResult = 10.000): düşen pencere OLMADAN da
+  // eksik kalabilir. `complete=false` iki sebepten doğabilir; hangisi olduğu
+  // SÖYLENMEZSE operatör "hata yok, demek ki tamam" sanardı.
+  const exhausted = fetched.windows.filter((window) => window.queryWindowExhausted)
+  if (exhausted.length > 0) {
+    const unreachable = exhausted.reduce(
+      (total, window) => total + window.unreachableRecords,
+      0,
+    )
+    console.error(
+      `[orders:reconcile] UYARI: ${exhausted.length} filtre erişim penceresini (10.000 ` +
+        `kayıt) aştı ve daha ince bölünemedi; ~${unreachable} paket bu filtreyle ` +
+        'ALINAMADI. Akış (stream) servisi kullanılmalıdır.',
+    )
+  }
+  if (fetched.cancelled) {
+    console.error('[orders:reconcile] UYARI: çekim İPTAL EDİLDİ; sonuç EKSİKTİR.')
+  }
 
   if (!apply) {
     const plan = await planBackfill(db, scope, fetched.orders)

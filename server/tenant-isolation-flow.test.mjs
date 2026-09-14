@@ -181,6 +181,10 @@ test('e2e tenant: requireAuth, org credential, mock Trendyol, logout 401 (A,D,I,
       return
     }
     // mock Trendyol'a org credential ile git.
+    //
+    // NOT: buradaki yol TESTIN KENDI mock sunucusuna aittir ve Trendyol
+    // sozlesmesini temsil ETMEZ; olculen sey kimlik kapsamidir. Uretim
+    // yolu `/v2/orders`tir (bkz. trendyol-orders-v2-migration-flow).
     const res = await fetch(
       `http://127.0.0.1:${mockPort}/integration/order/sellers/${cred.sellerId}/orders?status=Delivered&page=0`,
       { headers: { Authorization: 'Basic ' + Buffer.from(`${cred.apiKey}:${cred.apiSecret}`).toString('base64') } },

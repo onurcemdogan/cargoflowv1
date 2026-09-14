@@ -25,7 +25,10 @@ test('RES-1: Trendyol sipariş GET retry geçici 5xx ve ağ hatalarını da tekr
   const block = sliceBlock(
     readSrc('server/index.mjs'),
     'async function callTrendyolOrders(credentials, query)',
-    3200,
+    // ORDER V2 geçişi bu fonksiyona erişim penceresi kapısı ve sözleşme
+    // yorumları ekledi; pencere retry mantığını KAPSAYACAK kadar genişletildi.
+    // İDDİA AYNI KALDI — yalnız bakılan dilim büyüdü.
+    4600,
   )
   assert.match(block, /code >= 500 && code <= 599/, '5xx retry edilir')
   assert.match(block, /isNetworkError/, 'ağ hatası retry edilir')
@@ -40,7 +43,10 @@ test('RES-2: retry backoff + jitter uygular; 429 için Retry-After korunur', () 
   const block = sliceBlock(
     readSrc('server/index.mjs'),
     'async function callTrendyolOrders(credentials, query)',
-    3200,
+    // ORDER V2 geçişi bu fonksiyona erişim penceresi kapısı ve sözleşme
+    // yorumları ekledi; pencere retry mantığını KAPSAYACAK kadar genişletildi.
+    // İDDİA AYNI KALDI — yalnız bakılan dilim büyüdü.
+    4600,
   )
   assert.match(block, /jitter/i)
   assert.match(block, /retryAfterMs/)
@@ -71,7 +77,13 @@ test('RES-4: complete=false (kısmi/başarısız) reconcile ÇALIŞMAZ; endpoint
   assert.match(persist, /archiveMissingOrders/)
   // Endpoint: complete YALNIZ debug.syncStatus === 'COMPLETE' iken true → kısmi
   // (PARTIAL) veya başarısız sync reconcile ÇALIŞTIRMAZ.
-  assert.match(server, /complete = Boolean\(result\.ok\) && syncStatus === 'COMPLETE'/)
+  //
+  // ORDER V2: KOŞUL GENİŞLEDİ, GEVŞEMEDİ — erişim penceresi (10.000 kayıt)
+  // tükendiyse çekim `ok:true` dönse bile EKSİKTİR ve reconcile ÇALIŞMAMALIDIR.
+  assert.match(
+    server,
+    /complete =\s+Boolean\(result\.ok\) && syncStatus === 'COMPLETE' && !queryWindowExhausted/,
+  )
   // TOTAL_FAILURE (PARTIAL değil) → 502, mevcut siparişlere DOKUNULMAZ.
   assert.match(server, /if \(!result\.ok && !partial\)/)
   assert.match(server, /response\.status\(502\)/)
