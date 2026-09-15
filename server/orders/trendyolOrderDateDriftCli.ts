@@ -99,7 +99,7 @@ async function main(): Promise<void> {
   const samples: OrderDateDriftRow[] = []
 
   for (const row of rows) {
-    let rawOrderDate: unknown = null
+    let rawOrderDate: unknown
     try {
       rawOrderDate = readRawOrderDate(row.rawPayloadEncrypted as string | null)
     } catch {
