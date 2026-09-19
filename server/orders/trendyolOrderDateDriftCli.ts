@@ -95,6 +95,8 @@ async function main(): Promise<void> {
     ALREADY_CORRECT: 0,
     RAW_UNAVAILABLE: 0,
     RAW_UNPARSEABLE: 0,
+    // Kusur imzası kanıtlanamayan satır: ONARILMAZ, ayrı sayılır.
+    AMBIGUOUS: 0,
   }
   const samples: OrderDateDriftRow[] = []
 

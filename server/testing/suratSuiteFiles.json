@@ -27,6 +27,8 @@
   "server/print-geometry-html-product-pagination-flow.test.mjs",
   "server/trendyol-orderdate-timezone-flow.test.mjs",
   "server/trendyol-orderdate-repair-flow.test.mjs",
+  "server/trendyol-orderdate-ingestion-contract-flow.test.mjs",
+  "server/trendyol-orderdate-consumer-parity-flow.test.mjs",
   "server/browser-print-live-fit-flow.test.mjs",
   "server/surat-label-product-metadata-flow.test.mjs",
   "server/surat-batch-print-isolation-flow.test.mjs",

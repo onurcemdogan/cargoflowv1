@@ -706,3 +706,209 @@ test('TZR-16: yasam dongusu ve kullanici aktivasyonu DEGISMEZ', async (t) => {
     )
   }
 })
+
+// ── BELİRSİZ SATIRLAR (AMBIGUOUS) — TZ-002 GÜÇLENDİRMESİ ───────────────────
+
+test('TZR-17: OFSETSIZ ham dizgi AMBIGUOUStur ve ASLA onarilmaz', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'tzr-17')
+  // Eski yol bu dizgiyi SUNUCU YERELINDE cozerdi; hangi anin yazildigi
+  // geriye donuk KANITLANAMAZ → otomatik onarim disi.
+  const naive = await insertOrder(db, org, { raw: '2026-09-14 20:36:00' })
+  const drifted = await insertOrder(db, org)
+
+  const scan = await repair.scanTrendyolOrderDates(db, { organizationId: org })
+  assert.equal(scan.tally.ambiguous, 1)
+  assert.equal(scan.tally.update, 1)
+
+  const summary = await repair.applyTrendyolOrderDateRepair(db, applyOpts(org))
+  assert.equal(summary.updated, 1, 'yalniz KANITLI kaymis satir')
+  assert.equal(summary.ambiguous, 1)
+  assert.equal(
+    (await readOrder(db, naive.id)).orderDate.toISOString(),
+    DRIFTED.toISOString(),
+    'belirsiz satir DOKUNULMAMIS',
+  )
+  assert.equal((await readOrder(db, drifted.id)).orderDate.toISOString(), CORRECT.toISOString())
+})
+
+test('TZR-18: ACIKLANAMAYAN sapma AMBIGUOUStur, "okunamadi" DEGIL', () => {
+  const plan = repair.planOrderDateRepairRow({
+    orderId: 'o1',
+    organizationId: 'org',
+    marketplace: 'Trendyol',
+    packageId: 'P1',
+    orderNumber: 'N1',
+    currentOrderDate: new Date(RAW - OFFSET_MS + 120 * 60_000),
+    rawOrderDate: RAW,
+  })
+  assert.equal(plan.classification, 'AMBIGUOUS')
+  assert.equal(plan.action, 'SKIP_AMBIGUOUS')
+  // Ham deger COZULEBILDI: "unparseable" demek YANLIS olurdu.
+  assert.equal(plan.correctedOrderDate, CORRECT.toISOString())
+})
+
+test('TZR-19: APPLY her yazilan satir icin ESKI+YENI deger kaniti uretir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'tzr-19')
+  const row = await insertOrder(db, org, { packageId: 'PKG-EV', orderNumber: 'ORD-EV' })
+  await insertOrder(db, org, { orderDate: CORRECT })
+
+  const summary = await repair.applyTrendyolOrderDateRepair(db, applyOpts(org))
+  assert.equal(summary.updated, 1)
+  assert.equal(summary.evidence.length, 1, 'YALNIZ yazilan satir kanitlanir')
+  const [evidence] = summary.evidence
+  assert.equal(evidence.orderId, row.id)
+  assert.equal(evidence.packageId, 'PKG-EV')
+  assert.equal(evidence.orderNumber, 'ORD-EV')
+  assert.equal(evidence.oldOrderDate, DRIFTED.toISOString())
+  assert.equal(evidence.newOrderDate, CORRECT.toISOString())
+  assert.equal(evidence.driftMinutes, 180)
+  assert.equal(evidence.classification, 'DRIFTED_BY_OFFSET')
+  assert.equal(evidence.reason, 'TRENDYOL_ORDERDATE_GMT3_DOUBLE_CONVERSION')
+  assert.ok(Date.parse(evidence.repairedAt) > 0, 'onarim zaman damgasi')
+  // GERI ALINABILIRLIK: kanittan eski degere donulebilir.
+  assert.equal(
+    new Date(Date.parse(evidence.newOrderDate) + 180 * 60_000).toISOString(),
+    evidence.oldOrderDate,
+  )
+  // PII YOK.
+  for (const leaked of ['customerFirstName', 'customerPhone', 'customerEmail', 'rawPayloadEncrypted']) {
+    assert.equal(leaked in evidence, false, `kanitta PII: ${leaked}`)
+  }
+})
+
+test('TZR-20: KARISIK veri — yalniz kanitli kaymis satir yazilir, ikinci kosu 0', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'tzr-20')
+  const drifted = [await insertOrder(db, org), await insertOrder(db, org)]
+  const alreadyCorrect = await insertOrder(db, org, { orderDate: CORRECT })
+  const ambiguousNaive = await insertOrder(db, org, { raw: '2026-09-14 20:36:00' })
+  const ambiguousOdd = await insertOrder(db, org, {
+    orderDate: new Date(RAW - OFFSET_MS + 120 * 60_000),
+  })
+  const rawMissing = await insertOrder(db, org, { raw: null })
+  const unparseable = await insertOrder(db, org, { raw: 'bu bir tarih degil' })
+
+  const before = await allOrderDates(db)
+  const summary = await repair.applyTrendyolOrderDateRepair(db, applyOpts(org))
+  assert.equal(summary.scanned, 7)
+  assert.equal(summary.updated, 2)
+  assert.equal(summary.alreadyCorrect, 1)
+  assert.equal(summary.ambiguous, 2)
+  assert.equal(summary.rawUnavailable, 1)
+  assert.equal(summary.rawUnparseable, 1)
+  assert.equal(summary.conflicts, 0)
+  assert.equal(summary.failed, 0)
+
+  // DOKUNULMAYANLAR baytina kadar ayni.
+  const after = await allOrderDates(db)
+  for (const row of [alreadyCorrect, ambiguousNaive, ambiguousOdd, rawMissing, unparseable]) {
+    assert.equal(after.get(row.id), before.get(row.id), `DEGISMEMELIYDI: ${row.packageId}`)
+  }
+  for (const row of drifted) {
+    assert.equal(after.get(row.id), CORRECT.toISOString())
+  }
+
+  // IDEMPOTANS: ikinci kosu HICBIR SEY yazmaz.
+  const second = await repair.applyTrendyolOrderDateRepair(db, applyOpts(org))
+  assert.equal(second.updated, 0)
+  assert.equal(second.evidence.length, 0)
+  assert.deepEqual(await allOrderDates(db), after, 'ikinci kosu DB-yi DEGISTIRMEDI')
+})
+
+// ── KAPSAM ANALİZİ: "TARİHSEL KESME" Mİ, "BİÇİM FARKI" MI ──────────────────
+
+test('TZR-21: KAPSAM — doğru satirlar OFSETLI ham bicimden geliyorsa FORMAT_DEPENDENT', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const range = await import('./orders/trendyolOrderDateRangeAudit.ts')
+  const org = await makeOrg(db, 'tzr-21')
+
+  // Kaymış satırlar: SAYISAL ham değer.
+  for (let i = 0; i < 3; i += 1) await insertOrder(db, org)
+  // "Zaten doğru" satırlar: OFSETLI DIZGI — kusurdan hic etkilenmemisler.
+  for (let i = 0; i < 2; i += 1) {
+    await insertOrder(db, org, { raw: CORRECT.toISOString(), orderDate: CORRECT })
+  }
+
+  const result = await range.auditTrendyolOrderDateRange(db, { organizationId: org })
+  assert.equal(result.totals.total, 5)
+  assert.equal(result.totals.drifted, 3)
+  assert.equal(result.totals.correct, 2)
+  assert.equal(result.byRawShape.EPOCH_MS.drifted, 3)
+  assert.equal(result.byRawShape.OFFSET_STRING.correct, 2)
+  assert.equal(
+    result.byRawShape.EPOCH_MS.correct,
+    0,
+    'SAYISAL ham degerden gelen HICBIR satir dogru degil → kusur HALA CANLI',
+  )
+  assert.equal(
+    range.interpretRangeAudit(result),
+    'FORMAT_DEPENDENT',
+    '"yeni siparisler duzeldi" cikarimi bu veriyle DESTEKLENMEZ',
+  )
+})
+
+test('TZR-22: KAPSAM — gercek tarih kesmesi varsa HISTORICAL_CUTOFF ve sinirlar raporlanir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const range = await import('./orders/trendyolOrderDateRangeAudit.ts')
+  const org = await makeOrg(db, 'tzr-22')
+
+  // ESKI satirlar kaymis (sayisal ham deger, kusurlu kayit).
+  const oldRaws = [RAW, RAW + 86_400_000, RAW + 2 * 86_400_000]
+  for (const raw of oldRaws) {
+    await insertOrder(db, org, { raw, orderDate: new Date(raw) })
+  }
+  // YENI satirlar duzgun yazilmis (sayisal ham deger AMA dogru kanonik an).
+  const newRaws = [RAW + 30 * 86_400_000, RAW + 31 * 86_400_000]
+  for (const raw of newRaws) {
+    await insertOrder(db, org, { raw, orderDate: new Date(raw - OFFSET_MS) })
+  }
+
+  const result = await range.auditTrendyolOrderDateRange(db, { organizationId: org })
+  assert.equal(result.totals.drifted, 3)
+  assert.equal(result.totals.correct, 2)
+  assert.equal(result.byRawShape.EPOCH_MS.correct, 2, 'sayisal ham degerde de DOGRU satir var')
+  assert.equal(range.interpretRangeAudit(result), 'HISTORICAL_CUTOFF')
+
+  // SINIRLAR ORNEKLEMDEN DEGIL TAM TARAMADAN gelir.
+  assert.equal(result.earliestDrifted.storedOrderDate, new Date(oldRaws[0]).toISOString())
+  assert.equal(result.latestDrifted.storedOrderDate, new Date(oldRaws[2]).toISOString())
+  assert.equal(
+    result.earliestCorrect.storedOrderDate,
+    new Date(newRaws[0] - OFFSET_MS).toISOString(),
+  )
+  assert.ok(
+    Date.parse(result.latestDrifted.storedOrderDate) <
+      Date.parse(result.earliestCorrect.storedOrderDate),
+    'kesme tarihi KANITLI',
+  )
+  // Ay/gun kirilimi kayitli (kusurlu) degere gore kovalanir.
+  assert.ok(Object.keys(result.byMonth).length >= 1)
+  assert.ok(Object.keys(result.byCalendarDate).length >= 2)
+})
+
+test('TZR-23: kapsam analizi SALT OKUNURDUR ve Trendyol DISI satiri saymaz', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const range = await import('./orders/trendyolOrderDateRangeAudit.ts')
+  const org = await makeOrg(db, 'tzr-23')
+  await insertOrder(db, org)
+  await insertOrder(db, org, { marketplace: 'Hepsiburada' })
+
+  const before = await allOrderDates(db)
+  const result = await range.auditTrendyolOrderDateRange(db, { organizationId: org })
+  assert.deepEqual(await allOrderDates(db), before, 'analiz DB-yi DEGISTIRMEDI')
+  assert.equal(result.totals.total, 1, 'yalniz Trendyol')
+  assert.deepEqual(Object.keys(result.byMarketplace), ['Trendyol'])
+
+  const source = readFileSync(join(here, 'orders', 'trendyolOrderDateRangeAudit.ts'), 'utf8')
+  for (const mutation of ['.update(', '.insert(', '.delete(', '.set(']) {
+    assert.equal(source.includes(mutation), false, `analiz aracinda mutasyon: ${mutation}`)
+  }
+})
