@@ -135,3 +135,75 @@ test('IHC-7: yayin asamasi HER ZAMAN gorunur', () => {
     expect(presentIntegrationHealth(model({ rolloutStage: stage })).stageText).toBe(text)
   }
 })
+
+// ═══ INTEGRATION-HEALTH-001A — ÇOK HESAPLI GÖSTERİM ═════════════════════
+//
+// Aynı sağlayıcının iki mağazası AYRI satır olarak görünmeli. Kusur
+// düzeltilmeden önce ikisi tek karta çöküyor ve sağlıklı mağaza, kimlik
+// hatası olanın arkasında görünmez oluyordu.
+
+test('IHA-14: ayni saglayicinin iki baglantisi AYRI satir olarak sunulur', () => {
+  const store1 = presentIntegrationHealth(
+    model({
+      providerKey: 'woocommerce',
+      displayName: 'WooCommerce',
+      marketplaceAccountId: 'aaaaaaaa-1111-4111-8111-111111111111',
+      connectionScope: 'account',
+      connectionKey: 'woocommerce::aaaaaaaa-1111-4111-8111-111111111111',
+      connectionLabel: 'WooCommerce · aaaaaaaa',
+      sync: 'HEALTHY',
+      overall: 'OPERATIONAL',
+    }),
+  )
+  const store2 = presentIntegrationHealth(
+    model({
+      providerKey: 'woocommerce',
+      displayName: 'WooCommerce',
+      marketplaceAccountId: 'bbbbbbbb-2222-4222-8222-222222222222',
+      connectionScope: 'account',
+      connectionKey: 'woocommerce::bbbbbbbb-2222-4222-8222-222222222222',
+      connectionLabel: 'WooCommerce · bbbbbbbb',
+      connection: 'DISCONNECTED',
+      sync: 'FAILED',
+      overall: 'ACTION_REQUIRED',
+      lastSuccessfulSyncAt: null,
+      attentionReasonCodes: ['CREDENTIALS_REJECTED'],
+    }),
+  )
+
+  // AYRI kimlik, AYRI baslik, AYRI durum.
+  expect(store1.connectionKey).not.toBe(store2.connectionKey)
+  expect(store1.title).not.toBe(store2.title)
+  expect(store1.headline).toBe('Çalışıyor')
+  expect(store2.headline).toBe('İşlem gerekli')
+  expect(store1.actionText).toBeNull()
+  expect(store2.actionText).toBe('Kimlik doğrulama gerekli — bilgileri güncelleyin.')
+
+  // Saglikli magaza GORUNUR kalir — bozuk olanin arkasinda kaybolmaz.
+  expect(store1.facts.find((f) => f.label === 'Senkron')?.value).toBe('Güncel')
+  expect(store2.facts.find((f) => f.label === 'Senkron')?.value).toBe('Başarısız')
+
+  // React listesi icin anahtar SAGLAYICI DEGIL BAGLANTI olmali.
+  const keys = new Set([store1, store2].map((s) => s.connectionKey))
+  expect(keys.size).toBe(2)
+})
+
+test('IHA-14c: baglanti etiketi kimlik DEGILDIR, kanonik kimlik hesap idsidir', () => {
+  const withoutLabel = presentIntegrationHealth(
+    model({
+      providerKey: 'woocommerce',
+      displayName: 'WooCommerce',
+      marketplaceAccountId: 'cccccccc-3333-4333-8333-333333333333',
+    }),
+  )
+  // Etiket verilmediyse saglayici adina duser AMA kimlik korunur.
+  expect(withoutLabel.title).toBe('WooCommerce')
+  expect(withoutLabel.marketplaceAccountId).toBe('cccccccc-3333-4333-8333-333333333333')
+  expect(withoutLabel.connectionKey).toBe(
+    'woocommerce::cccccccc-3333-4333-8333-333333333333',
+  )
+  // Hesapsiz (legacy) baglanti sahte id ALMAZ.
+  const legacy = presentIntegrationHealth(model({ providerKey: 'ikas', displayName: 'ikas' }))
+  expect(legacy.marketplaceAccountId).toBeNull()
+  expect(legacy.connectionKey).toBe('ikas::legacy')
+})

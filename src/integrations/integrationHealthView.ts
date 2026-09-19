@@ -16,6 +16,12 @@ export type HealthSeverity = 'ok' | 'info' | 'warning' | 'critical' | 'muted'
 export interface IntegrationHealthViewModel {
   providerKey: string
   displayName: string
+  /** Kanonik bağlantı kimliği — DEĞİŞKEN görünen ad DEĞİL. */
+  marketplaceAccountId?: string | null
+  connectionScope?: 'account' | 'legacy' | 'none'
+  connectionKey?: string
+  /** Operatörün iki mağazayı ayırt etmesi için GÜVENLİ etiket. */
+  connectionLabel?: string
   connection: string
   sync: string
   webhook: string
@@ -29,6 +35,13 @@ export interface IntegrationHealthViewModel {
 export interface PresentedHealth {
   providerKey: string
   displayName: string
+  /**
+   * Listede gösterilecek BAŞLIK. Aynı sağlayıcının iki mağazası varsa bu
+   * değer AYRIŞIR; kimlik yine `marketplaceAccountId`tır.
+   */
+  title: string
+  marketplaceAccountId: string | null
+  connectionKey: string
   headline: string
   severity: HealthSeverity
   /** Kullanıcıya gösterilecek satırlar (etiket + değer). */
@@ -148,6 +161,11 @@ export function presentIntegrationHealth(
   return {
     providerKey: model.providerKey,
     displayName: model.displayName,
+    title: model.connectionLabel ?? model.displayName,
+    marketplaceAccountId: model.marketplaceAccountId ?? null,
+    connectionKey:
+      model.connectionKey ??
+      `${model.providerKey}::${model.marketplaceAccountId ?? 'legacy'}`,
     headline: overall.text,
     severity: overall.severity,
     facts,

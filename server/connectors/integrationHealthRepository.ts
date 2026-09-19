@@ -17,6 +17,19 @@
 // Bu yüzden MIGRATION EKLENMEDİ. Spekülatif kolon açmak, doldurulmayan ve
 // zamanla yalan söyleyen alanlar üretirdi.
 //
+// ═══ SAĞLIK BAĞLANTI KAPSAMLIDIR (001A DÜZELTMESİ) ═══════════════════════
+//
+// ÖLÇÜLEN KUSUR: bu katman satırları `Map<providerKey, …>` ile topluyordu.
+// `integration_sync_state` kimliği ise (org, provider, resource, ACCOUNT)
+// dörtlüsüdür. Sonuç: aynı sağlayıcının İKİ mağazası TEK sonuca çöküyor ve
+// `Map.set()`i en son kazanan satır görünüyordu — yani SAĞLIKLI bir mağaza,
+// KİMLİK HATASI olan diğerinin arkasında GÖRÜNMEZ oluyordu.
+//
+// Yeniden üretildi (yamadan önce): 2 satır → 1 sonuç, hesap kimliği yok.
+//
+// Artık her SATIR kendi sağlık kaydını üretir. Gruplama anahtarı
+// `provider::account`tır (`connectionKey`) ve hesap kimliği ASLA uydurulmaz.
+//
 // ═══ KİRACI KAPSAMI ══════════════════════════════════════════════════════
 //
 // Depoda Postgres RLS YOKTUR. İzolasyon UYGULAMA KAPSAMIYLA sağlanır:
@@ -25,7 +38,9 @@
 import { and, eq } from 'drizzle-orm'
 import { integrationSyncState } from '../db/schema.ts'
 import {
+  connectionKey,
   resolveIntegrationHealth,
+  type ConnectionScope,
   type IntegrationHealth,
   type StoredSyncState,
   type WebhookObservation,
@@ -43,9 +58,19 @@ export interface IntegrationHealthQuery {
   organizationId: string
   /** Sağlık hangi kaynağa göre okunur (üretimde 'orders'). */
   resource?: string
-  /** Kimlik bilgisi ALAN VARLIĞI — geçerlilik kanıtı DEĞİLDİR. */
+  /**
+   * BAĞLANTI kapsamlı kimlik varlığı. Anahtar `connectionKey()` çıktısıdır
+   * (`provider::account`). Çok hesaplı sağlayıcıda DOĞRU olan budur.
+   */
+  credentialsPresentByConnection?: Record<string, boolean>
+  /**
+   * ESKİ, sağlayıcı geneli girdi. GERİ UYUMLULUK için korunur ve YALNIZ
+   * bağlantıya özel bir değer YOKKEN kullanılır — hesap gerçeğini EZEMEZ.
+   */
   credentialsPresentByProvider?: Record<string, boolean>
-  /** Gerçekten gözlenmiş webhook olayları; yoksa uydurulmaz. */
+  /** Bağlantı kapsamlı webhook gözlemi (`connectionKey` anahtarlı). */
+  webhookByConnection?: Record<string, WebhookObservation>
+  /** ESKİ, sağlayıcı geneli gözlem. Bağlantıya özel değer ONU EZER. */
   webhookByProvider?: Record<string, WebhookObservation>
   nowMs: number
   lockStaleMs?: number
@@ -53,11 +78,19 @@ export interface IntegrationHealthQuery {
 
 export class TenantScopeMissingError extends Error {}
 
+interface ConnectionRow {
+  providerKey: string
+  marketplaceAccountId: string | null
+  scope: ConnectionScope
+  syncState: StoredSyncState
+}
+
 /**
- * Kiracının TÜM desteklenen sağlayıcıları için sağlık.
+ * Kiracının TÜM bağlantıları için sağlık.
  *
- * Satır YOKSA sağlayıcı listeden DÜŞMEZ: "hiç senkron edilmemiş" de bir
- * operasyonel gerçektir ve `NEVER_RUN` olarak görünür.
+ * Her `integration_sync_state` satırı KENDİ sonucunu üretir; iki mağaza
+ * BİRLEŞTİRİLMEZ. Hiç satırı olmayan desteklenen sağlayıcılar da listede
+ * kalır ama `connectionScope: 'none'` ile — sahte hesap kimliği ÜRETİLMEZ.
  */
 export async function loadIntegrationHealth(
   db: Db,
@@ -73,6 +106,8 @@ export async function loadIntegrationHealth(
   const rows: Record<string, unknown>[] = await db
     .select({
       provider: integrationSyncState.provider,
+      // 001A: HESAP KİMLİĞİ ARTIK OKUNUYOR — kimliğin parçasıdır.
+      marketplaceAccountId: integrationSyncState.marketplaceAccountId,
       resource: integrationSyncState.resource,
       lastSyncStatus: integrationSyncState.lastSyncStatus,
       lastSuccessfulSyncAt: integrationSyncState.lastSuccessfulSyncAt,
@@ -89,34 +124,99 @@ export async function loadIntegrationHealth(
       ),
     )
 
-  const byProvider = new Map<string, StoredSyncState>()
+  // SATIR BAŞINA bir bağlantı. `provider::account` anahtarı ile deterministik.
+  const connections = new Map<string, ConnectionRow>()
   for (const row of rows) {
-    byProvider.set(String(row.provider).toLowerCase(), {
-      lastSyncStatus: (row.lastSyncStatus as string | null) ?? null,
-      lastSuccessfulSyncAt: (row.lastSuccessfulSyncAt as Date | null) ?? null,
-      lastErrorCode: (row.lastErrorCode as string | null) ?? null,
-      lastFetchedCount: (row.lastFetchedCount as number | null) ?? null,
-      updatedAt: (row.updatedAt as Date | null) ?? null,
+    const providerKey = String(row.provider ?? '').toLowerCase()
+    const accountId = row.marketplaceAccountId ? String(row.marketplaceAccountId) : null
+    connections.set(connectionKey(providerKey, accountId), {
+      providerKey,
+      marketplaceAccountId: accountId,
+      // Hesap kimliği olmayan satır ESKİ bağlantıdır; id UYDURULMAZ.
+      scope: accountId ? 'account' : 'legacy',
+      syncState: {
+        lastSyncStatus: (row.lastSyncStatus as string | null) ?? null,
+        lastSuccessfulSyncAt: (row.lastSuccessfulSyncAt as Date | null) ?? null,
+        lastErrorCode: (row.lastErrorCode as string | null) ?? null,
+        lastFetchedCount: (row.lastFetchedCount as number | null) ?? null,
+        updatedAt: (row.updatedAt as Date | null) ?? null,
+      },
     })
   }
 
   const catalog = buildProviderCatalog()
+
+  /** Bağlantıya özel değer ÖNCE; yoksa eski sağlayıcı geneli girdi. */
+  const credentialsFor = (providerKey: string, accountId: string | null): boolean => {
+    const key = connectionKey(providerKey, accountId)
+    const scoped = query.credentialsPresentByConnection?.[key]
+    if (typeof scoped === 'boolean') return scoped
+    return Boolean(query.credentialsPresentByProvider?.[providerKey])
+  }
+  const webhookFor = (
+    providerKey: string,
+    accountId: string | null,
+  ): WebhookObservation | null => {
+    const key = connectionKey(providerKey, accountId)
+    return (
+      query.webhookByConnection?.[key] ??
+      query.webhookByProvider?.[providerKey] ??
+      null
+    )
+  }
+
   const out: IntegrationHealth[] = []
+
+  // 1) GERÇEK bağlantılar — her biri AYRI kayıt.
+  //    Sıralama giriş sırasından BAĞIMSIZ olsun diye anahtara göre sabitlenir.
+  for (const key of [...connections.keys()].sort()) {
+    const connection = connections.get(key)!
+    const descriptor = catalog.get(connection.providerKey)
+    if (!descriptor) continue
+    out.push(
+      resolveIntegrationHealth({
+        descriptor,
+        // YAYIN AŞAMASI SAĞLAYICI GENELİDİR (çekirdek kararı, 001A'da
+        // DEĞİŞTİRİLMEDİ): `ROLLOUT_STAGE_POLICY` hesap bazlı değildir.
+        rolloutStage: resolveRolloutStage(connection.providerKey),
+        marketplaceAccountId: connection.marketplaceAccountId,
+        connectionScope: connection.scope,
+        credentialsPresent: credentialsFor(
+          connection.providerKey,
+          connection.marketplaceAccountId,
+        ),
+        syncState: connection.syncState,
+        webhook: webhookFor(connection.providerKey, connection.marketplaceAccountId),
+        nowMs: query.nowMs,
+        ...(query.lockStaleMs != null ? { lockStaleMs: query.lockStaleMs } : {}),
+      }),
+    )
+  }
+
+  // 2) Desteklenen ama HİÇ bağlantısı olmayan sağlayıcılar.
+  //    SAHTE hesap kimliği ÜRETİLMEZ: `scope: 'none'`, id `null`.
   for (const providerKey of HEALTH_SUPPORTED_PROVIDERS) {
+    const hasConnection = [...connections.values()].some(
+      (connection) => connection.providerKey === providerKey,
+    )
+    if (hasConnection) continue
     const descriptor = catalog.get(providerKey)
     if (!descriptor) continue
     out.push(
       resolveIntegrationHealth({
         descriptor,
         rolloutStage: resolveRolloutStage(providerKey),
-        credentialsPresent: Boolean(query.credentialsPresentByProvider?.[providerKey]),
-        syncState: byProvider.get(providerKey) ?? null,
-        webhook: query.webhookByProvider?.[providerKey] ?? null,
+        marketplaceAccountId: null,
+        connectionScope: 'none',
+        credentialsPresent: credentialsFor(providerKey, null),
+        syncState: null,
+        webhook: webhookFor(providerKey, null),
         nowMs: query.nowMs,
         ...(query.lockStaleMs != null ? { lockStaleMs: query.lockStaleMs } : {}),
       }),
     )
   }
+
   return out
 }
 
@@ -129,6 +229,12 @@ export async function loadIntegrationHealth(
 export interface IntegrationHealthView {
   providerKey: string
   displayName: string
+  /** Kanonik bağlantı kimliği — DEĞİŞKEN görünen ad DEĞİL. */
+  marketplaceAccountId: string | null
+  connectionScope: ConnectionScope
+  connectionKey: string
+  /** Operatörün iki mağazayı ayırt etmesi için GÜVENLİ etiket. */
+  connectionLabel: string
   connection: string
   sync: string
   webhook: string
@@ -139,6 +245,24 @@ export interface IntegrationHealthView {
   attentionReasonCodes: string[]
 }
 
+/**
+ * Bağlantı etiketi — KİMLİK DEĞİL, yalnız GÖSTERİM.
+ *
+ * Kanonik kimlik her zaman `marketplaceAccountId`tır. Etiket, operatörün iki
+ * mağazayı ayırt edebilmesi için üretilir ve GİZLİ VERİ TAŞIMAZ: hesap
+ * kimliğinin yalnız ilk 8 karakteri gösterilir (uuid öneki sır değildir,
+ * kimlik bilgisi hiç değildir).
+ */
+export function connectionLabelOf(
+  displayName: string,
+  marketplaceAccountId: string | null,
+  scope: ConnectionScope,
+): string {
+  if (scope === 'none') return displayName
+  if (!marketplaceAccountId) return `${displayName} (eski bağlantı)`
+  return `${displayName} · ${marketplaceAccountId.slice(0, 8)}`
+}
+
 export function toHealthView(
   health: IntegrationHealth,
   displayName: string,
@@ -146,6 +270,14 @@ export function toHealthView(
   return {
     providerKey: health.providerKey,
     displayName,
+    marketplaceAccountId: health.marketplaceAccountId,
+    connectionScope: health.connectionScope,
+    connectionKey: health.connectionKey,
+    connectionLabel: connectionLabelOf(
+      displayName,
+      health.marketplaceAccountId,
+      health.connectionScope,
+    ),
     connection: health.connection,
     sync: health.sync,
     webhook: health.webhook,

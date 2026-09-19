@@ -140,9 +140,35 @@ export interface WebhookObservation {
   configured?: boolean
 }
 
+/**
+ * BAĞLANTI KAPSAMI — sağlığın kimliği SAĞLAYICI DEĞİL, BAĞLANTIDIR.
+ *
+ *   'account' → gerçek bir mağaza/hesap satırı (marketplaceAccountId dolu)
+ *   'legacy'  → hesap kimliği OLMAYAN eski bağlantı (id UYDURULMAZ)
+ *   'none'    → bağlantı hiç kurulmamış; yalnız "destekleniyor" bilgisi
+ *
+ * `legacy` ile `none` AYNI ŞEY DEĞİLDİR: ilkinde gerçek bir senkron geçmişi
+ * vardır, ikincisinde hiç bağlantı yoktur.
+ */
+export const CONNECTION_SCOPES = ['account', 'legacy', 'none'] as const
+export type ConnectionScope = (typeof CONNECTION_SCOPES)[number]
+
+/** Bağlantının deterministik bileşik anahtarı. Hesap yoksa `legacy`. */
+export function connectionKey(
+  providerKey: string,
+  marketplaceAccountId: string | null | undefined,
+): string {
+  const provider = String(providerKey ?? '').trim().toLowerCase()
+  const account = String(marketplaceAccountId ?? '').trim() || 'legacy'
+  return `${provider}::${account}`
+}
+
 export interface IntegrationHealthInput {
   descriptor: ConnectorDescriptor
   rolloutStage: CapabilityStage
+  /** Bağlantı kimliği. UYDURULMAZ: yoksa null kalır. */
+  marketplaceAccountId?: string | null
+  connectionScope?: ConnectionScope
   /** Kimlik bilgisi ALANLARI var mı — TEK BAŞINA geçerlilik KANITI DEĞİLDİR. */
   credentialsPresent: boolean
   credentialsRequired?: boolean
@@ -161,6 +187,11 @@ export interface IntegrationHealthReason {
 
 export interface IntegrationHealth {
   providerKey: string
+  /** Bağlantı kimliği — aynı sağlayıcının iki mağazası AYRI kayıttır. */
+  marketplaceAccountId: string | null
+  connectionScope: ConnectionScope
+  /** Deterministik bileşik anahtar (`provider::account`). */
+  connectionKey: string
   connection: ConnectionState
   credentials: CredentialState
   sync: SyncState
@@ -227,8 +258,16 @@ export function resolveIntegrationHealth(input: IntegrationHealthInput): Integra
   }
 
   // ── BAĞLANTI ────────────────────────────────────────────────────────────
+  //
+  // BAŞARILI SENKRON, YAPILANDIRMANIN KANITIDIR. Çağıran `credentialsPresent`
+  // bildirmese bile, kimlik doğrulanmış bir okuma BAŞARMIŞ bir bağlantıya
+  // "kurulmadı" demek KENDİ İÇİNDE ÇELİŞKİLİDİR — elimizde o bağlantının
+  // çalıştığına dair kayıt vardır. Bu, çok hesaplı testte ortaya çıktı:
+  // çağıran kimlik varlığını hesap bazında bildirmediğinde, gerçekten
+  // senkron etmiş bir mağaza "kurulmadı" görünüyordu.
+  const provenByAuthenticatedRead = lastSuccessMs !== null
   let connection: ConnectionState
-  if (credentialsRequired && !input.credentialsPresent) {
+  if (credentialsRequired && !input.credentialsPresent && !provenByAuthenticatedRead) {
     connection = 'NOT_CONFIGURED'
     reasons.push({ code: 'NOT_CONFIGURED', component: 'connection' })
   } else if (credentials === 'INVALID') {
@@ -352,8 +391,15 @@ export function resolveIntegrationHealth(input: IntegrationHealthInput): Integra
     overall = 'OPERATIONAL'
   }
 
+  const marketplaceAccountId = input.marketplaceAccountId ?? null
+  const connectionScope: ConnectionScope =
+    input.connectionScope ?? (marketplaceAccountId ? 'account' : 'legacy')
+
   return {
     providerKey: input.descriptor.providerKey,
+    marketplaceAccountId,
+    connectionScope,
+    connectionKey: connectionKey(input.descriptor.providerKey, marketplaceAccountId),
     connection,
     credentials,
     sync,
