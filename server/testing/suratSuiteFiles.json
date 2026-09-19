@@ -236,5 +236,6 @@
   "server/live-label-footer-consistency-flow.test.mjs",
   "server/orders-tab-detail-parity-flow.test.mjs",
   "server/connector-kernel-flow.test.mjs",
-  "server/provider-contract-pack-flow.test.mjs"
+  "server/provider-contract-pack-flow.test.mjs",
+  "server/integration-health-flow.test.mjs"
 ]

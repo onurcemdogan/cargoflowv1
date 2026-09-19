@@ -42,6 +42,7 @@
     "orders:orderdate:range": "node server/orders/trendyolOrderDateRangeAuditCli.ts",
     "test:connector-kernel": "node --test server/connector-kernel-flow.test.mjs",
     "test:contract-packs": "node --test server/provider-contract-pack-flow.test.mjs",
+    "test:integration-health": "node --test server/integration-health-flow.test.mjs",
     "trendyol:package-status:check": "node server/orders/trendyolPackageIdentityTraceCli.ts",
     "surat:zpl:diagnose": "node server/integrations/suratZplDiagnosticCli.ts",
     "surat:zpl:mask": "node server/labels/maskSuratZplCli.ts",

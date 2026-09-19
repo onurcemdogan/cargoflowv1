@@ -2425,6 +2425,46 @@ app.get('/api/onboarding/status', async (request, response) => {
   }
 })
 
+// GET /api/integrations/health — KANONİK ENTEGRASYON SAĞLIĞI (SALT OKUNUR).
+//
+// SAĞLAYICIYA HİÇBİR ÇAĞRI YAPILMAZ: sağlık YALNIZ saklanmış durumdan
+// (`integration_sync_state`) türetilir. Normal gezinme sağlayıcıyı YOKLAMAZ.
+// Kiracı kapsamı `requireOnboardingContext` ile gelir; yanıt yalnız kararlı
+// sebep KODLARI taşır — ham sağlayıcı hatası/uç noktası/kimlik bilgisi ASLA.
+app.get('/api/integrations/health', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const [{ loadIntegrationHealth, toHealthView }, { buildProviderCatalog }, credentials] =
+      await Promise.all([
+        import('./connectors/integrationHealthRepository.ts'),
+        import('./connectors/providerCatalog.ts'),
+        import('./integrations/credentialService.ts'),
+      ])
+    const masked = await credentials.getMaskedIntegrationStatus(
+      context.db,
+      context.organizationId,
+    )
+    const catalog = buildProviderCatalog()
+    const entries = await loadIntegrationHealth(context.db, {
+      organizationId: context.organizationId,
+      // ALAN VARLIĞI — geçerlilik KANITI DEĞİLDİR; model bunu UNKNOWN sayar.
+      credentialsPresentByProvider: {
+        trendyol: Boolean(masked?.trendyol?.configured),
+      },
+      nowMs: Date.now(),
+    })
+    response.json({
+      ok: true,
+      integrations: entries.map((entry) =>
+        toHealthView(entry, catalog.get(entry.providerKey)?.displayName ?? entry.providerKey),
+      ),
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Entegrasyon sağlığı okunamadı.' })
+  }
+})
+
 // POST /api/onboarding/complete — koşullar sağlanmıyorsa 409 + eksik adımlar;
 // sağlanıyorsa onboardingCompleted=true. Sürat create çağrısı YAPILMAZ.
 app.post('/api/onboarding/complete', async (request, response) => {

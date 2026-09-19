@@ -1,0 +1,137 @@
+import { expect, test } from 'vitest'
+import {
+  presentIntegrationHealth,
+  webhookSeverity,
+  type IntegrationHealthViewModel,
+} from '../integrations/integrationHealthView'
+
+// ═══ INTEGRATION-HEALTH-001 — DÜRÜST KOPYA ══════════════════════════════
+//
+// Bu dosya iki YANLIŞ MESAJI yapısal olarak imkânsız kılar:
+//
+//   1) Kimlik bilgisi girilmiş diye "sağlıklı" demek
+//   2) Sağlayıcının SUNMADIĞI özelliği kırmızı hata gibi göstermek
+//
+// İkincisi önemli: ikas webhook imzası resmî dokümanda yok, Ticimax webhook
+// hiç sunmuyor. Bunlar kullanıcının düzeltebileceği şeyler DEĞİLDİR;
+// aksiyon listesine girerlerse kullanıcı boş yere uğraşır.
+
+function model(over: Partial<IntegrationHealthViewModel> = {}): IntegrationHealthViewModel {
+  return {
+    providerKey: 'trendyol',
+    displayName: 'Trendyol',
+    connection: 'CONNECTED',
+    sync: 'HEALTHY',
+    webhook: 'NOT_SUPPORTED',
+    reconciliation: 'HEALTHY',
+    rolloutStage: 'ga',
+    overall: 'OPERATIONAL',
+    lastSuccessfulSyncAt: '2026-09-19T09:00:00.000Z',
+    attentionReasonCodes: [],
+    ...over,
+  }
+}
+
+test('IHC-1: calisan baglanti "Calisiyor" der ve AKSIYON istemez', () => {
+  const view = presentIntegrationHealth(model())
+  expect(view.headline).toBe('Çalışıyor')
+  expect(view.severity).toBe('ok')
+  expect(view.actionText).toBeNull()
+  // Son senkron Istanbul saatiyle gosterilir (09:00Z → 12:00).
+  const fact = view.facts.find((f) => f.label === 'Son başarılı senkron')
+  expect(fact?.value).toContain('12:00')
+})
+
+test('IHC-2: HIC senkron edilmemis baglanti ASLA "saglikli" demez', () => {
+  const view = presentIntegrationHealth(
+    model({
+      sync: 'NEVER_RUN',
+      overall: 'DEGRADED',
+      lastSuccessfulSyncAt: null,
+      attentionReasonCodes: ['CREDENTIALS_NOT_PROVEN', 'AWAITING_FIRST_SYNC'],
+    }),
+  )
+  expect(view.headline).not.toBe('Çalışıyor')
+  expect(view.actionText).toBe('Bağlandı — ilk senkron bekleniyor.')
+  expect(view.facts.find((f) => f.label === 'Senkron')?.value).toBe('Henüz senkron edilmedi')
+  expect(view.facts.find((f) => f.label === 'Son başarılı senkron')?.value).toBe('Henüz yok')
+})
+
+test('IHC-3: DESTEKLENMEYEN webhook KIRMIZI degil, aksiyon da DEGIL', () => {
+  for (const code of ['WEBHOOK_NOT_OFFERED_BY_PROVIDER', 'WEBHOOK_CONTRACT_NOT_VERIFIED']) {
+    const view = presentIntegrationHealth(
+      model({ webhook: 'NOT_SUPPORTED', attentionReasonCodes: [code] }),
+    )
+    expect(view.actionText).toBeNull()
+    expect(view.severity).not.toBe('critical')
+    expect(view.facts.find((f) => f.label === 'Güncelleme yöntemi')?.value).toBe('Periyodik kontrol')
+  }
+  expect(webhookSeverity('NOT_SUPPORTED')).toBe('info')
+  expect(webhookSeverity('UNKNOWN')).toBe('info')
+  expect(webhookSeverity('NOT_CONFIGURED')).toBe('info')
+  // Gercekten bozuk olan durumlar UYARI verir.
+  expect(webhookSeverity('DEGRADED')).toBe('warning')
+  expect(webhookSeverity('DISABLED')).toBe('warning')
+  expect(webhookSeverity('HEALTHY')).toBe('ok')
+})
+
+test('IHC-4: kimlik reddi EN ONCELIKLI aksiyondur', () => {
+  const view = presentIntegrationHealth(
+    model({
+      connection: 'DISCONNECTED',
+      sync: 'FAILED',
+      overall: 'ACTION_REQUIRED',
+      lastSuccessfulSyncAt: null,
+      attentionReasonCodes: ['SYNC_STALE', 'SYNC_FAILED', 'CREDENTIALS_REJECTED'],
+    }),
+  )
+  expect(view.severity).toBe('critical')
+  expect(view.actionText).toBe('Kimlik doğrulama gerekli — bilgileri güncelleyin.')
+})
+
+test('IHC-5: "acilmadi" ile "bozuk" AYRI gorunur', () => {
+  const off = presentIntegrationHealth(
+    model({ providerKey: 'woocommerce', rolloutStage: 'off', overall: 'DISABLED', attentionReasonCodes: ['ROLLOUT_OFF'] }),
+  )
+  expect(off.headline).toBe('Henüz açılmadı')
+  expect(off.severity).toBe('muted')
+  expect(off.actionText).toBeNull()
+  expect(off.stageText).toBe('Kapalı')
+
+  const broken = presentIntegrationHealth(
+    model({ overall: 'ACTION_REQUIRED', attentionReasonCodes: ['SYNC_FAILED'] }),
+  )
+  expect(broken.severity).toBe('critical')
+  expect(broken.headline).not.toBe(off.headline)
+})
+
+test('IHC-6: sunum katmani HAM saglayici metni TASIMAZ', () => {
+  const view = presentIntegrationHealth(
+    model({
+      attentionReasonCodes: ['SYNC_FAILED', 'Bearer sk_live_SECRET https://shop.example.com'],
+      overall: 'ACTION_REQUIRED',
+    }),
+  )
+  const serialized = JSON.stringify(view)
+  for (const secret of ['sk_live_SECRET', 'shop.example.com', 'Bearer']) {
+    expect(serialized).not.toContain(secret)
+  }
+  // Bilinmeyen kod aksiyon URETMEZ (sozluge bagli).
+  const unknownOnly = presentIntegrationHealth(
+    model({ attentionReasonCodes: ['Bearer sk_live_SECRET'] }),
+  )
+  expect(unknownOnly.actionText).toBeNull()
+})
+
+test('IHC-7: yayin asamasi HER ZAMAN gorunur', () => {
+  const stages: [string, string][] = [
+    ['off', 'Kapalı'],
+    ['internal_test', 'İç test'],
+    ['shadow', 'Gölge mod'],
+    ['pilot', 'Pilot'],
+    ['ga', 'Aktif'],
+  ]
+  for (const [stage, text] of stages) {
+    expect(presentIntegrationHealth(model({ rolloutStage: stage })).stageText).toBe(text)
+  }
+})
