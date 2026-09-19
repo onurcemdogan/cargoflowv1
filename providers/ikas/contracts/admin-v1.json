@@ -1,0 +1,154 @@
+{
+  "PROVIDER": "ikas",
+  "PROVIDER_KIND": "commerce_platform",
+  "DISPLAY_NAME": "ikas",
+  "CONTRACT_PACK_VERSION": 1,
+  "RETRIEVED_AT": "2026-09-19",
+  "SOURCE_URLS": [
+    "https://ikas.dev/docs/api/getting-started/authentication",
+    "https://ikas.dev/docs/api/admin-api/orders",
+    "https://ikas.dev/docs/api/admin-api/webhooks"
+  ],
+  "SOURCE_TIER": "1-official-developer-portal",
+  "API_VERSION": {
+    "style": "GraphQL",
+    "endpoint": "https://api.myikas.com/api/v1/admin/graphql",
+    "transport": "POST",
+    "verified": true
+  },
+  "AUTH_MODEL": {
+    "flow": "oauth2-client_credentials (private app)",
+    "credentials": ["client_id", "client_secret"],
+    "requestHeader": "Authorization: Bearer <access_token>",
+    "provisioning": "ikas Dashboard → Apps → My Apps → Create Private App; scope seçimi orada yapılır.",
+    "verified": true,
+    "tokenLifetime": { "documented": false, "verified": false, "note": "TTL yayımlanmamış; istemci 401'de bir kez yenileyip tekrar dener." }
+  },
+  "IDENTITY_FIELDS": {
+    "store": "client_id ile ilişkilendirilen mağaza (adaptör kararlı mağaza kimliğini token sahibinden türetir)",
+    "order": "id",
+    "orderHumanReference": "orderNumber (1001'den başlayan sıralı numara)",
+    "orderLine": "orderLineItems[].id",
+    "variant": "orderLineItems[].variant",
+    "stableIdVerified": true,
+    "note": "orderNumber SIRALI ve insan-okunur; kimlik olarak `id` kullanılır."
+  },
+  "PAGINATION": {
+    "style": "page-number",
+    "input": "PaginationInput { page, limit }",
+    "response": "OrderPaginationResponse { data, count, hasNext, limit, page }",
+    "verified": true,
+    "maxLimit": { "documented": false, "verified": false }
+  },
+  "ORDER_LIST": {
+    "query": "listOrder",
+    "filters": [
+      "orderedAt (DateFilterInput)", "updatedAt (DateFilterInput)",
+      "customerId (StringFilterInput)", "orderNumber (StringFilterInput)",
+      "status (OrderStatusEnumInputFilter)",
+      "orderPaymentStatus (OrderPaymentStatusEnumInputFilter)",
+      "orderPackageStatus (OrderPackageStatusEnumInputFilter)",
+      "salesChannelId (StringFilterInput)", "search (String)"
+    ],
+    "verified": true,
+    "checkpointFilter": {
+      "value": "updatedAt (DateFilterInput)",
+      "verified": true,
+      "note": "Mutabakat ekseni `updatedAt`tır: webhook imzası doğrulanamadığı için DOĞRULUK SİGORTASI budur."
+    }
+  },
+  "ORDER_MODEL": {
+    "fields": [
+      "id", "orderNumber", "status", "orderPackageStatus", "orderedAt",
+      "currencyCode", "totalFinalPrice", "customer", "shippingAddress", "orderLineItems"
+    ],
+    "verified": true
+  },
+  "ORDER_LINE_MODEL": {
+    "fields": [
+      "id", "variant", "quantity", "price", "finalPrice", "discount",
+      "status", "options", "taxValue", "stockLocationId", "statusUpdatedAt"
+    ],
+    "verified": true
+  },
+  "ORDER_STATUSES": {
+    "enum": "OrderStatusEnum",
+    "values": [],
+    "verified": false,
+    "note": "Resmî sayfada enum DEĞERLERİ listelenmemiştir. Statü eşlemesi bu yüzden VERİDEN öğrenilir: bilinmeyen statü `null` kanonik değere düşer ve UI'da ham değer gösterilir — TAHMİN EDİLMEZ."
+  },
+  "PRODUCT_MODEL": {
+    "endpoint": "listProduct (Admin API)",
+    "identity": "id",
+    "verified": true,
+    "detailLevel": "varlık doğrulandı; alan listesi WAVE-1'de kullanılmıyor (products.read shadow)"
+  },
+  "WEBHOOK_MODEL": {
+    "registration": "saveWebhook mutation { endpoint, scopes }",
+    "scopeFormat": "store/[resource]/[action]",
+    "exampleScopes": ["store/customer/created", "store/customer/updated"],
+    "orderScopes": { "documented": false, "verified": false, "note": "Sipariş kapsamlarının TAM listesi resmî sayfada yayımlanmamıştır." },
+    "verified": true
+  },
+  "WEBHOOK_SIGNATURE": {
+    "header": null,
+    "algorithm": null,
+    "verified": false,
+    "DECISION": "DOĞRULANAMADI — UYDURULMAZ.",
+    "note": "Resmî webhook sayfasında imza başlığı, algoritma veya secret doğrulaması BELGELENMEMİŞTİR. Bu yüzden `orders.webhook` yeteneği ikas için contractVerified=false ile kapalıdır ve doğruluk YALNIZ `updatedAt` mutabakatından sağlanır. Resmî doküman veya tenant kimlik bilgisi kanıtlayana kadar açılmaz."
+  },
+  "RETRY_MODEL": {
+    "providerSide": "Endpoint ulaşılamaz ya da HTTP 200 dışında dönerse ikas 3 kez dener, sonra durur.",
+    "verified": true,
+    "cargoflowImplication": "3 deneme AZDIR: kaçan olay webhook ile telafi edilemez → periyodik `updatedAt` mutabakatı ZORUNLUDUR."
+  },
+  "RATE_LIMITS": {
+    "documented": false,
+    "verified": false,
+    "note": "Yayımlanmış sabit limit bulunamadı; muhafazakâr eşzamanlılık + üstel geri çekilme."
+  },
+  "ERROR_MODEL": {
+    "shape": "GraphQL `errors[]` dizisi; HTTP 200 ile birlikte de gelebilir",
+    "verified": true,
+    "cargoflowImplication": "HTTP 200 BAŞARI DEMEK DEĞİLDİR: `errors` dizisi HER YANITTA kontrol edilir."
+  },
+  "DATE_TIMEZONE_RULES": {
+    "canonicalField": "orderedAt / updatedAt (Timestamp)",
+    "rule": "Timestamp mutlak andır; yerel duvar saati DEĞİLDİR.",
+    "verified": true,
+    "offsetApplied": "YOK — Trendyol'daki gibi manuel ±3 saat UYGULANMAZ (sözleşme gerektirmiyor)."
+  },
+  "MONEY_RULES": {
+    "representation": "Float (totalFinalPrice)",
+    "currencyField": "currencyCode",
+    "verified": true,
+    "risk": "Float ikili yuvarlama taşır; kanonik tutar ondalık dizgiye çevrilerek saklanır."
+  },
+  "PHONE_ADDRESS_FIELDS": {
+    "address": [
+      "firstName", "lastName", "addressLine1", "addressLine2", "city", "country",
+      "district", "state", "phone", "postalCode", "company", "taxNumber",
+      "taxOffice", "identityNumber", "isDefault"
+    ],
+    "verified": true,
+    "note": "Adres bloğunda `phone` VARDIR (WooCommerce'in aksine); `district` Türkiye ilçe alanıdır ve taşıyıcı için gereklidir."
+  },
+  "CAPABILITIES": {
+    "orders.read": { "supported": true, "contractVerified": true, "stage": "internal_test" },
+    "orders.webhook": { "supported": false, "contractVerified": false, "reason": "Webhook imza doğrulaması resmî dokümanda yok; imzasız olay KABUL EDİLMEZ." },
+    "orders.status.write": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
+    "products.read": { "supported": true, "contractVerified": true, "stage": "shadow" },
+    "products.write": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
+    "inventory.read": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
+    "inventory.write": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
+    "shipments.tracking.write": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
+    "returns.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
+    "finance.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
+    "questions.read": { "supported": false, "contractVerified": false, "reason": "Sağlayıcı sunmuyor." }
+  },
+  "OPEN_QUESTIONS": [
+    "Webhook imza/doğrulama modeli yayımlanmamış → orders.webhook KAPALI.",
+    "OrderStatusEnum değerleri yayımlanmamış → statü eşlemesi fail-open değil, bilinmeyen=null.",
+    "Access token TTL ve oran sınırı yayımlanmamış."
+  ]
+}

@@ -1,0 +1,142 @@
+{
+  "PROVIDER": "ticimax",
+  "PROVIDER_KIND": "commerce_platform",
+  "DISPLAY_NAME": "Ticimax",
+  "CONTRACT_PACK_VERSION": 1,
+  "RETRIEVED_AT": "2026-09-19",
+  "SOURCE_URLS": [
+    "https://www.ticimax.com/web-servis-api/",
+    "https://static.ticimax.com/dokumanlar/siparisservis.pdf",
+    "https://static.ticimax.com/dokumanlar/UrunServis.pdf"
+  ],
+  "SOURCE_TIER": "1-official-vendor-documentation",
+  "EXTRACTION_NOTE": "Resmî PDF gömülü metninden çıkarıldı (glif başına konumlandırma nedeniyle boşluklar anlamsızdır; terim taraması boşluksuz metinde yapıldı). Üçüncü taraf entegratör sayfaları KULLANILMADI.",
+  "API_VERSION": {
+    "style": "SOAP (WCF .svc)",
+    "endpointTemplate": "https://{magazaAlanAdi}/Servis/SiparisServis.svc",
+    "perTenantEndpoint": true,
+    "verified": true,
+    "note": "Uç nokta KİRACIYA ÖZELDİR: her mağaza kendi alan adı altında servis yayımlar. Tek merkezî host YOKTUR."
+  },
+  "AUTH_MODEL": {
+    "parameter": "UyeKodu",
+    "transport": "SOAP gövdesinde metot parametresi",
+    "verified": true,
+    "note": "Dokümanda `UyeKodu` her metotta geçer (22 kez). `ApiKey`/`LisansKodu` bu dokümanda GEÇMEZ.",
+    "provisioning": "Mağaza yöneticisi Ticimax panelinden servis erişimini açar ve UyeKodu üretir.",
+    "secretHandling": "UyeKodu şifreli kimlik deposunda tutulur; loglara ve UI'a YAZILMAZ."
+  },
+  "IDENTITY_FIELDS": {
+    "store": "mağaza alan adı (normalize edilir)",
+    "order": "SiparisID",
+    "orderHumanReference": "SiparisNo",
+    "alternateKey": "SiparisKodu",
+    "customer": "UyeID",
+    "stableIdVerified": true
+  },
+  "PAGINATION": {
+    "style": "filtre + sayfalama nesnesi",
+    "objects": ["SiparisFiltre", "SiparisSayfalama"],
+    "verified": true,
+    "fieldLevelVerified": false,
+    "note": "`SiparisFiltre` ve `SiparisSayfalama` nesnelerinin VARLIĞI doğrulandı; alan adlarının tamamı PDF'ten güvenilir biçimde çıkarılamadı → adaptör WSDL'den tip üretir, alan adı TAHMİN ETMEZ."
+  },
+  "ORDER_LIST": {
+    "method": "SelectSiparis",
+    "relatedMethods": [
+      "SelectSiparisKargoPaket", "SelectSiparisOdeme",
+      "SelectSiparisUrun", "SelectSiparisUrunDurumlari"
+    ],
+    "verified": true,
+    "checkpointFilter": {
+      "value": "SiparisFiltre tarih alanları",
+      "verified": false,
+      "note": "Tarih alan adları doğrulanamadı; bağlantı sihirbazı WSDL'den okunan gerçek alanları kullanır."
+    }
+  },
+  "ORDER_MODEL": {
+    "knownFields": ["SiparisID", "SiparisNo", "SiparisKodu", "SiparisDurumu", "OdemeTipi", "UyeID", "KargoTakipNo", "AliciAdi"],
+    "verified": true,
+    "completeFieldListVerified": false
+  },
+  "ORDER_STATUSES": {
+    "values": [],
+    "verified": false,
+    "knownSample": ["Onay bekliyor"],
+    "note": "Doküman statü ve ödeme tiplerini SAYISAL kodlarla listeliyor (ör. ödeme tipleri arasında Havale, Mobil ödeme, BKM Express, PayPal geçiyor) ancak kod↔anlam eşleşmesi PDF'ten güvenilir biçimde çıkarılamadı. Statü eşlemesi bu yüzden VERİDEN öğrenilir; bilinmeyen kod `null` kanonik değere düşer."
+  },
+  "WRITE_OPERATIONS": {
+    "documented": [
+      "SaveSiparis", "SaveSiparisKargoPaket", "SaveSiparisKargoPaketKargoTakipNo",
+      "SetSiparisAktarildi", "SetSiparisAktarildiIptal", "SetSiparisDurum",
+      "SetSiparisKargoyaVerildi", "SetSiparisTeslimEdildi", "SetFaturaNo",
+      "SetSiparisUrunDurum"
+    ],
+    "verified": true,
+    "cargoflowNote": "`SetSiparisDurum` ve `SaveSiparisKargoPaketKargoTakipNo` VARDIR → statü yazma ve takip no yazma sözleşmesi MEVCUTTUR. WAVE-1'de hiçbiri AÇILMAZ (stage=off): yazma yolu ayrı bir bilettir."
+  },
+  "OTHER_METHODS": [
+    "GetKargoSecenek", "GetOdemeTipleri", "GetSepet",
+    "SelectCariOdeme", "SelectSepet", "SelectWebSepet"
+  ],
+  "WEBHOOK_MODEL": {
+    "supported": false,
+    "verified": true,
+    "evidence": "Resmî SiparisServis dokümanında 'webhook' terimi SIFIR kez geçer.",
+    "consequence": "Ticimax için gerçek zamanlı olay YOKTUR → senkron YALNIZCA kontrol noktalı yoklama (checkpointed polling) ile kurulur."
+  },
+  "WEBHOOK_SIGNATURE": {
+    "applicable": false,
+    "verified": true
+  },
+  "RETRY_MODEL": {
+    "providerSide": null,
+    "verified": false,
+    "note": "Sağlayıcı tarafında yeniden deneme YOKTUR: webhook olmadığı için teslim edilen bir olay da yoktur. Yeniden deneme TAMAMEN CargoFlow tarafındadır — SOAP çağrısı başarısız olursa kontrol noktası İLERLETİLMEZ ve aynı pencere üstel geri çekilmeyle yeniden sorulur. Kontrol noktası yalnız TAM başarılı sayfadan sonra ilerler.",
+    "cargoflowImplication": "Kaçan sipariş riski YOKTUR çünkü pencere kapanmadan imleç ilerlemez; tekrar riski kanonik kimlikle (SiparisID) engellenir."
+  },
+  "RATE_LIMITS": {
+    "documented": false,
+    "verified": false,
+    "note": "Kiracıya özel barındırma; yayımlanmış limit yok. Muhafazakâr eşzamanlılık (1) + üstel geri çekilme."
+  },
+  "ERROR_MODEL": {
+    "shape": "SOAP Fault + metot dönüşünde durum alanı",
+    "verified": false,
+    "note": "Hata kodu listesi yayımlanmamış; adaptör SOAP Fault'u taşır ve ham mesajı KULLANICIYA SIZDIRMADAN sınıflandırır."
+  },
+  "DATE_TIMEZONE_RULES": {
+    "verified": false,
+    "DECISION": "TAHMİN EDİLMEZ.",
+    "note": "Dokümanda tarih alanlarının saat dilimi BELİRTİLMEMİŞTİR. Trendyol `orderDate` kusurunun kök nedeni tam da belirtilmemiş bir saat dilimini varsaymaktı. Bu yüzden Ticimax tarihleri, gerçek bir kiracı yanıtı üzerinde doğrulanana kadar OFSETSİZ kabul edilip ham değer saklanır ve kanonik ana çevrim AÇILMAZ."
+  },
+  "MONEY_RULES": {
+    "verified": false,
+    "note": "Para alanlarının tipi doğrulanamadı; ham değer korunur ve ondalık dizgiye çevrilir."
+  },
+  "PHONE_ADDRESS_FIELDS": {
+    "knownFields": ["AliciAdi"],
+    "verified": false,
+    "note": "Adres/telefon alt alanları PDF'ten güvenilir çıkarılamadı → WSDL'den okunur."
+  },
+  "CAPABILITIES": {
+    "orders.read": { "supported": true, "contractVerified": true, "stage": "internal_test", "note": "SelectSiparis doğrulandı; alan eşlemesi WSDL'den üretilir." },
+    "orders.webhook": { "supported": false, "contractVerified": true, "reason": "Sağlayıcı webhook SUNMUYOR (dokümanda yok) — yoklama ile çalışılır." },
+    "orders.status.write": { "supported": true, "contractVerified": true, "stage": "off", "note": "SetSiparisDurum mevcut; WAVE-1'de KAPALI." },
+    "shipments.tracking.write": { "supported": true, "contractVerified": true, "stage": "off", "note": "SaveSiparisKargoPaketKargoTakipNo mevcut; WAVE-1'de KAPALI." },
+    "products.read": { "supported": false, "contractVerified": false, "reason": "UrunServis ayrı dokümandır; bu pakette doğrulanmadı." },
+    "products.write": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
+    "inventory.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
+    "inventory.write": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
+    "returns.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
+    "finance.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
+    "questions.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." }
+  },
+  "OPEN_QUESTIONS": [
+    "SiparisFiltre / SiparisSayfalama alan adları — WSDL'den okunmalı.",
+    "Statü ve ödeme tipi sayısal kod↔anlam tablosu.",
+    "Tarih alanlarının saat dilimi — DOĞRULANANA KADAR ÇEVRİM YOK.",
+    "Hata kodu listesi ve oran sınırı."
+  ],
+  "PILOT_BLOCKER": "Gerçek kiracı servis kimliği (UyeKodu) ve WSDL erişimi olmadan alan düzeyinde eşleme KANITLANAMAZ. Bağlayıcı DÜRÜST KISMİ yetenekle sınırlıdır."
+}

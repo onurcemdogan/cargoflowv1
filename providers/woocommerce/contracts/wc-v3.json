@@ -1,0 +1,167 @@
+{
+  "PROVIDER": "woocommerce",
+  "PROVIDER_KIND": "commerce_platform",
+  "DISPLAY_NAME": "WooCommerce",
+  "CONTRACT_PACK_VERSION": 1,
+  "RETRIEVED_AT": "2026-09-19",
+  "SOURCE_URLS": [
+    "https://woocommerce.github.io/woocommerce-rest-api-docs/",
+    "https://developer.woocommerce.com/docs/apis/rest-api/v2/webhooks/"
+  ],
+  "SOURCE_TIER": "1-official-developer-portal",
+  "API_VERSION": {
+    "namespace": "wc/v3",
+    "basePathTemplate": "{storeUrl}/wp-json/wc/v3",
+    "requires": "WooCommerce 3.5+, WordPress 4.4+, pretty permalinks enabled",
+    "verified": true
+  },
+  "AUTH_MODEL": {
+    "https": {
+      "scheme": "http-basic",
+      "username": "consumer_key",
+      "password": "consumer_secret",
+      "fallback": "consumer_key/consumer_secret as query string when the server strips the Authorization header",
+      "verified": true
+    },
+    "http": {
+      "scheme": "oauth1.0a-one-legged",
+      "signatureMethods": ["HMAC-SHA1", "HMAC-SHA256"],
+      "verified": true,
+      "cargoflowSupport": false,
+      "reason": "Düz HTTP üzerinde anahtar taşınmaz; CargoFlow yalnız HTTPS kabul eder."
+    }
+  },
+  "IDENTITY_FIELDS": {
+    "store": "storeUrl kökü (normalize edilir: şema, www., sondaki /, varsayılan port)",
+    "order": "id",
+    "orderHumanReference": "number",
+    "orderLine": "line_items[].id",
+    "product": "id",
+    "variant": "line_items[].variation_id",
+    "stableIdVerified": true,
+    "note": "name/title ASLA kimlik değildir."
+  },
+  "PAGINATION": {
+    "style": "page-number",
+    "params": ["page", "per_page", "offset"],
+    "defaultPerPage": 10,
+    "totalHeaders": ["X-WP-Total", "X-WP-TotalPages"],
+    "linkHeaderRels": ["next", "last", "first", "prev"],
+    "verified": true
+  },
+  "ORDER_LIST": {
+    "endpoint": "GET /wc/v3/orders",
+    "filters": ["after", "before", "status", "order", "orderby", "page", "per_page", "offset"],
+    "dateFilterFormat": "ISO8601",
+    "verified": true,
+    "checkpointFilter": {
+      "value": "after/before (date_created ekseni)",
+      "modifiedAfterVerified": false,
+      "note": "`modified_after` resmî sayfada DOĞRULANAMADI; mutabakat `after/before` + sayfalama ile kurulur, `modified_after` KULLANILMAZ."
+    }
+  },
+  "ORDER_MODEL": {
+    "fields": [
+      "id", "number", "status", "date_created", "date_created_gmt",
+      "date_modified_gmt", "currency", "total", "customer_id", "payment_method",
+      "billing", "shipping", "line_items"
+    ],
+    "verified": true
+  },
+  "ORDER_LINE_MODEL": {
+    "fields": [
+      "id", "name", "product_id", "variation_id", "quantity", "sku", "price",
+      "subtotal", "subtotal_tax", "total", "total_tax", "taxes", "meta_data", "tax_class"
+    ],
+    "verified": true
+  },
+  "ORDER_STATUSES": {
+    "values": ["pending", "processing", "on-hold", "completed", "cancelled", "refunded", "failed", "trash"],
+    "verified": true
+  },
+  "PRODUCT_MODEL": {
+    "endpoint": "GET /wc/v3/products",
+    "identity": "id",
+    "verified": true,
+    "detailLevel": "list-endpoint-verified; alan listesi bu pakette KULLANILMIYOR (products.read shadow)"
+  },
+  "WEBHOOK_MODEL": {
+    "topics": [
+      "order.created", "order.updated", "order.deleted",
+      "product.created", "product.updated", "product.deleted",
+      "customer.created", "customer.updated", "customer.deleted",
+      "coupon.created", "coupon.updated", "coupon.deleted"
+    ],
+    "headers": [
+      "X-WC-Webhook-Source", "X-WC-Webhook-Topic", "X-WC-Webhook-Resource",
+      "X-WC-Webhook-Event", "X-WC-Webhook-Signature", "X-WC-Webhook-ID",
+      "X-WC-Webhook-Delivery-ID"
+    ],
+    "contentType": "application/json",
+    "statuses": ["active", "paused", "disabled"],
+    "verified": true
+  },
+  "WEBHOOK_SIGNATURE": {
+    "header": "X-WC-Webhook-Signature",
+    "algorithm": "HMAC-SHA256",
+    "encoding": "base64",
+    "computedOver": "ham istek gövdesi (JSON olarak kodlandıktan SONRA)",
+    "key": "webhook'un yapılandırılmış secret değeri",
+    "verified": true
+  },
+  "RETRY_MODEL": {
+    "providerSide": "Ardışık 5 başarısız teslimden (2xx dışı) sonra webhook DISABLED olur ve REST API ile yeniden etkinleştirilmesi gerekir.",
+    "deliveryLogRetention": "yalnız son 25 teslim kaydı",
+    "verified": true,
+    "cargoflowImplication": "2xx DÖNDÜRMEK ZORUNLU: işlem kuyruğa alınır, gövde içi hata bile 200 ile yanıtlanır; aksi hâlde 5 hatada webhook kapanır."
+  },
+  "RATE_LIMITS": {
+    "documented": false,
+    "verified": false,
+    "note": "WooCommerce mağaza barındırmasına bağlıdır; resmî sabit limit YAYIMLANMAMIŞTIR. İstemci muhafazakâr eşzamanlılık + üstel geri çekilme uygular."
+  },
+  "ERROR_MODEL": {
+    "shape": "{ code, message, data: { status } }",
+    "authFailure": "401 woocommerce_rest_authentication_error",
+    "permissionFailure": "403 woocommerce_rest_cannot_view",
+    "notFound": "404 woocommerce_rest_shop_order_invalid_id",
+    "verified": true,
+    "verificationNote": "Kod adları hata gövdesi sözleşmesinden; ayrıntılı kod listesi fixture ile sabitlenir."
+  },
+  "DATE_TIMEZONE_RULES": {
+    "canonicalField": "date_created_gmt / date_modified_gmt",
+    "rule": "GMT alanları OFSETSİZ yazılır ama GMT'dir → `Z` eklenerek mutlak ana çevrilir.",
+    "forbidden": "date_created (site yerel saati) kanonik an olarak KULLANILMAZ — sunucu saat dilimine bağlıdır.",
+    "verified": true,
+    "cargoflowNote": "Trendyol orderDate çift dönüşüm kusurunun aynısını üretmemek için yerel alan ASLA kullanılmaz."
+  },
+  "MONEY_RULES": {
+    "representation": "ondalık DİZGİ (ör. \"120.50\")",
+    "currencyField": "currency (ISO 4217)",
+    "rule": "float'a çevrilip yuvarlanmaz; ondalık dizgi korunur.",
+    "verified": true
+  },
+  "PHONE_ADDRESS_FIELDS": {
+    "billing": ["first_name", "last_name", "company", "address_1", "address_2", "city", "state", "postcode", "country", "email", "phone"],
+    "shipping": ["first_name", "last_name", "company", "address_1", "address_2", "city", "state", "postcode", "country"],
+    "verified": true,
+    "risk": "shipping bloğunda TELEFON YOKTUR; taşıyıcı telefon ister → billing.phone'a düşülür, o da yoksa veri kalitesi bayrağı."
+  },
+  "CAPABILITIES": {
+    "orders.read": { "supported": true, "contractVerified": true, "stage": "internal_test" },
+    "orders.webhook": { "supported": true, "contractVerified": true, "stage": "internal_test" },
+    "orders.status.write": { "supported": true, "contractVerified": true, "stage": "off", "note": "PUT /orders/{id} status alanı; WAVE-1'de KAPALI." },
+    "products.read": { "supported": true, "contractVerified": true, "stage": "shadow" },
+    "products.write": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
+    "inventory.read": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
+    "inventory.write": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
+    "shipments.tracking.write": { "supported": false, "contractVerified": false, "reason": "Çekirdek WooCommerce'te takip alanı YOKTUR; eklenti gerektirir, doğrulanmadı." },
+    "returns.read": { "supported": false, "contractVerified": false, "reason": "Çekirdekte iade kaynağı yok (refunds ayrı semantik)." },
+    "finance.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
+    "questions.read": { "supported": false, "contractVerified": false, "reason": "Sağlayıcı sunmuyor." }
+  },
+  "OPEN_QUESTIONS": [
+    "modified_after / dates_are_gmt parametreleri resmî sayfada doğrulanamadı; mutabakat date_created ekseninde kurulur.",
+    "Barındırmaya bağlı oran sınırı yayımlanmamıştır."
+  ]
+}
