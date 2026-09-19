@@ -38,6 +38,7 @@
     "orders:retention:check": "node server/orders/retentionCheckCli.ts",
     "orders:malformed:check": "node server/orders/malformedOrderAuditCli.ts",
     "orders:orderdate:drift": "node server/orders/trendyolOrderDateDriftCli.ts",
+    "orders:orderdate:repair": "node server/orders/trendyolOrderDateRepairCli.ts",
     "trendyol:package-status:check": "node server/orders/trendyolPackageIdentityTraceCli.ts",
     "surat:zpl:diagnose": "node server/integrations/suratZplDiagnosticCli.ts",
     "surat:zpl:mask": "node server/labels/maskSuratZplCli.ts",
