@@ -102,6 +102,7 @@ const STAGE_COPY: Record<string, string> = {
 const ACTION_PRIORITY: { code: string; text: string }[] = [
   { code: 'CREDENTIALS_REJECTED', text: 'Kimlik doğrulama gerekli — bilgileri güncelleyin.' },
   { code: 'SYNC_FAILED', text: 'Son senkron başarısız oldu; otomatik olarak yeniden denenecek.' },
+  { code: 'CREDENTIALS_ABSENT', text: 'Kimlik bilgisi kaldırılmış — bağlantıyı yeniden kurun.' },
   { code: 'NOT_CONFIGURED', text: 'Bağlantıyı kurmak için bilgileri girin.' },
   { code: 'SYNC_STALE', text: 'Senkron gecikmiş; kısa süre içinde yeniden denenecek.' },
   { code: 'RECONCILIATION_STALE', text: 'Mutabakat gecikmiş; kısa süre içinde yeniden denenecek.' },

@@ -41,6 +41,7 @@ import {
   connectionKey,
   resolveIntegrationHealth,
   type ConnectionScope,
+  type CredentialPresence,
   type IntegrationHealth,
   type StoredSyncState,
   type WebhookObservation,
@@ -59,14 +60,17 @@ export interface IntegrationHealthQuery {
   /** Sağlık hangi kaynağa göre okunur (üretimde 'orders'). */
   resource?: string
   /**
-   * BAĞLANTI kapsamlı kimlik varlığı. Anahtar `connectionKey()` çıktısıdır
-   * (`provider::account`). Çok hesaplı sağlayıcıda DOĞRU olan budur.
+   * BAĞLANTI kapsamlı kimlik VARLIĞI (üç durumlu). Anahtar `connectionKey()`
+   * çıktısıdır (`provider::account`). Tercih edilen girdi budur.
+   */
+  credentialsPresenceByConnection?: Record<string, CredentialPresence>
+  /** Sağlayıcı geneli üç durumlu girdi — hesaba özel değer bunu EZER. */
+  credentialsPresenceByProvider?: Record<string, CredentialPresence>
+  /**
+   * ESKİ boolean girdiler (geri uyumluluk). "Bilmiyorum" ifade EDEMEZLER;
+   * `true` → PRESENT, `false` → ABSENT olarak yorumlanır.
    */
   credentialsPresentByConnection?: Record<string, boolean>
-  /**
-   * ESKİ, sağlayıcı geneli girdi. GERİ UYUMLULUK için korunur ve YALNIZ
-   * bağlantıya özel bir değer YOKKEN kullanılır — hesap gerçeğini EZEMEZ.
-   */
   credentialsPresentByProvider?: Record<string, boolean>
   /** Bağlantı kapsamlı webhook gözlemi (`connectionKey` anahtarlı). */
   webhookByConnection?: Record<string, WebhookObservation>
@@ -146,12 +150,34 @@ export async function loadIntegrationHealth(
 
   const catalog = buildProviderCatalog()
 
-  /** Bağlantıya özel değer ÖNCE; yoksa eski sağlayıcı geneli girdi. */
-  const credentialsFor = (providerKey: string, accountId: string | null): boolean => {
+  /**
+   * KİMLİK VARLIĞI ÖNCELİK SIRASI — hesap gerçeği HER ZAMAN üstündür.
+   *
+   *   1) bağlantıya özel üç durumlu değer
+   *   2) bağlantıya özel eski boolean
+   *   3) sağlayıcı geneli üç durumlu değer
+   *   4) sağlayıcı geneli eski boolean
+   *   5) hiçbiri → UNKNOWN (ASLA ABSENT UYDURULMAZ)
+   *
+   * Hesaba özel `ABSENT`, sağlayıcı geneli `PRESENT`i EZER: bir mağazanın
+   * kimliği silindiyse, kardeş mağazanın kimliği duruyor diye "bağlı"
+   * görünemez.
+   */
+  const credentialsFor = (
+    providerKey: string,
+    accountId: string | null,
+  ): CredentialPresence => {
     const key = connectionKey(providerKey, accountId)
-    const scoped = query.credentialsPresentByConnection?.[key]
-    if (typeof scoped === 'boolean') return scoped
-    return Boolean(query.credentialsPresentByProvider?.[providerKey])
+    const scoped = query.credentialsPresenceByConnection?.[key]
+    if (scoped) return scoped
+    const scopedLegacy = query.credentialsPresentByConnection?.[key]
+    if (typeof scopedLegacy === 'boolean') return scopedLegacy ? 'PRESENT' : 'ABSENT'
+    const providerLevel = query.credentialsPresenceByProvider?.[providerKey]
+    if (providerLevel) return providerLevel
+    const providerLegacy = query.credentialsPresentByProvider?.[providerKey]
+    if (typeof providerLegacy === 'boolean') return providerLegacy ? 'PRESENT' : 'ABSENT'
+    // BİLGİ YOKSA UYDURULMAZ.
+    return 'UNKNOWN'
   }
   const webhookFor = (
     providerKey: string,
@@ -181,7 +207,7 @@ export async function loadIntegrationHealth(
         rolloutStage: resolveRolloutStage(connection.providerKey),
         marketplaceAccountId: connection.marketplaceAccountId,
         connectionScope: connection.scope,
-        credentialsPresent: credentialsFor(
+        credentialsPresence: credentialsFor(
           connection.providerKey,
           connection.marketplaceAccountId,
         ),
@@ -208,7 +234,7 @@ export async function loadIntegrationHealth(
         rolloutStage: resolveRolloutStage(providerKey),
         marketplaceAccountId: null,
         connectionScope: 'none',
-        credentialsPresent: credentialsFor(providerKey, null),
+        credentialsPresence: credentialsFor(providerKey, null),
         syncState: null,
         webhook: webhookFor(providerKey, null),
         nowMs: query.nowMs,

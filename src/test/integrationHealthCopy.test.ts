@@ -207,3 +207,35 @@ test('IHA-14c: baglanti etiketi kimlik DEGILDIR, kanonik kimlik hesap idsidir', 
   expect(legacy.marketplaceAccountId).toBeNull()
   expect(legacy.connectionKey).toBe('ikas::legacy')
 })
+
+// ═══ INTEGRATION-HEALTH-001B — KALDIRILMIŞ KİMLİK KOPYASI ════════════════
+
+test('IHB-UI: kimlik KALDIRILMIS baglanti "saglikli" demez, dogru aksiyonu verir', () => {
+  const removed = presentIntegrationHealth(
+    model({
+      providerKey: 'woocommerce',
+      displayName: 'WooCommerce',
+      connection: 'NOT_CONFIGURED',
+      overall: 'NOT_CONFIGURED',
+      // Gecmiste basarili senkron VARDI ama kimlik SIMDI YOK.
+      lastSuccessfulSyncAt: '2026-09-18T09:00:00.000Z',
+      attentionReasonCodes: ['CREDENTIALS_ABSENT', 'NOT_CONFIGURED'],
+    }),
+  )
+  expect(removed.headline).not.toBe('Çalışıyor')
+  expect(removed.headline).toBe('Bağlantı kurulmadı')
+  // Kaldirilmis kimlik, "hic kurulmamis"tan DAHA KESIN bir mesaj alir.
+  expect(removed.actionText).toBe('Kimlik bilgisi kaldırılmış — bağlantıyı yeniden kurun.')
+
+  // Hic kurulmamis baglanti FARKLI mesaj alir.
+  const neverConfigured = presentIntegrationHealth(
+    model({
+      connection: 'NOT_CONFIGURED',
+      overall: 'NOT_CONFIGURED',
+      lastSuccessfulSyncAt: null,
+      attentionReasonCodes: ['NOT_CONFIGURED'],
+    }),
+  )
+  expect(neverConfigured.actionText).toBe('Bağlantıyı kurmak için bilgileri girin.')
+  expect(neverConfigured.actionText).not.toBe(removed.actionText)
+})

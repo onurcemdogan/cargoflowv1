@@ -2446,11 +2446,22 @@ app.get('/api/integrations/health', async (request, response) => {
       context.organizationId,
     )
     const catalog = buildProviderCatalog()
+    // KİMLİK VARLIĞI ÜÇ DURUMLUDUR. `configured` GÖZLENEBİLİR olduğunda
+    // PRESENT/ABSENT'e çevrilir; gözlenemiyorsa UNKNOWN kalır.
+    //
+    // WooCommerce / ikas / Ticimax için kimlik KALICILIĞI HENÜZ YOK →
+    // UNKNOWN bildirilir. Uydurma bir ABSENT, bağlantıyı yanlışlıkla
+    // "kaldırılmış" gösterirdi; uydurma bir PRESENT ise tersini yapardı.
+    const trendyolConfigured = masked?.trendyol?.configured
     const entries = await loadIntegrationHealth(context.db, {
       organizationId: context.organizationId,
-      // ALAN VARLIĞI — geçerlilik KANITI DEĞİLDİR; model bunu UNKNOWN sayar.
-      credentialsPresentByProvider: {
-        trendyol: Boolean(masked?.trendyol?.configured),
+      credentialsPresenceByProvider: {
+        trendyol:
+          typeof trendyolConfigured === 'boolean'
+            ? trendyolConfigured
+              ? 'PRESENT'
+              : 'ABSENT'
+            : 'UNKNOWN',
       },
       nowMs: Date.now(),
     })

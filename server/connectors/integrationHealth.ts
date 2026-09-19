@@ -32,6 +32,19 @@ export type ConnectionState = (typeof CONNECTION_STATES)[number]
 export const CREDENTIAL_STATES = ['VALID', 'INVALID', 'UNKNOWN', 'NOT_REQUIRED'] as const
 export type CredentialState = (typeof CREDENTIAL_STATES)[number]
 
+/**
+ * KİMLİK BİLGİSİNİN ŞU ANKİ VARLIĞI — ÜÇ DURUMLU, BOOLEAN DEĞİL.
+ *
+ * Tek bir boolean "açıkça YOK" ile "BİLMİYORUZ"u ayıramaz ve bu ayrım
+ * kritiktir: GEÇMİŞTE başarılı bir kimlik doğrulanmış okuma, o kimliğin
+ * O ZAMAN geçerli olduğunu kanıtlar — BUGÜN HÂLÂ DURDUĞUNU DEĞİL.
+ *
+ * Ölçülen kusur: kimlik bilgisi SİLİNMİŞ bir bağlantı, eski bir başarılı
+ * senkron sayesinde CONNECTED/VALID görünüyordu.
+ */
+export const CREDENTIAL_PRESENCE = ['PRESENT', 'ABSENT', 'UNKNOWN'] as const
+export type CredentialPresence = (typeof CREDENTIAL_PRESENCE)[number]
+
 export const SYNC_STATES = ['HEALTHY', 'STALE', 'RUNNING', 'FAILED', 'NEVER_RUN'] as const
 export type SyncState = (typeof SYNC_STATES)[number]
 
@@ -169,8 +182,17 @@ export interface IntegrationHealthInput {
   /** Bağlantı kimliği. UYDURULMAZ: yoksa null kalır. */
   marketplaceAccountId?: string | null
   connectionScope?: ConnectionScope
-  /** Kimlik bilgisi ALANLARI var mı — TEK BAŞINA geçerlilik KANITI DEĞİLDİR. */
-  credentialsPresent: boolean
+  /**
+   * Kimlik bilgisinin ŞU ANKİ varlığı. Tercih edilen alan budur.
+   * `ABSENT`, `UNKNOWN`DAN DAHA GÜÇLÜ kanıttır ve geçmiş başarıyı EZER.
+   */
+  credentialsPresence?: CredentialPresence
+  /**
+   * ESKİ boolean girdi (geri uyumluluk). `true` → PRESENT, `false` → ABSENT.
+   * "Bilmiyorum" ifade EDEMEDİĞİ için yeni çağıranlar `credentialsPresence`
+   * kullanmalıdır.
+   */
+  credentialsPresent?: boolean
   credentialsRequired?: boolean
   syncState: StoredSyncState | null
   webhook?: WebhookObservation | null
@@ -240,11 +262,28 @@ export function resolveIntegrationHealth(input: IntegrationHealthInput): Integra
   const errorClass = state?.lastErrorCode ? classifyErrorCode(state.lastErrorCode) : null
 
   // ── KİMLİK ──────────────────────────────────────────────────────────────
-  // KURAL: alan varlığı ASLA "geçerli" demek değildir. Geçerlilik ancak
-  // KİMLİK DOĞRULANMIŞ BİR OKUMANIN başarısıyla kanıtlanır.
+  //
+  // İKİ AYRI OLGU KARIŞTIRILMAZ:
+  //   · GEÇMİŞ kanıt  : başarılı kimlik doğrulanmış okuma OLDU MU
+  //   · ŞU ANKİ varlık: kimlik bilgisi HÂLÂ DURUYOR MU
+  //
+  // Açık YOKLUK, geçmiş başarıyı EZER: silinmiş bir kimlik eski bir senkronla
+  // DİRİLTİLEMEZ. `UNKNOWN` ise geçmiş kanıtın kullanılmasına izin verir.
+  const presence: CredentialPresence =
+    input.credentialsPresence ??
+    (typeof input.credentialsPresent === 'boolean'
+      ? input.credentialsPresent
+        ? 'PRESENT'
+        : 'ABSENT'
+      : 'UNKNOWN')
+
   let credentials: CredentialState
   if (!credentialsRequired) {
     credentials = 'NOT_REQUIRED'
+  } else if (presence === 'ABSENT') {
+    // GEÇMİŞ BAŞARI BURADA KULLANILMAZ — kimlik artık YOK.
+    credentials = 'UNKNOWN'
+    reasons.push({ code: 'CREDENTIALS_ABSENT', component: 'credentials' })
   } else if (errorClass === 'AUTH') {
     credentials = 'INVALID'
     reasons.push({ code: 'CREDENTIALS_REJECTED', component: 'credentials', errorClass: 'AUTH' })
@@ -252,7 +291,7 @@ export function resolveIntegrationHealth(input: IntegrationHealthInput): Integra
     credentials = 'VALID'
   } else {
     credentials = 'UNKNOWN'
-    if (input.credentialsPresent) {
+    if (presence === 'PRESENT') {
       reasons.push({ code: 'CREDENTIALS_NOT_PROVEN', component: 'credentials' })
     }
   }
@@ -265,15 +304,22 @@ export function resolveIntegrationHealth(input: IntegrationHealthInput): Integra
   // çalıştığına dair kayıt vardır. Bu, çok hesaplı testte ortaya çıktı:
   // çağıran kimlik varlığını hesap bazında bildirmediğinde, gerçekten
   // senkron etmiş bir mağaza "kurulmadı" görünüyordu.
-  const provenByAuthenticatedRead = lastSuccessMs !== null
   let connection: ConnectionState
-  if (credentialsRequired && !input.credentialsPresent && !provenByAuthenticatedRead) {
+  if (credentialsRequired && presence === 'ABSENT') {
+    // AÇIK YOKLUK KAZANIR; geçmiş başarı bunu değiştirmez.
     connection = 'NOT_CONFIGURED'
     reasons.push({ code: 'NOT_CONFIGURED', component: 'connection' })
   } else if (credentials === 'INVALID') {
     connection = 'DISCONNECTED'
-  } else {
+  } else if (!credentialsRequired || presence === 'PRESENT') {
     connection = 'CONNECTED'
+  } else if (lastSuccessMs !== null) {
+    // BİLİNMİYOR + geçmiş kimlik doğrulanmış okuma → kanıt KULLANILABİLİR.
+    connection = 'CONNECTED'
+  } else {
+    // Ne şimdiki varlık bilgisi ne geçmiş kanıt var.
+    connection = 'NOT_CONFIGURED'
+    reasons.push({ code: 'NOT_CONFIGURED', component: 'connection' })
   }
 
   // ── SENKRON ─────────────────────────────────────────────────────────────
@@ -432,6 +478,7 @@ export function healthPermitsLiveMutation(health: IntegrationHealth): boolean {
 /** Operatör/tüccar kopyası — ham sağlayıcı metni ASLA taşınmaz. */
 export const HEALTH_REASON_COPY_TR: Record<string, string> = {
   NOT_CONFIGURED: 'Bağlantı kurulmadı',
+  CREDENTIALS_ABSENT: 'Kimlik bilgisi kaldırılmış — yeniden bağlayın',
   CREDENTIALS_NOT_PROVEN: 'Bağlandı — ilk senkron bekleniyor',
   CREDENTIALS_REJECTED: 'Kimlik doğrulama gerekli',
   SYNC_NEVER_RUN: 'Bağlandı — ilk senkron bekleniyor',
