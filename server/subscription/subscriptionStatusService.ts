@@ -34,21 +34,26 @@ const CAPABILITY_USAGE: Partial<Record<BillableCapability, UsageMetric>> = {
   'connections.carrier': 'connections.carrier',
 }
 
-export interface BillingStatus {
+export interface SubscriptionStatus {
   plan: {
-    planId: string
+    /** Bozuk atamada `null` — uydurma plan gösterilmez. */
+    planId: string | null
     displayName: string
     legacy: boolean
     assignable: boolean
     assignedAt: string | null
     assignedBy: string | null
+    resolution: string
+    /** Yapılandırma hatası varsa KARARLI kod; yoksa null. */
+    errorCode: string | null
+    invalidPlanId: string | null
   }
   access: FeatureAccessResult[]
   usage: Record<string, UsageReading>
   measuredAt: string
 }
 
-export interface BillingStatusOptions {
+export interface SubscriptionStatusOptions {
   nowMs: number
   /**
    * Sağlayıcı/yayın gerçeği — `integrationHealth` ve connector kernel
@@ -62,31 +67,67 @@ export interface BillingStatusOptions {
   requested?: Partial<Record<BillableCapability, number>>
 }
 
-export async function loadBillingStatus(
+export async function loadSubscriptionStatus(
   db: Db,
   organizationId: string,
-  options: BillingStatusOptions,
-): Promise<BillingStatus> {
+  options: SubscriptionStatusOptions,
+): Promise<SubscriptionStatus> {
   const [assignment, usage] = await Promise.all([
     loadPlanAssignment(db, organizationId),
     loadUsageSnapshot(db, organizationId, { nowMs: options.nowMs }),
   ])
-  return buildBillingStatus(assignment, usage, options)
+  return buildSubscriptionStatus(assignment, usage, options)
 }
 
 /** SAF birleştirme — testte DB olmadan da çağrılabilir. */
-export function buildBillingStatus(
+export function buildSubscriptionStatus(
   assignment: PlanAssignment,
   usage: UsageSnapshot,
-  options: BillingStatusOptions,
-): BillingStatus {
-  const definition = planDefinition(assignment.planId)
+  options: SubscriptionStatusOptions,
+): SubscriptionStatus {
+  // ── BOZUK ATAMA: FAIL-CLOSED ──────────────────────────────────────────
+  //
+  // Açıkça yazılmış ama tanınmayan plan (ör. `tier_standrad` yazım hatası)
+  // NE sınırsız geçiş durumuna NE de kısıtlayıcı bir plana çevrilir. Ticari
+  // hak VERİLMEZ ve yapılandırma hatası UI'da görünür olur.
+  if (assignment.resolution === 'INVALID_ASSIGNMENT' || assignment.planId === null) {
+    return {
+      plan: {
+        planId: null,
+        displayName: 'Plan yapılandırması geçersiz',
+        legacy: false,
+        assignable: false,
+        assignedAt: assignment.assignedAt,
+        assignedBy: assignment.assignedBy,
+        resolution: assignment.resolution,
+        errorCode: assignment.errorCode ?? 'PLAN_ASSIGNMENT_INVALID',
+        invalidPlanId: assignment.invalidPlanId,
+      },
+      access: BILLABLE_CAPABILITIES.map((capability) => ({
+        capability,
+        decision: 'PLAN_REQUIRED' as const,
+        reasonCode: 'PLAN_ASSIGNMENT_INVALID',
+        // Yükseltme hedefi YOK: sorun plan seviyesi değil, YAPILANDIRMA.
+        requiredPlanId: null,
+        limit: null,
+        usage: NOT_YET_METERED,
+        usageMetered: false,
+      })),
+      usage: usage.metrics as Record<string, UsageReading>,
+      measuredAt: usage.measuredAt,
+    }
+  }
+
+  // Erken dönüşten sonra `planId` kesin olarak doludur; closure içinde
+  // daraltma kaybolmasın diye sabitlenir.
+  const planId = assignment.planId
+  const definition = planDefinition(planId)
   const access = BILLABLE_CAPABILITIES.map((capability) => {
     const metric = CAPABILITY_USAGE[capability]
     const reading: UsageReading = metric ? usage.metrics[metric] : NOT_YET_METERED
     return resolveFeatureAccess({
       capability,
-      planId: assignment.planId,
+      planId,
       usage: reading,
       ...(options.productSupported?.[capability] !== undefined
         ? { productSupported: options.productSupported[capability] }
@@ -105,12 +146,15 @@ export function buildBillingStatus(
 
   return {
     plan: {
-      planId: assignment.planId,
+      planId,
       displayName: definition.defaultDisplayName,
       legacy: assignment.legacy,
       assignable: definition.assignable,
       assignedAt: assignment.assignedAt,
       assignedBy: assignment.assignedBy,
+      resolution: assignment.resolution,
+      errorCode: null,
+      invalidPlanId: null,
     },
     access,
     usage: usage.metrics as Record<string, UsageReading>,

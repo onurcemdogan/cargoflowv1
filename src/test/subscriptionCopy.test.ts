@@ -3,7 +3,7 @@ import {
   presentEntitlement,
   presentPlanHeadline,
   presentUsage,
-} from '../billing/entitlementCopy'
+} from '../subscription/entitlementCopy'
 
 // ═══ BILLING-MODEL-UI-001 — DÜRÜST TİCARİ KOPYA ═════════════════════════
 //

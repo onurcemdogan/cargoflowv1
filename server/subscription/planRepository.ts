@@ -17,33 +17,73 @@
 //
 // Kayıt yoksa → `legacy_unmetered` (her şey sınırsız, açıkça geçiş durumu).
 // Bu bir satış planı DEĞİLDİR ve `assignable: false`tır.
-import { and, count, eq, isNotNull } from 'drizzle-orm'
-import { marketplaceAccounts, orders, organizationSettings, shipments } from '../db/schema.ts'
+import { and, count, eq, inArray, isNotNull } from 'drizzle-orm'
+import {
+  integrationCredentials,
+  marketplaceAccounts,
+  orders,
+  organizationSettings,
+} from '../db/schema.ts'
 import { PLAN_IDS, type PlanId } from './planCatalog.ts'
 import { NOT_YET_METERED, type UsageReading } from './featureAccess.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
 
+/**
+ * TAŞIYICI sağlayıcılar.
+ *
+ * `INTEGRATION_PROVIDERS` = trendyol · surat · hepsiburada · n11 — bunlardan
+ * YALNIZ `surat` bir taşıyıcıdır. Yani mevcut şema BUGÜN en fazla BİR taşıyıcı
+ * bağlantısı temsil edebilir; bu bir SINIRLILIKTIR ve uydurulmaz.
+ */
+export const CARRIER_PROVIDERS = ['surat'] as const
+
 /** `settings_json` içindeki plan bloğunun anahtarı. */
 export const PLAN_SETTINGS_KEY = 'planAssignment'
 
 export class TenantScopeMissingError extends Error {}
 
+/**
+ * ATAMA ÇÖZÜMLEME SONUCU — "kayıt yok" ile "kayıt BOZUK" AYRI şeylerdir.
+ *
+ * ÖLÇÜLEN KUSUR: `tier_standrad` gibi bir YAZIM HATASI sessizce
+ * `legacy_unmetered`e düşüyor ve SINIRSIZ hak veriyordu (yeniden üretildi).
+ * Yanlış yazılmış bir plan, bedava sınırsız plan DEĞİLDİR.
+ */
+export const PLAN_RESOLUTIONS = [
+  /** Hiç atama yok → mevcut üretim organizasyonu, geriye uyumlu. */
+  'LEGACY_NO_ASSIGNMENT',
+  /** Tanınan plan atanmış. */
+  'ASSIGNED',
+  /** AÇIKÇA atanmış ama TANINMAYAN/bozuk → FAIL-CLOSED. */
+  'INVALID_ASSIGNMENT',
+] as const
+export type PlanResolution = (typeof PLAN_RESOLUTIONS)[number]
+
 export interface PlanAssignment {
-  planId: PlanId
+  /** Bozuk atamada `null` — uydurma plan ATANMAZ. */
+  planId: PlanId | null
+  resolution: PlanResolution
   /** Geçiş durumunda mı (kayıt yoktu). */
   legacy: boolean
   assignedAt: string | null
   /** Kim/ne atadı — denetlenebilirlik için. Sır TAŞIMAZ. */
   assignedBy: string | null
+  /** Bozuk atamada operatöre gösterilecek KARARLI hata kodu. */
+  errorCode: string | null
+  /** Tanınmayan ham değer (PII değil, yapılandırma verisi). */
+  invalidPlanId: string | null
 }
 
 const LEGACY_ASSIGNMENT: PlanAssignment = {
   planId: 'legacy_unmetered',
+  resolution: 'LEGACY_NO_ASSIGNMENT',
   legacy: true,
   assignedAt: null,
   assignedBy: null,
+  errorCode: null,
+  invalidPlanId: null,
 }
 
 function readAssignment(settings: unknown): PlanAssignment {
@@ -52,15 +92,27 @@ function readAssignment(settings: unknown): PlanAssignment {
   const raw = block as Record<string, unknown>
   const planId = String(raw.planId ?? '')
   if (!(PLAN_IDS as readonly string[]).includes(planId)) {
-    // TANINMAYAN plan kimliği UYDURULMAZ; geçiş durumuna düşülür ki mevcut
-    // kullanıcı yetenek kaybetmesin.
-    return LEGACY_ASSIGNMENT
+    // FAIL-CLOSED: AÇIKÇA yazılmış ama tanınmayan plan, ne sınırsız geçiş
+    // durumuna ne de kısıtlayıcı bir plana SESSİZCE çevrilir. Yapılandırma
+    // hatası GÖRÜNÜR kılınır ve ticari hak VERİLMEZ.
+    return {
+      planId: null,
+      resolution: 'INVALID_ASSIGNMENT',
+      legacy: false,
+      assignedAt: raw.assignedAt ? String(raw.assignedAt) : null,
+      assignedBy: raw.assignedBy ? String(raw.assignedBy) : null,
+      errorCode: 'PLAN_ASSIGNMENT_INVALID',
+      invalidPlanId: planId || null,
+    }
   }
   return {
     planId: planId as PlanId,
+    resolution: 'ASSIGNED',
     legacy: planId === 'legacy_unmetered',
     assignedAt: raw.assignedAt ? String(raw.assignedAt) : null,
     assignedBy: raw.assignedBy ? String(raw.assignedBy) : null,
+    errorCode: null,
+    invalidPlanId: null,
   }
 }
 
@@ -127,12 +179,24 @@ export async function loadUsageSnapshot(
       .select({ value: count() })
       .from(marketplaceAccounts)
       .where(eq(marketplaceAccounts.organizationId, scoped)),
-    // OTORİTER: CargoFlow'un OLUŞTURDUĞU gönderiler (taşıyıcı bağlantısı
-    // kanıtı); dışarıdan gelen pazaryeri gönderisi SAYILMAZ.
+    // OTORİTER: YAPILANDIRILMIŞ TAŞIYICI KİMLİKLERİ.
+    //
+    // ÖLÇÜLEN KUSUR: burada önce `shipments` sayılıyordu. O GÖNDERİ HACMİDİR,
+    // BAĞLANTI DEĞİL: tek bir Sürat yapılandırmasıyla atılan 100 gönderi
+    // "100 taşıyıcı bağlantısı" olarak raporlanıyordu (yeniden üretildi).
+    //
+    // Doğru kaynak `integration_credentials`tır: UNIQUE(org, provider) ile
+    // sağlayıcı başına TEK satır tutar. Kimlik ÇÖZÜLMEZ (decrypt YOK);
+    // yalnız SATIR VARLIĞI sayılır.
     db
       .select({ value: count() })
-      .from(shipments)
-      .where(and(eq(shipments.organizationId, scoped), eq(shipments.source, 'local_create'))),
+      .from(integrationCredentials)
+      .where(
+        and(
+          eq(integrationCredentials.organizationId, scoped),
+          inArray(integrationCredentials.provider, [...CARRIER_PROVIDERS]),
+        ),
+      ),
     db.select({ value: count() }).from(orders).where(eq(orders.organizationId, scoped)),
     // OTORİTER: kullanıcının etiketi İŞ AKIŞINA ALDIĞI siparişler.
     // `user_label_activated_at` YALNIZ açık kullanıcı aksiyonuyla yazılır

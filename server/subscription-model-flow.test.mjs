@@ -23,10 +23,10 @@ const here = dirname(fileURLToPath(import.meta.url))
 process.env.ORDER_DATA_ENCRYPTION_KEY = randomBytes(32).toString('hex')
 
 const schema = await import('./db/schema.ts')
-const catalog = await import('./billing/planCatalog.ts')
-const access = await import('./billing/featureAccess.ts')
-const planRepo = await import('./billing/planRepository.ts')
-const service = await import('./billing/billingStatusService.ts')
+const catalog = await import('./subscription/planCatalog.ts')
+const access = await import('./subscription/featureAccess.ts')
+const planRepo = await import('./subscription/planRepository.ts')
+const service = await import('./subscription/subscriptionStatusService.ts')
 
 const NOW = Date.parse('2026-09-20T12:00:00.000Z')
 
@@ -97,7 +97,7 @@ test('BILL-1: plan kaydi OLMAYAN organizasyon mevcut yeteneklerini KORUR', async
   assert.equal(assignment.planId, 'legacy_unmetered')
   assert.equal(assignment.legacy, true)
 
-  const status = await service.loadBillingStatus(db, org, { nowMs: NOW })
+  const status = await service.loadSubscriptionStatus(db, org, { nowMs: NOW })
   // HICBIR yetenek plan yuzunden kapanmamali.
   for (const entry of status.access) {
     assert.notEqual(
@@ -115,15 +115,21 @@ test('BILL-17/BILL-20: legacy organizasyon Trendyol + Surat yollarini KULLANABIL
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
   const org = await makeOrg(db, 'bill-17')
-  const status = await service.loadBillingStatus(db, org, { nowMs: NOW })
+  const status = await service.loadSubscriptionStatus(db, org, { nowMs: NOW })
   // Pazaryeri ve tasiyici baglantisi ile toplu baski ACIK olmali.
   for (const capability of ['connections.marketplace', 'connections.carrier', 'labels.bulk_print']) {
     assert.equal(decisionFor(status, capability).decision, 'ALLOWED', capability)
   }
-  // TANINMAYAN plan kimligi de legacy'e duser (yetenek kaybi YOK).
+  // ATAMA YOKLUGU ile BOZUK ATAMA AYRI: yoklugu legacy'dir (yukarida),
+  // ama ACIKCA yazilmis TANINMAYAN plan FAIL-CLOSED olur (SUB-6/SUB-7).
   await assignPlan(db, org, 'enterprise_that_does_not_exist')
-  const fallback = await planRepo.loadPlanAssignment(db, org)
-  assert.equal(fallback.planId, 'legacy_unmetered')
+  const invalid = await planRepo.loadPlanAssignment(db, org)
+  assert.notEqual(
+    invalid.planId,
+    'legacy_unmetered',
+    'yazim hatasi SESSIZCE sinirsiz hak VERMEZ',
+  )
+  assert.equal(invalid.resolution, 'INVALID_ASSIGNMENT')
 })
 
 // ── HAK / LİMİT ────────────────────────────────────────────────────────────
@@ -290,8 +296,8 @@ test('BILL-11: kiraci A, kiraci Bnin plan/kullanim durumunu GOREMEZ', async (t) 
   await addMarketplaceAccount(db, orgB, 'b-store-1')
   await addMarketplaceAccount(db, orgB, 'b-store-2')
 
-  const a = await service.loadBillingStatus(db, orgA, { nowMs: NOW })
-  const b = await service.loadBillingStatus(db, orgB, { nowMs: NOW })
+  const a = await service.loadSubscriptionStatus(db, orgA, { nowMs: NOW })
+  const b = await service.loadSubscriptionStatus(db, orgB, { nowMs: NOW })
 
   assert.equal(a.plan.planId, 'legacy_unmetered', 'A kendi gercegini gorur')
   assert.equal(b.plan.planId, 'tier_advanced')
@@ -320,19 +326,19 @@ test('BILL-14: ayni saglayicinin IKI hesabi BAGIMSIZ sayilir', async (t) => {
 
   // SEMANTİK: karar "BİR TANE DAHA ekleyebilir miyim" sorusudur
   // (varsayılan `requested: 1`). 1/3 → yer var.
-  const first = await service.loadBillingStatus(db, org, { nowMs: NOW })
+  const first = await service.loadSubscriptionStatus(db, org, { nowMs: NOW })
   assert.equal(first.usage['connections.marketplace'].value, 1)
   assert.equal(decisionFor(first, 'connections.marketplace').decision, 'ALLOWED')
 
   // AYNI SAĞLAYICININ ikinci hesabı BAĞIMSIZ sayılır (birleştirilmez).
   await addMarketplaceAccount(db, org, 'store-2')
-  const second = await service.loadBillingStatus(db, org, { nowMs: NOW })
+  const second = await service.loadSubscriptionStatus(db, org, { nowMs: NOW })
   assert.equal(second.usage['connections.marketplace'].value, 2, 'iki hesap AYRI sayilir')
   assert.equal(decisionFor(second, 'connections.marketplace').decision, 'ALLOWED')
 
   // Üçüncü hesapla limit DOLAR: 3/3 → bir tane daha EKLENEMEZ.
   await addMarketplaceAccount(db, org, 'store-3')
-  const third = await service.loadBillingStatus(db, org, { nowMs: NOW })
+  const third = await service.loadSubscriptionStatus(db, org, { nowMs: NOW })
   assert.equal(third.usage['connections.marketplace'].value, 3)
   assert.equal(decisionFor(third, 'connections.marketplace').decision, 'LIMIT_REACHED')
   assert.equal(decisionFor(third, 'connections.marketplace').requiredPlanId, 'tier_advanced')
@@ -360,7 +366,7 @@ test('BILL-15: legacy (hesapsiz) durum ACIKCA temsil edilir', async (t) => {
 // ── GÜVENLİK / MİMARİ ──────────────────────────────────────────────────────
 
 test('BILL-12: istemci durumu sunucu hakkini ACAMAZ', () => {
-  const source = readFileSync(join(here, 'billing', 'featureAccess.ts'), 'utf8')
+  const source = readFileSync(join(here, 'subscription', 'featureAccess.ts'), 'utf8')
   // Karar YALNIZ sunucu girdilerinden turer; istemciden gelen bir "unlocked"
   // bayragi YOKTUR.
   for (const forbidden of ['request.body', 'req.body', 'clientPlan', 'unlocked', 'override']) {
@@ -368,7 +374,7 @@ test('BILL-12: istemci durumu sunucu hakkini ACAMAZ', () => {
   }
   // Uc nokta kiraciyi GOVDEDEN almaz.
   const endpoint = readFileSync(join(here, 'index.mjs'), 'utf8')
-  const start = endpoint.indexOf("app.get('/api/billing/status'")
+  const start = endpoint.indexOf("app.get('/api/subscription/status'")
   assert.ok(start > 0)
   const block = endpoint.slice(start, endpoint.indexOf('\n})', start))
   assert.match(block, /requireOnboardingContext/)
@@ -380,7 +386,7 @@ test('BILL-13: ticari yanit SIR TASIMAZ', async (t) => {
   t.after(() => pglite.close())
   const org = await makeOrg(db, 'bill-13')
   await assignPlan(db, org, 'tier_standard', { assignedBy: 'system' })
-  const status = await service.loadBillingStatus(db, org, { nowMs: NOW })
+  const status = await service.loadSubscriptionStatus(db, org, { nowMs: NOW })
   const serialized = JSON.stringify(status)
   for (const secret of ['password', 'apiKey', 'apiSecret', 'token', 'consumer_secret', 'card', 'iban']) {
     assert.equal(serialized.toLowerCase().includes(secret.toLowerCase()), false, `sizdi: ${secret}`)
@@ -397,7 +403,7 @@ test('BILL-16: plan ADI karsilastirmasi ticari modul DISINDA YOK', () => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
       const full = join(dir, entry.name)
       if (entry.isDirectory()) {
-        if (['node_modules', 'billing', 'testing'].includes(entry.name)) continue
+        if (['node_modules', 'subscription', 'testing'].includes(entry.name)) continue
         scan(full)
         continue
       }
@@ -445,7 +451,7 @@ test('BILL-19: ayni girdi → ayni karar', () => {
       connectionOperational: true,
     })
   assert.deepEqual(build(), build())
-  const source = readFileSync(join(here, 'billing', 'featureAccess.ts'), 'utf8')
+  const source = readFileSync(join(here, 'subscription', 'featureAccess.ts'), 'utf8')
   const code = source
     .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
@@ -480,4 +486,116 @@ test('BILL-18: entegrasyon sagligi ticari durumdan ETKILENMEZ', async () => {
   for (const forbidden of ['planCatalog', 'featureAccess', 'billing']) {
     assert.equal(healthSource.includes(forbidden), false, `saglik ticari module bagli: ${forbidden}`)
   }
+})
+
+// ═══ COMMERCIAL-NOMENCLATURE-001 — ÖLÇÜLEN İKİ KUSURUN REGRESYONU ═══════
+//
+// 1) `connections.carrier` GÖNDERİ sayıyordu, BAĞLANTI değil: tek bir Sürat
+//    yapılandırmasıyla atılan 100 gönderi "100 taşıyıcı bağlantısı" oluyordu.
+// 2) AÇIKÇA yazılmış ama TANINMAYAN plan kimliği (yazım hatası) sessizce
+//    `legacy_unmetered` olup SINIRSIZ hak veriyordu.
+//
+// İkisi de yamadan önce yeniden üretildi.
+
+test('SUB-1: 1 tasiyici yapilandirmasi + 100 gonderi → connections.carrier = 1', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'sub-1')
+  await db.insert(schema.integrationCredentials).values({
+    organizationId: org, provider: 'surat', encryptedPayload: 'sifreli-yer-tutucu', keyVersion: 1,
+  })
+  for (let i = 0; i < 100; i += 1) {
+    await db.insert(schema.shipments).values({
+      organizationId: org, marketplace: 'Trendyol', packageId: `P${i}`,
+      provider: 'surat', source: 'local_create', status: 'CREATED',
+    })
+  }
+  const usage = await planRepo.loadUsageSnapshot(db, org, { nowMs: NOW })
+  assert.equal(
+    usage.metrics['connections.carrier'].value,
+    1,
+    'GONDERI HACMI baglanti sayisi DEGILDIR',
+  )
+})
+
+test('SUB-2: yapilandirma YOKKEN gecmis gonderiler baglanti IDDIA ETMEZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'sub-2')
+  for (let i = 0; i < 5; i += 1) {
+    await db.insert(schema.shipments).values({
+      organizationId: org, marketplace: 'Trendyol', packageId: `H${i}`,
+      provider: 'surat', source: 'local_create', status: 'CREATED',
+    })
+  }
+  const usage = await planRepo.loadUsageSnapshot(db, org, { nowMs: NOW })
+  assert.equal(usage.metrics['connections.carrier'].value, 0)
+})
+
+test('SUB-3: mevcut sema BUGUN en fazla BIR tasiyici temsil edebilir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'sub-3')
+  await db.insert(schema.integrationCredentials).values({
+    organizationId: org, provider: 'surat', encryptedPayload: 'sifreli-yer-tutucu', keyVersion: 1,
+  })
+  const usage = await planRepo.loadUsageSnapshot(db, org, { nowMs: NOW })
+  assert.equal(usage.metrics['connections.carrier'].value, 1)
+  // SINIRLILIK ACIKCA BELGELENIR: INTEGRATION_PROVIDERS icinde tek tasiyici
+  // `surat`tir ve integration_credentials UNIQUE(org, provider) tasir.
+  assert.deepEqual([...planRepo.CARRIER_PROVIDERS], ['surat'])
+})
+
+test('SUB-4: atama YOK → legacy_unmetered (uretim uyumlulugu)', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'sub-4')
+  const assignment = await planRepo.loadPlanAssignment(db, org)
+  assert.equal(assignment.planId, 'legacy_unmetered')
+  assert.equal(assignment.resolution, 'LEGACY_NO_ASSIGNMENT')
+  assert.equal(assignment.errorCode, null)
+})
+
+test('SUB-5: TANINAN atama secilen plani verir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'sub-5')
+  await assignPlan(db, org, 'tier_standard')
+  const assignment = await planRepo.loadPlanAssignment(db, org)
+  assert.equal(assignment.planId, 'tier_standard')
+  assert.equal(assignment.resolution, 'ASSIGNED')
+  assert.equal(assignment.legacy, false)
+})
+
+test('SUB-6: ACIKCA yazilmis TANINMAYAN plan legacy_unmetered OLAMAZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'sub-6')
+  await assignPlan(db, org, 'tier_standrad')
+  const assignment = await planRepo.loadPlanAssignment(db, org)
+  assert.notEqual(assignment.planId, 'legacy_unmetered')
+  assert.equal(assignment.planId, null, 'uydurma plan ATANMAZ')
+  assert.equal(assignment.resolution, 'INVALID_ASSIGNMENT')
+  assert.equal(assignment.errorCode, 'PLAN_ASSIGNMENT_INVALID')
+  assert.equal(assignment.invalidPlanId, 'tier_standrad')
+  assert.equal(assignment.legacy, false)
+})
+
+test('SUB-7: TANINMAYAN plan SINIRSIZ ticari erisim URETEMEZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'sub-7')
+  await assignPlan(db, org, 'tier_standrad')
+  const status = await service.loadSubscriptionStatus(db, org, { nowMs: NOW })
+
+  assert.equal(status.plan.planId, null)
+  assert.equal(status.plan.errorCode, 'PLAN_ASSIGNMENT_INVALID')
+  for (const entry of status.access) {
+    assert.notEqual(entry.decision, 'ALLOWED', `bozuk atamada hak verildi: ${entry.capability}`)
+    assert.equal(entry.reasonCode, 'PLAN_ASSIGNMENT_INVALID')
+    // Sorun plan SEVIYESI degil YAPILANDIRMA → "yukselt" hedefi YOK.
+    assert.equal(entry.requiredPlanId, null)
+  }
+  // Ne sinirsiz ne de sessizce kisitlayici Basic.
+  assert.notEqual(status.plan.planId, 'tier_basic')
 })

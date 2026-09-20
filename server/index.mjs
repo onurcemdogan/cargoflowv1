@@ -2476,20 +2476,21 @@ app.get('/api/integrations/health', async (request, response) => {
   }
 })
 
-// GET /api/billing/status — TİCARİ PLAN / HAK DURUMU (SALT OKUNUR).
+// GET /api/subscription/status — CARGOFLOW ABONELİK / HAK DURUMU.
 //
-// DİKKAT: buradaki "billing" CargoFlow ABONELİĞİDİR; taşıyıcı `billingParty`
-// (Platform Öder / Satıcı Öder) ile İLGİSİ YOKTUR.
+// AD AYRIMI: bu uç CargoFlow'un KENDİ ABONELİĞİDİR. Depodaki `billingParty`
+// (gönderi ücretini kim öder: SELLER / TRENDYOL) TAMAMEN FARKLI bir kavramdır
+// ve bu uçla İLGİSİ YOKTUR. Karışmasın diye yol da `subscription`tır.
 //
 // Kiracı kapsamı `requireOnboardingContext`ten gelir; istek gövdesiyle
 // organizasyon DEĞİŞTİRİLEMEZ. Ödeme sağlayıcısı YOKTUR; yanıt kimlik
 // bilgisi, token ya da ödeme verisi TAŞIMAZ.
-app.get('/api/billing/status', async (request, response) => {
+app.get('/api/subscription/status', async (request, response) => {
   const context = await requireOnboardingContext(request, response)
   if (!context) return
   try {
-    const { loadBillingStatus } = await import('./billing/billingStatusService.ts')
-    const status = await loadBillingStatus(context.db, context.organizationId, {
+    const { loadSubscriptionStatus } = await import('./subscription/subscriptionStatusService.ts')
+    const status = await loadSubscriptionStatus(context.db, context.organizationId, {
       nowMs: Date.now(),
     })
     response.json({ ok: true, ...status })
