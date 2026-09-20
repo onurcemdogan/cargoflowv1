@@ -2476,6 +2476,57 @@ app.get('/api/integrations/health', async (request, response) => {
   }
 })
 
+// ── KARGO ÜCRETİ ÖDEYENİ (HESAP KAPSAMLI) ────────────────────────────────
+//
+// DİKKAT: bu uçlar GÖNDERİ ÜCRETİNİ kimin ödediğiyle ilgilidir; CargoFlow
+// ABONELİĞİYLE (`/api/subscription/status`) İLGİSİ YOKTUR.
+//
+// Kiracı kapsamı context'ten gelir; `marketplaceAccountId` SAHİPLİĞİ yazma
+// yolunda DOĞRULANIR. Sağlayıcıya çağrı YAPILMAZ, sır DÖNDÜRÜLMEZ.
+app.get('/api/shipping/payer', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const config = await import('./shipments/marketplacePayerConfig.ts')
+    const accounts = await config.loadAccountPayerView(
+      context.db,
+      context.organizationId,
+    )
+    response.json({ ok: true, accounts })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Ödeyen ayarları okunamadı.' })
+  }
+})
+
+app.post('/api/shipping/payer', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  // KİRACI GÖVDEDEN ALINMAZ: yalnız hesap kimliği ve değer okunur.
+  const marketplaceAccountId = String(request.body?.marketplaceAccountId ?? '').trim()
+  const payer = String(request.body?.payer ?? '').trim().toUpperCase()
+  try {
+    const config = await import('./shipments/marketplacePayerConfig.ts')
+    await config.setAccountPayerConfig(
+      context.db,
+      context.organizationId,
+      marketplaceAccountId,
+      payer,
+    )
+    response.json({ ok: true, marketplaceAccountId, payer })
+  } catch (error) {
+    const name = error instanceof Error ? error.constructor.name : ''
+    if (name === 'AccountNotInTenantError') {
+      response.status(404).json({ ok: false, message: 'Hesap bulunamadı.' })
+      return
+    }
+    if (name === 'InvalidPayerValueError') {
+      response.status(400).json({ ok: false, message: 'Geçersiz ödeyen değeri.' })
+      return
+    }
+    response.status(500).json({ ok: false, message: 'Ödeyen ayarı kaydedilemedi.' })
+  }
+})
+
 // GET /api/subscription/status — CARGOFLOW ABONELİK / HAK DURUMU.
 //
 // AD AYRIMI: bu uç CargoFlow'un KENDİ ABONELİĞİDİR. Depodaki `billingParty`

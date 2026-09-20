@@ -19,7 +19,12 @@
 // kendi değerini taşır ve biri diğerini ezemez.
 import { and, eq } from 'drizzle-orm'
 import { marketplaceAccounts, organizationSettings } from '../db/schema.ts'
-import { SHIPPING_PAYERS, type ShippingPayer } from './shippingBillingParty.ts'
+import {
+  payerEvidenceClass,
+  SHIPPING_PAYERS,
+  type PayerEvidenceClass,
+  type ShippingPayer,
+} from './shippingBillingParty.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -123,4 +128,55 @@ export async function setAccountPayerConfig(
     .update(organizationSettings)
     .set({ settingsJson: next, updatedAt: new Date() })
     .where(eq(organizationSettings.organizationId, scoped))
+}
+
+/** UI için hesap satırı — SIR TAŞIMAZ, görünen ad KİMLİK DEĞİLDİR. */
+export interface AccountPayerRow {
+  marketplaceAccountId: string
+  marketplace: string
+  displayName: string | null
+  isActive: boolean
+  evidenceClass: PayerEvidenceClass
+  /** Sözleşmeden türetilebiliyorsa operatöre SORULMAZ. */
+  configurable: boolean
+  payer: ShippingPayer
+}
+
+/**
+ * Kiracının TÜM pazaryeri hesapları + mevcut ödeyen ayarı.
+ *
+ * Tek okuma noktası burasıdır; rota katmanı DB'ye dokunmaz.
+ */
+export async function loadAccountPayerView(
+  db: Db,
+  organizationId: string,
+): Promise<AccountPayerRow[]> {
+  const scoped = requireTenant(organizationId)
+  const [accounts, configured] = await Promise.all([
+    db
+      .select({
+        id: marketplaceAccounts.id,
+        marketplace: marketplaceAccounts.marketplace,
+        displayName: marketplaceAccounts.displayName,
+        isActive: marketplaceAccounts.isActive,
+      })
+      .from(marketplaceAccounts)
+      // KİRACI SINIRI — istisnasız.
+      .where(eq(marketplaceAccounts.organizationId, scoped)),
+    loadAccountPayerConfigs(db, scoped),
+  ])
+  return (accounts as Record<string, unknown>[]).map((account) => {
+    const marketplace = String(account.marketplace ?? '')
+    const evidenceClass = payerEvidenceClass(marketplace)
+    const id = String(account.id)
+    return {
+      marketplaceAccountId: id,
+      marketplace,
+      displayName: account.displayName ? String(account.displayName) : null,
+      isActive: Boolean(account.isActive),
+      evidenceClass,
+      configurable: evidenceClass !== 'CAN_DERIVE_FROM_ORDER',
+      payer: configured[id] ?? 'UNKNOWN',
+    }
+  })
 }

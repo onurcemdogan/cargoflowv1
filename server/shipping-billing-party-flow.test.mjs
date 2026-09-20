@@ -28,6 +28,19 @@ const payer = await import('./shipments/shippingBillingParty.ts')
 const suratBilling = await import('./shipments/suratBillingParty.ts')
 const accountConfig = await import('./shipments/marketplacePayerConfig.ts')
 
+/**
+ * DOGRULANMIS saglayici sozlesmesi kaniti uretir.
+ *
+ * Duz `BillingParty` YETMEZ (BPX-1): koken iddiasi kanit seviyesiyle gelir.
+ */
+function confirmedEvidence(billingParty) {
+  return {
+    billingParty,
+    evidence: 'CONFIRMED_PROVIDER_CONTRACT',
+    provenance: 'PROVIDER_RAW',
+  }
+}
+
 // ── TEMEL ÇÖZÜMLEME ────────────────────────────────────────────────────────
 
 test('BP-1: hesap yapilandirmasi MARKETPLACE_PAYS cozulur', () => {
@@ -93,7 +106,7 @@ test('BP-7: DOGRULANMIS siparis sinyali kiraci varsayilanini EZER', () => {
   const result = payer.resolveShippingBillingParty({
     marketplace: 'trendyol',
     // Trendyol sozlesmesi: whoPays alani YOK → TRENDYOL oder.
-    verifiedOrderSignal: 'TRENDYOL',
+    orderContractEvidence: confirmedEvidence('TRENDYOL'),
     tenantConfig: 'SELLER_PAYS',
   })
   assert.equal(result.payer, 'MARKETPLACE_PAYS', 'kanitlanmis olgu varsayimi YENER')
@@ -137,7 +150,7 @@ test('BP-10: Trendyol, DOGRULANMIS sinyal yoksa kargo saglayicisindan CIKARIM YA
   assert.equal(
     payer.resolveShippingBillingParty({
       marketplace: 'trendyol',
-      verifiedOrderSignal: sellerPays.billingParty,
+      orderContractEvidence: confirmedEvidence(sellerPays.billingParty),
     }).payer,
     'SELLER_PAYS',
   )
@@ -155,7 +168,7 @@ test('BP-11: n11 odeyen alani BU DEPODA DOGRULANMADI — uydurulmaz', () => {
   // Sinyal verilse bile n11 icin YOK SAYILIR (dogrulanmamis).
   const ignored = payer.resolveShippingBillingParty({
     marketplace: 'n11',
-    verifiedOrderSignal: 'SELLER',
+    orderContractEvidence: confirmedEvidence('SELLER'),
   })
   assert.equal(ignored.payer, 'UNKNOWN')
   assert.notEqual(ignored.provenance, 'ORDER_CONTRACT')
@@ -174,7 +187,7 @@ test('BP-13: cozumleyici DETERMINISTIK', () => {
   const build = () =>
     payer.resolveShippingBillingParty({
       marketplace: 'trendyol',
-      verifiedOrderSignal: 'SELLER',
+      orderContractEvidence: confirmedEvidence('SELLER'),
       marketplaceAccountConfig: 'MARKETPLACE_PAYS',
       tenantConfig: 'MARKETPLACE_PAYS',
     })
@@ -286,13 +299,13 @@ test('BP-14: abonelik plani kargo odeyenini ETKILEMEZ', async () => {
   const subscription = await import('./subscription/planCatalog.ts')
   const before = payer.resolveShippingBillingParty({
     marketplace: 'trendyol',
-    verifiedOrderSignal: 'SELLER',
+    orderContractEvidence: confirmedEvidence('SELLER'),
   })
   // En yuksek plan bile odeyeni DEGISTIRMEZ.
   void subscription.PLAN_CATALOG.tier_advanced
   const after = payer.resolveShippingBillingParty({
     marketplace: 'trendyol',
-    verifiedOrderSignal: 'SELLER',
+    orderContractEvidence: confirmedEvidence('SELLER'),
   })
   assert.deepEqual(after, before)
 
@@ -329,7 +342,10 @@ test('BP-15: kargo odeyeni abonelik hakkini ETKILEMEZ', async () => {
       planId: 'tier_standard',
     })
   const before = build()
-  void payer.resolveShippingBillingParty({ marketplace: 'trendyol', verifiedOrderSignal: 'SELLER' })
+  void payer.resolveShippingBillingParty({
+    marketplace: 'trendyol',
+    orderContractEvidence: confirmedEvidence('SELLER'),
+  })
   assert.deepEqual(build(), before)
 
   // Abonelik modulleri kargo odeyenini YENIDEN TANIMLAMAZ.
@@ -371,7 +387,7 @@ test('BP-17: UNKNOWN → CONFIG_REQUIRED; sessiz dogrudan-tasiyici DUSUSU YOK', 
   })
   const known = payer.resolveShippingBillingParty({
     marketplace: 'trendyol',
-    verifiedOrderSignal: 'TRENDYOL',
+    orderContractEvidence: confirmedEvidence('TRENDYOL'),
   })
   assert.equal(payer.routingGateForPayer(known).gate, 'ALLOWED')
 })

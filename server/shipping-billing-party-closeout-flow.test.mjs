@@ -1,0 +1,262 @@
+// BILLING-PARTY-CLOSEOUT-001 — KANIT SAHTECİLİĞİ VE ÜRÜNE BAĞLAMA.
+//
+// ═══ ÖLÇÜLEN AÇIK ════════════════════════════════════════════════════════
+//
+// `verifiedOrderSignal` DÜZ bir `BillingParty` idi: HERHANGİ bir çağıran
+// `'TRENDYOL'` yazarak `ORDER_CONTRACT` kökeni UYDURABİLİYORDU. Köken
+// iddiası artık KANITIN KENDİSİYLE gelmek zorunda ve kanıt seviyesi mevcut
+// forensic modelden (`suratBillingParty`) OLDUĞU GİBİ taşınır.
+import assert from 'node:assert/strict'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join, dirname } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { randomBytes } from 'node:crypto'
+import test from 'node:test'
+import { PGlite } from '@electric-sql/pglite'
+import { drizzle } from 'drizzle-orm/pglite'
+
+const here = dirname(fileURLToPath(import.meta.url))
+process.env.ORDER_DATA_ENCRYPTION_KEY = randomBytes(32).toString('hex')
+
+const schema = await import('./db/schema.ts')
+const payer = await import('./shipments/shippingBillingParty.ts')
+const suratBilling = await import('./shipments/suratBillingParty.ts')
+const accountConfig = await import('./shipments/marketplacePayerConfig.ts')
+
+function migrationStatements() {
+  const dir = join(here, '..', 'drizzle')
+  const out = []
+  for (const file of readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()) {
+    out.push(
+      ...readFileSync(join(dir, file), 'utf8')
+        .split('--> statement-breakpoint')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    )
+  }
+  return out
+}
+
+async function makeDb() {
+  const pglite = new PGlite()
+  for (const s of migrationStatements()) await pglite.exec(s)
+  return { pglite, db: drizzle(pglite, { schema }) }
+}
+
+async function makeOrg(db, slug) {
+  const [org] = await db.insert(schema.organizations).values({ name: slug, slug }).returning()
+  return org.id
+}
+
+async function makeAccount(db, organizationId, marketplace, providerAccountId) {
+  const [account] = await db
+    .insert(schema.marketplaceAccounts)
+    .values({ organizationId, marketplace, providerAccountId })
+    .returning()
+  return account.id
+}
+
+// ── KANIT SAHTECİLİĞİ ──────────────────────────────────────────────────────
+
+test('BPX-1: DUZ deger UYDURMA koken URETEMEZ', () => {
+  // Eski API sekli (duz deger) artik ORDER_CONTRACT vermez.
+  const forged = payer.resolveShippingBillingParty({
+    marketplace: 'trendyol',
+    verifiedOrderSignal: 'TRENDYOL',
+  })
+  assert.notEqual(forged.provenance, 'ORDER_CONTRACT', 'duz deger koken KANITI DEGILDIR')
+  assert.equal(forged.payer, 'UNKNOWN')
+
+  // Kanit nesnesi verilse bile seviye/kaynak yetersizse REDDEDILIR.
+  const insufficient = [
+    { evidence: 'UNVERIFIED_HISTORICAL_RAW', provenance: 'PROVIDER_RAW' },
+    { evidence: 'UNKNOWN', provenance: 'PROVIDER_RAW' },
+    { evidence: 'CONFIRMED_PROVIDER_CONTRACT', provenance: 'NORMALIZED_COPY' },
+    { evidence: 'CONFIRMED_PROVIDER_CONTRACT', provenance: 'RECONSTRUCTED' },
+    { evidence: 'CONFIRMED_PROVIDER_CONTRACT', provenance: 'UNKNOWN' },
+  ]
+  for (const bad of insufficient) {
+    const result = payer.resolveShippingBillingParty({
+      marketplace: 'trendyol',
+      orderContractEvidence: { billingParty: 'TRENDYOL', ...bad },
+    })
+    assert.notEqual(
+      result.provenance,
+      'ORDER_CONTRACT',
+      `yetersiz kanit koken URETTI: ${JSON.stringify(bad)}`,
+    )
+  }
+})
+
+test('BPX-2: DOGRULANMIS saglayici sozlesmesi kaniti DOGRU cozulur', () => {
+  // Kanit, mevcut forensic modulden OLDUGU GIBI gelir.
+  const live = suratBilling.inspectTrendyolBillingSource(
+    { rawOrder: { packageId: 'P1', orderNumber: 'N1', whoPays: '1' } },
+    { origin: 'LIVE_PROVIDER_RESPONSE' },
+  )
+  assert.equal(live.evidence, 'CONFIRMED_PROVIDER_CONTRACT')
+  assert.equal(live.provenance, 'PROVIDER_RAW')
+  assert.equal(live.billingParty, 'SELLER')
+
+  const result = payer.resolveShippingBillingParty({
+    marketplace: 'trendyol',
+    orderContractEvidence: {
+      billingParty: live.billingParty,
+      evidence: live.evidence,
+      provenance: live.provenance,
+    },
+  })
+  assert.equal(result.payer, 'SELLER_PAYS')
+  assert.equal(result.provenance, 'ORDER_CONTRACT')
+  assert.equal(result.reasonCode, 'CONFIRMED_PROVIDER_CONTRACT_EVIDENCE')
+})
+
+test('BPX-3: GECMIS ham veri kaniti sozlesme SAYILMAZ, alt kaynaga DUSER', () => {
+  const historical = suratBilling.inspectTrendyolBillingSource(
+    { rawOrder: { packageId: 'P1', orderNumber: 'N1', whoPays: '1' } },
+    { origin: 'PERSISTED_HISTORICAL' },
+  )
+  assert.notEqual(historical.evidence, 'CONFIRMED_PROVIDER_CONTRACT')
+
+  const evidence = {
+    billingParty: historical.billingParty,
+    evidence: historical.evidence,
+    provenance: historical.provenance,
+  }
+  // Yapilandirma YOKSA UNKNOWN.
+  assert.equal(
+    payer.resolveShippingBillingParty({ marketplace: 'trendyol', orderContractEvidence: evidence })
+      .payer,
+    'UNKNOWN',
+  )
+  // Hesap ayari VARSA ONA duser (sozlesme kanitina DEGIL).
+  const fallback = payer.resolveShippingBillingParty({
+    marketplace: 'trendyol',
+    orderContractEvidence: evidence,
+    marketplaceAccountConfig: 'MARKETPLACE_PAYS',
+  })
+  assert.equal(fallback.payer, 'MARKETPLACE_PAYS')
+  assert.equal(fallback.provenance, 'ACCOUNT_CONFIG')
+})
+
+// ── ÜRÜNE BAĞLAMA: GİDİŞ-DÖNÜŞ ────────────────────────────────────────────
+
+test('BPX-4: hesap gorunumu yuklenir, secim KALICI olur ve GERI OKUNUR', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'bpx-4')
+  const n11Account = await makeAccount(db, org, 'n11', 'n11-1')
+  const trendyolAccount = await makeAccount(db, org, 'trendyol', '277221')
+
+  const before = await accountConfig.loadAccountPayerView(db, org)
+  assert.equal(before.length, 2)
+  const n11Before = before.find((row) => row.marketplaceAccountId === n11Account)
+  const tyBefore = before.find((row) => row.marketplaceAccountId === trendyolAccount)
+
+  // Trendyol: sozlesmeden turetilir → operatore SORULMAZ.
+  assert.equal(tyBefore.evidenceClass, 'CAN_DERIVE_FROM_ORDER')
+  assert.equal(tyBefore.configurable, false)
+  // n11: hesap ayari gerekir, baslangicta secilmemis.
+  assert.equal(n11Before.evidenceClass, 'ACCOUNT_CONFIG_REQUIRED')
+  assert.equal(n11Before.configurable, true)
+  assert.equal(n11Before.payer, 'UNKNOWN')
+
+  // YAZ → GERI OKU.
+  await accountConfig.setAccountPayerConfig(db, org, n11Account, 'SELLER_PAYS')
+  const after = await accountConfig.loadAccountPayerView(db, org)
+  assert.equal(
+    after.find((row) => row.marketplaceAccountId === n11Account).payer,
+    'SELLER_PAYS',
+    'secim KALICI ve GERI OKUNUR',
+  )
+  // Kardes hesap ETKILENMEDI.
+  assert.equal(
+    after.find((row) => row.marketplaceAccountId === trendyolAccount).payer,
+    'UNKNOWN',
+  )
+  // Gorunum SIR tasimaz.
+  const serialized = JSON.stringify(after)
+  for (const secret of ['password', 'apiKey', 'apiSecret', 'token', 'encrypted']) {
+    assert.equal(serialized.toLowerCase().includes(secret.toLowerCase()), false, secret)
+  }
+})
+
+test('BPX-5: gecersiz odeyen degeri REDDEDILIR', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'bpx-5')
+  const account = await makeAccount(db, org, 'n11', 'n11-1')
+  for (const bad of ['', 'BUYER_PAYS', 'seller', 'true', 'PLATFORM_PAYS']) {
+    await assert.rejects(
+      () => accountConfig.setAccountPayerConfig(db, org, account, bad),
+      accountConfig.InvalidPayerValueError,
+      `kabul EDILMEMELIYDI: ${bad}`,
+    )
+  }
+})
+
+test('BPX-6: baska kiracinin hesabina YAZILAMAZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const orgA = await makeOrg(db, 'bpx-6-a')
+  const orgB = await makeOrg(db, 'bpx-6-b')
+  const bAccount = await makeAccount(db, orgB, 'n11', 'b-1')
+
+  await assert.rejects(
+    () => accountConfig.setAccountPayerConfig(db, orgA, bAccount, 'SELLER_PAYS'),
+    accountConfig.AccountNotInTenantError,
+  )
+  // B'nin ayari DEGISMEDI.
+  assert.deepEqual(await accountConfig.loadAccountPayerConfigs(db, orgB), {})
+  // A hicbir hesap GORMEZ.
+  assert.deepEqual(await accountConfig.loadAccountPayerView(db, orgA), [])
+})
+
+// ── API YÜZEYİ ─────────────────────────────────────────────────────────────
+
+test('BPX-7: odeyen ucu kiraci govdeden ALMAZ, sir ve saglayici cagrisi ICERMEZ', () => {
+  const source = readFileSync(join(here, 'index.mjs'), 'utf8')
+  const start = source.indexOf("app.get('/api/shipping/payer'")
+  assert.ok(start > 0, 'odeyen ucu bulunamadi')
+  const end = source.indexOf("app.get('/api/subscription/status'")
+  assert.ok(end > start)
+  const block = source.slice(start, end)
+
+  assert.match(block, /requireOnboardingContext/)
+  assert.equal(
+    /organizationId\s*[:=]\s*(request|req)\.body/.test(block),
+    false,
+    'kiraci govdeden ALINAMAZ',
+  )
+  for (const forbidden of ['fetch(', 'axios', 'apiKey', 'apiSecret', 'password']) {
+    assert.equal(block.includes(forbidden), false, `odeyen ucunda yasak: ${forbidden}`)
+  }
+  // Sahiplik hatasi 404, gecersiz deger 400 olarak AYRISIR.
+  assert.match(block, /AccountNotInTenantError/)
+  assert.match(block, /InvalidPayerValueError/)
+})
+
+test('BPX-8: UNKNOWN hala CONFIG_REQUIRED kapisi uretir', () => {
+  const unknown = payer.resolveShippingBillingParty({ marketplace: 'n11' })
+  assert.equal(payer.routingGateForPayer(unknown).gate, 'CONFIG_REQUIRED')
+  const chosen = payer.resolveShippingBillingParty({
+    marketplace: 'n11',
+    marketplaceAccountConfig: 'MARKETPLACE_PAYS',
+  })
+  assert.equal(payer.routingGateForPayer(chosen).gate, 'ALLOWED')
+})
+
+test('BPX-9: abonelik duzeltmeleri ve ayrimi KORUNDU', async () => {
+  const planRepo = await import('./subscription/planRepository.ts')
+  // ec21c97: tasiyici saglayici listesi ve fail-closed plan cozumlemesi.
+  assert.deepEqual([...planRepo.CARRIER_PROVIDERS], ['surat'])
+  assert.ok(planRepo.PLAN_RESOLUTIONS.includes('INVALID_ASSIGNMENT'))
+  assert.ok(planRepo.PLAN_RESOLUTIONS.includes('LEGACY_NO_ASSIGNMENT'))
+
+  // Odeyen modulu abonelik modulunu IMPORT ETMEZ (import satirlari).
+  const source = readFileSync(join(here, 'shipments', 'shippingBillingParty.ts'), 'utf8')
+  const imports = [...source.matchAll(/^\s*import[^\n]*from\s+'([^']+)'/gm)].map((m) => m[1])
+  for (const specifier of imports) {
+    assert.equal(specifier.includes('subscription'), false, specifier)
+  }
+})

@@ -24,7 +24,11 @@
 //
 // Aras/Sürat'ın varlığı kimin ödediğini KANITLAMAZ. Taşıyıcı kimliğinden
 // ödeyen çıkarımı YASAKTIR (BP-4, BP-10).
-import type { BillingParty } from './suratBillingParty.ts'
+import type {
+  BillingEvidenceLevel,
+  BillingParty,
+  RawDataProvenance,
+} from './suratBillingParty.ts'
 
 /** Sağlayıcı-nötr kanonik ödeyen durumu. */
 export const SHIPPING_PAYERS = ['MARKETPLACE_PAYS', 'SELLER_PAYS', 'UNKNOWN'] as const
@@ -71,14 +75,30 @@ export const PAYER_PRECEDENCE: readonly PayerProvenance[] = [
  */
 export const MARKETPLACES_WITH_VERIFIED_ORDER_SIGNAL = ['trendyol'] as const
 
+/**
+ * SİPARİŞ SÖZLEŞMESİ KANITI — DÜZ DEĞER KABUL EDİLMEZ.
+ *
+ * ÖLÇÜLEN AÇIK: önceki sürümde bu alan düz bir `BillingParty` idi; yani
+ * HERHANGİ bir çağıran `'TRENDYOL'` yazarak `ORDER_CONTRACT` kökeni
+ * UYDURABİLİYORDU. Köken iddiası, kanıtın KENDİSİYLE gelmek zorundadır.
+ *
+ * Kanıt alanları `suratBillingParty.inspectTrendyolBillingSource()`
+ * çıktısından OLDUĞU GİBİ taşınır; burada yeniden hesaplanmaz.
+ */
+export interface OrderContractEvidence {
+  billingParty: BillingParty
+  /** YALNIZ `CONFIRMED_PROVIDER_CONTRACT` sözleşme kanıtı sayılır. */
+  evidence: BillingEvidenceLevel
+  /** Yükün gerçekte ne olduğu; yalnız `PROVIDER_RAW` kabul edilir. */
+  provenance: RawDataProvenance
+}
+
 export interface ShippingPayerInput {
   marketplace: string
   /**
-   * Sağlayıcı sipariş sözleşmesinden ÇÖZÜLMÜŞ sonuç (ör. Trendyol için
-   * `classifyTrendyolWhoPays(...).billingParty`). Yalnız DOĞRULANMIŞ sinyali
-   * olan pazaryerleri için verilir.
+   * Sağlayıcı sipariş sözleşmesi KANITI. Düz `BillingParty` YETMEZ.
    */
-  verifiedOrderSignal?: BillingParty | null
+  orderContractEvidence?: OrderContractEvidence | null
   /** Hesap düzeyinde operatör yapılandırması. */
   marketplaceAccountConfig?: ShippingPayer | null
   /** Kiracı geneli varsayılan. */
@@ -122,17 +142,30 @@ export function resolveShippingBillingParty(
 ): ShippingPayerResult {
   const marketplace = normalizeMarketplace(input.marketplace)
 
-  // 1) DOĞRULANMIŞ SİPARİŞ SÖZLEŞMESİ — yalnız kanıtı olan pazaryerlerinde.
+  // 1) DOĞRULANMIŞ SİPARİŞ SÖZLEŞMESİ — ÜÇ KOŞUL BİRDEN.
+  //
+  //   (a) pazaryerinin doğrulanmış sözleşme sinyali OLMALI
+  //   (b) kanıt seviyesi `CONFIRMED_PROVIDER_CONTRACT` OLMALI
+  //   (c) yük gerçekten SAĞLAYICI HAM PAKETİ (`PROVIDER_RAW`) OLMALI
+  //
+  // `UNVERIFIED_HISTORICAL_RAW` / `NORMALIZED_COPY` / `RECONSTRUCTED` /
+  // `UNKNOWN` sözleşme kanıtı SAYILMAZ ve bir alt kaynağa DÜŞÜLÜR.
   const hasVerifiedContract = (
     MARKETPLACES_WITH_VERIFIED_ORDER_SIGNAL as readonly string[]
   ).includes(marketplace)
-  if (hasVerifiedContract && input.verifiedOrderSignal) {
-    const payer = canonicalizeBillingParty(input.verifiedOrderSignal)
+  const evidence = input.orderContractEvidence ?? null
+  if (
+    hasVerifiedContract &&
+    evidence &&
+    evidence.evidence === 'CONFIRMED_PROVIDER_CONTRACT' &&
+    evidence.provenance === 'PROVIDER_RAW'
+  ) {
+    const payer = canonicalizeBillingParty(evidence.billingParty)
     if (payer !== 'UNKNOWN') {
       return {
         payer,
         provenance: 'ORDER_CONTRACT',
-        reasonCode: 'VERIFIED_ORDER_CONTRACT_SIGNAL',
+        reasonCode: 'CONFIRMED_PROVIDER_CONTRACT_EVIDENCE',
         usableForRouting: true,
       }
     }

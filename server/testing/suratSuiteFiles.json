@@ -241,5 +241,6 @@
   "server/integration-health-multi-account-flow.test.mjs",
   "server/integration-health-credential-presence-flow.test.mjs",
   "server/subscription-model-flow.test.mjs",
-  "server/shipping-billing-party-flow.test.mjs"
+  "server/shipping-billing-party-flow.test.mjs",
+  "server/shipping-billing-party-closeout-flow.test.mjs"
 ]
