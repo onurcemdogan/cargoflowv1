@@ -242,5 +242,6 @@
   "server/integration-health-credential-presence-flow.test.mjs",
   "server/subscription-model-flow.test.mjs",
   "server/shipping-billing-party-flow.test.mjs",
-  "server/shipping-billing-party-closeout-flow.test.mjs"
+  "server/shipping-billing-party-closeout-flow.test.mjs",
+  "server/trendyol-order-contract-provenance-flow.test.mjs"
 ]

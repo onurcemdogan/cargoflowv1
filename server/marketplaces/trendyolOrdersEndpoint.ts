@@ -95,6 +95,19 @@ export function isDeprecatedTrendyolOrdersUrl(url: unknown): boolean {
   )
 }
 
+/**
+ * Bir URL GERÇEKTEN v2 sipariş ucuna mı gidiyor?
+ *
+ * Sözleşme kanıtı üretimi (bkz. `trendyolLiveOrderIngestion.ts`) bunu SORAR:
+ * "bu yanıt sipariş servisinden mi geldi?". Yol dizgisi BURADA tanımlıdır,
+ * bu yüzden tanıma da BURADA yapılır — çağıran modülün kendi regex'ini
+ * yazması, yolun tek otoritede olması ilkesini bozardı.
+ */
+export function isTrendyolOrdersV2Url(url: unknown): boolean {
+  const text = String(url ?? '')
+  return /\/integration\/order\/sellers\/[^/]+\/v2\/orders(?:$|[?#])/.test(text)
+}
+
 // ═══ ERİŞİM PENCERESİ (10.000 KAYIT) ══════════════════════════════════════
 //
 // Resmî örnek size=200 üzerinden anlatılır (page 0..49). Gerçek değişmez

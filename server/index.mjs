@@ -37,6 +37,13 @@ import {
   TRENDYOL_V2_MAX_RANGE_MS,
 } from './marketplaces/trendyolOrdersEndpoint.ts'
 import { normalizeTrendyolOrderDate } from './marketplaces/trendyolOrderDate.ts'
+// SÖZLEŞME KANITI YALNIZ BURADA DOĞAR: canlı Trendyol yanıtının döndüğü
+// noktada. Genel `(yük, 'LIVE_PROVIDER_RESPONSE')` fabrikası KALDIRILDI —
+// çağıranın yazdığı bir dizge artık güven üretmez.
+import {
+  ingestTrendyolLiveOrderResponse,
+  mergeOrderContractEvidence,
+} from './shipments/trendyolLiveOrderIngestion.ts'
 import { buildTrendyolShipmentEligibility } from './shipments/trendyolShipmentEligibility.ts'
 import { resolveOutboundRecipientPhone } from '../src/utils/labelData.ts'
 import {
@@ -4319,6 +4326,13 @@ if (!listenSuppressed) app.listen(port, host, () => {
 // Tek iş çalıştırıcısı bu fonksiyonu ENJEKTE alır; böylece worker ile
 // kanarya YAPISAL OLARAK ayrışamaz.
 export { runLabelJobViaCreateHandler }
+
+// PROV-3 REGRESYONU İÇİN: sözleşme kanıtı GERÇEK çekim yolunda mı doğuyor?
+// Bu soru ancak ÜRETİMDEKİ fonksiyonun KENDİSİ çalıştırılarak yanıtlanır —
+// kaynak metnine bakmak ya da kopya bir harness yazmak kanıt DEĞİLDİR.
+// Taşıma katmanı `globalThis.fetch` üzerinden taklit edilir; fonksiyonun
+// içindeki HİÇBİR ŞEY değiştirilmez.
+export { callTrendyolOrders, callTrendyolOrdersAllPages }
 
 // Kapanışta yeni tur başlatılmaz (mevcut zamanlayıcı temizlenir).
 for (const signal of ['SIGTERM', 'SIGINT']) {
@@ -12812,6 +12826,9 @@ async function fetchTrendyolOrderSlicePages(credentials, query = {}) {
     },
   ]
   const combinedContent = [...firstContent]
+  // Kanıt sayfa sayfa TOPLANIR. Birleştirme YENİ nesne üretmez; canlı
+  // sınırda basılan nesnelerin KENDİLERİ taşınır, marka bu yüzden korunur.
+  const collectedEvidence = [firstResult.orderContractEvidence]
 
   for (let page = firstPage + 1; page < maxPages; page += 1) {
     const pageResult = await callTrendyolOrders(credentials, {
@@ -12836,6 +12853,7 @@ async function fetchTrendyolOrderSlicePages(credentials, query = {}) {
       return {
         ...pageResult,
         ok: false,
+        orderContractEvidence: mergeOrderContractEvidence(...collectedEvidence),
         message: `Trendyol sayfalı sipariş çekimi eksik kaldı. ${page}. sayfa alınamadı: ${pageResult.message}`,
         partialContent: combinedContent,
         failedPage: page,
@@ -12849,6 +12867,7 @@ async function fetchTrendyolOrderSlicePages(credentials, query = {}) {
     }
 
     combinedContent.push(...pageContent)
+    collectedEvidence.push(pageResult.orderContractEvidence)
   }
 
   // Önceki denemeden devralınan sayfalar (varsa) BAŞA eklenir; tekrar eden
@@ -12859,6 +12878,7 @@ async function fetchTrendyolOrderSlicePages(credentials, query = {}) {
 
   return {
     ...firstResult,
+    orderContractEvidence: mergeOrderContractEvidence(...collectedEvidence),
     message:
       totalPages > 1
         ? `Trendyol siparişleri ${maxPages} sayfadan alındı.`
@@ -12968,6 +12988,7 @@ async function resolveTrendyolCappedSlice(credentials, query, cappedResult) {
 async function runTrendyolOrderSlices(credentials, query, slices, sliceReason) {
   const sliceResults = []
   const collected = []
+  const collectedEvidence = []
   let exhausted = false
   for (const slice of slices) {
     // Dilim içinde sayfa devamlılığı YOKTUR: devralınan içerik farklı bir
@@ -12987,6 +13008,7 @@ async function runTrendyolOrderSlices(credentials, query, slices, sliceReason) {
     if (!result.ok) {
       return {
         ...result,
+        orderContractEvidence: mergeOrderContractEvidence(...collectedEvidence),
         message: `Trendyol dilimli sipariş çekimi eksik kaldı: ${result.message}`,
         partialContent: mergeTrendyolPackageCollections(...collected),
         debug: {
@@ -12998,6 +13020,7 @@ async function runTrendyolOrderSlices(credentials, query, slices, sliceReason) {
     }
     if (result.queryWindowExhausted) exhausted = true
     collected.push(getTrendyolOrderPackagesArray(result.data))
+    collectedEvidence.push(result.orderContractEvidence)
   }
 
   const content = mergeTrendyolPackageCollections(...collected)
@@ -13010,6 +13033,7 @@ async function runTrendyolOrderSlices(credentials, query, slices, sliceReason) {
   }
   return {
     ...firstResult,
+    orderContractEvidence: mergeOrderContractEvidence(...collectedEvidence),
     queryWindowExhausted: exhausted,
     message: `Trendyol siparişleri ${slices.length} tarih diliminden alındı.`,
     data: {
@@ -13181,8 +13205,24 @@ async function callTrendyolOrders(credentials, query) {
     )
     await new Promise((resolve) => setTimeout(resolve, delayMs))
   }
+  // ═══ SÖZLEŞME KANITININ DOĞUM NOKTASI ══════════════════════════════════
+  //
+  // Yanıt GERÇEKTEN Trendyol'dan başarıyla döndüğü AN burasıdır. Kanıt
+  // burada basılır; sınır modülü gövde METNİNİ kendisi ayrıştırır ve zarfı
+  // (başarı + 2xx + v2 sipariş ucu + JSON) KENDİ ölçer. Çözümlenmiş bir
+  // nesne geçirmek MÜMKÜN DEĞİLDİR, bu yüzden üst katmanlardan hiçbiri
+  // "bu yük canlı yanıttan geldi" diye BEYANDA BULUNAMAZ.
+  const orderContractEvidence = ingestTrendyolLiveOrderResponse({
+    ok: result?.ok,
+    statusCode: result?.statusCode,
+    requestUrl: url,
+    contentType: result?.debug?.contentType,
+    rawResponseText: result?.rawResponse,
+  }).evidenceByPackageId
+
   return {
     ...result,
+    orderContractEvidence,
     debug: {
       ...(result?.debug ?? {}),
       rateLimitRetries,

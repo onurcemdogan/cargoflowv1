@@ -22,6 +22,26 @@ const schema = await import('./db/schema.ts')
 const payer = await import('./shipments/shippingBillingParty.ts')
 const suratBilling = await import('./shipments/suratBillingParty.ts')
 const accountConfig = await import('./shipments/marketplacePayerConfig.ts')
+const ingestion = await import('./shipments/trendyolLiveOrderIngestion.ts')
+
+/**
+ * CANLI YANIT SINIRINDAN kanit uretir — kanidin TEK dogum yolu budur.
+ *
+ * PROVENANCE-FINAL'den once burada `createTrendyolOrderContractEvidence`
+ * cagriliyordu; o genel fabrika `(rastgeleYuk, { origin: 'LIVE_...' })`
+ * kabul ettigi icin KALDIRILDI (bkz. PROV-1).
+ */
+function liveEvidence(rawPackage, packageId = 'P1') {
+  const outcome = ingestion.ingestTrendyolLiveOrderResponse({
+    ok: true,
+    statusCode: 200,
+    requestUrl:
+      'https://apigw.trendyol.com/integration/order/sellers/277221/v2/orders?page=0&size=50',
+    contentType: 'application/json',
+    rawResponseText: JSON.stringify({ content: [rawPackage] }),
+  })
+  return outcome.evidenceByPackageId.get(packageId)
+}
 
 function migrationStatements() {
   const dir = join(here, '..', 'drizzle')
@@ -89,22 +109,16 @@ test('BPX-1: DUZ deger UYDURMA koken URETEMEZ', () => {
 })
 
 test('BPX-2: DOGRULANMIS saglayici sozlesmesi kaniti DOGRU cozulur', () => {
-  // Kanit, mevcut forensic modulden OLDUGU GIBI gelir.
-  const live = suratBilling.inspectTrendyolBillingSource(
-    { rawOrder: { packageId: 'P1', orderNumber: 'N1', whoPays: '1' } },
-    { origin: 'LIVE_PROVIDER_RESPONSE' },
-  )
+  // Kanit CANLI YANIT SINIRINDA dogar; taraf karari forensic modulden gelir.
+  const live = liveEvidence({ packageId: 'P1', orderNumber: 'N1', whoPays: '1' })
   assert.equal(live.evidence, 'CONFIRMED_PROVIDER_CONTRACT')
   assert.equal(live.provenance, 'PROVIDER_RAW')
   assert.equal(live.billingParty, 'SELLER')
 
-  // KANIT FABRIKADAN gecmelidir: alanlari kopyalamak YETMEZ (BPZ-1).
+  // KANIT O SINIRDAN gecmelidir: alanlari kopyalamak YETMEZ (BPZ-1).
   const result = payer.resolveShippingBillingParty({
     marketplace: 'trendyol',
-    orderContractEvidence: payer.createTrendyolOrderContractEvidence(
-      { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
-      { origin: 'LIVE_PROVIDER_RESPONSE' },
-    ),
+    orderContractEvidence: live,
   })
   assert.equal(result.payer, 'SELLER_PAYS')
   assert.equal(result.provenance, 'ORDER_CONTRACT')
@@ -112,10 +126,9 @@ test('BPX-2: DOGRULANMIS saglayici sozlesmesi kaniti DOGRU cozulur', () => {
 })
 
 test('BPX-3: GECMIS ham veri kaniti sozlesme SAYILMAZ, alt kaynaga DUSER', () => {
-  const historical = suratBilling.inspectTrendyolBillingSource(
-    { rawOrder: { packageId: 'P1', orderNumber: 'N1', whoPays: '1' } },
-    { origin: 'PERSISTED_HISTORICAL' },
-  )
+  const historical = suratBilling.inspectTrendyolBillingSource({
+    rawOrder: { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
+  })
   assert.notEqual(historical.evidence, 'CONFIRMED_PROVIDER_CONTRACT')
 
   const evidence = {
@@ -285,10 +298,7 @@ test('BPZ-1: ELLE kurulmus mukemmel kanit ORDER_CONTRACT URETEMEZ', () => {
   assert.equal(result.payer, 'UNKNOWN')
 
   // Gercek kanidin KOPYASI da gecersizdir (marka nesneye baglidir).
-  const real = payer.createTrendyolOrderContractEvidence(
-    { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
-    { origin: 'LIVE_PROVIDER_RESPONSE' },
-  )
+  const real = liveEvidence({ packageId: 'P1', orderNumber: 'N1', whoPays: '1' })
   const copy = { ...real }
   assert.equal(payer.isTrustedOrderContractEvidence(copy), false, 'kopya da gecersiz')
   assert.equal(
@@ -300,11 +310,8 @@ test('BPZ-1: ELLE kurulmus mukemmel kanit ORDER_CONTRACT URETEMEZ', () => {
   )
 })
 
-test('BPZ-2: FABRIKADAN gecen kanit ORDER_CONTRACT uretir', () => {
-  const evidence = payer.createTrendyolOrderContractEvidence(
-    { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
-    { origin: 'LIVE_PROVIDER_RESPONSE' },
-  )
+test('BPZ-2: CANLI YANIT SINIRINDAN gecen kanit ORDER_CONTRACT uretir', () => {
+  const evidence = liveEvidence({ packageId: 'P1', orderNumber: 'N1', whoPays: '1' })
   assert.equal(payer.isTrustedOrderContractEvidence(evidence), true)
   const result = payer.resolveShippingBillingParty({
     marketplace: 'trendyol',
@@ -314,40 +321,43 @@ test('BPZ-2: FABRIKADAN gecen kanit ORDER_CONTRACT uretir', () => {
   assert.equal(result.provenance, 'ORDER_CONTRACT')
 })
 
-test('BPZ-3: fabrika SINIFLANDIRMAYI KOPYALAMAZ, forensic modulu CAGIRIR', () => {
-  // Ayni girdi, iki yol → AYNI karar.
-  const viaFactory = payer.createTrendyolOrderContractEvidence(
-    { packageId: 'P1', orderNumber: 'N1' },
-    { origin: 'LIVE_PROVIDER_RESPONSE' },
-  )
-  const viaForensic = suratBilling.inspectTrendyolBillingSource(
-    { rawOrder: { packageId: 'P1', orderNumber: 'N1' } },
-    { origin: 'LIVE_PROVIDER_RESPONSE' },
-  )
-  assert.equal(viaFactory.billingParty, viaForensic.billingParty)
-  assert.equal(viaFactory.evidence, viaForensic.evidence)
-  assert.equal(viaFactory.provenance, viaForensic.provenance)
+test('BPZ-3: sinir SINIFLANDIRMAYI KOPYALAMAZ, forensic modulu CAGIRIR', () => {
+  // Ayni girdi, iki yol → AYNI TARAF karari (seviye canli sinirda yukselir).
+  const viaBoundary = liveEvidence({ packageId: 'P1', orderNumber: 'N1' })
+  const viaForensic = suratBilling.inspectTrendyolBillingSource({
+    rawOrder: { packageId: 'P1', orderNumber: 'N1' },
+  })
+  assert.equal(viaBoundary.billingParty, viaForensic.billingParty)
+  assert.equal(viaBoundary.provenance, viaForensic.provenance)
+  assert.equal(viaBoundary.interpretation, viaForensic.interpretation)
   // whoPays alani YOK → sozlesme geregi TRENDYOL oder.
-  assert.equal(viaFactory.billingParty, 'TRENDYOL')
+  assert.equal(viaBoundary.billingParty, 'TRENDYOL')
+  // Seviye FARKI tam olarak sinirin kattigi seydir.
+  assert.equal(viaBoundary.evidence, 'CONFIRMED_PROVIDER_CONTRACT')
+  assert.equal(viaForensic.evidence, 'UNVERIFIED_HISTORICAL_RAW')
 
-  // Trendyol karar mantigi COZUMLEYICIDE YENIDEN YAZILMAMIS olmali.
+  // Trendyol karar mantigi NE cozumleyicide NE de sinirda YENIDEN YAZILMIS
+  // olmali. (Sinir modulunun kendi taramasi: PROV-NODUP.)
   const source = readFileSync(join(here, 'shipments', 'shippingBillingParty.ts'), 'utf8')
+  // SATIR yorumlari ONCE silinir: aksi halde bir satir yorumundaki `/*`
+  // dizisi (orn. "server/subscription/*") blok-yorum silicisini yanlis
+  // yerden baslatir ve import blogunu YUTAR — tarama sessizce KORLESIR.
   const code = source
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
   for (const duplicated of ['whoPays', "'1'", 'hasOwnField', 'readOwnField']) {
     assert.equal(code.includes(duplicated), false, `siniflandirma KOPYALANMIS: ${duplicated}`)
   }
-  assert.match(code, /inspectTrendyolBillingSource/)
+  // Cozumleyici kanidi TUKETIR; kanidi ureten sinirri ISIMLE isaret eder.
+  assert.match(code, /trendyolLiveOrderIngestion/)
 })
 
-test('BPZ-4: PERSISTED koken sozlesme kaniti URETMEZ', () => {
-  const persisted = payer.createTrendyolOrderContractEvidence(
-    { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
-    { origin: 'PERSISTED' },
-  )
-  // Fabrikadan gecti (markali) AMA seviye yetersiz.
-  assert.equal(payer.isTrustedOrderContractEvidence(persisted), true)
+test('BPZ-4: SAKLANMIS yuk sozlesme kaniti URETMEZ', () => {
+  // Kalicidan okunan yuk canli sinirdan GECMEZ → markasizdir.
+  const persisted = suratBilling.inspectTrendyolBillingSource({
+    rawOrder: { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
+  })
+  assert.equal(payer.isTrustedOrderContractEvidence(persisted), false)
   assert.notEqual(persisted.evidence, 'CONFIRMED_PROVIDER_CONTRACT')
   assert.equal(
     payer.resolveShippingBillingParty({
@@ -355,6 +365,12 @@ test('BPZ-4: PERSISTED koken sozlesme kaniti URETMEZ', () => {
       orderContractEvidence: persisted,
     }).provenance,
     'UNKNOWN',
+  )
+
+  // Normalize edilmis kopya canli sinirdan GECSE BILE kanit URETMEZ.
+  assert.equal(
+    liveEvidence({ packageId: 'P1', marketplace: 'Trendyol', customerName: 'x' }),
+    undefined,
   )
 })
 

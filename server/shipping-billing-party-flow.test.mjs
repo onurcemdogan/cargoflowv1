@@ -27,11 +27,13 @@ const schema = await import('./db/schema.ts')
 const payer = await import('./shipments/shippingBillingParty.ts')
 const suratBilling = await import('./shipments/suratBillingParty.ts')
 const accountConfig = await import('./shipments/marketplacePayerConfig.ts')
+const ingestion = await import('./shipments/trendyolLiveOrderIngestion.ts')
 
 /**
  * DOGRULANMIS saglayici sozlesmesi kaniti uretir.
  *
- * ELLE NESNE KURULMAZ (BPZ-1): kanit YALNIZ guvenilir fabrikadan cikar.
+ * ELLE NESNE KURULMAZ ve BAYRAK YAZILMAZ (PROV-1): kanidin TEK dogum yeri
+ * canli yanit sinirridir. Test o siniri GERCEK yanit zarfiyla surer.
  * Istenen tarafi uretmek icin Trendyol sozlesmesi kullanilir:
  *   whoPays own-property '1' → SELLER ; property YOK → TRENDYOL
  */
@@ -40,9 +42,16 @@ function confirmedEvidence(billingParty) {
     billingParty === 'SELLER'
       ? { packageId: 'P1', orderNumber: 'N1', whoPays: '1' }
       : { packageId: 'P1', orderNumber: 'N1' }
-  const evidence = payer.createTrendyolOrderContractEvidence(raw, {
-    origin: 'LIVE_PROVIDER_RESPONSE',
+  const outcome = ingestion.ingestTrendyolLiveOrderResponse({
+    ok: true,
+    statusCode: 200,
+    requestUrl:
+      'https://apigw.trendyol.com/integration/order/sellers/277221/v2/orders?page=0&size=50',
+    contentType: 'application/json',
+    rawResponseText: JSON.stringify({ content: [raw] }),
   })
+  const evidence = outcome.evidenceByPackageId.get('P1')
+  assert.ok(evidence, 'canli sinir kanit URETMELI')
   assert.equal(evidence.billingParty, billingParty, 'kanit beklenen tarafi uretmeli')
   return evidence
 }
