@@ -239,5 +239,6 @@
   "server/provider-contract-pack-flow.test.mjs",
   "server/integration-health-flow.test.mjs",
   "server/integration-health-multi-account-flow.test.mjs",
-  "server/integration-health-credential-presence-flow.test.mjs"
+  "server/integration-health-credential-presence-flow.test.mjs",
+  "server/billing-model-flow.test.mjs"
 ]

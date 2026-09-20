@@ -2476,6 +2476,28 @@ app.get('/api/integrations/health', async (request, response) => {
   }
 })
 
+// GET /api/billing/status — TİCARİ PLAN / HAK DURUMU (SALT OKUNUR).
+//
+// DİKKAT: buradaki "billing" CargoFlow ABONELİĞİDİR; taşıyıcı `billingParty`
+// (Platform Öder / Satıcı Öder) ile İLGİSİ YOKTUR.
+//
+// Kiracı kapsamı `requireOnboardingContext`ten gelir; istek gövdesiyle
+// organizasyon DEĞİŞTİRİLEMEZ. Ödeme sağlayıcısı YOKTUR; yanıt kimlik
+// bilgisi, token ya da ödeme verisi TAŞIMAZ.
+app.get('/api/billing/status', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const { loadBillingStatus } = await import('./billing/billingStatusService.ts')
+    const status = await loadBillingStatus(context.db, context.organizationId, {
+      nowMs: Date.now(),
+    })
+    response.json({ ok: true, ...status })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Plan durumu okunamadı.' })
+  }
+})
+
 // POST /api/onboarding/complete — koşullar sağlanmıyorsa 409 + eksik adımlar;
 // sağlanıyorsa onboardingCompleted=true. Sürat create çağrısı YAPILMAZ.
 app.post('/api/onboarding/complete', async (request, response) => {
