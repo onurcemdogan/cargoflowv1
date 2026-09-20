@@ -92,6 +92,13 @@
       "when": 1789297507844,
       "tag": "0012_user_label_activation",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789946546039,
+      "tag": "0013_woocommerce_connector",
+      "breakpoints": true
     }
   ]
 }

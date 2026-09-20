@@ -53,6 +53,14 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
   assert.deepEqual(
     tables.rows.map((row) => row.table_name),
     [
+      // HESAP KAPSAMLI BAĞLAYICI KİMLİKLERİ (0013). `integration_credentials`
+      // org+provider TEKİLDİR ve bir org'un İKİ Woo mağazası için ayrı sır
+      // TUTAMAZ; bu tablo hesap kapsamlıdır ve sağlayıcı-nötrdür.
+      'connector_credentials',
+      // DAYANIKLI WEBHOOK GELEN KUTUSU (0013). WooCommerce ardışık 5
+      // başarısız teslimden sonra webhook'u DISABLED yapar → doğrulama
+      // sonrası KALICI yazım 2xx'ten ÖNCE gelmek zorundadır.
+      'connector_webhook_inbox',
       'integration_credentials',
       'integration_sync_state',
       // ARKA PLAN ETIKET IS KUYRUGU (0010). Tekillik VERITABANI kisitindadir:

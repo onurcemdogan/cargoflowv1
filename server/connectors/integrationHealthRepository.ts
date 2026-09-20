@@ -35,8 +35,8 @@
 // Depoda Postgres RLS YOKTUR. İzolasyon UYGULAMA KAPSAMIYLA sağlanır:
 // buradaki HER sorgu `organization_id` eşitliği taşır ve bu dosyada
 // kapsamsız `select` YAZILAMAZ (testle kilitli).
-import { and, eq } from 'drizzle-orm'
-import { integrationSyncState } from '../db/schema.ts'
+import { and, eq, inArray } from 'drizzle-orm'
+import { integrationSyncState, marketplaceAccounts } from '../db/schema.ts'
 import {
   connectionKey,
   resolveIntegrationHealth,
@@ -86,7 +86,13 @@ interface ConnectionRow {
   providerKey: string
   marketplaceAccountId: string | null
   scope: ConnectionScope
-  syncState: StoredSyncState
+  /**
+   * `null` = YAPILANDIRILMIŞ AMA HİÇ ÇALIŞMAMIŞ.
+   *
+   * Sahte bir "boş durum" nesnesi üretilmez: çözümleyici `null`ı NEVER_RUN
+   * olarak okur ve bu, uydurulmuş bir tarih/statüden DAHA DOĞRUDUR.
+   */
+  syncState: StoredSyncState | null
 }
 
 /**
@@ -145,6 +151,47 @@ export async function loadIntegrationHealth(
         lastFetchedCount: (row.lastFetchedCount as number | null) ?? null,
         updatedAt: (row.updatedAt as Date | null) ?? null,
       },
+    })
+  }
+
+  // ═══ İLK SENKRON ÖNCESİ BAĞLANTI GERÇEĞİ (WOOCOMMERCE-001) ════════════
+  //
+  // ÖLÇÜLEN KUSUR (yeniden üretildi): sayım YALNIZ `integration_sync_state`
+  // satırlarından yapılıyordu. GERÇEKTEN yapılandırılmış ama HİÇ ÇALIŞMAMIŞ
+  // bir hesap hiç satır üretmediği için aşağıdaki "hiç bağlantısı yok"
+  // dalına düşüyor ve `woocommerce / none / null` görünüyordu — hesap
+  // dururken "bağlantı yok" demek YANLIŞTIR.
+  //
+  // Düzeltme: yapılandırılmış `marketplace_accounts` SAYILIR ve senkron
+  // durumu SOLDAN EŞLEŞTİRİLİR. Satırı olmayan hesap `NEVER_RUN`dur ama
+  // kimliği GERÇEKTİR. Sahte id ÜRETİLMEZ; sağlayıcı ÇÖKERTİLMEZ.
+  //
+  // Eski (hesapsız) senkron satırları `legacy` olarak KALIR.
+  const accountRows: Record<string, unknown>[] = await db
+    .select({
+      id: marketplaceAccounts.id,
+      marketplace: marketplaceAccounts.marketplace,
+    })
+    .from(marketplaceAccounts)
+    .where(
+      and(
+        // KİRACI SINIRI — istisnasız.
+        eq(marketplaceAccounts.organizationId, organizationId),
+        inArray(marketplaceAccounts.marketplace, [...HEALTH_SUPPORTED_PROVIDERS]),
+      ),
+    )
+  for (const row of accountRows) {
+    const providerKey = String(row.marketplace ?? '').toLowerCase()
+    const accountId = String(row.id)
+    const key = connectionKey(providerKey, accountId)
+    // Senkron satırı VARSA o kazanır (gerçek durum daha zengindir).
+    if (connections.has(key)) continue
+    connections.set(key, {
+      providerKey,
+      marketplaceAccountId: accountId,
+      scope: 'account',
+      // HİÇ ÇALIŞMADI: durum uydurulmaz, `null` verilir → NEVER_RUN.
+      syncState: null,
     })
   }
 

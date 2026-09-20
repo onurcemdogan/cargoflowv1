@@ -214,6 +214,16 @@ if (trustProxySetting !== null) {
 }
 
 app.use(cors())
+// ═══ WEBHOOK HAM GÖVDESİ — `express.json`DAN ÖNCE ═══════════════════════
+//
+// WooCommerce imzası HAM İSTEK GÖVDESİ BAYTLARI üzerinden HMAC-SHA256'dır.
+// `express.json()` gövdeyi tüketip nesneye çevirir; nesneyi tekrar
+// serileştirmek AYNI BAYTLARI ÜRETMEZ (anahtar sırası, boşluk, unicode
+// kaçışları, sayı biçimi) ve imza TUTMAZ.
+//
+// Bu yüzden webhook yolu JSON ayrıştırıcıdan ÖNCE `raw` ile bağlanır:
+// `request.body` bir `Buffer`dır. Sıra DEĞİŞTİRİLEMEZ.
+app.use('/api/webhooks/woocommerce', express.raw({ type: '*/*', limit: '5mb' }))
 app.use(express.json({ limit: '10mb' }))
 // KRİTİK: tenantAuth (requireAuth) ve onboarding/orders/products endpoint'leri
 // ana app üzerinde çalışır ve session token'ını request.cookies'ten okur.
@@ -2538,6 +2548,129 @@ app.post('/api/shipping/payer', async (request, response) => {
       return
     }
     response.status(500).json({ ok: false, message: 'Ödeyen ayarı kaydedilemedi.' })
+  }
+})
+
+// ── WOOCOMMERCE MAĞAZALARI (ÇOK MAĞAZA, HESAP KAPSAMLI) ──────────────────
+//
+// Kiracı kapsamı CONTEXT'ten gelir; gövdeden ASLA. Sır (`consumer_secret`,
+// webhook secret) HİÇBİR yanıtta DÖNMEZ — yalnız VARLIĞI bildirilir.
+//
+// Mağaza adresi SSRF sınırıdır: doğrulama `storeUrlPolicy` içindedir ve
+// kaydetmeden ÖNCE gerçek kimlik doğrulamalı OKUMA yapılır.
+app.get('/api/integrations/woocommerce/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const service = await import('./connectors/woocommerce/wooConnectionService.ts')
+    const stores = await service.listWooStores(context.db, context.organizationId)
+    response.json({ ok: true, stores })
+  } catch {
+    response.status(500).json({ ok: false, message: 'WooCommerce mağazaları okunamadı.' })
+  }
+})
+
+app.post('/api/integrations/woocommerce/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const service = await import('./connectors/woocommerce/wooConnectionService.ts')
+    const client = await import('./connectors/woocommerce/wooClient.ts')
+    const result = await service.connectWooStore(
+      context.db,
+      {
+        organizationId: context.organizationId,
+        storeUrl: String(request.body?.storeUrl ?? ''),
+        consumerKey: String(request.body?.consumerKey ?? ''),
+        consumerSecret: String(request.body?.consumerSecret ?? ''),
+        webhookSecret: String(request.body?.webhookSecret ?? '') || undefined,
+        displayName: String(request.body?.displayName ?? '') || undefined,
+      },
+      { transport: client.fetchWooTransport },
+    )
+    if (result.outcome !== 'CONNECTED') {
+      // Ham WordPress/PHP metni TAŞINMAZ; yalnız kararlı sınıf + güvenli metin.
+      response.status(result.outcome === 'STORE_URL_REJECTED' ? 400 : 422).json({
+        ok: false,
+        outcome: result.outcome,
+        errorClass: result.errorClass,
+        message: result.message,
+      })
+      return
+    }
+    response.json({
+      ok: true,
+      outcome: result.outcome,
+      marketplaceAccountId: result.account?.id ?? null,
+      providerAccountId: result.providerAccountId,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'WooCommerce mağazası kaydedilemedi.' })
+  }
+})
+
+// ── WOOCOMMERCE WEBHOOK ALIMI ────────────────────────────────────────────
+//
+// KİMLİK DOĞRULAMA İMZADIR, oturum DEĞİL: WooCommerce çerez göndermez. Bu uç
+// bilerek tenant auth kapısının DIŞINDADIR; yetki `X-WC-Webhook-Signature`
+// ile HESABIN KENDİ secret'ı üzerinden kanıtlanır. URL'i tahmin eden biri
+// imzayı üretemez.
+//
+// SIRA: doğrula → KALICI YAZ → 2xx → işle. Sözleşme ardışık 5 başarısız
+// teslimden sonra webhook'u DISABLED yapar; bu yüzden uzun işleme 2xx'i
+// BEKLETEMEZ.
+app.post(
+  '/api/webhooks/woocommerce/:organizationId/:marketplaceAccountId',
+  async (request, response) => {
+    const organizationId = String(request.params.organizationId ?? '').trim()
+    const marketplaceAccountId = String(request.params.marketplaceAccountId ?? '').trim()
+    try {
+      const { getDb } = await import('./db/client.ts')
+      const db = getDb()
+      if (!db) {
+        response.status(503).json({ ok: false })
+        return
+      }
+      const service = await import('./connectors/woocommerce/wooConnectionService.ts')
+      const ingest = await import('./connectors/woocommerce/wooWebhookIngest.ts')
+      const resolved = await service.resolveWooWebhookAccount(db, {
+        organizationId,
+        marketplaceAccountId,
+      })
+      const result = await ingest.ingestWooWebhook(db, {
+        organizationId,
+        marketplaceAccountId,
+        webhookSecret: resolved?.webhookSecret ?? null,
+        request: {
+          // `express.raw` sayesinde BUFFER; yeniden serileştirme YOK.
+          rawBody: Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
+          headers: request.headers,
+        },
+      })
+      response.status(result.httpStatus).json({
+        ok: result.httpStatus >= 200 && result.httpStatus <= 299,
+        outcome: result.outcome,
+      })
+    } catch {
+      // BAŞARI İDDİA EDİLMEZ: sağlayıcının tekrar denemesi DOĞRUDUR.
+      response.status(503).json({ ok: false, outcome: 'NOT_DURABLE' })
+    }
+  },
+)
+
+app.post('/api/integrations/woocommerce/stores/disconnect', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  const marketplaceAccountId = String(request.body?.marketplaceAccountId ?? '').trim()
+  try {
+    const service = await import('./connectors/woocommerce/wooConnectionService.ts')
+    await service.disconnectWooStore(context.db, {
+      organizationId: context.organizationId,
+      marketplaceAccountId,
+    })
+    response.json({ ok: true, marketplaceAccountId })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Bağlantı kaldırılamadı.' })
   }
 })
 

@@ -38,6 +38,7 @@ import {
   resolveTrendyolConfigured,
 } from '../utils/integrationConfigured'
 import { ShippingPayerSection } from '../integrations/ShippingPayerSection'
+import { WooCommerceSection } from '../integrations/WooCommerceSection'
 import {
   integrationCategoryTabs,
   suratDetailTabs,
@@ -156,6 +157,7 @@ export function IntegrationsPage({
         Bu bölüm CargoFlow ABONELİĞİ DEĞİL, gönderi ücretinin ödeyenidir.
         Trendyol'da alan düzenlenemez: ödeyen sipariş sözleşmesinden okunur.
       */}
+      <WooCommerceSection />
       <ShippingPayerSection />
 
       <nav className="integration-category-tabs" aria-label="Entegrasyon kategorileri">

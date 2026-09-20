@@ -26,6 +26,7 @@ const schema = await import('./db/schema.ts')
 const health = await import('./connectors/integrationHealth.ts')
 const catalog = await import('./connectors/providerCatalog.ts')
 const repo = await import('./connectors/integrationHealthRepository.ts')
+const kernel = await import('./connectors/connectorKernel.ts')
 
 const NOW = Date.parse('2026-09-19T12:00:00.000Z')
 const MIN = 60_000
@@ -205,8 +206,18 @@ test('IH-9: saglik yesil olsa da rolloutStage=off OFF kalir', () => {
   assert.equal(result.rolloutStage, 'off', 'saglik ASAMAYI ILERLETMEZ')
   assert.equal(result.overall, 'DISABLED')
   assert.equal(health.healthPermitsLiveMutation(result), false)
-  // Katalog politikası da off demeli.
-  assert.equal(catalog.resolveRolloutStage('woocommerce'), 'off')
+
+  // GÜNCELLENDİ (WOOCOMMERCE-001): Woo politikası artık `internal_test`.
+  // Bu testin ASIL konusu "sağlık AŞAMAYI İLERLETMEZ"dir ve o DEĞİŞMEDİ
+  // (yukarıda `off` verildi, `off` çıktı). Aşağıdaki satır yalnızca o
+  // andaki politika DEĞERİNİ sabitliyordu; kalıcı değişmez ise
+  // "Woo CANLI DEĞİLDİR"dir — asıl kilitlenmesi gereken budur.
+  assert.equal(catalog.resolveRolloutStage('woocommerce'), 'internal_test')
+  assert.equal(
+    kernel.stageAffectsLiveBehavior(catalog.resolveRolloutStage('woocommerce')),
+    false,
+    'WooCommerce CANLI davranışı ETKİLEYEMEZ',
+  )
 })
 
 test('IH-10: shadow saglikli olsa bile URETIM MUTASYONUNA izin vermez', () => {
@@ -452,9 +463,33 @@ test('IH-17: saglik modeli MIGRATION GEREKTIRMEZ — mevcut kolonlar yeterli', (
   ]) {
     assert.ok(columns.includes(needed), `mevcut semada eksik kolon: ${needed}`)
   }
-  // Bu bilette yeni migration EKLENMEDI.
+  // GÜNCELLENDİ (WOOCOMMERCE-001): önceki sürüm migration SAYISINI (13)
+  // sabitliyordu. O sayı, "sağlık modeli migration gerektirmez" iddiasının
+  // VEKİLİYDİ ve başka bir biletin MEŞRU migration'ı eklenince süresi
+  // doldu — WOOCOMMERCE-001 çok mağazalı hesap + hesap kapsamlı sır +
+  // dayanıklı gelen kutusu için 0013'ü EKLEDİ.
+  //
+  // ASIL DEĞİŞMEZ KORUNUR ve DOĞRUDAN ölçülür: sağlık modeli
+  // `integration_sync_state`e KOLON EKLEMEZ ve eklenen migration
+  // SAĞLIK migration'ı DEĞİLDİR.
+  // `Object.keys` drizzle'ın İÇ alanlarını da verir (`enableRLS` gibi);
+  // yalnız GERÇEK kolonlar süzülür.
+  const syncStateColumns = Object.entries(schema.integrationSyncState)
+    .filter(([, value]) => value && typeof value === 'object' && typeof value.name === 'string')
+    .map(([key]) => key)
+    .sort()
+  assert.deepEqual(
+    syncStateColumns,
+    [
+      'createdAt', 'id', 'lastErrorCode', 'lastFetchedCount', 'lastSuccessfulSyncAt',
+      'lastSyncStatus', 'marketplaceAccountId', 'organizationId', 'provider',
+      'resource', 'updatedAt',
+    ],
+    'sağlık modeli için YENİ KOLON EKLENMEDİ',
+  )
   const migrations = readdirSync(join(here, '..', 'drizzle')).filter((f) => f.endsWith('.sql'))
-  assert.equal(migrations.length, 13, `migration sayisi degismemeli: ${migrations.length}`)
+  const healthMigrations = migrations.filter((f) => /health/i.test(f))
+  assert.deepEqual(healthMigrations, [], 'SAĞLIK için migration eklenmedi')
 })
 
 test('IH-18: katalog yetenek gercegini SOZLESME PAKETINDEN alir', () => {

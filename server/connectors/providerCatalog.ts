@@ -32,13 +32,23 @@ const CONTRACT_PACK_PATHS: Record<string, string> = {
 /**
  * YAYIN AŞAMASI POLİTİKASI.
  *
- * Trendyol `ga`dır çünkü ÜRETİMDE ÇALIŞIYOR. Diğer üçü `off`tur: sözleşmeleri
- * doğrulandı ama hiçbiri canlı akışa bağlanmadı. Bu harita KONFİGÜRASYONDUR;
- * sağlık sonucundan ETKİLENMEZ.
+ * Trendyol `ga`dır çünkü ÜRETİMDE ÇALIŞIYOR.
+ *
+ * WooCommerce `internal_test`tir (WOOCOMMERCE-001): bağlayıcı GERÇEKTEN
+ * uygulandı — SSRF kapısı, hesap kapsamlı şifreli kimlikler, wc/v3 okuma,
+ * sayfalama, sözleşmeye sadık normalleştirme, ham gövde imza doğrulaması ve
+ * dayanıklı gelen kutusu. AMA canlı doğrulama YAPILMADI (gerçek kiracı
+ * kimliği yok) ve `internal_test` `stageAffectsLiveBehavior` tarafından
+ * CANLI SAYILMAZ: kanonik sipariş yazımı ve karşılama yan etkileri
+ * `liveWriteGate` ile KAPALIDIR. `pilot`/`ga` AYRI bir bilettir.
+ *
+ * ikas/Ticimax `off`: sözleşmeleri doğrulandı, kod yolu YOK.
+ *
+ * Bu harita KONFİGÜRASYONDUR; sağlık sonucundan ETKİLENMEZ.
  */
 export const ROLLOUT_STAGE_POLICY: Record<string, CapabilityStage> = {
   trendyol: 'ga',
-  woocommerce: 'off',
+  woocommerce: 'internal_test',
   ikas: 'off',
   ticimax: 'off',
 }

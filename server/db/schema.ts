@@ -142,13 +142,140 @@ export const marketplaceAccounts = pgTable(
       table.marketplace,
       table.providerAccountId,
     ),
-    // Bir (org, marketplace) için tek aktif hesap: partial unique (is_active).
-    uniqueIndex('marketplace_accounts_single_active_unique')
-      .on(table.organizationId, table.marketplace)
-      .where(sql`${table.isActive}`),
+    // ÇOK MAĞAZALI KISIT KALDIRILDI (WOOCOMMERCE-001, 0013).
+    //
+    // ÖNCEDEN: `marketplace_accounts_single_active_unique` (org, marketplace)
+    // için EN FAZLA bir aktif hesaba izin veriyordu. Bir organizasyon AYNI
+    // ANDA Woo Mağaza A + B + C bağlar; üçü de AKTİF kalmak zorundadır.
+    // Yeniden üretildi: ikinci aktif Woo satırı unique ihlaliyle REDDEDİLDİ.
+    //
+    // TRENDYOL DAVRANIŞI DEĞİŞMEZ: tek aktif hesap garantisi DB kısıtından
+    // DEĞİL, `resolveOrCreateActiveAccount` içindeki "kardeşleri pasifleştir"
+    // adımından gelir ve o adım OLDUĞU GİBİ DURUR (WOO-MS-2 kilitler).
     index('marketplace_accounts_org_marketplace_idx').on(
       table.organizationId,
       table.marketplace,
+    ),
+    index('marketplace_accounts_org_marketplace_active_idx').on(
+      table.organizationId,
+      table.marketplace,
+      table.isActive,
+    ),
+  ],
+)
+
+/**
+ * HESAP KAPSAMLI BAĞLAYICI KİMLİKLERİ — SAĞLAYICI-NÖTR.
+ *
+ * ═══ NEDEN YENİ TABLO ════════════════════════════════════════════════════
+ *
+ * `integration_credentials` UNIQUE(organization_id, provider)'dır ve provider
+ * allowlist'i 'woocommerce' İÇERMEZ. Yani bir organizasyonun İKİ Woo mağazası
+ * için AYRI anahtar/sır çiftini TEMSİL EDEMEZ. Yeniden üretildi (migration
+ * öncesi): hem allowlist hem tekil indeks ihlali.
+ *
+ * Eski tablo Trendyol/Sürat için OLDUĞU GİBİ KALIR — yıkıcı yeniden yazım YOK.
+ * Bu tablo hesap kapsamlıdır ve gelecekteki ticaret platformları (ikas,
+ * Ticimax) tarafından da kullanılabilir: `provider_key` serbesttir.
+ *
+ * Şifreleme AYNI AES-256-GCM ilkelerini kullanır (`credentialService`);
+ * İKİNCİ bir kriptografi uygulaması YOKTUR.
+ */
+export const connectorCredentials = pgTable(
+  'connector_credentials',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    marketplaceAccountId: uuid('marketplace_account_id')
+      .notNull()
+      .references(() => marketplaceAccounts.id, { onDelete: 'cascade' }),
+    providerKey: text('provider_key').notNull(),
+    encryptedPayload: text('encrypted_payload').notNull(),
+    keyVersion: integer('key_version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('connector_credentials_account_provider_unique').on(
+      table.organizationId,
+      table.marketplaceAccountId,
+      table.providerKey,
+    ),
+    index('connector_credentials_org_provider_idx').on(
+      table.organizationId,
+      table.providerKey,
+    ),
+  ],
+)
+
+/**
+ * DAYANIKLI WEBHOOK GELEN KUTUSU — SAĞLAYICI-NÖTR.
+ *
+ * ═══ NEDEN DAYANIKLI ═════════════════════════════════════════════════════
+ *
+ * Resmî WooCommerce sözleşmesi: ARDIŞIK 5 başarısız teslimden (2xx dışı)
+ * sonra webhook DISABLED olur ve REST ile yeniden açılması gerekir. Bu
+ * yüzden "doğrula → uzun senkron işlemi → sonra 2xx" YASAKTIR.
+ *
+ * Doğru sıra: ham gövde → imza doğrulama → KALICI yazım → 2xx → işleme.
+ * Kalıcı yazım BAŞARISIZSA 2xx DÖNÜLMEZ (başarılı alım İDDİA EDİLMEZ).
+ *
+ * Gövde PII taşır → `encrypted_payload` (aynı AES-256-GCM zarfı). Düz metin
+ * webhook gövdesi SAKLANMAZ.
+ *
+ * Teslim kimliği sağlayıcının resmî `X-WC-Webhook-Delivery-ID` başlığıdır ve
+ * HESAP KAPSAMLIDIR: A mağazasının teslimi B'yi asla etkileyemez.
+ */
+export const connectorWebhookInbox = pgTable(
+  'connector_webhook_inbox',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    marketplaceAccountId: uuid('marketplace_account_id')
+      .notNull()
+      .references(() => marketplaceAccounts.id, { onDelete: 'cascade' }),
+    providerKey: text('provider_key').notNull(),
+    /** Sağlayıcının resmî teslim kimliği (X-WC-Webhook-Delivery-ID). */
+    deliveryId: text('delivery_id').notNull(),
+    topic: text('topic').notNull(),
+    receivedAt: timestamp('received_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    /** İmza doğrulandığı an; doğrulanmamış istek BURAYA HİÇ GİRMEZ. */
+    verifiedAt: timestamp('verified_at', { withTimezone: true }),
+    status: text('status').notNull(),
+    attemptCount: integer('attempt_count').notNull().default(0),
+    processedAt: timestamp('processed_at', { withTimezone: true }),
+    /** Kararlı hata SINIFI — sağlayıcının ham metni DEĞİL. */
+    errorCode: text('error_code'),
+    encryptedPayload: text('encrypted_payload').notNull(),
+    keyVersion: integer('key_version').notNull().default(1),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('connector_webhook_inbox_delivery_unique').on(
+      table.organizationId,
+      table.marketplaceAccountId,
+      table.providerKey,
+      table.deliveryId,
+    ),
+    index('connector_webhook_inbox_status_idx').on(
+      table.organizationId,
+      table.providerKey,
+      table.status,
     ),
   ],
 )
