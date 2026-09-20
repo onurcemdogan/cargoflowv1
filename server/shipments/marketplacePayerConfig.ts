@@ -34,6 +34,7 @@ export const PAYER_SETTINGS_KEY = 'marketplacePayer'
 export class TenantScopeMissingError extends Error {}
 export class AccountNotInTenantError extends Error {}
 export class InvalidPayerValueError extends Error {}
+export class PayerNotConfigurableError extends Error {}
 
 function requireTenant(organizationId: unknown): string {
   const scoped = String(organizationId ?? '').trim()
@@ -96,7 +97,10 @@ export async function setAccountPayerConfig(
 
   // SAHİPLİK DOĞRULAMASI — hesap bu kiracıya ait mi.
   const owned = await db
-    .select({ id: marketplaceAccounts.id })
+    .select({
+      id: marketplaceAccounts.id,
+      marketplace: marketplaceAccounts.marketplace,
+    })
     .from(marketplaceAccounts)
     .where(
       and(
@@ -106,6 +110,19 @@ export async function setAccountPayerConfig(
     )
   if (owned.length === 0) {
     throw new AccountNotInTenantError('Hesap bu organizasyona ait değil.')
+  }
+
+  // YAPILANDIRILABİLİRLİK — SUNUM DEĞİL, YAZMA KAPISI.
+  //
+  // Trendyol'da ödeyen SİPARİŞ SÖZLEŞMESİNDEN okunur. UI alanı gizlemek
+  // YETMEZ: API doğrudan çağrılabilir. Elle yazılmış bir Trendyol ayarı,
+  // sözleşmeden gelen gerçeğin ÜSTÜNE oturmaya çalışırdı; bu yüzden yazma
+  // yolunda da REDDEDİLİR.
+  const marketplace = String((owned[0] as Record<string, unknown>).marketplace ?? '')
+  if (payerEvidenceClass(marketplace) === 'CAN_DERIVE_FROM_ORDER') {
+    throw new PayerNotConfigurableError(
+      `Bu pazaryerinde ödeyen sipariş verisinden okunur; elle ayarlanamaz: ${marketplace}`,
+    )
   }
 
   const rows = await db

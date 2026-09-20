@@ -98,13 +98,13 @@ test('BPX-2: DOGRULANMIS saglayici sozlesmesi kaniti DOGRU cozulur', () => {
   assert.equal(live.provenance, 'PROVIDER_RAW')
   assert.equal(live.billingParty, 'SELLER')
 
+  // KANIT FABRIKADAN gecmelidir: alanlari kopyalamak YETMEZ (BPZ-1).
   const result = payer.resolveShippingBillingParty({
     marketplace: 'trendyol',
-    orderContractEvidence: {
-      billingParty: live.billingParty,
-      evidence: live.evidence,
-      provenance: live.provenance,
-    },
+    orderContractEvidence: payer.createTrendyolOrderContractEvidence(
+      { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
+      { origin: 'LIVE_PROVIDER_RESPONSE' },
+    ),
   })
   assert.equal(result.payer, 'SELLER_PAYS')
   assert.equal(result.provenance, 'ORDER_CONTRACT')
@@ -259,4 +259,128 @@ test('BPX-9: abonelik duzeltmeleri ve ayrimi KORUNDU', async () => {
   for (const specifier of imports) {
     assert.equal(specifier.includes('subscription'), false, specifier)
   }
+})
+
+
+// ═══ CLOSEOUT-002 — KANIT ARTIK ÜRETİLEMEZ (MARKALI) ════════════════════
+//
+// ÖLÇÜLEN AÇIK (ikinci tur): kanıt ALANLI bir nesne olunca da elle
+// kurulabiliyordu. Alanları doğru yazmak, kanıta SAHİP OLMAK DEĞİLDİR.
+// Artık yalnız güvenilir fabrikadan geçen nesneler kabul edilir.
+
+test('BPZ-1: ELLE kurulmus mukemmel kanit ORDER_CONTRACT URETEMEZ', () => {
+  // Alanlarin HEPSI dogru; yine de fabrikadan gecmedigi icin REDDEDILIR.
+  const forged = {
+    billingParty: 'TRENDYOL',
+    evidence: 'CONFIRMED_PROVIDER_CONTRACT',
+    provenance: 'PROVIDER_RAW',
+    interpretation: 'elle yazildi',
+  }
+  assert.equal(payer.isTrustedOrderContractEvidence(forged), false)
+  const result = payer.resolveShippingBillingParty({
+    marketplace: 'trendyol',
+    orderContractEvidence: forged,
+  })
+  assert.notEqual(result.provenance, 'ORDER_CONTRACT', 'elle kurulan kanit KABUL EDILDI')
+  assert.equal(result.payer, 'UNKNOWN')
+
+  // Gercek kanidin KOPYASI da gecersizdir (marka nesneye baglidir).
+  const real = payer.createTrendyolOrderContractEvidence(
+    { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
+    { origin: 'LIVE_PROVIDER_RESPONSE' },
+  )
+  const copy = { ...real }
+  assert.equal(payer.isTrustedOrderContractEvidence(copy), false, 'kopya da gecersiz')
+  assert.equal(
+    payer.resolveShippingBillingParty({
+      marketplace: 'trendyol',
+      orderContractEvidence: copy,
+    }).provenance,
+    'UNKNOWN',
+  )
+})
+
+test('BPZ-2: FABRIKADAN gecen kanit ORDER_CONTRACT uretir', () => {
+  const evidence = payer.createTrendyolOrderContractEvidence(
+    { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
+    { origin: 'LIVE_PROVIDER_RESPONSE' },
+  )
+  assert.equal(payer.isTrustedOrderContractEvidence(evidence), true)
+  const result = payer.resolveShippingBillingParty({
+    marketplace: 'trendyol',
+    orderContractEvidence: evidence,
+  })
+  assert.equal(result.payer, 'SELLER_PAYS')
+  assert.equal(result.provenance, 'ORDER_CONTRACT')
+})
+
+test('BPZ-3: fabrika SINIFLANDIRMAYI KOPYALAMAZ, forensic modulu CAGIRIR', () => {
+  // Ayni girdi, iki yol → AYNI karar.
+  const viaFactory = payer.createTrendyolOrderContractEvidence(
+    { packageId: 'P1', orderNumber: 'N1' },
+    { origin: 'LIVE_PROVIDER_RESPONSE' },
+  )
+  const viaForensic = suratBilling.inspectTrendyolBillingSource(
+    { rawOrder: { packageId: 'P1', orderNumber: 'N1' } },
+    { origin: 'LIVE_PROVIDER_RESPONSE' },
+  )
+  assert.equal(viaFactory.billingParty, viaForensic.billingParty)
+  assert.equal(viaFactory.evidence, viaForensic.evidence)
+  assert.equal(viaFactory.provenance, viaForensic.provenance)
+  // whoPays alani YOK → sozlesme geregi TRENDYOL oder.
+  assert.equal(viaFactory.billingParty, 'TRENDYOL')
+
+  // Trendyol karar mantigi COZUMLEYICIDE YENIDEN YAZILMAMIS olmali.
+  const source = readFileSync(join(here, 'shipments', 'shippingBillingParty.ts'), 'utf8')
+  const code = source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1 ')
+  for (const duplicated of ['whoPays', "'1'", 'hasOwnField', 'readOwnField']) {
+    assert.equal(code.includes(duplicated), false, `siniflandirma KOPYALANMIS: ${duplicated}`)
+  }
+  assert.match(code, /inspectTrendyolBillingSource/)
+})
+
+test('BPZ-4: PERSISTED koken sozlesme kaniti URETMEZ', () => {
+  const persisted = payer.createTrendyolOrderContractEvidence(
+    { packageId: 'P1', orderNumber: 'N1', whoPays: '1' },
+    { origin: 'PERSISTED' },
+  )
+  // Fabrikadan gecti (markali) AMA seviye yetersiz.
+  assert.equal(payer.isTrustedOrderContractEvidence(persisted), true)
+  assert.notEqual(persisted.evidence, 'CONFIRMED_PROVIDER_CONTRACT')
+  assert.equal(
+    payer.resolveShippingBillingParty({
+      marketplace: 'trendyol',
+      orderContractEvidence: persisted,
+    }).provenance,
+    'UNKNOWN',
+  )
+})
+
+test('BPZ-5: Trendyol odeyeni YAZMA YOLUNDA da ayarlanamaz', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'bpz-5')
+  const trendyol = await makeAccount(db, org, 'trendyol', '277221')
+  const n11 = await makeAccount(db, org, 'n11', 'n11-1')
+
+  // UI alani gizlemek YETMEZ: API dogrudan cagrilabilir.
+  await assert.rejects(
+    () => accountConfig.setAccountPayerConfig(db, org, trendyol, 'SELLER_PAYS'),
+    accountConfig.PayerNotConfigurableError,
+  )
+  // Hicbir sey yazilmadi.
+  assert.deepEqual(await accountConfig.loadAccountPayerConfigs(db, org), {})
+
+  // Yapilandirilabilir pazaryeri ETKILENMEZ.
+  await accountConfig.setAccountPayerConfig(db, org, n11, 'SELLER_PAYS')
+  const configs = await accountConfig.loadAccountPayerConfigs(db, org)
+  assert.equal(configs[n11], 'SELLER_PAYS')
+  assert.equal(configs[trendyol], undefined)
+
+  // Uc 409 dondurur.
+  const endpoint = readFileSync(join(here, 'index.mjs'), 'utf8')
+  assert.match(endpoint, /PayerNotConfigurableError/)
+  assert.match(endpoint, /409/)
 })

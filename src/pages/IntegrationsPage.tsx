@@ -37,6 +37,7 @@ import {
   resolveSuratConfigured,
   resolveTrendyolConfigured,
 } from '../utils/integrationConfigured'
+import { ShippingPayerSection } from '../integrations/ShippingPayerSection'
 import {
   integrationCategoryTabs,
   suratDetailTabs,
@@ -149,6 +150,13 @@ export function IntegrationsPage({
         olursa olsun görünür ve sağlayıcı hesabı tanımlı olmasa da erişilebilir.
       */}
       <ShipmentDefaultsSection form={form} setForm={setForm} busy={busy} onSave={onSave} />
+
+      {/*
+        KARGO ÜCRETİ ÖDEYENİ — hesap bazlı, kendi verisini çeker.
+        Bu bölüm CargoFlow ABONELİĞİ DEĞİL, gönderi ücretinin ödeyenidir.
+        Trendyol'da alan düzenlenemez: ödeyen sipariş sözleşmesinden okunur.
+      */}
+      <ShippingPayerSection />
 
       <nav className="integration-category-tabs" aria-label="Entegrasyon kategorileri">
         {integrationCategoryTabs.map((tab) => (

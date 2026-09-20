@@ -24,6 +24,7 @@
 //
 // Aras/Sürat'ın varlığı kimin ödediğini KANITLAMAZ. Taşıyıcı kimliğinden
 // ödeyen çıkarımı YASAKTIR (BP-4, BP-10).
+import { inspectTrendyolBillingSource } from './suratBillingParty.ts'
 import type {
   BillingEvidenceLevel,
   BillingParty,
@@ -76,21 +77,75 @@ export const PAYER_PRECEDENCE: readonly PayerProvenance[] = [
 export const MARKETPLACES_WITH_VERIFIED_ORDER_SIGNAL = ['trendyol'] as const
 
 /**
- * SİPARİŞ SÖZLEŞMESİ KANITI — DÜZ DEĞER KABUL EDİLMEZ.
+ * SİPARİŞ SÖZLEŞMESİ KANITI — MARKALI (BRANDED), ÜRETİLEMEZ.
  *
- * ÖLÇÜLEN AÇIK: önceki sürümde bu alan düz bir `BillingParty` idi; yani
- * HERHANGİ bir çağıran `'TRENDYOL'` yazarak `ORDER_CONTRACT` kökeni
- * UYDURABİLİYORDU. Köken iddiası, kanıtın KENDİSİYLE gelmek zorundadır.
+ * ═══ İKİ AŞAMALI DÜZELTMENİN İKİNCİSİ ══════════════════════════════════
  *
- * Kanıt alanları `suratBillingParty.inspectTrendyolBillingSource()`
- * çıktısından OLDUĞU GİBİ taşınır; burada yeniden hesaplanmaz.
+ * (1) Önce girdi düz bir `BillingParty` idi: çağıran `'TRENDYOL'` yazıp
+ *     `ORDER_CONTRACT` kökeni uyduruyordu.
+ * (2) Sonra alanlı bir nesne oldu — ama O DA ELLE KURULABİLİYORDU:
+ *
+ *       { evidence: 'CONFIRMED_PROVIDER_CONTRACT',
+ *         provenance: 'PROVIDER_RAW', billingParty: 'TRENDYOL' }
+ *
+ *     Alanları doğru yazmak, kanıta SAHİP OLMAK DEĞİLDİR.
+ *
+ * Çözüm: kanıt nesneleri GÜVENİLİR FABRİKADAN geçtiklerinde bir `WeakSet`e
+ * kaydedilir. Çözümleyici bu kayda BAKAR; elle kurulmuş bir nesne — alanları
+ * ne kadar doğru olursa olsun — kayıtta OLMADIĞI için REDDEDİLİR.
+ *
+ * `WeakSet` seçildi çünkü: dışarıdan taklit edilemez (modüle özel), nesne
+ * ömrünü uzatmaz ve sınıflandırma mantığını KOPYALAMAZ — Trendyol kararı
+ * yine `inspectTrendyolBillingSource` içinde kalır.
  */
+const TRUSTED_EVIDENCE = new WeakSet<object>()
+
 export interface OrderContractEvidence {
-  billingParty: BillingParty
+  readonly billingParty: BillingParty
   /** YALNIZ `CONFIRMED_PROVIDER_CONTRACT` sözleşme kanıtı sayılır. */
-  evidence: BillingEvidenceLevel
+  readonly evidence: BillingEvidenceLevel
   /** Yükün gerçekte ne olduğu; yalnız `PROVIDER_RAW` kabul edilir. */
-  provenance: RawDataProvenance
+  readonly provenance: RawDataProvenance
+  /** Yorumlama metni — operatör yüzeyi için; karara GİRMEZ. */
+  readonly interpretation: string
+}
+
+/**
+ * KANIT ÜRETİMİNİN TEK YOLU — GÜVENİLİR SINIR.
+ *
+ * Ham sağlayıcı yükü ve AÇIK köken alır, kararı mevcut forensic modüle
+ * verir ve sonucu markalar. Trendyol sınıflandırması BURADA YENİDEN
+ * YAZILMAZ; `inspectTrendyolBillingSource` çağrılır.
+ *
+ * `origin` çağıranın beyanıdır ama TEK BAŞINA yetmez: forensic modül
+ * `CONFIRMED_PROVIDER_CONTRACT` seviyesini yalnız gerçekten canlı sağlayıcı
+ * yanıtı sınırında üretir ve yükün `PROVIDER_RAW` olduğunu ayrıca ölçer.
+ */
+export function createTrendyolOrderContractEvidence(
+  rawProviderPayload: Record<string, unknown>,
+  options: { origin: 'LIVE_PROVIDER_RESPONSE' | 'PERSISTED' },
+): OrderContractEvidence {
+  // Forensic modül SİPARİŞ SARMALAYICISI bekler (`rawOrder` alanı); fabrika
+  // ham sağlayıcı yükünü alır ve sarmalar. Böylece çağıran sarmalayıcı
+  // şeklini bilmek zorunda kalmaz ve yanlış şekil sessizce `MISSING`e
+  // düşmez.
+  const inspection = inspectTrendyolBillingSource(
+    { rawOrder: rawProviderPayload },
+    { origin: options.origin },
+  )
+  const evidence: OrderContractEvidence = Object.freeze({
+    billingParty: inspection.billingParty,
+    evidence: inspection.evidence,
+    provenance: inspection.provenance,
+    interpretation: inspection.interpretation,
+  })
+  TRUSTED_EVIDENCE.add(evidence)
+  return evidence
+}
+
+/** Kanıt GERÇEKTEN güvenilir fabrikadan mı geldi. */
+export function isTrustedOrderContractEvidence(value: unknown): boolean {
+  return typeof value === 'object' && value !== null && TRUSTED_EVIDENCE.has(value)
 }
 
 export interface ShippingPayerInput {
@@ -145,8 +200,9 @@ export function resolveShippingBillingParty(
   // 1) DOĞRULANMIŞ SİPARİŞ SÖZLEŞMESİ — ÜÇ KOŞUL BİRDEN.
   //
   //   (a) pazaryerinin doğrulanmış sözleşme sinyali OLMALI
-  //   (b) kanıt seviyesi `CONFIRMED_PROVIDER_CONTRACT` OLMALI
-  //   (c) yük gerçekten SAĞLAYICI HAM PAKETİ (`PROVIDER_RAW`) OLMALI
+  //   (b) kanıt GÜVENİLİR FABRİKADAN üretilmiş OLMALI (markalı)
+  //   (c) kanıt seviyesi `CONFIRMED_PROVIDER_CONTRACT` OLMALI
+  //   (d) yük gerçekten SAĞLAYICI HAM PAKETİ (`PROVIDER_RAW`) OLMALI
   //
   // `UNVERIFIED_HISTORICAL_RAW` / `NORMALIZED_COPY` / `RECONSTRUCTED` /
   // `UNKNOWN` sözleşme kanıtı SAYILMAZ ve bir alt kaynağa DÜŞÜLÜR.
@@ -157,6 +213,9 @@ export function resolveShippingBillingParty(
   if (
     hasVerifiedContract &&
     evidence &&
+    // (d) KANIT GÜVENİLİR FABRİKADAN GELMİŞ OLMALI. Alanları elle doğru
+    //     yazmak yetmez; nesne markalı değilse REDDEDİLİR.
+    isTrustedOrderContractEvidence(evidence) &&
     evidence.evidence === 'CONFIRMED_PROVIDER_CONTRACT' &&
     evidence.provenance === 'PROVIDER_RAW'
   ) {

@@ -31,14 +31,20 @@ const accountConfig = await import('./shipments/marketplacePayerConfig.ts')
 /**
  * DOGRULANMIS saglayici sozlesmesi kaniti uretir.
  *
- * Duz `BillingParty` YETMEZ (BPX-1): koken iddiasi kanit seviyesiyle gelir.
+ * ELLE NESNE KURULMAZ (BPZ-1): kanit YALNIZ guvenilir fabrikadan cikar.
+ * Istenen tarafi uretmek icin Trendyol sozlesmesi kullanilir:
+ *   whoPays own-property '1' → SELLER ; property YOK → TRENDYOL
  */
 function confirmedEvidence(billingParty) {
-  return {
-    billingParty,
-    evidence: 'CONFIRMED_PROVIDER_CONTRACT',
-    provenance: 'PROVIDER_RAW',
-  }
+  const raw =
+    billingParty === 'SELLER'
+      ? { packageId: 'P1', orderNumber: 'N1', whoPays: '1' }
+      : { packageId: 'P1', orderNumber: 'N1' }
+  const evidence = payer.createTrendyolOrderContractEvidence(raw, {
+    origin: 'LIVE_PROVIDER_RESPONSE',
+  })
+  assert.equal(evidence.billingParty, billingParty, 'kanit beklenen tarafi uretmeli')
+  return evidence
 }
 
 // ── TEMEL ÇÖZÜMLEME ────────────────────────────────────────────────────────

@@ -2523,6 +2523,13 @@ app.post('/api/shipping/payer', async (request, response) => {
       response.status(400).json({ ok: false, message: 'Geçersiz ödeyen değeri.' })
       return
     }
+    if (name === 'PayerNotConfigurableError') {
+      response.status(409).json({
+        ok: false,
+        message: 'Bu pazaryerinde ödeyen sipariş verisinden okunur; elle ayarlanamaz.',
+      })
+      return
+    }
     response.status(500).json({ ok: false, message: 'Ödeyen ayarı kaydedilemedi.' })
   }
 })
