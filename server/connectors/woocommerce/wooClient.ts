@@ -18,7 +18,14 @@
 // Paket: resmî sabit limit YAYIMLANMAMIŞ (barındırmaya bağlı). Bu yüzden
 // sahte bir sayısal limit KODLANMAZ; muhafazakâr eşzamanlılık ve sınırlı
 // geri çekilme uygulanır.
-import { inspectStoreUrlSyntax, assertStoreUrlAllowed, type DnsResolver } from '../storeUrlPolicy.ts'
+import { request as httpsRequest, type RequestOptions } from 'node:https'
+import type { IncomingMessage } from 'node:http'
+import {
+  inspectStoreUrlSyntax,
+  assertStoreUrlAllowed,
+  createPinnedLookup,
+  type DnsResolver,
+} from '../storeUrlPolicy.ts'
 
 /** Çağırana dönen KARARLI sınıflar — ham WordPress/PHP metni ASLA. */
 export const WOO_ERROR_CLASSES = [
@@ -50,6 +57,14 @@ export type WooTransport = (request: {
   url: string
   method: 'GET'
   headers: Record<string, string>
+  /**
+   * POLİTİKANIN ONAYLADIĞI ADRES KÜMESİ.
+   *
+   * Taşıma katmanı soketi YALNIZ bunlarla kurar. Bu alan isteğin PARÇASIDIR
+   * çünkü doğrulama ile bağlantı AYNI çözümlemeyi paylaşmak zorundadır;
+   * taşıma katmanının adı yeniden çözmesi rebinding açığıdır.
+   */
+  approvedAddresses: readonly string[]
 }) => Promise<WooTransportResponse>
 
 export interface WooCredentials {
@@ -179,6 +194,8 @@ export async function wooGet(
       response = await options.transport({
         url,
         method: 'GET',
+        // DOĞRULAMANIN ÇÖZDÜĞÜ ADRESLER — taşıma YENİDEN ÇÖZMEZ.
+        approvedAddresses: decision.approvedAddresses,
         headers: {
           // SIR YALNIZ BURADA — sorgu dizesinde ASLA.
           Authorization: buildBasicAuthHeader(
@@ -399,28 +416,107 @@ export async function fetchWooOrders(
 }
 
 /**
- * Üretim taşıma katmanı — yönlendirme KAPALI.
+ * ÜRETİM TAŞIMA KATMANI — ADRES SABİTLENMİŞ.
  *
- * `redirect: 'manual'`: bir mağaza herkese açık adresten özel hedefe
- * yönlendirerek SSRF kapısını atlayamaz. Yönlendirme görülürse istek
- * başarısız sayılır (hedef ayrıca doğrulanmadıkça izlenmez).
+ * ═══ NEDEN `fetch` DEĞİL ═══════════════════════════════════════════════
+ *
+ * ÖLÇÜLEN AÇIK: `fetch(hostname)` adı ÇALIŞMA ZAMANINDA yeniden çözüyordu.
+ * Politika birinci aramayı denetliyor, soket İKİNCİ aramanın sonucuna
+ * bağlanıyordu — DNS rebinding / doğrulama-kullanım TOCTOU.
+ *
+ * Artık soket `createPinnedLookup` ile YALNIZ politikanın onayladığı adres
+ * kümesini kullanır; bağlantı anında YENİ ad araması YAPILMAZ. `node:https`
+ * çekirdek modüldür: yeni bağımlılık YOK.
+ *
+ * ═══ KORUNANLAR ════════════════════════════════════════════════════════
+ *
+ *  · `Host` başlığı ORİJİNAL ad (IP değil) — `host` seçeneğinden türer
+ *  · TLS SNI ORİJİNAL ad (`servername`) — sertifika ADA göre doğrulanır
+ *  · `rejectUnauthorized: true` — SERTİFİKA DOĞRULAMASI KAPATILMAZ
+ *  · `Authorization` yalnız doğrulanmış hedefe gider
+ *  · YÖNLENDİRME İZLENMEZ: `https.request` yönlendirme takip ETMEZ, bu
+ *    yüzden davranış `redirect: 'manual'` ile aynıdır (hatta daha katı).
+ *    İzlenecek olsaydı hedef AYNI doğrula+sabitle kapısından geçmeliydi.
+ *
+ * SSRF'i sertifika doğrulamasını kapatarak ya da IP'yi sertifika adı
+ * sayarak "çözmek" YASAKTIR: ikisi de kapıyı başka yerden açar.
  */
-export const fetchWooTransport: WooTransport = async (request) => {
-  const response = await fetch(request.url, {
-    method: request.method,
-    headers: request.headers,
-    redirect: 'manual',
-  })
-  const headers: Record<string, string> = {}
-  response.headers.forEach((value, key) => {
-    headers[key.toLowerCase()] = value
-  })
-  return {
-    status: response.status,
-    headers,
-    bodyText: await response.text(),
-  }
+export const WOO_TRANSPORT_DEFAULT_TIMEOUT_MS = 30_000
+
+export interface PinnedTransportDeps {
+  /** Test enjeksiyonu; üretimde `node:https`.request. */
+  request?: typeof httpsRequest
+  timeoutMs?: number
 }
+
+export function createPinnedHttpsTransport(
+  deps: PinnedTransportDeps = {},
+): WooTransport {
+  const doRequest = deps.request ?? httpsRequest
+  const timeoutMs = Math.max(1, Number(deps.timeoutMs ?? WOO_TRANSPORT_DEFAULT_TIMEOUT_MS))
+
+  return (request) =>
+    new Promise<WooTransportResponse>((resolve, reject) => {
+      let target: URL
+      try {
+        target = new URL(request.url)
+      } catch (error) {
+        reject(error as Error)
+        return
+      }
+
+      const options: RequestOptions = {
+        protocol: 'https:',
+        // Host başlığı BURADAN türer: ORİJİNAL AD.
+        host: target.hostname,
+        port: target.port === '' ? 443 : Number(target.port),
+        path: `${target.pathname}${target.search}`,
+        method: request.method,
+        headers: request.headers,
+        // TLS SNI = ORİJİNAL AD. IP yazılsaydı sertifika doğrulaması
+        // anlamsızlaşır ve saldırgan istediği hedefe yönlendirebilirdi.
+        servername: target.hostname,
+        // SERTİFİKA DOĞRULAMASI AÇIK — SSRF bu yolla "çözülmez".
+        rejectUnauthorized: true,
+        // ÇEKİRDEK DÜZELTME: soket YALNIZ onaylanmış adreslere gider.
+        lookup: createPinnedLookup(request.approvedAddresses ?? []),
+      }
+
+      const clientRequest = doRequest(options, (response: IncomingMessage) => {
+        const chunks: Buffer[] = []
+        response.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)))
+        response.on('end', () => {
+          const headers: Record<string, string> = {}
+          for (const [key, value] of Object.entries(response.headers)) {
+            if (value === undefined) continue
+            headers[key.toLowerCase()] = Array.isArray(value) ? value.join(', ') : String(value)
+          }
+          resolve({
+            status: Number(response.statusCode ?? 0),
+            headers,
+            bodyText: Buffer.concat(chunks).toString('utf8'),
+          })
+        })
+        response.on('error', reject)
+      })
+
+      // ASILI KALAN MAĞAZA worker'ı SONSUZA KADAR TUTAMAZ.
+      //
+      // Zamanlayıcı SOKETE kurulur, isteğe DEĞİL: `request.setTimeout`
+      // yalnız soket BAĞLANDIKTAN sonra işler ve ulaşılamayan bir adrese
+      // yapılan BAĞLANMA denemesini kapsamaz — oysa asılı kalmanın en
+      // yaygın hâli tam olarak budur.
+      clientRequest.on('socket', (socket) => {
+        socket.setTimeout(timeoutMs, () => {
+          clientRequest.destroy(new Error('WOO_TRANSPORT_TIMEOUT'))
+        })
+      })
+      clientRequest.on('error', reject)
+      clientRequest.end()
+    })
+}
+
+export const fetchWooTransport: WooTransport = createPinnedHttpsTransport()
 
 /**
  * Yönlendirme hedefi doğrulaması.

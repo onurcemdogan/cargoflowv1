@@ -13,6 +13,22 @@
 // Bu yüzden ad çözümlemesi YAPILIR ve ÇÖZÜLEN ADRESLER denetlenir.
 // Yönlendirmeler de aynı kapıdan geçer: her hedef YENİDEN doğrulanır.
 //
+// ═══ DOĞRULAMA İLE BAĞLANTI AYNI ÇÖZÜMLEMEYİ PAYLAŞMAK ZORUNDA ═══════════
+//
+// ÖLÇÜLEN AÇIK: politika adı çözüp adresleri onaylıyordu, ama istek sonra
+// `fetch(hostname)` ile gidiyordu ve çalışma zamanı adı BİR KEZ DAHA
+// çözüyordu. İki BAĞIMSIZ çözümleme = DNS rebinding / doğrulama-kullanım
+// TOCTOU: ilk arama herkese açık adres, ikinci arama loopback/RFC1918/
+// metadata dönebilir.
+//
+// "Fetch'ten hemen önce bir kez daha DNS bak" bunu ÇÖZMEZ — aynı hata
+// sınıfıdır, yalnız pencere daralır.
+//
+// Bu yüzden politika artık ONAYLANMIŞ ADRES KÜMESİNİ döndürür ve taşıma
+// katmanı soketi YALNIZ o kümeyle kurar (`createPinnedLookup`). Ad,
+// Host başlığı ve TLS SNI için OLDUĞU GİBİ korunur; sertifika doğrulaması
+// KAPATILMAZ. Bağlantı anında YENİ bir ad araması YAPILMAZ.
+//
 // ═══ KİMLİK BU DOSYADA ÜRETİLMEZ ═════════════════════════════════════════
 //
 // Mağaza kimliği `canonicalIdentity.storeFingerprint` ile üretilir. Buradaki
@@ -42,6 +58,15 @@ export interface StoreUrlAccepted {
   host: string
   /** Anlamlı WordPress alt yolu (yoksa ''). */
   basePath: string
+  /**
+   * POLİTİKANIN ONAYLADIĞI ADRES KÜMESİ.
+   *
+   * Soket YALNIZ bunlardan birine bağlanır. Sözdizimi denetimi (ağ yok) bir
+   * IP literali için o adresi döndürür, ad için BOŞ küme döndürür — boş küme
+   * "henüz çözümlenmedi" demektir ve sabitlenmiş arama onu FAIL-CLOSED
+   * reddeder.
+   */
+  approvedAddresses: string[]
 }
 export interface StoreUrlRejected {
   ok: false
@@ -162,6 +187,9 @@ export function inspectStoreUrlSyntax(rawUrl: unknown): StoreUrlDecision {
     normalizedUrl: `https://${host}${port ? `:${port}` : ''}${basePath}`,
     host,
     basePath,
+    // IP literali ZATEN denetlendi ve kendi adresidir; ad için çözümleme
+    // `assertStoreUrlAllowed`ta yapılır (burada AĞ YOK).
+    approvedAddresses: isIP(hostAddress) !== 0 ? [hostAddress] : [],
   }
 }
 
@@ -198,11 +226,103 @@ export async function assertStoreUrlAllowed(
   if (!Array.isArray(addresses) || addresses.length === 0) {
     return { ok: false, rejection: 'DNS_UNRESOLVED' }
   }
-  // HERHANGİ biri özelse reddedilir: DNS rebinding'de tek kayıt yeter.
+  // HERHANGİ biri özelse TÜM hedef reddedilir: DNS rebinding'de tek kayıt
+  // yeter ve "özel olanı ele, kalanını kullan" saldırgana seçim bırakırdı.
+  const approved: string[] = []
   for (const record of addresses) {
-    if (isPrivateAddress(String(record?.address ?? ''))) {
+    const address = String(record?.address ?? '').trim()
+    if (isPrivateAddress(address)) {
       return { ok: false, rejection: 'PRIVATE_RESOLVED_ADDRESS' }
     }
+    if (isIP(address) === 0) {
+      // Çözümleyici IP olmayan bir şey döndürdüyse GÜVENİLMEZ.
+      return { ok: false, rejection: 'DNS_UNRESOLVED' }
+    }
+    approved.push(address)
   }
-  return syntax
+  // BU KÜME BAĞLAYICIDIR: taşıma katmanı soketi yalnız bunlarla kurar.
+  return { ...syntax, approvedAddresses: approved }
+}
+
+// ═══ SABİTLENMİŞ AD ARAMASI — DOĞRULAMA İLE SOKETİ AYNI GERÇEĞE BAĞLAR ═══
+
+export interface PinnedLookupOptions {
+  /**
+   * Node bunu SAYI ya da `'IPv4'`/`'IPv6'` METNİ olarak geçebilir.
+   * Yalnız sayıyı beklemek, metin geldiğinde sessizce YANLIŞ süzerdi.
+   */
+  family?: number | string
+  all?: boolean
+  hints?: number
+}
+export type PinnedLookupCallback = (
+  error: NodeJS.ErrnoException | null,
+  /**
+   * Node'un `LookupFunction` imzası bunu ZORUNLU tutar. Hata yolunda değer
+   * OKUNMAZ (çağıran `err` görünce erken döner), yine de boş metin geçilir:
+   * imzayı gevşetmek `lookup` sözleşmesinden sapmak olurdu.
+   */
+  address: string | { address: string; family: number }[],
+  family?: number,
+) => void
+
+export class PinnedAddressUnavailableError extends Error {}
+
+/**
+ * `dns.lookup` YERİNE geçen, YALNIZ onaylanmış adresleri döndüren arama.
+ *
+ * `net.connect` bunu soket kurarken çağırır; sistem çözümleyicisine HİÇ
+ * gidilmez. Böylece doğrulamanın gördüğü adresler ile soketin bağlandığı
+ * adres AYNI KÜMEDEN gelir — rebinding penceresi KAPANIR.
+ *
+ * FAIL-CLOSED: küme boşsa ya da istenen aile için uygun adres yoksa HATA
+ * döner. Sessizce sistem aramasına DÜŞÜLMEZ (düşseydi açık geri gelirdi).
+ *
+ * Node `autoSelectFamily` açıkken `all: true` ile çağırır ve DİZİ bekler;
+ * kapalıyken tek adres bekler. İKİ BİÇİM DE desteklenir — yalnız birini
+ * desteklemek üretimde sessizce kırardı.
+ */
+export function createPinnedLookup(
+  approvedAddresses: readonly string[],
+): (
+  hostname: string,
+  options: PinnedLookupOptions | PinnedLookupCallback,
+  callback?: PinnedLookupCallback,
+) => void {
+  const approved = approvedAddresses
+    .map((value) => String(value ?? '').trim())
+    .filter((value) => isIP(value) !== 0)
+
+  return function pinnedLookup(hostname, options, callback) {
+    const done: PinnedLookupCallback =
+      typeof options === 'function' ? options : (callback as PinnedLookupCallback)
+    const opts: PinnedLookupOptions = typeof options === 'function' ? {} : (options ?? {})
+    const fail = (message: string) => {
+      const error = new PinnedAddressUnavailableError(
+        `${message} (${String(hostname)})`,
+      ) as NodeJS.ErrnoException
+      error.code = 'ENOTFOUND'
+      done(error, '')
+    }
+    if (approved.length === 0) {
+      fail('Onaylanmış adres yok; sistem ad aramasına DÜŞÜLMEZ')
+      return
+    }
+    const rawFamily = opts.family
+    const wanted =
+      rawFamily === 'IPv4' ? 4 : rawFamily === 'IPv6' ? 6 : Number(rawFamily ?? 0) || 0
+    const selected = approved
+      .map((address) => ({ address, family: isIP(address) }))
+      .filter((record) => wanted === 0 || record.family === wanted)
+    if (selected.length === 0) {
+      fail('Onaylanmış kümede istenen aile için adres yok')
+      return
+    }
+    if (opts.all) {
+      done(null, selected)
+      return
+    }
+    const first = selected[0] as { address: string; family: number }
+    done(null, first.address, first.family)
+  }
 }

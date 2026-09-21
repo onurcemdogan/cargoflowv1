@@ -245,5 +245,6 @@
   "server/shipping-billing-party-closeout-flow.test.mjs",
   "server/trendyol-order-contract-provenance-flow.test.mjs",
   "server/woocommerce-connector-flow.test.mjs",
-  "server/woocommerce-runtime-closeout-flow.test.mjs"
+  "server/woocommerce-runtime-closeout-flow.test.mjs",
+  "server/woocommerce-dns-rebinding-flow.test.mjs"
 ]
