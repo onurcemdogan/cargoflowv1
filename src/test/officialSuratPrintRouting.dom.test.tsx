@@ -104,7 +104,16 @@ function stubFetch(responder?: (body: Record<string, unknown>) => unknown) {
 
 const renderCalls = () =>
   fetchCalls.filter((call) => call.url === SURAT_RENDER_ENDPOINT)
+/**
+ * Sunucu yetkili ham baskı çağrıları.
+ *
+ * ÇAPA TAŞINDI (PRINT-PLATFORM-001): istemci artık ham ZPL göndermez;
+ * native yol kimlikle `/api/printing/jobs` ucunu çağırır.
+ */
 const zebraRawCalls = () =>
+  fetchCalls.filter((call) => call.url.includes('/api/printing/jobs'))
+/** ESKİ güvensiz ham uç ARTIK HİÇ çağrılmamalıdır. */
+const legacyRawZplCalls = () =>
   fetchCalls.filter((call) => call.url.includes('/api/printing/zebra/raw'))
 
 /** Kalıcı gizli iframe'i hazırlar ve `window.print`i gözler. */
@@ -416,12 +425,14 @@ test('SR-13: CargoFlow HTML modu DEĞİŞMEDEN çalışır (render ucu çağrıl
     'surat-official-png',
   )
 
-  // (b) Zebra yolu: MEVCUT /api/printing/zebra/raw ucu aynen kullanılır.
+  // (b) Native yol: SUNUCU YETKİLİ iş ucu kullanılır; eski ham bayt ucu
+  //     ARTIK HİÇ çağrılmaz (aynı taşıyıcı akışı için iki yol AÇIK KALMAZ).
   fetchCalls = []
   const zebra = await printWith([readyOrder()], 'cargoflow_html', ZEBRA_PRINTER)
   expect(zebraRawCalls()).toHaveLength(1)
+  expect(legacyRawZplCalls()).toHaveLength(0)
   expect(renderCalls()).toHaveLength(0)
-  expect(zebra.printResult?.provider).toBe('zebra-local-agent')
+  expect(zebra.printResult?.provider).toBe('server-windows-raw')
 
   // (c) Şablon HİÇ verilmediğinde de davranış CargoFlow HTML'dir.
   fetchCalls = []

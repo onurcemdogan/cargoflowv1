@@ -219,7 +219,7 @@ test('SEP-22: Zebra/native jobs[].ok sözleşmesi DEĞİŞMEDİ', () => {
     join(here, '..', 'src/providers/printing/BrowserDownloadPrintProvider.ts'),
     'utf8',
   )
-  const zebra = provider.slice(provider.indexOf("'/api/printing/zebra/raw'"))
+  const zebra = provider.slice(provider.indexOf("'/api/printing/jobs'"))
   assert.match(zebra, /jobs: data\.jobs/)
   assert.equal(/resolveBrowserPrintJobs/.test(zebra), false)
 })

@@ -699,31 +699,47 @@ async function localAgentPrint(orders: CargoOrder[]) {
   return { calls, result }
 }
 
-test('PRINT-7: local-agent çok sayfa → TEK çağrı, canonical sırada combinedZpl', async () => {
+// ═══ SINIR TAŞINDI, İDDİA GÜÇLENDİ (PRINT-PLATFORM-001) ═══════════════
+//
+// Bu iki test ESKİDEN istemcinin kurduğu birleşik ZPL'i inceliyordu. O
+// kurulum artık YASAKTIR: taşıyıcı artefaktı SUNUCU YETKİLİDİR ve istemci
+// bayt GÖNDEREMEZ (kimlik doğrulanmış bir tarayıcı kendi ZPL'ini
+// bastırabiliyordu — ölçüldü).
+//
+// Sayfa sırası/birleştirme artık SUNUCUDA kanıtlanır (print-platform
+// paketi: PRINT-6, PG-4). Burada kanıtlanan şey İSTEMCİNİN HİÇ BAYT
+// GÖNDERMEDİĞİDİR — bu, eski iddiadan DAHA güçlüdür.
+test('PRINT-7: local-agent → TEK çağrı ve YALNIZ KİMLİK (bayt YOK)', async () => {
   const { calls } = await localAgentPrint([bundleOrder('A', 2)])
-  // TEK YEREL AJAN ÇAĞRISI.
+  // TEK sunucu çağrısı.
   expect(calls).toHaveLength(1)
-  const labels = calls[0].labels as Array<{ orderNumber: string; zpl: string }>
-  expect(labels).toHaveLength(1)
-  const zpl = labels[0].zpl
-  // Taşıyıcı + iki detay TEK ham ZPL işinde.
-  expect((zpl.match(/\^XA/g) ?? []).length).toBe(3)
-  expect((zpl.match(/\^XZ/g) ?? []).length).toBe(3)
-  // CANONICAL SIRA: taşıyıcı ilk, detaylar 1..N.
-  expect(zpl.indexOf('A-CARRIER')).toBeLessThan(zpl.indexOf('A-DETAY1'))
-  expect(zpl.indexOf('A-DETAY1')).toBeLessThan(zpl.indexOf('A-DETAY2'))
+  const items = calls[0].items as Array<{ orderId: string; orderNumber: string }>
+  expect(items).toHaveLength(1)
+  expect(items[0].orderNumber).toBeTruthy()
+  // İSTEMCİ BAYT GÖNDERMEZ: ne birleşik ZPL, ne sayfa, ne etiket dizisi.
+  expect(calls[0].labels).toBeUndefined()
+  const body = JSON.stringify(calls[0])
+  for (const forbidden of ['^XA', '^XZ', 'A-CARRIER', 'A-DETAY1', 'zpl']) {
+    expect(body).not.toContain(forbidden)
+  }
 }, 20000)
 
-test('PRINT-8: resmî Sürat + local-agent → BOŞ zplContent gönderilmez', async () => {
+test('PRINT-8: BOŞ/uydurma ZPL gönderimi YAPISAL OLARAK İMKÂNSIZ', async () => {
   const { calls } = await localAgentPrint([bundleOrder('B', 1)])
-  const labels = calls[0].labels as Array<{ orderNumber: string; zpl: string }>
-  // KÖK NEDEN KAPANDI: eskiden bilerek boş bırakılan zplContent gidiyordu.
-  expect(labels[0].zpl.trim().length).toBeGreaterThan(0)
-  expect(labels[0].zpl).toContain('B-CARRIER')
-  // İSTEMCİ technicalZpl SEÇİMİNE GERİ DÖNMEZ.
-  const source = calls[0]
-  expect(JSON.stringify(source)).not.toContain('technicalZpl')
-  expect(JSON.stringify(source)).not.toContain('barcodeRaw')
+  // KÖK NEDEN KALICI KAPANDI: istemcinin göndereceği bir içerik alanı YOK,
+  // dolayısıyla "boş zplContent gitti" hatası TEKRAR EDEMEZ.
+  const body = JSON.stringify(calls[0])
+  for (const forbidden of [
+    'technicalZpl',
+    'barcodeRaw',
+    'zplContent',
+    'B-CARRIER',
+    'labels',
+  ]) {
+    expect(body).not.toContain(forbidden)
+  }
+  // Gönderilen TEK şey kimliktir.
+  expect(Object.keys(calls[0]).sort()).toEqual(['items', 'printerName'])
 }, 20000)
 
 // ── BULK ──────────────────────────────────────────────────────────────────

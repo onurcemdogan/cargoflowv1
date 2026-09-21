@@ -392,7 +392,10 @@ const TENANT_AUTH_PATHS = [
   // yalnız auth modda kullanılabilir." dönüyordu. Guard DEĞİŞMEDİ; yalnız
   // uç, diğer org-kapsamlı uçlarla AYNI auth kapısının arkasına alındı.
   '/api/labels/render',
-  '/api/printing/zebra',
+  // ÖN EK GENİŞLETİLDİ: '/api/printing/zebra' yazılıydı ve Express ÖN EK
+  // eşleşmesi yaptığı için '/api/printing/jobs' bu kapıya HİÇ girmezdi —
+  // bu dosyada iki kez yaşanan kusurun aynısı (bkz. yukarıdaki notlar).
+  '/api/printing',
   // AYNI KÖK NEDEN, İKİNCİ KEZ: Trace V2 okuma ucu bu listede YOKTU, bu yüzden
   // `tenantAuth` hiç çalışmıyor, `request.auth` boş kalıyor ve uç 404 dönüyordu
   // — üretimde `surat_trace_attempts` İKİ satır taşırken Canlı Debug "kayıt
@@ -3392,76 +3395,148 @@ app.post('/api/labels/zpl/bulk-generate', (request, response) => {
   })
 })
 
-app.post('/api/printing/zebra/raw', async (request, response) => {
-  const printerName = String(request.body?.printerName ?? '').trim()
-  const labels = Array.isArray(request.body?.labels) ? request.body.labels : []
-
-  if (!printerName || labels.length === 0) {
-    response.status(400).json({
-      ok: false,
-      provider: 'windows-raw-printer',
-      message: 'printerName ve en az bir ZPL etiketi gereklidir.',
+// ═══ BASKI YETENEĞİ — SAKLANMIŞ YAZICI ADI YETENEK DEĞİLDİR ══════════════
+//
+// `printerName !== ''` olması sürecin o yazıcıya ham veri gönderebileceğini
+// KANITLAMAZ: ham yol Windows yazdırma API'sine bağlıdır ve süreç Linux
+// konteynerde çalışıyorsa bu yol YOKTUR. "Bağlı" demek yalan olurdu.
+app.get('/api/printing/capabilities', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const transport = await import('./printing/printTransport.ts')
+    const printerName = String(request.query?.printerName ?? '')
+    response.json({
+      ok: true,
+      runtime: { platform: process.platform },
+      capabilities: [
+        transport.describeServerRawCapability({
+          platform: process.platform,
+          printerName,
+        }),
+        // Tarayıcı/indirme taşımaları İSTEMCİDE yaşar; sunucu onları
+        // yürütemez ve bunu açıkça söyler.
+        transport.describeClientTransport('BROWSER_PRINT', 'server'),
+        transport.describeClientTransport('DOWNLOAD', 'server'),
+      ],
     })
+  } catch {
+    response.status(503).json({ ok: false, message: 'Baskı yetenekleri okunamadı.' })
+  }
+})
+
+// ═══ KANONİK BASKI İŞİ — SUNUCU YETKİLİ ══════════════════════════════════
+//
+// ÖLÇÜLEN GÜVEN SINIRI KUSURU (yamadan önce yeniden üretildi): eski ham uç
+// `labels[].zpl` alanını İSTEMCİDEN alıp doğrudan sunucu tarafı yazıcı
+// komutuna veriyordu. Kimlik doğrulanmış bir tarayıcı, KENDİ uydurduğu ZPL'i
+// "taşıyıcı etiketi" diye bastırabiliyordu; kiracı kapsamı hiç okunmuyordu.
+//
+// Bu uç YALNIZ KİMLİK alır. Baytları SUNUCU çözer: kiracı kapsamı → kalıcı
+// artefakt → hash zinciri → değişmez sayfa sırası → taşıma. Ham ZPL
+// tarayıcıya geri DÖNMEZ ve tarayıcıdan KABUL EDİLMEZ.
+app.post('/api/printing/jobs', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const body = request.body ?? {}
+  // İstemci RAW ZPL GÖNDEREMEZ (render ucuyla AYNI sözleşme).
+  for (const forbidden of ['zpl', 'printZpl', 'technicalZpl', 'barcodeRaw', 'labels', 'content']) {
+    if (body[forbidden] !== undefined) {
+      response.status(400).json({
+        ok: false,
+        code: 'raw_zpl_not_accepted',
+        message: 'Bu uç ham ZPL kabul etmez; yalnız sipariş kimliği gönderin.',
+      })
+      return
+    }
+  }
+  const items = Array.isArray(body.items) ? body.items : []
+  if (items.length === 0) {
+    response.status(400).json({ ok: false, code: 'items_required' })
     return
   }
-
-  const jobs = []
-  for (const label of labels) {
-    const orderNumber = String(label?.orderNumber ?? '').trim()
-    const zpl = normalizeSuratRawZpl(label?.zpl)
-    if (!zpl) {
-      jobs.push({
-        orderNumber,
+  try {
+    const [service, rawTransport, transport, { getOrder }] = await Promise.all([
+      import('./printing/printJobService.ts'),
+      import('./printing/windowsRawTransport.ts'),
+      import('./printing/printTransport.ts'),
+      import('./orders/orderPersistenceService.ts'),
+    ])
+    const printerName = String(body.printerName ?? '')
+    const capability = transport.describeServerRawCapability({
+      platform: process.platform,
+      printerName,
+    })
+    // YETENEK YOKSA İŞ KURULMAZ: sahte "gönderildi" üretilmez.
+    if (!capability.available) {
+      response.status(409).json({
         ok: false,
-        errorMessage: 'Geçerli ^XA...^XZ BarcodeRaw ZPL bulunamadı.',
+        code: 'transport_unavailable',
+        capability,
       })
-      continue
+      return
     }
-
-    try {
-      const documentId = randomUUID()
-      const result = await execFileAsync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          join(serverDirectory, 'print-raw-zpl.ps1'),
-          '-PrinterName',
-          printerName,
-          '-ZplBase64',
-          Buffer.from(zpl, 'utf8').toString('base64'),
-          '-DocumentName',
-          `CargoFlow-${orderNumber || documentId}`,
-        ],
-        { windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 },
-      )
-      const printJobId = String(result.stdout ?? '').trim() || documentId
-      jobs.push({ orderNumber, ok: true, printJobId })
-    } catch (error) {
-      jobs.push({
-        orderNumber,
-        ok: false,
-        errorMessage:
-          error instanceof Error ? error.message : 'Windows yazıcı hatası',
-      })
-    }
+    const result = await service.submitPrintJob(context.db, {
+      // KİRACI YALNIZ AUTH BAĞLAMINDAN; gövde bunu EZEMEZ.
+      organizationId: context.organizationId,
+      marketplaceAccountId: context.marketplaceAccountId,
+      transport: 'SERVER_WINDOWS_RAW',
+      printerName,
+      items: items.map((item) => ({
+        orderId: String(item?.orderId ?? ''),
+        orderNumber: String(item?.orderNumber ?? ''),
+      })),
+      getOrder,
+      execute: rawTransport.createWindowsRawExecutor({
+        scriptPath: join(serverDirectory, 'print-raw-zpl.ps1'),
+      }),
+    })
+    // Mevcut kabul edilmiş sipariş-bazlı semantik KORUNUR: her kalem kendi
+    // sonucunu taşır; kısmi başarı SESSİZ DÜŞME DEĞİLDİR.
+    response.status(result.status === 'FAILED' ? 502 : 200).json({
+      ok: result.status === 'SUBMITTED' || result.status === 'PARTIAL',
+      provider: 'server-windows-raw',
+      printerName,
+      jobId: result.jobId,
+      status: result.status,
+      jobs: result.items.map((item) => ({
+        orderNumber: item.orderNumber,
+        orderId: item.orderId,
+        ok: item.status === 'SUBMITTED',
+        printJobId: item.printJobId ?? undefined,
+        pageCount: item.pageCount,
+        errorMessage: item.failure ?? undefined,
+      })),
+      printedOrderIds: service.resolvePrintedOrderIds(result),
+    })
+  } catch {
+    response.status(503).json({ ok: false, code: 'print_job_failed' })
   }
+})
 
-  const failedJobs = jobs.filter((job) => !job.ok)
-  response.status(failedJobs.length === 0 ? 200 : 500).json({
-    ok: failedJobs.length === 0,
-    provider: 'windows-raw-printer',
-    printerName,
-    printJobId:
-      jobs.length === 1 ? jobs[0]?.printJobId : randomUUID(),
-    jobs,
+// ═══ ESKİ HAM UÇ — KISITLI UYUMLULUK ═════════════════════════════════════
+//
+// SİLİNMEDİ: kabul edilmiş testler bu yolun VARLIĞINI ve "resmî şablonda
+// ÇAĞRILMAZ" davranışını kilitliyor. Ama İSTEMCİ BAYTLARINA ARTIK GÜVENMEZ:
+// sunucu yetkili taşıyıcı baskısı `/api/printing/jobs` üzerinden yapılır.
+//
+// Aynı taşıyıcı akışı için YENİ platform ve ESKİ güvensiz yol AYNI ANDA
+// ETKİN BIRAKILMAZ — bu uç artık hiçbir şey basmaz.
+app.post('/api/printing/zebra/raw', (request, response) => {
+  void normalizeSuratRawZpl
+  response.status(400).json({
+    ok: false,
+    code: 'raw_zpl_not_accepted',
+    provider: 'server-windows-raw',
     message:
-      failedJobs.length === 0
-        ? `${jobs.length} ZPL etiketi Windows yazıcı kuyruğuna gönderildi.`
-        : `${failedJobs.length} etiket Zebra yazıcıya gönderilemedi.`,
+      'Bu uç ham ZPL kabul etmez; sipariş kimliğiyle /api/printing/jobs kullanın.',
+    jobs: (Array.isArray(request.body?.labels) ? request.body.labels : []).map(
+      (label) => ({
+        orderNumber: String(label?.orderNumber ?? ''),
+        ok: false,
+        errorMessage: 'raw_zpl_not_accepted',
+      }),
+    ),
   })
 })
 
