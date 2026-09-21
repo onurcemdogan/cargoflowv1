@@ -45,7 +45,7 @@
     "test:integration-health": "node --test server/integration-health-flow.test.mjs server/integration-health-multi-account-flow.test.mjs server/integration-health-credential-presence-flow.test.mjs",
     "test:subscription": "node --test server/subscription-model-flow.test.mjs",
     "test:billing-party": "node --test server/shipping-billing-party-flow.test.mjs server/shipping-billing-party-closeout-flow.test.mjs server/trendyol-order-contract-provenance-flow.test.mjs",
-    "test:woocommerce": "node --test server/woocommerce-connector-flow.test.mjs",
+    "test:woocommerce": "node --test server/woocommerce-connector-flow.test.mjs server/woocommerce-runtime-closeout-flow.test.mjs",
     "test:billing-model": "npm run test:subscription",
     "trendyol:package-status:check": "node server/orders/trendyolPackageIdentityTraceCli.ts",
     "surat:zpl:diagnose": "node server/integrations/suratZplDiagnosticCli.ts",

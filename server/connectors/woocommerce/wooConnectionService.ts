@@ -194,8 +194,38 @@ export async function connectWooStore(
   }
 }
 
+export const WOO_DISCONNECT_OUTCOMES = [
+  /** Woo mağazası ayrıldı: kimlik silindi, hesap pasifleşti. */
+  'DISCONNECTED',
+  /**
+   * Hesap YOK ya da bu kiracının Woo hesabı DEĞİL.
+   *
+   * Sağlayıcı uyuşmazlığı ile yokluk BİLEREK aynı yanıta çöker: "bu id
+   * Trendyol'a ait" demek, saldırgana başka kiracının/sağlayıcının hesap
+   * id'sini DOĞRULATIRDI.
+   */
+  'NOT_FOUND',
+] as const
+export type WooDisconnectOutcome = (typeof WOO_DISCONNECT_OUTCOMES)[number]
+
 /**
  * Tek mağazayı ayırır.
+ *
+ * ═══ ÖLÇÜLEN KUSUR (YAMADAN ÖNCE YENİDEN ÜRETİLDİ) ════════════════════
+ *
+ * Bu fonksiyon YALNIZ `organization_id + marketplace_account_id` ile
+ * pasifleştiriyordu; `marketplace = 'woocommerce'` ŞARTI YOKTU. Aynı
+ * organizasyondaki bir çağıran, Woo disconnect ucuna TRENDYOL hesap
+ * id'sini verip o hesabı KAPATABİLİYORDU (ölçüldü: `isActive true → false`).
+ *
+ * Kiracı kapsamı bu deliği KAPATMAZ: id aynı kiracınındır, sağlayıcısı
+ * farklıdır. Kapsam denetiminin doğru ekseni SAĞLAYICIDIR.
+ *
+ * ═══ FAIL-CLOSED ══════════════════════════════════════════════════════
+ *
+ * Sahiplik MUTASYONDAN ÖNCE kanıtlanır. Kanıtlanamazsa HİÇBİR ŞEY
+ * değişmez: ne kimlik silinir, ne hesap pasifleşir. Trendyol kimliği ve
+ * durumu ASLA bu yoldan değiştirilemez.
  *
  * KARDEŞ mağazalar ETKİLENMEZ ve GEÇMİŞ İŞ VERİSİ SİLİNMEZ: kimlik
  * kaldırıldı diye sipariş geçmişi silinmez (geri bağlanınca veri lazımdır).
@@ -203,12 +233,32 @@ export async function connectWooStore(
 export async function disconnectWooStore(
   db: Db,
   params: { organizationId: string; marketplaceAccountId: string },
-): Promise<void> {
+): Promise<{ outcome: WooDisconnectOutcome }> {
   const organizationId = String(params.organizationId ?? '').trim()
   const marketplaceAccountId = String(params.marketplaceAccountId ?? '').trim()
   if (organizationId === '' || marketplaceAccountId === '') {
     throw new Error('organizationId ve marketplaceAccountId zorunludur.')
   }
+
+  // 1) SAĞLAYICI + KİRACI SAHİPLİĞİ — MUTASYONDAN ÖNCE.
+  const owned = await db
+    .select({ id: marketplaceAccounts.id })
+    .from(marketplaceAccounts)
+    .where(
+      and(
+        eq(marketplaceAccounts.organizationId, organizationId),
+        eq(marketplaceAccounts.id, marketplaceAccountId),
+        // BU SATIR DELİĞİ KAPATIR: yalnız WooCommerce hesapları.
+        eq(marketplaceAccounts.marketplace, WOO_PROVIDER_KEY),
+      ),
+    )
+    .limit(1)
+  if (!owned[0]) {
+    // HİÇBİR MUTASYON YAPILMADI.
+    return { outcome: 'NOT_FOUND' }
+  }
+
+  // 2) Yalnız kanıtlandıktan sonra.
   await deleteConnectorCredential(db, {
     organizationId,
     marketplaceAccountId,
@@ -221,8 +271,12 @@ export async function disconnectWooStore(
       and(
         eq(marketplaceAccounts.organizationId, organizationId),
         eq(marketplaceAccounts.id, marketplaceAccountId),
+        // Yazma yüklemi de SAĞLAYICI KAPSAMLIDIR: okuma ile yazma arasında
+        // kayma olsa bile yabancı sağlayıcı hesabı GÜNCELLENEMEZ.
+        eq(marketplaceAccounts.marketplace, WOO_PROVIDER_KEY),
       ),
     )
+  return { outcome: 'DISCONNECTED' }
 }
 
 export interface WooStoreView {

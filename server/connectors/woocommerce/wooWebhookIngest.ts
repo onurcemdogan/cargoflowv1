@@ -209,14 +209,24 @@ export async function processWooInboxItem(
     record: WebhookInboxRecord
     rawBody: Buffer
     persistCanonical?: (order: WooNormalizedOrder) => Promise<void>
+    /**
+     * Deneme sayacını BU adım mı artırsın.
+     *
+     * Arka plan tüketicisi kaydı ÖNCE atomik olarak sahiplenir (sayacı orada
+     * artırır); ikisi de artırsaydı TEK deneme sayacı İKİ ilerletir ve
+     * tekrar bütçesi yalan söylerdi.
+     */
+    incrementAttempt?: boolean
   },
 ): Promise<WooWebhookProcessResult> {
+  const incrementAttempt = params.incrementAttempt !== false
   if (!isSupportedOrderTopic(params.record.topic)) {
     await markInboxProcessing(db, {
       organizationId: params.organizationId,
       inboxId: params.record.id,
       status: 'IGNORED',
       errorCode: 'TOPIC_NOT_SUPPORTED',
+      incrementAttempt,
     })
     return {
       processed: false,
@@ -238,6 +248,7 @@ export async function processWooInboxItem(
       inboxId: params.record.id,
       status: 'RETRYABLE',
       errorCode: 'MALFORMED_JSON',
+      incrementAttempt,
     })
     return {
       processed: false,
@@ -256,6 +267,7 @@ export async function processWooInboxItem(
       inboxId: params.record.id,
       status: 'RETRYABLE',
       errorCode: normalization.rejection,
+      incrementAttempt,
     })
     return {
       processed: false,
@@ -279,6 +291,7 @@ export async function processWooInboxItem(
     inboxId: params.record.id,
     status: 'PROCESSED',
     errorCode: null,
+    incrementAttempt,
   })
   return {
     processed: true,

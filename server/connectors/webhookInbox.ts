@@ -22,7 +22,7 @@
 //
 // Gövde müşteri adı/adresi/telefonu taşır. Düz metin SAKLANMAZ; mevcut
 // AES-256-GCM zarfı kullanılır (ikinci kriptografi YOK).
-import { and, eq } from 'drizzle-orm'
+import { and, asc, eq, inArray, lt } from 'drizzle-orm'
 import { connectorWebhookInbox } from '../db/schema.ts'
 import {
   decryptCredentialPayload,
@@ -251,6 +251,14 @@ export async function markInboxProcessing(
     status: WebhookInboxStatus
     errorCode?: string | null
     processedAt?: Date | null
+    /**
+     * Deneme sayacını BU çağrı mı artırsın.
+     *
+     * `false`: sayaç ZATEN `claimInboxDelivery` ile artırıldı. Tüketici
+     * önce SAHİPLENİR (atomik artış) sonra sonucu yazar; ikisi de artırsaydı
+     * tek işleme denemesi sayacı İKİ artırır ve bütçe yalan söylerdi.
+     */
+    incrementAttempt?: boolean
   },
 ): Promise<void> {
   const organizationId = String(params.organizationId ?? '').trim()
@@ -265,7 +273,9 @@ export async function markInboxProcessing(
       ),
     )
     .limit(1)
-  const attemptCount = Number((rows[0] as Record<string, unknown>)?.attemptCount ?? 0) + 1
+  const currentAttempts = Number((rows[0] as Record<string, unknown>)?.attemptCount ?? 0)
+  const attemptCount =
+    params.incrementAttempt === false ? currentAttempts : currentAttempts + 1
   await db
     .update(connectorWebhookInbox)
     .set({
@@ -317,4 +327,172 @@ export async function listInbox(
     .from(connectorWebhookInbox)
     .where(and(...conditions))
   return rows.map((row: Record<string, unknown>) => toRecord(row))
+}
+
+// ═══ KURTARMA / TEKRAR DENEME — DAYANIKLI KUTUNUN TÜKETİCİ TARAFI ════════
+//
+// ÖLÇÜLEN EKSİK: kutu DAYANIKLIYDI ama TÜKETİCİSİ YOKTU. Kabul edilen her
+// teslim `RECEIVED` olarak SONSUZA KADAR duruyordu. Dayanıklılığın anlamı
+// "sonra işlenecek"tir; işleyen yoksa kutu sadece bir mezarlıktır.
+//
+// Uygunluk kaynağı VERİTABANIDIR: yeniden başlatma sonrası aday satırlar
+// aynı sorguyla YENİDEN bulunur. Bellekteki hiçbir kuyruk hayatta kalmak
+// zorunda değildir — ve kalmamalıdır.
+
+/** Tekrar deneme bütçesi. Sınırsız tekrar YOKTUR. */
+export interface InboxRetryPolicy {
+  /** Bu sayıya ULAŞAN kayıt BİR DAHA seçilmez (sonsuz döngü yok). */
+  maxAttempts: number
+  /** İlk gecikme; sonrakiler ikiye katlanır. */
+  retryBaseMs: number
+  /** Üst sınır — geri çekilme sonsuza büyümez. */
+  retryCapMs: number
+}
+
+export const DEFAULT_INBOX_RETRY_POLICY: InboxRetryPolicy = {
+  maxAttempts: 5,
+  retryBaseMs: 60_000,
+  retryCapMs: 30 * 60_000,
+}
+
+/**
+ * ÜSTEL GERİ ÇEKİLME.
+ *
+ * Sıkı döngü YASAK: bozuk bir yük, her turda yeniden denenirse hem CPU hem
+ * log yakar ve gerçek işleri geciktirir.
+ */
+export function nextRetryDelayMs(
+  attemptCount: number,
+  policy: InboxRetryPolicy = DEFAULT_INBOX_RETRY_POLICY,
+): number {
+  const attempts = Math.max(0, Math.floor(Number(attemptCount) || 0))
+  if (attempts <= 0) return 0
+  const raw = policy.retryBaseMs * 2 ** (attempts - 1)
+  return Math.min(policy.retryCapMs, raw)
+}
+
+/** Kayıt ŞİMDİ işlenebilir mi (bütçe + geri çekilme). */
+export function isInboxDeliveryDue(
+  record: {
+    status: WebhookInboxStatus
+    attemptCount: number
+    /** Son dokunuş anı — geri çekilme BURADAN ölçülür. */
+    updatedAt?: Date | null
+  },
+  nowMs: number,
+  policy: InboxRetryPolicy = DEFAULT_INBOX_RETRY_POLICY,
+): boolean {
+  if (record.status !== 'RECEIVED' && record.status !== 'RETRYABLE') return false
+  const attempts = Number(record.attemptCount ?? 0)
+  // BÜTÇE BİTTİ: kayıt DURUR (veri kaybolmaz) ama tekrar SEÇİLMEZ.
+  if (attempts >= policy.maxAttempts) return false
+  if (attempts <= 0) return true
+  const last = record.updatedAt instanceof Date ? record.updatedAt.getTime() : null
+  if (last === null) return true
+  return nowMs - last >= nextRetryDelayMs(attempts, policy)
+}
+
+export interface DueInboxRecord extends WebhookInboxRecord {
+  updatedAt: Date | null
+}
+
+/**
+ * İŞLENMEYİ BEKLEYEN teslimler.
+ *
+ * ═══ NEDEN KİRACI FİLTRESİ ZORUNLU DEĞİL ═══════════════════════════════
+ *
+ * Bu SİSTEM düzeyinde bir kurtarma taramasıdır: arka plan tüketicisi bir
+ * kiracı adına DEĞİL, süreç adına çalışır. İzolasyon KAYBOLMAZ — dönen her
+ * satır KENDİ `organizationId`sini taşır ve sonraki HER okuma/yazma o
+ * kimlikle KAPSANIR (gövde çözme, sonuç yazma, hesap çözümleme).
+ *
+ * Tek kiracıyı taramak için `organizationId` verilebilir (tanı/test).
+ *
+ * `PROCESSED` ve `IGNORED` ASLA seçilmez: işlenmiş teslim yeniden
+ * işlenmez, politika gereği yok sayılan teslim tekrar tekrar denenmez.
+ */
+export async function listDueInboxDeliveries(
+  db: Db,
+  params: {
+    providerKey: string
+    nowMs: number
+    policy?: InboxRetryPolicy
+    limit?: number
+    organizationId?: string
+  },
+): Promise<DueInboxRecord[]> {
+  const providerKey = normalizeProviderKey(params.providerKey)
+  const policy = params.policy ?? DEFAULT_INBOX_RETRY_POLICY
+  const limit = Math.max(1, Math.min(200, Number(params.limit ?? 25)))
+  const conditions = [
+    eq(connectorWebhookInbox.providerKey, providerKey),
+    inArray(connectorWebhookInbox.status, ['RECEIVED', 'RETRYABLE']),
+    // Bütçesi dolmuş satır SORGUDA ELENİR.
+    lt(connectorWebhookInbox.attemptCount, policy.maxAttempts),
+  ]
+  if (params.organizationId) {
+    conditions.push(
+      eq(connectorWebhookInbox.organizationId, String(params.organizationId)),
+    )
+  }
+  const rows = await db
+    .select()
+    .from(connectorWebhookInbox)
+    .where(and(...conditions))
+    // EN ESKİ TESLİM ÖNCE: geri çekilmedeki satırlar taze teslimleri AÇ
+    // BIRAKMAZ; tersi de doğrudur.
+    .orderBy(asc(connectorWebhookInbox.receivedAt))
+    // Geri çekilme süresi SQL'de değil burada ölçülür; bu yüzden aday
+    // penceresi limitten geniş alınır ve SONRA sınırlanır.
+    .limit(limit * 4)
+  const due: DueInboxRecord[] = []
+  for (const row of rows as Record<string, unknown>[]) {
+    const record: DueInboxRecord = {
+      ...toRecord(row),
+      updatedAt: (row.updatedAt as Date | null) ?? null,
+    }
+    if (!isInboxDeliveryDue(record, params.nowMs, policy)) continue
+    due.push(record)
+    if (due.length >= limit) break
+  }
+  return due
+}
+
+/**
+ * KAYDI SAHİPLEN — koşullu, atomik.
+ *
+ * Aynı satırı iki tüketici (iki süreç ya da örtüşen iki tur) aynı anda
+ * işleyemez: sahiplenme, deneme sayacını BEKLENEN değerden bir fazlasına
+ * koşullu olarak taşır. Yarışı kaybeden `null` alır ve o satıra DOKUNMAZ.
+ *
+ * Sayacı BURASI artırır; `markInboxProcessing` bu yüzden
+ * `incrementAttempt: false` ile çağrılır.
+ */
+export async function claimInboxDelivery(
+  db: Db,
+  params: {
+    organizationId: string
+    inboxId: string
+    expectedStatus: WebhookInboxStatus
+    expectedAttemptCount: number
+  },
+): Promise<WebhookInboxRecord | null> {
+  const organizationId = String(params.organizationId ?? '').trim()
+  if (organizationId === '') throw new WebhookInboxScopeError('organizationId zorunludur.')
+  const expected = Math.max(0, Number(params.expectedAttemptCount ?? 0))
+  const claimed = await db
+    .update(connectorWebhookInbox)
+    .set({ attemptCount: expected + 1, updatedAt: new Date() })
+    .where(
+      and(
+        // KİRACI SINIRI — istisnasız.
+        eq(connectorWebhookInbox.organizationId, organizationId),
+        eq(connectorWebhookInbox.id, String(params.inboxId)),
+        eq(connectorWebhookInbox.status, params.expectedStatus),
+        eq(connectorWebhookInbox.attemptCount, expected),
+      ),
+    )
+    .returning()
+  const row = claimed[0] as Record<string, unknown> | undefined
+  return row ? toRecord(row) : null
 }

@@ -309,21 +309,48 @@ test('IHB-12: saglik ciktisi HICBIR kimlik/sir degeri TASIMAZ', async (t) => {
 // ── UÇ NOKTA ───────────────────────────────────────────────────────────────
 
 test('IHB-13: uc nokta UYDURMAZ — gozlenemeyen saglayici UNKNOWN bildirir', () => {
-  const source = readFileSync(join(here, 'index.mjs'), 'utf8')
-  const start = source.indexOf("app.get('/api/integrations/health'")
+  // ═══ BU TEST TASINDI, ZAYIFLAMADI ═════════════════════════════════════
+  //
+  // Ilk yazimda uc noktanin SATIR ICI govdesi taraniyordu; uc davranisi o
+  // gun `index.mjs` icindeydi ve "uydurma deger yok" ancak orada
+  // olculebiliyordu.
+  //
+  // WOOCOMMERCE-001 KAPANISI uc davranisini `integrationHealthService.ts`e
+  // tasidi: satir ici kaldigi surece YALNIZ depo yardimcilari test
+  // edilebiliyordu ve URUN UCU yalan soyleyebiliyordu (olculdu).
+  //
+  // Ayrica `woocommerce` ARTIK kimlik kaliciligina SAHIPTIR
+  // (`connector_credentials`); onun icin varlik bildirmek UYDURMA DEGIL,
+  // OLCUMDUR. Degismeyen kural sudur: GOZLENEMEYEN saglayici icin deger
+  // UYDURULMAZ.
+  const endpoint = readFileSync(join(here, 'index.mjs'), 'utf8')
+  const start = endpoint.indexOf("app.get('/api/integrations/health'")
   assert.ok(start > 0, 'saglik ucu bulunamadi')
-  const block = source.slice(start, source.indexOf('\n})', start))
-  // Trendyol gozlenebilir → uc durumlu esleme yapilir.
-  assert.match(block, /credentialsPresenceByProvider/)
-  assert.match(block, /'PRESENT'/)
-  assert.match(block, /'ABSENT'/)
-  assert.match(block, /'UNKNOWN'/)
-  // Diger saglayicilar icin UYDURMA deger yazilmamali.
-  for (const fabricated of ['woocommerce:', 'ikas:', 'ticimax:']) {
+  const block = endpoint.slice(start, endpoint.indexOf('\n})', start))
+  // UC IKINCI BIR GERCEK URETMEZ: haritayi kendi kurmaz, servise devreder.
+  assert.match(block, /handleIntegrationHealthRequest/)
+  assert.equal(block.includes('credentialsPresenceByProvider'), false)
+  assert.equal(block.includes('credentialsPresenceByConnection'), false)
+
+  const service = readFileSync(
+    join(here, 'connectors', 'integrationHealthService.ts'),
+    'utf8',
+  )
+  // Trendyol gozlenebilir → uc durumlu esleme AYNEN korunur.
+  assert.match(service, /credentialsPresenceByProvider/)
+  assert.match(service, /'PRESENT'/)
+  assert.match(service, /'ABSENT'/)
+  assert.match(service, /'UNKNOWN'/)
+  // Kimlik kaliciligi OLMAYAN saglayicilar icin HICBIR deger yazilmaz.
+  for (const fabricated of ['ikas', 'ticimax']) {
     assert.equal(
-      block.includes(fabricated),
+      service.includes(fabricated),
       false,
       `kimlik kaliciligi olmayan saglayici icin uydurma deger: ${fabricated}`,
     )
   }
+  // Woo varligi LITERAL DEGIL, GERCEK SATIRLARDAN turetilir.
+  assert.match(service, /listAccountsWithCredential/)
+  assert.equal(service.includes("'woocommerce': 'PRESENT'"), false)
+  assert.equal(service.includes("woocommerce: 'PRESENT'"), false)
 })

@@ -2444,50 +2444,31 @@ app.get('/api/onboarding/status', async (request, response) => {
 
 // GET /api/integrations/health — KANONİK ENTEGRASYON SAĞLIĞI (SALT OKUNUR).
 //
-// SAĞLAYICIYA HİÇBİR ÇAĞRI YAPILMAZ: sağlık YALNIZ saklanmış durumdan
-// (`integration_sync_state`) türetilir. Normal gezinme sağlayıcıyı YOKLAMAZ.
+// SAĞLAYICIYA HİÇBİR ÇAĞRI YAPILMAZ: sağlık YALNIZ SAKLANMIŞ durumdan
+// türetilir — senkron geçmişi (`integration_sync_state`), yapılandırılmış
+// hesaplar (`marketplace_accounts`) ve kimlik VARLIĞI (`connector_credentials`,
+// sır ÇÖZÜLMEDEN). Normal gezinme sağlayıcıyı YOKLAMAZ.
 // Kiracı kapsamı `requireOnboardingContext` ile gelir; yanıt yalnız kararlı
 // sebep KODLARI taşır — ham sağlayıcı hatası/uç noktası/kimlik bilgisi ASLA.
 app.get('/api/integrations/health', async (request, response) => {
   const context = await requireOnboardingContext(request, response)
   if (!context) return
   try {
-    const [{ loadIntegrationHealth, toHealthView }, { buildProviderCatalog }, credentials] =
-      await Promise.all([
-        import('./connectors/integrationHealthRepository.ts'),
-        import('./connectors/providerCatalog.ts'),
-        import('./integrations/credentialService.ts'),
-      ])
-    const masked = await credentials.getMaskedIntegrationStatus(
-      context.db,
-      context.organizationId,
-    )
-    const catalog = buildProviderCatalog()
-    // KİMLİK VARLIĞI ÜÇ DURUMLUDUR. `configured` GÖZLENEBİLİR olduğunda
-    // PRESENT/ABSENT'e çevrilir; gözlenemiyorsa UNKNOWN kalır.
+    // KİMLİK VARLIĞI HARİTASI BURADA KURULMAZ.
     //
-    // WooCommerce / ikas / Ticimax için kimlik KALICILIĞI HENÜZ YOK →
-    // UNKNOWN bildirilir. Uydurma bir ABSENT, bağlantıyı yanlışlıkla
-    // "kaldırılmış" gösterirdi; uydurma bir PRESENT ise tersini yapardı.
-    const trendyolConfigured = masked?.trendyol?.configured
-    const entries = await loadIntegrationHealth(context.db, {
+    // ÖLÇÜLEN KUSUR: bu uç yalnız SAĞLAYICI GENELİ Trendyol varlığını
+    // besliyordu. Woo hesapları için varlık hiç türetilmediğinden kimliği
+    // DURAN mağaza "kurulmadı", kimliği SİLİNEN mağaza (geçmiş senkron
+    // kanıtıyla) "bağlı" görünüyordu — tam TERSİ.
+    //
+    // Varlık artık `connector_credentials` satırlarından HESAP BAZINDA
+    // türetilir ve bu servis TEK GERÇEKTİR; uç ikinci bir harita KURMAZ.
+    const health = await import('./connectors/integrationHealthService.ts')
+    const result = await health.handleIntegrationHealthRequest({
+      db: context.db,
       organizationId: context.organizationId,
-      credentialsPresenceByProvider: {
-        trendyol:
-          typeof trendyolConfigured === 'boolean'
-            ? trendyolConfigured
-              ? 'PRESENT'
-              : 'ABSENT'
-            : 'UNKNOWN',
-      },
-      nowMs: Date.now(),
     })
-    response.json({
-      ok: true,
-      integrations: entries.map((entry) =>
-        toHealthView(entry, catalog.get(entry.providerKey)?.displayName ?? entry.providerKey),
-      ),
-    })
+    response.status(result.httpStatus).json(result.body)
   } catch {
     response.status(500).json({ ok: false, message: 'Entegrasyon sağlığı okunamadı.' })
   }
@@ -2631,26 +2612,16 @@ app.post(
         response.status(503).json({ ok: false })
         return
       }
-      const service = await import('./connectors/woocommerce/wooConnectionService.ts')
-      const ingest = await import('./connectors/woocommerce/wooWebhookIngest.ts')
-      const resolved = await service.resolveWooWebhookAccount(db, {
+      const handlers = await import('./connectors/woocommerce/wooHttpHandlers.ts')
+      const result = await handlers.handleWooWebhookDelivery({
+        db,
         organizationId,
         marketplaceAccountId,
+        // `express.raw` sayesinde BUFFER; yeniden serileştirme YOK.
+        rawBody: Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
+        headers: request.headers,
       })
-      const result = await ingest.ingestWooWebhook(db, {
-        organizationId,
-        marketplaceAccountId,
-        webhookSecret: resolved?.webhookSecret ?? null,
-        request: {
-          // `express.raw` sayesinde BUFFER; yeniden serileştirme YOK.
-          rawBody: Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
-          headers: request.headers,
-        },
-      })
-      response.status(result.httpStatus).json({
-        ok: result.httpStatus >= 200 && result.httpStatus <= 299,
-        outcome: result.outcome,
-      })
+      response.status(result.httpStatus).json(result.body)
     } catch {
       // BAŞARI İDDİA EDİLMEZ: sağlayıcının tekrar denemesi DOĞRUDUR.
       response.status(503).json({ ok: false, outcome: 'NOT_DURABLE' })
@@ -2663,12 +2634,15 @@ app.post('/api/integrations/woocommerce/stores/disconnect', async (request, resp
   if (!context) return
   const marketplaceAccountId = String(request.body?.marketplaceAccountId ?? '').trim()
   try {
-    const service = await import('./connectors/woocommerce/wooConnectionService.ts')
-    await service.disconnectWooStore(context.db, {
+    // SAĞLAYICI KAPSAMI SERVİSTE FAIL-CLOSED KANITLANIR: aynı organizasyonun
+    // TRENDYOL hesap id'si buraya verilse bile HİÇBİR mutasyon olmaz (404).
+    const handlers = await import('./connectors/woocommerce/wooHttpHandlers.ts')
+    const result = await handlers.handleWooDisconnect({
+      db: context.db,
       organizationId: context.organizationId,
       marketplaceAccountId,
     })
-    response.json({ ok: true, marketplaceAccountId })
+    response.status(result.httpStatus).json(result.body)
   } catch {
     response.status(500).json({ ok: false, message: 'Bağlantı kaldırılamadı.' })
   }
@@ -4431,6 +4405,37 @@ async function startTrendyolStreamSyncOnBoot() {
   }
 }
 
+// ═══ WOOCOMMERCE GELEN KUTUSU TÜKETİCİSİ ═════════════════════════════════
+//
+// ÖLÇÜLEN EKSİK: webhook teslimi doğrulanıp KALICI yazılıyor ve 2xx
+// dönülüyordu ama onu İŞLEYEN hiçbir çalışma zamanı YOKTU — kayıtlar
+// `RECEIVED` olarak sonsuza kadar duruyordu.
+//
+// Tüketici SAĞLAYICIYA BAĞLI DEĞİLDİR: 2xx verildikten sonra WooCommerce o
+// teslimi bir daha göndermez, bu yüzden kurtarma TAMAMEN İÇERİDEDİR ve
+// gerçeğin kaynağı KUTUDAKİ ŞİFRELİ YÜKTÜR (istek gövdesi DEĞİL).
+//
+// VARSAYILAN KAPALI: `WOO_WEBHOOK_WORKER_ENABLED` açıkça açılmadıkça
+// zamanlayıcı kurulmaz. Açık olsa bile `internal_test` aşamasında kanonik
+// sipariş yazımı `liveWriteGate` ile KAPALIDIR ve kanonik yazıcı ENJEKTE
+// EDİLMEZ (etiket/taşıyıcı/baskı yan etkisi YOK).
+async function startWooInboxWorkerOnBoot() {
+  if (!isTenantAuthMode()) return
+  try {
+    const [{ getDb }, worker] = await Promise.all([
+      import('./db/client.ts'),
+      import('./connectors/woocommerce/wooWebhookWorker.ts'),
+    ])
+    const started = worker.startWooInboxScheduler({
+      runCycle: () => worker.runWooInboxCycle(getDb()),
+    })
+    if (started) console.log('[woo-inbox] webhook gelen kutusu tüketicisi etkin')
+  } catch {
+    // BEST-EFFORT: kurulamazsa uygulama normal çalışır; teslimler kutuda
+    // DURMAYA devam eder ve bir sonraki açılışta yeniden bulunur.
+  }
+}
+
 // ═══ İÇE AKTARILABİLİRLİK — DİNLEYİCİ VARSAYILAN OLARAK AÇILIR ═══════════
 //
 // Kontrollü kanarya (`auto-label:job:run-once`) worker'ın kullandığı AYNI
@@ -4453,6 +4458,7 @@ if (!listenSuppressed) app.listen(port, host, () => {
   // İkisi de VARSAYILAN KAPALI; bayrak açıkça açılmadıkça kurulmazlar.
   void startLabelJobWorkerOnBoot()
   void startTrendyolStreamSyncOnBoot()
+  void startWooInboxWorkerOnBoot()
 })
 
 // KANARYA İÇİN PAYLAŞILAN ÇALIŞTIRMA YOLU — İKİNCİ CREATE UYGULAMASI YOK.
@@ -4504,6 +4510,17 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
       .catch(() => undefined)
     void import('./marketplaces/trendyolStreamScheduler.ts')
       .then((scheduler) => scheduler.stopTrendyolStreamScheduler())
+      .catch(() => undefined)
+    // Gelen kutusu tüketicisi de ZARİFÇE boşaltılır. Süre dolsa bile VERİ
+    // KAYBI YOKTUR: işlenmemiş kayıt kutuda durur ve sonraki açılışta aynı
+    // uygunluk sorgusuyla YENİDEN bulunur.
+    void import('./connectors/woocommerce/wooWebhookWorker.ts')
+      .then(async (worker) => {
+        await worker.drainWooInboxScheduler(
+          Number(process.env.WOO_WEBHOOK_WORKER_DRAIN_MS ?? 15_000),
+        )
+        worker.stopWooInboxScheduler()
+      })
       .catch(() => undefined)
   })
 }
