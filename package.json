@@ -46,6 +46,7 @@
     "test:subscription": "node --test server/subscription-model-flow.test.mjs",
     "test:billing-party": "node --test server/shipping-billing-party-flow.test.mjs server/shipping-billing-party-closeout-flow.test.mjs server/trendyol-order-contract-provenance-flow.test.mjs",
     "test:print-platform": "node --test server/print-platform-flow.test.mjs",
+    "test:catalog": "node --test server/catalog-browse-flow.test.mjs && vitest run --config vitest.config.ts src/test/productCatalog.dom.test.tsx",
     "test:onboarding": "node --test server/onboarding-provider-flow.test.mjs server/tenant-onboarding-flow.test.mjs && vitest run --config vitest.config.ts src/test/onboardingWizard.dom.test.tsx",
     "test:woocommerce": "node --test server/woocommerce-connector-flow.test.mjs server/woocommerce-runtime-closeout-flow.test.mjs server/woocommerce-dns-rebinding-flow.test.mjs",
     "test:billing-model": "npm run test:subscription",

@@ -115,7 +115,11 @@ export async function findProducts(
   const pageSize = resolvePageSize(filters.pageSize)
   const page = Math.max(1, Math.trunc(Number(filters.page ?? 1)) || 1)
   const where = buildWhere(organizationId, filters, marketplaceAccountId)
-  const orderBy =
+  // DETERMİNİSTİK SIRA: başlık/zaman eşitliğinde varyant kimliği kırıcıdır.
+  // Kırıcı olmadan OFFSET sayfalaması eşit başlıklı satırları sayfalar arasında
+  // TEKRARLAYABİLİR veya ATLAYABİLİR (istemcinin tam katalog yükleyicisi de
+  // bu sayfalarla birleştirir).
+  const primary =
     filters.sort === 'titleDesc'
       ? desc(products.title)
       : filters.sort === 'recent'
@@ -132,7 +136,7 @@ export async function findProducts(
       ),
     )
     .where(where)
-    .orderBy(orderBy)
+    .orderBy(primary, asc(productVariants.id))
     .limit(pageSize)
     .offset((page - 1) * pageSize)
   const totalRows = await db

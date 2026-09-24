@@ -2217,36 +2217,17 @@ app.get('/api/products', async (request, response) => {
   const context = await requireProductPersistenceContext(request, response)
   if (!context) return
   try {
-    const query = request.query ?? {}
-    const archivedParam = strOrUndef(query.archived)
-    const result = await context.service.listProducts(
-      context.db,
-      context.organizationId,
-      {
-        search: strOrUndef(query.search),
-        barcode: strOrUndef(query.barcode),
-        merchantSku: strOrUndef(query.merchantSku),
-        archived:
-          archivedParam === undefined
-            ? undefined
-            : archivedParam === 'true' || archivedParam === '1',
-        page: query.page,
-        pageSize: query.pageSize,
-        sort:
-          query.sort === 'titleDesc' || query.sort === 'recent'
-            ? query.sort
-            : 'titleAsc',
-      },
-      // Yalnız aktif pazaryeri hesabının ürünleri.
-      context.marketplaceAccountId,
-    )
-    response.json({
-      ok: true,
-      products: result.products,
-      total: result.total,
-      page: result.page,
-      pageSize: result.pageSize,
+    // Ucun TAM davranışı `productCatalogQuery.ts` içindedir (test edilir).
+    // Kapsam YALNIZ burada çözülen kiracı + AKTİF hesaptır; sorgudaki
+    // kapsam alanları YOK SAYILIR.
+    const catalog = await import('./products/productCatalogQuery.ts')
+    const result = await catalog.handleProductListRequest({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: context.marketplaceAccountId,
+      query: request.query ?? {},
     })
+    response.status(result.httpStatus).json(result.body)
   } catch {
     response.status(500).json({ ok: false, message: 'Ürünler yüklenemedi.' })
   }

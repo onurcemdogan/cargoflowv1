@@ -132,6 +132,10 @@ import type {
 } from './types/cargoflow'
 import { downloadTextFile } from './utils/download'
 import { resolveLastSuccessfulSyncAt } from './utils/orderSyncStatus'
+import {
+  createLocalCatalogSource,
+  serverCatalogSource,
+} from './services/productCatalogService'
 import { loadLabelPreviewDrafts } from './utils/labelPreviewDrafts'
 import { migrateAlternateLoopbackStorage } from './utils/localStorageMigration'
 import { type QuickTab } from './utils/ordersTabs'
@@ -312,6 +316,23 @@ function App() {
     [orders, ordersState.lastSyncedAt],
   )
   const products = productsState.products
+
+  // ═══ ÜRÜN KATALOĞU TARAYICISI ≠ OPERASYONEL KATALOG ════════════════════
+  //
+  // Ürünler ekranı YALNIZ görünen sayfayı ister (auth: `GET /api/products`).
+  // `products` (tam operasyonel katalog: etiket meta verisi, görsel eşleşmesi,
+  // pano zenginleştirme) AYRI yüklenmeye DEVAM EDER ve ekrana VERİLMEZ.
+  // Legacy (veritabanısız) modda sunucu kataloğu olmadığından yerel kaynak
+  // kullanılır.
+  const catalogAuthMode = integrationConfigService.isAuthMode()
+  const catalogSource = useMemo(
+    () => (catalogAuthMode ? serverCatalogSource : createLocalCatalogSource(products)),
+    [catalogAuthMode, products],
+  )
+  // Aktif hesap nesli: değişince tarayıcı eski hesabın satırlarını göstermez.
+  const [catalogScopeKey, setCatalogScopeKey] = useState(() =>
+    workflowService.getMarketplaceAccountGeneration(),
+  )
 
   // ═══ SUNUCU TARAFI SİPARİŞ ÇALIŞMA ALANI ═══════════════════════════════
   //
@@ -820,6 +841,7 @@ function App() {
       const generation = workflowService.getMarketplaceAccountGeneration()
       const isFresh = () =>
         generation === workflowService.getMarketplaceAccountGeneration()
+      setCatalogScopeKey(generation)
       setSelectedIds([])
       catalogProductsRef.current = []
       // Eski liste anında temizlenir; yeni hesabın local verisi paralel yüklenir.
@@ -1841,13 +1863,14 @@ function App() {
       {activePage === 'products' ? (
         <Suspense fallback={<RouteSkeleton />}>
         <ProductsPage
-          products={products}
+          catalogSource={catalogSource}
+          scopeKey={catalogScopeKey}
           orders={orders}
           result={productsState.productsMessage}
           debug={productsState.productsDebug}
           metadata={productsState.metadata}
-          busy={productsState.productsLoading}
-          onFetchProducts={() => handleFetchProducts()}
+          syncBusy={productsState.productsLoading}
+          onSyncProducts={() => handleFetchProducts()}
         />
         </Suspense>
       ) : null}
