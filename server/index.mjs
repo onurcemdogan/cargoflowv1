@@ -2435,11 +2435,13 @@ app.get('/api/onboarding/status', async (request, response) => {
   const context = await requireOnboardingContext(request, response)
   if (!context) return
   try {
-    const status = await context.service.deriveOnboardingStatus(
-      context.db,
-      context.organizationId,
-    )
-    response.json({ ok: true, ...status })
+    // Ucun TAM davranışı serviste; burada yalnız kiracı kapsamı çözülür.
+    // Durum okuması YEREL DB'dir — sağlayıcıya/taşıyıcıya çağrı YOKTUR.
+    const result = await context.service.handleOnboardingStatusRequest({
+      db: context.db,
+      organizationId: context.organizationId,
+    })
+    response.status(result.httpStatus).json(result.body)
   } catch {
     response.status(500).json({ ok: false, message: 'Onboarding durumu okunamadı.' })
   }
@@ -2674,26 +2676,19 @@ app.get('/api/subscription/status', async (request, response) => {
   }
 })
 
-// POST /api/onboarding/complete — koşullar sağlanmıyorsa 409 + eksik adımlar;
-// sağlanıyorsa onboardingCompleted=true. Sürat create çağrısı YAPILMAZ.
+// POST /api/onboarding/complete — koşullar sağlanmıyorsa 409 + kararlı engel
+// kodları; sağlanıyorsa onboardingCompleted=true. Sürat create çağrısı YAPILMAZ.
+// İSTEK GÖVDESİ OKUNMAZ: istemci `completed`/adım bayrağı gönderemez; sunucu
+// tüm durumu YENİDEN hesaplar (kaynak taramasıyla kilitli).
 app.post('/api/onboarding/complete', async (request, response) => {
   const context = await requireOnboardingContext(request, response)
   if (!context) return
   try {
-    const result = await context.service.completeOnboarding(
-      context.db,
-      context.organizationId,
-    )
-    if (!result.ok) {
-      response.status(409).json({
-        ok: false,
-        message: 'Onboarding tamamlanamadı; eksik adımlar var.',
-        missing: result.missing,
-        ...result.status,
-      })
-      return
-    }
-    response.json({ ok: true, ...result.status })
+    const result = await context.service.handleOnboardingCompleteRequest({
+      db: context.db,
+      organizationId: context.organizationId,
+    })
+    response.status(result.httpStatus).json(result.body)
   } catch {
     response.status(500).json({ ok: false, message: 'Onboarding tamamlanamadı.' })
   }

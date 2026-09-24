@@ -1,8 +1,15 @@
-// Organization ilk giriş onboarding akışı (5 adım). Mevcut entegrasyon
-// (save/test) ve sync (fetchProducts/fetchOrders) servis metodlarını YENİDEN
-// KULLANIR; ikinci bir credential/sync sistemi yazılmaz. onboardingCompleted
-// kaynak-of-truth backend'tir; frontend'te SAKLANMAZ. Sürat create ÇAĞRILMAZ.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+// Organization ilk giriş onboarding akışı. Mevcut entegrasyon (save/test) ve
+// sync (fetchProducts/fetchOrders) servis metodlarını YENİDEN KULLANIR; ikinci
+// bir credential/sync sistemi yazılmaz. Tamamlanma ve adım durumu SUNUCUDADIR;
+// tarayıcıda SAKLANMAZ. Sürat create ÇAĞRILMAZ.
+//
+// ONBOARDING-001:
+//   · Adımlar anlamsaldır (pazaryeri / taşıyıcı / ilk senkron); pazaryeri
+//     adımı SUNUCUNUN uygun bulduğu sağlayıcıları gösterir, ad sunucudan gelir.
+//   · Açılışta kurulum SUNUCUNUN söylediği ilk eksik adımdan SÜRER.
+//   · "Kayıtlı" ile "doğrulandı" ayrıdır: kimlik varlığı doğrulama DEĞİLDİR.
+//   · Adıma gitmek HİÇBİR ağ işlemi başlatmaz; senkron/test yalnız tıklamayla.
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { IntegrationConfig, IntegrationTestResult } from '../types/cargoflow'
 import {
   integrationConfigService,
@@ -11,22 +18,56 @@ import {
 import {
   completeOnboarding,
   fetchOnboardingStatus,
+  ONBOARDING_STEP_ORDER,
+  type OnboardingBootstrapResource,
+  type OnboardingMarketplaceView,
   type OnboardingStatus,
+  type OnboardingStepKey,
 } from '../services/onboardingService'
 import { useAuth } from '../auth/useAuth'
 
-const STEPS = [
-  { key: 'welcome', label: 'Hoş Geldiniz' },
-  { key: 'trendyol', label: 'Trendyol Bağlantısı' },
-  { key: 'surat', label: 'Sürat Kargo Bağlantısı' },
-  { key: 'sync', label: 'İlk Senkronizasyon' },
-  { key: 'ready', label: 'Hazır' },
-] as const
+const BLOCKER_LABELS: Record<string, string> = {
+  NO_ELIGIBLE_MARKETPLACE: 'Şu anda kurulabilir bir pazaryeri bağlantısı yok',
+  MARKETPLACE_NOT_CONFIGURED: 'Pazaryeri bağlantısı kaydedilmeli',
+  MARKETPLACE_NOT_VERIFIED: 'Pazaryeri kimlik bilgileri reddedildi; bilgileri kontrol edin',
+  FIRST_SYNC_REQUIRED: 'En az bir başarılı ilk senkron gerekli',
+  CARRIER_NOT_CONFIGURED: 'Kargo bağlantısı kaydedilmeli',
+}
 
-const MISSING_LABELS: Record<string, string> = {
-  trendyolConfigured: 'Trendyol bağlantısı kurulmalı',
-  firstSyncCompleted: 'En az bir başarılı ürün veya sipariş senkronu gerekli',
-  suratConfigured: 'Sürat Kargo bağlantısı kurulmalı',
+const RESOURCE_LABELS: Record<OnboardingBootstrapResource, { idle: string; busy: string }> = {
+  products: { idle: 'Ürünleri Senkronize Et', busy: 'Ürünler senkronize ediliyor…' },
+  orders: { idle: 'Siparişleri Senkronize Et', busy: 'Siparişler senkronize ediliyor…' },
+}
+
+/**
+ * Sağlayıcıya özel MEVCUT senkron aksiyonları. Yeni bir sağlayıcı için sahte
+ * genel form/aksiyon ÜRETİLMEZ: burada yoksa buton gösterilmez.
+ */
+const SYNC_ACTIONS: Record<
+  string,
+  Partial<Record<OnboardingBootstrapResource, (config: IntegrationConfig) => Promise<string>>>
+> = {
+  trendyol: {
+    products: async (config) => (await workflowService.fetchProducts(config)).result.message,
+    orders: async (config) => (await workflowService.fetchOrders(config)).result.message,
+  },
+}
+
+function stepLabel(key: OnboardingStepKey, status: OnboardingStatus): string {
+  switch (key) {
+    case 'WELCOME':
+      return 'Hoş Geldiniz'
+    case 'MARKETPLACE':
+      return status.marketplaces.length === 1
+        ? `${status.marketplaces[0].displayName} Bağlantısı`
+        : 'Pazaryeri Bağlantısı'
+    case 'CARRIER':
+      return `${status.carrier.displayName} Bağlantısı`
+    case 'FIRST_SYNC':
+      return 'İlk Senkronizasyon'
+    case 'READY':
+      return 'Hazır'
+  }
 }
 
 export function OnboardingPage({
@@ -37,23 +78,29 @@ export function OnboardingPage({
   onCompleted: () => void
 }) {
   const auth = useAuth()
-  const [stepIndex, setStepIndex] = useState(0)
+  // SÜRDÜRME: sunucunun hesapladığı ilk eksik adımdan açılır. Gezinme durumu
+  // yalnız bu oturumdadır (geçicidir); tamamlanma gerçeği değildir.
+  const [stepIndex, setStepIndex] = useState(() =>
+    Math.max(0, ONBOARDING_STEP_ORDER.indexOf(initialStatus.resumeStep)),
+  )
   const [status, setStatus] = useState<OnboardingStatus>(initialStatus)
   const [config, setConfig] = useState<IntegrationConfig>(() =>
     integrationConfigService.loadIntegrationConfig(),
   )
-  const [trendyolTest, setTrendyolTest] = useState<IntegrationTestResult | null>(null)
-  const [suratTest, setSuratTest] = useState<IntegrationTestResult | null>(null)
-  const [productsSyncMessage, setProductsSyncMessage] = useState<string | null>(null)
-  const [ordersSyncMessage, setOrdersSyncMessage] = useState<string | null>(null)
+  const [marketplaceTest, setMarketplaceTest] = useState<IntegrationTestResult | null>(null)
+  const [carrierTest, setCarrierTest] = useState<IntegrationTestResult | null>(null)
+  const [syncMessages, setSyncMessages] = useState<Record<string, string>>({})
   const [completeError, setCompleteError] = useState<string[] | null>(null)
   // Eşzamanlı/çift tıklama koruması: her aksiyon için ayrı meşguliyet bayrağı.
   const [busy, setBusy] = useState<Record<string, boolean>>({})
+  const inFlight = useRef<Set<string>>(new Set())
   const mounted = useRef(true)
 
   // Onboarding yalnız auth modda görünür; sync'in sunucu credential'ını
-  // kullanması için servis auth moduna alınır.
+  // kullanması için servis auth moduna alınır. Bu YEREL bir ayardır; ağ
+  // üzerinden senkron/test BAŞLATMAZ.
   useEffect(() => {
+    mounted.current = true
     workflowService.setAuthMode(true)
     void integrationConfigService.hydrateIntegrationConfig().catch(() => undefined)
     return () => {
@@ -73,59 +120,61 @@ export function OnboardingPage({
     }
   }, [onCompleted])
 
-  const withBusy = useCallback(
-    async (key: string, fn: () => Promise<void>) => {
-      if (busy[key]) return // çift tıklama: aynı aksiyon eşzamanlı tekrar başlatılmaz
-      setBusy((current) => ({ ...current, [key]: true }))
-      try {
-        await fn()
-      } finally {
-        if (mounted.current) {
-          setBusy((current) => ({ ...current, [key]: false }))
-        }
+  const withBusy = useCallback(async (key: string, fn: () => Promise<void>) => {
+    // Çift tıklama: aynı aksiyon eşzamanlı TEKRAR başlatılmaz (ref, render
+    // beklemeden kilitler).
+    if (inFlight.current.has(key)) return
+    inFlight.current.add(key)
+    setBusy((current) => ({ ...current, [key]: true }))
+    try {
+      await fn()
+    } catch {
+      // Ham hata metni kullanıcıya TAŞINMAZ; durum sunucudan yenilenir.
+      if (mounted.current) {
+        setSyncMessages((current) => ({ ...current, [key]: 'İşlem tamamlanamadı; lütfen tekrar deneyin.' }))
       }
-    },
-    [busy],
-  )
+    } finally {
+      inFlight.current.delete(key)
+      if (mounted.current) {
+        setBusy((current) => ({ ...current, [key]: false }))
+      }
+    }
+  }, [])
 
-  const saveAndTestTrendyol = () =>
-    withBusy('trendyol', async () => {
+  const saveAndTestMarketplace = () =>
+    withBusy('marketplace', async () => {
       await integrationConfigService.persistIntegrationConfig(config)
       const result = await workflowService.testTrendyolConnection(config)
       if (!mounted.current) return
-      setTrendyolTest(result)
+      setMarketplaceTest(result)
       await refreshStatus()
     })
 
-  const saveSurat = () =>
-    withBusy('suratSave', async () => {
+  const saveCarrier = () =>
+    withBusy('carrierSave', async () => {
       await integrationConfigService.persistIntegrationConfig(config)
       await refreshStatus()
     })
 
-  const testSurat = () =>
-    withBusy('suratTest', async () => {
+  const testCarrier = () =>
+    withBusy('carrierTest', async () => {
       // Yalnız güvenli bağlantı/credential doğrulaması; gönderi OLUŞTURMAZ.
       const result = await workflowService.testSuratConnection(config)
       if (!mounted.current) return
-      setSuratTest(result)
+      setCarrierTest(result)
     })
 
-  const syncProducts = () =>
-    withBusy('syncProducts', async () => {
-      const { result } = await workflowService.fetchProducts(config)
+  const runSync = (providerKey: string, resource: OnboardingBootstrapResource) => {
+    const action = SYNC_ACTIONS[providerKey]?.[resource]
+    if (!action) return
+    const key = `sync:${providerKey}:${resource}`
+    void withBusy(key, async () => {
+      const message = await action(config)
       if (!mounted.current) return
-      setProductsSyncMessage(result.message)
+      setSyncMessages((current) => ({ ...current, [key]: message }))
       await refreshStatus()
     })
-
-  const syncOrders = () =>
-    withBusy('syncOrders', async () => {
-      const { result } = await workflowService.fetchOrders(config)
-      if (!mounted.current) return
-      setOrdersSyncMessage(result.message)
-      await refreshStatus()
-    })
+  }
 
   const finish = () =>
     withBusy('complete', async () => {
@@ -136,19 +185,12 @@ export function OnboardingPage({
         onCompleted()
         return
       }
-      setCompleteError(result.missing ?? [])
-      await refreshStatus()
+      if (result.status) setStatus(result.status)
+      setCompleteError(result.blockers)
     })
 
-  const canComplete = useMemo(
-    () =>
-      status.steps.trendyolConfigured &&
-      status.steps.suratConfigured &&
-      (status.steps.productsSynced || status.steps.ordersSynced),
-    [status],
-  )
-
-  const step = STEPS[stepIndex]
+  const stepKey = ONBOARDING_STEP_ORDER[stepIndex]
+  const requiredSteps = status.steps.filter((step) => step.required)
 
   return (
     <div className="onboarding-screen">
@@ -169,97 +211,109 @@ export function OnboardingPage({
         </header>
 
         <ol className="onboarding-steps" aria-label="Kurulum adımları">
-          {STEPS.map((item, index) => (
-            <li
-              key={item.key}
-              className={
-                index === stepIndex
-                  ? 'is-active'
-                  : index < stepIndex
-                    ? 'is-done'
-                    : ''
-              }
-            >
-              <span className="onboarding-step-index">{index + 1}</span>
-              <span>{item.label}</span>
-            </li>
-          ))}
+          {ONBOARDING_STEP_ORDER.map((key, index) => {
+            const view = status.steps.find((step) => step.key === key)
+            const done = Boolean(view?.required && view.done)
+            return (
+              <li
+                key={key}
+                data-step={key}
+                className={index === stepIndex ? 'is-active' : done ? 'is-done' : ''}
+                aria-current={index === stepIndex ? 'step' : undefined}
+              >
+                <span className="onboarding-step-index">{done ? '✓' : index + 1}</span>
+                <span>{stepLabel(key, status)}</span>
+              </li>
+            )
+          })}
         </ol>
 
         <section className="onboarding-body">
-          {step.key === 'welcome' && (
+          {stepKey === 'WELCOME' && (
             <div className="onboarding-card">
               <h2>Hoş Geldiniz</h2>
               <p>
-                Bu kısa kurulumda Trendyol ve Sürat Kargo bağlantılarını kurar,
-                ilk ürün ve sipariş senkronunu başlatır ve panele geçersiniz.
-                Bilgileriniz yalnız bu organizasyona aittir.
+                Bu kısa kurulumda satış kanalınızı ve {status.carrier.displayName}
+                {' '}bağlantınızı kaydeder, ilk senkronu başlatır ve panele
+                geçersiniz. Bilgileriniz yalnız bu organizasyona aittir.
               </p>
             </div>
           )}
 
-          {step.key === 'trendyol' && (
+          {stepKey === 'MARKETPLACE' && (
             <div className="onboarding-card">
-              <h2>Trendyol Bağlantısı</h2>
-              <StatusChip
-                configured={status.steps.trendyolConfigured}
-                verified={status.steps.trendyolConnectionVerified}
-              />
-              <label>
-                Satıcı ID (sellerId)
-                <input
-                  value={config.trendyol.sellerId}
-                  onChange={(event) =>
-                    setConfig((current) => ({
-                      ...current,
-                      trendyol: { ...current.trendyol, sellerId: event.target.value },
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                API Key
-                <input
-                  value={config.trendyol.apiKey}
-                  onChange={(event) =>
-                    setConfig((current) => ({
-                      ...current,
-                      trendyol: { ...current.trendyol, apiKey: event.target.value },
-                    }))
-                  }
-                />
-              </label>
-              <label>
-                API Secret
-                <input
-                  type="password"
-                  value={config.trendyol.apiSecret}
-                  onChange={(event) =>
-                    setConfig((current) => ({
-                      ...current,
-                      trendyol: { ...current.trendyol, apiSecret: event.target.value },
-                    }))
-                  }
-                />
-              </label>
-              <button type="button" disabled={busy.trendyol} onClick={saveAndTestTrendyol}>
-                {busy.trendyol ? 'Test ediliyor…' : 'Kaydet ve Bağlantıyı Test Et'}
-              </button>
-              {trendyolTest && (
-                <p className={trendyolTest.ok ? 'onboarding-ok' : 'onboarding-warn'}>
-                  {trendyolTest.message}
-                </p>
+              <h2>{stepLabel('MARKETPLACE', status)}</h2>
+              {status.marketplaces.length === 0 && (
+                <p className="onboarding-warn">{BLOCKER_LABELS.NO_ELIGIBLE_MARKETPLACE}.</p>
               )}
+              {status.marketplaces.map((marketplace) => (
+                <div key={marketplace.providerKey} data-provider={marketplace.providerKey}>
+                  <MarketplaceChips marketplace={marketplace} />
+                  {marketplace.providerKey === 'trendyol' && (
+                    <>
+                      <label>
+                        Satıcı ID (sellerId)
+                        <input
+                          value={config.trendyol.sellerId}
+                          onChange={(event) =>
+                            setConfig((current) => ({
+                              ...current,
+                              trendyol: { ...current.trendyol, sellerId: event.target.value },
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        API Key
+                        <input
+                          value={config.trendyol.apiKey}
+                          onChange={(event) =>
+                            setConfig((current) => ({
+                              ...current,
+                              trendyol: { ...current.trendyol, apiKey: event.target.value },
+                            }))
+                          }
+                        />
+                      </label>
+                      <label>
+                        API Secret
+                        <input
+                          type="password"
+                          value={config.trendyol.apiSecret}
+                          onChange={(event) =>
+                            setConfig((current) => ({
+                              ...current,
+                              trendyol: { ...current.trendyol, apiSecret: event.target.value },
+                            }))
+                          }
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        disabled={busy.marketplace}
+                        onClick={() => void saveAndTestMarketplace()}
+                      >
+                        {busy.marketplace ? 'Test ediliyor…' : 'Kaydet ve Bağlantıyı Test Et'}
+                      </button>
+                      <SessionTestResult result={marketplaceTest} />
+                    </>
+                  )}
+                </div>
+              ))}
             </div>
           )}
 
-          {step.key === 'surat' && (
+          {stepKey === 'CARRIER' && (
             <div className="onboarding-card">
-              <h2>Sürat Kargo Bağlantısı</h2>
-              <StatusChip
-                configured={status.steps.suratConfigured}
-                verified={status.steps.suratConnectionVerified}
-              />
+              <h2>{stepLabel('CARRIER', status)}</h2>
+              <div className="onboarding-chips">
+                <Chip on={status.carrier.configured}>
+                  {status.carrier.configured ? 'Kayıtlı' : 'Kayıt yok'}
+                </Chip>
+                {status.carrier.configured && (
+                  <Chip on={false}>Kalıcı doğrulama kaydı yok</Chip>
+                )}
+              </div>
               <label>
                 Kullanıcı Adı
                 <input
@@ -311,78 +365,96 @@ export function OnboardingPage({
                 />
               </label>
               <div className="onboarding-actions">
-                <button type="button" disabled={busy.suratSave} onClick={saveSurat}>
-                  {busy.suratSave ? 'Kaydediliyor…' : 'Kaydet'}
+                <button type="button" disabled={busy.carrierSave} onClick={() => void saveCarrier()}>
+                  {busy.carrierSave ? 'Kaydediliyor…' : 'Kaydet'}
                 </button>
-                <button type="button" disabled={busy.suratTest} onClick={testSurat}>
-                  {busy.suratTest ? 'Test ediliyor…' : 'Bağlantıyı Test Et'}
+                <button type="button" disabled={busy.carrierTest} onClick={() => void testCarrier()}>
+                  {busy.carrierTest ? 'Test ediliyor…' : 'Bağlantıyı Test Et'}
                 </button>
               </div>
-              {suratTest && (
-                <p className={suratTest.ok ? 'onboarding-ok' : 'onboarding-warn'}>
-                  {suratTest.message}
-                </p>
-              )}
+              <SessionTestResult result={carrierTest} />
               <p className="onboarding-note">
-                {status.suratVerificationNote ??
-                  'Sürat bağlantı testi gönderi oluşturmaz; yalnız kimlik doğrulaması yapılır.'}
+                Bağlantı testi gönderi oluşturmaz. Sonucu yalnız bu oturumda
+                gösterilir; kalıcı doğrulama olarak saklanmaz.
               </p>
             </div>
           )}
 
-          {step.key === 'sync' && (
+          {stepKey === 'FIRST_SYNC' && (
             <div className="onboarding-card">
               <h2>İlk Senkronizasyon</h2>
-              <div className="onboarding-actions">
-                <button type="button" disabled={busy.syncProducts} onClick={syncProducts}>
-                  {busy.syncProducts ? 'Ürünler senkronize ediliyor…' : 'Ürünleri Senkronize Et'}
-                </button>
-                <button type="button" disabled={busy.syncOrders} onClick={syncOrders}>
-                  {busy.syncOrders ? 'Siparişler senkronize ediliyor…' : 'Siparişleri Senkronize Et'}
-                </button>
-              </div>
+              {status.marketplaces.map((marketplace) => (
+                <div key={marketplace.providerKey} data-provider={marketplace.providerKey}>
+                  <p className={marketplace.bootstrapReady ? 'onboarding-ok' : 'onboarding-info'}>
+                    {marketplace.bootstrapReady
+                      ? `${marketplace.displayName}: ilk senkron başarılı.`
+                      : `${marketplace.displayName}: henüz başarılı bir ilk senkron yok.`}
+                  </p>
+                  <div className="onboarding-actions">
+                    {marketplace.bootstrapResources
+                      .filter((resource) => SYNC_ACTIONS[marketplace.providerKey]?.[resource])
+                      .map((resource) => {
+                        const key = `sync:${marketplace.providerKey}:${resource}`
+                        return (
+                          <button
+                            key={resource}
+                            type="button"
+                            disabled={busy[key] || !marketplace.configured}
+                            onClick={() => runSync(marketplace.providerKey, resource)}
+                          >
+                            {busy[key] ? RESOURCE_LABELS[resource].busy : RESOURCE_LABELS[resource].idle}
+                          </button>
+                        )
+                      })}
+                  </div>
+                  {!marketplace.configured && (
+                    <p className="onboarding-note">Senkron için önce bağlantıyı kaydedin.</p>
+                  )}
+                  {marketplace.bootstrapResources.map((resource) => {
+                    const message = syncMessages[`sync:${marketplace.providerKey}:${resource}`]
+                    return message ? (
+                      <p key={resource} className="onboarding-info">{message}</p>
+                    ) : null
+                  })}
+                </div>
+              ))}
               <ul className="onboarding-counts">
-                <li>
-                  Ürünler: {status.counts.products}{' '}
-                  {status.steps.productsSynced ? '✓' : ''}
-                </li>
-                <li>
-                  Siparişler: {status.counts.orders}{' '}
-                  {status.steps.ordersSynced ? '✓' : ''}
-                </li>
+                <li>Ürünler: {status.counts.products}</li>
+                <li>Siparişler: {status.counts.orders}</li>
               </ul>
-              {productsSyncMessage && <p className="onboarding-info">{productsSyncMessage}</p>}
-              {ordersSyncMessage && <p className="onboarding-info">{ordersSyncMessage}</p>}
+              <p className="onboarding-note">
+                Sıfır kayıt dönen başarılı bir senkron da geçerlidir.
+              </p>
             </div>
           )}
 
-          {step.key === 'ready' && (
+          {stepKey === 'READY' && (
             <div className="onboarding-card">
               <h2>Hazır</h2>
               <p>Kurulum adımları tamamlandığında panele geçebilirsiniz.</p>
-              <ul className="onboarding-summary">
-                <li>{status.steps.trendyolConfigured ? '✓' : '•'} Trendyol bağlantısı</li>
-                <li>{status.steps.suratConfigured ? '✓' : '•'} Sürat Kargo bağlantısı</li>
-                <li>
-                  {status.steps.productsSynced || status.steps.ordersSynced ? '✓' : '•'} İlk
-                  senkronizasyon
-                </li>
+              <ul className="onboarding-summary" aria-label="Kurulum kontrol listesi">
+                {requiredSteps.map((step) => (
+                  <li key={step.key} data-done={step.done ? 'true' : 'false'}>
+                    {step.done ? '✓' : '•'} {stepLabel(step.key, status)}
+                  </li>
+                ))}
               </ul>
-              <button type="button" disabled={busy.complete || !canComplete} onClick={finish}>
+              <button
+                type="button"
+                disabled={busy.complete || !status.eligibleToComplete}
+                onClick={() => void finish()}
+              >
                 {busy.complete ? 'Tamamlanıyor…' : 'Kurulumu Tamamla ve Panele Geç'}
               </button>
-              {!canComplete && (
-                <p className="onboarding-note">
-                  Tamamlamak için Trendyol ve Sürat bağlantısı ile en az bir başarılı
-                  senkron gerekir.
-                </p>
-              )}
-              {completeError && completeError.length > 0 && (
-                <ul className="onboarding-warn">
-                  {completeError.map((code) => (
-                    <li key={code}>{MISSING_LABELS[code] ?? code}</li>
+              {!status.eligibleToComplete && status.blockers.length > 0 && (
+                <ul className="onboarding-warn" aria-label="Eksik adımlar">
+                  {status.blockers.map((code) => (
+                    <li key={code}>{BLOCKER_LABELS[code] ?? code}</li>
                   ))}
                 </ul>
+              )}
+              {completeError && completeError.length > 0 && (
+                <p className="onboarding-warn">Kurulum tamamlanamadı; eksik adımları tamamlayın.</p>
               )}
             </div>
           )}
@@ -396,10 +468,12 @@ export function OnboardingPage({
           >
             Geri
           </button>
-          {stepIndex < STEPS.length - 1 && (
+          {stepIndex < ONBOARDING_STEP_ORDER.length - 1 && (
             <button
               type="button"
-              onClick={() => setStepIndex((index) => Math.min(STEPS.length - 1, index + 1))}
+              onClick={() =>
+                setStepIndex((index) => Math.min(ONBOARDING_STEP_ORDER.length - 1, index + 1))
+              }
             >
               İleri
             </button>
@@ -410,21 +484,42 @@ export function OnboardingPage({
   )
 }
 
-function StatusChip({
-  configured,
-  verified,
-}: {
-  configured: boolean
-  verified: boolean
-}) {
+function Chip({ on, warn = false, children }: { on: boolean; warn?: boolean; children: string }) {
+  return (
+    <span className={on ? 'onboarding-chip is-on' : warn ? 'onboarding-chip is-warn' : 'onboarding-chip'}>
+      {children}
+    </span>
+  )
+}
+
+/**
+ * "Kayıtlı" ile "doğrulandı" AYRIDIR. Doğrulama yalnız kimlik doğrulanmış
+ * GERÇEK bir okuma (başarılı ilk senkron) kaydı varsa söylenir.
+ */
+function MarketplaceChips({ marketplace }: { marketplace: OnboardingMarketplaceView }) {
   return (
     <div className="onboarding-chips">
-      <span className={configured ? 'onboarding-chip is-on' : 'onboarding-chip'}>
-        {configured ? 'Kayıtlı' : 'Kayıt yok'}
-      </span>
-      <span className={verified ? 'onboarding-chip is-on' : 'onboarding-chip'}>
-        {verified ? 'Doğrulandı' : 'Doğrulanmadı'}
-      </span>
+      <Chip on={marketplace.configured}>{marketplace.configured ? 'Kayıtlı' : 'Kayıt yok'}</Chip>
+      {marketplace.bootstrapReady ? (
+        <Chip on>Bağlantı doğrulandı</Chip>
+      ) : marketplace.credentialsRejected ? (
+        <Chip on={false} warn>Kimlik bilgileri reddedildi</Chip>
+      ) : (
+        <Chip on={false}>Henüz doğrulanmadı</Chip>
+      )}
     </div>
+  )
+}
+
+/** Bu oturumdaki etkileşimli testin sonucu — KALICI doğrulama değildir. */
+function SessionTestResult({ result }: { result: IntegrationTestResult | null }) {
+  if (!result) return null
+  return (
+    <p className={result.ok ? 'onboarding-ok' : 'onboarding-warn'} role="status">
+      {result.ok
+        ? 'Bağlantı testi sonucu bu oturumda başarılı.'
+        : 'Bağlantı testi başarısız.'}
+      {result.message ? ` ${result.message}` : ''}
+    </p>
   )
 }

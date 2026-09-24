@@ -6522,6 +6522,10 @@ button:disabled {
   border-color: var(--green);
   background: var(--green-soft);
 }
+.onboarding-chip.is-warn {
+  color: var(--amber);
+  border-color: var(--amber);
+}
 .onboarding-ok,
 .onboarding-info {
   color: var(--green);

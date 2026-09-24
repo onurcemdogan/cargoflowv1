@@ -76,52 +76,60 @@ test('onboarding A-P: izolasyon, koşullar, sync metadata, Sürat create=0', asy
   const orgB = await makeOrg(db, 'Org B', 'onb-b')
 
   // A) Yeni organization onboarding'e yönlenir (completed=false, adımlar boş).
+  // ONBOARDING-001: sağlayıcıya bağlı boolean alanlar yerine sağlayıcı
+  // farkında projeksiyon + kararlı engel kodları. AYNI olgular doğrulanır.
   const initial = await service.deriveOnboardingStatus(db, orgA)
   assert.equal(initial.completed, false)
-  assert.equal(initial.steps.trendyolConfigured, false)
-  assert.equal(initial.steps.suratConfigured, false)
-  assert.equal(initial.steps.productsSynced, false)
-  assert.equal(initial.steps.ordersSynced, false)
+  assert.equal(initial.marketplaces[0].providerKey, 'trendyol')
+  assert.equal(initial.marketplaces[0].configured, false)
+  assert.equal(initial.carrier.configured, false)
+  assert.equal(initial.marketplaces[0].bootstrapReady, false)
+  assert.equal(initial.steps.find((step) => step.key === 'FIRST_SYNC').done, false)
   assert.equal(initial.counts.products, 0)
   assert.equal(initial.counts.orders, 0)
 
-  // E) Credential olmadan complete → 409 (eksik: trendyol, sync, surat).
+  // E) Credential olmadan complete → 409 (eksik: pazaryeri, taşıyıcı).
+  // İlk senkron engeli pazaryeri KURULMADAN raporlanmaz (sıralı engel).
   const noCred = await service.completeOnboarding(db, orgA)
   assert.equal(noCred.ok, false)
-  assert.ok(noCred.missing.includes('trendyolConfigured'))
-  assert.ok(noCred.missing.includes('suratConfigured'))
-  assert.ok(noCred.missing.includes('firstSyncCompleted'))
+  assert.ok(noCred.blockers.includes('MARKETPLACE_NOT_CONFIGURED'))
+  assert.ok(noCred.blockers.includes('CARRIER_NOT_CONFIGURED'))
+  assert.equal(noCred.status.eligibleToComplete, false)
 
   // H) Sürat + Trendyol configured durumu doğru yansır.
   await credentials.saveIntegrationCredential(db, orgA, 'trendyol', { sellerId: '12345' })
   await credentials.saveIntegrationCredential(db, orgA, 'surat', { kullaniciAdi: 'user', firmaId: '1' })
   const configured = await service.deriveOnboardingStatus(db, orgA)
-  assert.equal(configured.steps.trendyolConfigured, true)
-  assert.equal(configured.steps.suratConfigured, true)
-  // Sürat için configured = verified (belgelenmiş kısıt).
-  assert.equal(configured.steps.suratConnectionVerified, true)
-  assert.ok(configured.suratVerificationNote.length > 0)
+  assert.equal(configured.marketplaces[0].configured, true)
+  assert.equal(configured.carrier.configured, true)
+  // SUPERSEDED (ONBOARDING-001): eski çapa "Sürat configured = verified"
+  // kuralını SABİTLİYORDU — kimlik VARLIĞI doğrulama DEĞİLDİR. Kalıcı,
+  // gönderi oluşturmayan doğrulama kanıtı olmadığı AÇIKÇA söylenir.
+  assert.equal(configured.carrier.verification, 'VERIFICATION_NOT_PERSISTED')
+  assert.equal('suratConnectionVerified' in configured, false)
 
-  // F) Trendyol/Sürat configured ama sync yok → complete 409 (firstSyncCompleted).
+  // F) Trendyol/Sürat configured ama sync yok → complete 409 (ilk senkron).
   const noSync = await service.completeOnboarding(db, orgA)
   assert.equal(noSync.ok, false)
-  assert.deepEqual(noSync.missing, ['firstSyncCompleted'])
+  assert.deepEqual(noSync.blockers, ['FIRST_SYNC_REQUIRED'])
 
-  // M) Partial sync (kayıt 0) completed saymaz: productsSynced false kalır.
+  // M) Partial sync (kayıt 0) completed saymaz: bootstrap hazır değil.
   await repo.recordSyncState(db, orgA, {
     provider: 'trendyol', resource: 'products', status: 'partial', fetchedCount: 0,
   })
   const afterPartial = await service.deriveOnboardingStatus(db, orgA)
-  assert.equal(afterPartial.steps.productsSynced, false, 'partial + 0 kayıt sync sayılmaz')
+  assert.equal(afterPartial.marketplaces[0].bootstrapReady, false, 'partial + 0 kayıt sync sayılmaz')
 
   // G) Başarılı ürün sync sonrası durum güncellenir (kayıt + metadata).
+  // Bu organizasyonun HİÇ hesabı yok → eski (hesapsız) satır AÇIK
+  // uyumlulukla sayılır (ONB-10).
   await products.persistProductSyncResult(db, orgA, [makeProduct('B1')], { complete: true })
   await repo.recordSyncState(db, orgA, {
     provider: 'trendyol', resource: 'products', status: 'success', fetchedCount: 1,
   })
   const afterProducts = await service.deriveOnboardingStatus(db, orgA)
-  assert.equal(afterProducts.steps.productsSynced, true)
-  assert.equal(afterProducts.steps.trendyolConnectionVerified, true, 'başarılı sync bağlantıyı doğrular')
+  assert.equal(afterProducts.marketplaces[0].bootstrapReady, true, 'başarılı sync bağlantıyı doğrular')
+  assert.equal(afterProducts.marketplaces[0].legacyConnection.counted, true)
   assert.equal(afterProducts.counts.products, 1)
 
   // I) Tüm koşullar sağlanınca complete başarılı + kalıcı.
@@ -143,7 +151,7 @@ test('onboarding A-P: izolasyon, koşullar, sync metadata, Sürat create=0', asy
   // C) Org A onboarding durumu Org B'yi ETKİLEMEZ.
   const bStatus = await service.deriveOnboardingStatus(db, orgB)
   assert.equal(bStatus.completed, false)
-  assert.equal(bStatus.steps.trendyolConfigured, false)
+  assert.equal(bStatus.marketplaces[0].configured, false)
   assert.equal(bStatus.counts.products, 0, 'Org B kataloğu boş')
 
   // D) Durum yalnız verilen org'dan türetilir (sahte/başka org karışmaz).
@@ -180,32 +188,38 @@ test('onboarding A-P: izolasyon, koşullar, sync metadata, Sürat create=0', asy
   assert.equal((await db.select().from(schema.shipments)).length, 0)
 })
 
-// L) Çift tıklama koruması saf mantık düzeyinde: evaluateCompletion idempotent
-// ve yan etkisizdir (aynı durumda tekrar çağrı aynı sonucu verir).
-test('evaluateCompletion idempotent + eksik adım raporu (L,M)', () => {
+// L) Çift tıklama koruması saf mantık düzeyinde: TEK kanonik değerlendirici
+// (`evaluateOnboarding`) idempotent ve yan etkisizdir (aynı durumda tekrar
+// çağrı aynı sonucu verir). ONBOARDING-001: `evaluateCompletion` bu
+// değerlendiriciyle DEĞİŞTİRİLDİ — ikinci bir tamamlanma algoritması YOK.
+test('evaluateOnboarding idempotent + eksik adım raporu (L,M)', async () => {
+  const model = await import('./onboarding/onboardingModel.ts')
   const base = {
     completed: false,
-    steps: {
-      trendyolConfigured: true,
-      trendyolConnectionVerified: true,
-      suratConfigured: false,
-      suratConnectionVerified: false,
-      productsSynced: true,
-      ordersSynced: false,
+    completedAt: null,
+    providers: [{
+      providerKey: 'trendyol', displayName: 'Trendyol', rolloutStage: 'ga',
+      eligibleForOnboarding: true, bootstrapResources: ['orders', 'products'],
+    }],
+    healthByResource: {
+      products: [{
+        providerKey: 'trendyol', marketplaceAccountId: null, connectionScope: 'legacy',
+        connection: 'CONNECTED', sync: 'HEALTHY', lastSuccessfulSyncAt: '2026-07-10T00:00:00.000Z',
+      }],
     },
+    accounts: [],
+    accountScopedCredentialProviders: [],
+    carrierConfigured: false,
+    defaultUnitDesiConfigured: false,
     counts: { products: 3, orders: 0 },
-    suratVerificationNote: 'x',
   }
-  const first = service.evaluateCompletion(base)
-  const second = service.evaluateCompletion(base)
+  const first = model.evaluateOnboarding(base)
+  const second = model.evaluateOnboarding(base)
   assert.deepEqual(first, second, 'aynı durumda aynı sonuç (idempotent)')
-  assert.deepEqual(first.missing, ['suratConfigured'])
-  assert.equal(first.eligible, false)
+  assert.deepEqual(first.blockers, ['CARRIER_NOT_CONFIGURED'])
+  assert.equal(first.eligibleToComplete, false)
 
-  const ready = service.evaluateCompletion({
-    ...base,
-    steps: { ...base.steps, suratConfigured: true },
-  })
-  assert.equal(ready.eligible, true)
-  assert.deepEqual(ready.missing, [])
+  const ready = model.evaluateOnboarding({ ...base, carrierConfigured: true })
+  assert.equal(ready.eligibleToComplete, true)
+  assert.deepEqual(ready.blockers, [])
 })

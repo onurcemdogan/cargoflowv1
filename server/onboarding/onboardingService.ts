@@ -1,113 +1,172 @@
-// Onboarding durum türetme + tamamlanma koşulları. Durum GERÇEK DB
-// kayıtlarından türetilir: integration_credentials (configured),
-// integration_sync_state (başarılı sync) ve organization ürün/sipariş sayıları.
-// Secret/credential DÖNMEZ. org yalnız çağıran taraftan (req.auth) gelir.
+// Onboarding durum yükleyicisi + tamamlama. Karar `onboardingModel.ts`
+// içindeki TEK değerlendiricidedir; bu dosya yalnız kabul edilmiş kaynaklardan
+// anlık görüntüyü toplar:
+//
+//   · pazaryeri uygunluğu   → sağlayıcı kataloğu + yayın aşaması politikası
+//   · bağlantı/senkron      → Entegrasyon Sağlığı (`loadIntegrationHealthForOrganization`)
+//                             — kimlik varlığı, hesap kimliği ve senkron
+//                             geçmişi BURADA YENİDEN KURULMAZ
+//   · hesaplar              → `marketplace_accounts` (kiracı kapsamlı)
+//   · taşıyıcı              → maskelenmiş kimlik durumu (sır DÖNMEZ)
+//
+// YAN ETKİ YOK: durum okuması sağlayıcıya/taşıyıcıya HİÇBİR çağrı yapmaz;
+// senkron başlatmaz, gönderi oluşturmaz. Yalnız yerel DB okunur.
+// Kiracı YALNIZ çağırandan (req.auth) gelir; istek gövdesi OKUNMAZ.
 import { getMaskedIntegrationStatus } from '../integrations/credentialService.ts'
 import { countOrdersByOrganization } from '../orders/orderRepository.ts'
 import { countProducts } from '../products/productRepository.ts'
 import {
+  ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS,
+  loadIntegrationHealthForOrganization,
+} from '../connectors/integrationHealthService.ts'
+import { buildProviderCatalog, resolveRolloutStage } from '../connectors/providerCatalog.ts'
+import {
+  evaluateOnboarding,
+  resolveOnboardingProviders,
+  type BootstrapResource,
+  type OnboardingSnapshot,
+  type OnboardingStatus,
+} from './onboardingModel.ts'
+import {
   ensureSettings,
-  getSyncStates,
+  listOrganizationMarketplaceAccounts,
   setOnboardingCompleted,
 } from './onboardingRepository.ts'
+import { getShipmentDefaults } from './shipmentDefaultsRepository.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
 
-// Sürat için gönderi OLUŞTURMAYAN güvenli bir bağlantı testi persistence'ı
-// bulunmadığından, suratConnectionVerified configured durumunu yansıtır ve bu
-// AÇIKÇA belirtilir (gerçek create denenmez).
-export const SURAT_VERIFICATION_NOTE =
-  'Sürat için gönderi oluşturmayan kalıcı bağlantı doğrulaması yoktur; ' +
-  'configured durumu doğrulama olarak kabul edilir (create çağrısı yapılmaz).'
+export type { OnboardingStatus } from './onboardingModel.ts'
 
-export interface OnboardingStatus {
-  completed: boolean
-  steps: {
-    trendyolConfigured: boolean
-    trendyolConnectionVerified: boolean
-    suratConfigured: boolean
-    suratConnectionVerified: boolean
-    productsSynced: boolean
-    ordersSynced: boolean
+function toIso(value: unknown): string | null {
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : null
+  if (value == null || value === '') return null
+  const parsed = Date.parse(String(value))
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null
+}
+
+export async function loadOnboardingSnapshot(
+  db: Db,
+  organizationId: string,
+  options: { nowMs?: number } = {},
+): Promise<OnboardingSnapshot> {
+  const scopedOrganizationId = String(organizationId ?? '').trim()
+  if (scopedOrganizationId === '') {
+    // FAIL-CLOSED: kiracı kapsamı olmadan onboarding OKUNMAZ.
+    throw new Error('organizationId zorunludur; kapsamsız okuma yapılmaz.')
   }
-  counts: { products: number; orders: number }
-  suratVerificationNote: string
+  const nowMs = options.nowMs ?? Date.now()
+  const providers = resolveOnboardingProviders(buildProviderCatalog(), resolveRolloutStage)
+  // Yalnız UYGUN sağlayıcıların canlı bootstrap kaynakları okunur.
+  const resources = [
+    ...new Set(
+      providers
+        .filter((provider) => provider.eligibleForOnboarding)
+        .flatMap((provider) => provider.bootstrapResources),
+    ),
+  ] as BootstrapResource[]
+
+  const settings = await ensureSettings(db, scopedOrganizationId)
+  const [masked, accounts, defaults, productCount, orderCount, ...healthLists] =
+    await Promise.all([
+      getMaskedIntegrationStatus(db, scopedOrganizationId),
+      listOrganizationMarketplaceAccounts(db, scopedOrganizationId),
+      getShipmentDefaults(db, scopedOrganizationId),
+      countProducts(db, scopedOrganizationId),
+      countOrdersByOrganization(db, scopedOrganizationId),
+      ...resources.map((resource) =>
+        loadIntegrationHealthForOrganization(db, {
+          organizationId: scopedOrganizationId,
+          nowMs,
+          resource,
+        }),
+      ),
+    ])
+
+  const healthByResource: OnboardingSnapshot['healthByResource'] = {}
+  resources.forEach((resource, index) => {
+    healthByResource[resource] = healthLists[index]
+  })
+
+  return {
+    completed: Boolean(settings.onboardingCompleted),
+    completedAt: toIso(settings.onboardingCompletedAt),
+    providers,
+    healthByResource,
+    accounts: accounts.map((account: Record<string, unknown>) => ({
+      id: String(account.id),
+      marketplace: String(account.marketplace ?? ''),
+      displayName: account.displayName ? String(account.displayName) : null,
+      isActive: account.isActive === true,
+    })),
+    accountScopedCredentialProviders: ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS,
+    carrierConfigured: Boolean(masked?.surat?.configured),
+    defaultUnitDesiConfigured: defaults?.defaultUnitDesi != null,
+    counts: { products: Number(productCount) || 0, orders: Number(orderCount) || 0 },
+  }
 }
 
 export async function deriveOnboardingStatus(
   db: Db,
   organizationId: string,
+  options: { nowMs?: number } = {},
 ): Promise<OnboardingStatus> {
-  const settings = await ensureSettings(db, organizationId)
-  const [masked, syncStates, productCount, orderCount] = await Promise.all([
-    getMaskedIntegrationStatus(db, organizationId),
-    getSyncStates(db, organizationId),
-    countProducts(db, organizationId),
-    countOrdersByOrganization(db, organizationId),
-  ])
-
-  const productsSyncState = syncStates.products
-  const ordersSyncState = syncStates.orders
-  const productsSyncSucceeded =
-    Boolean(productsSyncState) &&
-    String(productsSyncState.lastSyncStatus) === 'success'
-  const ordersSyncSucceeded =
-    Boolean(ordersSyncState) &&
-    String(ordersSyncState.lastSyncStatus) === 'success'
-
-  // İlk sync boş sonuç dönebilir: kayıt sayısı > 0 VEYA başarılı sync metadata.
-  const productsSynced = productCount > 0 || productsSyncSucceeded
-  const ordersSynced = orderCount > 0 || ordersSyncSucceeded
-
-  const trendyolConfigured = masked.trendyol.configured
-  const suratConfigured = masked.surat.configured
-  // Başarılı bir ürün/sipariş sync'i Trendyol bağlantısının çalıştığını kanıtlar.
-  const trendyolConnectionVerified =
-    trendyolConfigured && (productsSyncSucceeded || ordersSyncSucceeded)
-
-  return {
-    completed: Boolean(settings.onboardingCompleted),
-    steps: {
-      trendyolConfigured,
-      trendyolConnectionVerified,
-      suratConfigured,
-      // Belgelenmiş kısıt: güvenli create-suz test persistence yok.
-      suratConnectionVerified: suratConfigured,
-      productsSynced,
-      ordersSynced,
-    },
-    counts: { products: productCount, orders: orderCount },
-    suratVerificationNote: SURAT_VERIFICATION_NOTE,
-  }
+  return evaluateOnboarding(await loadOnboardingSnapshot(db, organizationId, options))
 }
 
-// Tamamlanma koşulları: Trendyol configured + en az bir başarılı products/orders
-// sync + Sürat configured. Sağlanmıyorsa eksik adımlar döner.
-export function evaluateCompletion(status: OnboardingStatus): {
-  eligible: boolean
-  missing: string[]
-} {
-  const missing: string[] = []
-  if (!status.steps.trendyolConfigured) missing.push('trendyolConfigured')
-  if (!status.steps.productsSynced && !status.steps.ordersSynced) {
-    // En az bir başarılı ürün VEYA sipariş sync'i gerekir.
-    missing.push('firstSyncCompleted')
-  }
-  if (!status.steps.suratConfigured) missing.push('suratConfigured')
-  return { eligible: missing.length === 0, missing }
-}
-
+/**
+ * Tamamlama — sunucu TÜM durumu YENİDEN hesaplar.
+ *
+ * İstemci `completed=true` veya adım bayrağı GÖNDEREMEZ: bu fonksiyon istek
+ * gövdesi ALMAZ. Tamamlanmış organizasyon için çağrı idempotenttir ve güncel
+ * sağlıkla GERİ ALINMAZ (tarihsel tamamlanma otoriterdir).
+ */
 export async function completeOnboarding(
   db: Db,
   organizationId: string,
-): Promise<{ ok: boolean; missing?: string[]; status: OnboardingStatus }> {
+): Promise<{ ok: boolean; blockers: string[]; status: OnboardingStatus }> {
   const status = await deriveOnboardingStatus(db, organizationId)
-  const { eligible, missing } = evaluateCompletion(status)
-  if (!eligible) {
-    return { ok: false, missing, status }
+  if (status.completed) {
+    return { ok: true, blockers: [], status }
+  }
+  if (!status.eligibleToComplete) {
+    return { ok: false, blockers: status.blockers, status }
   }
   await setOnboardingCompleted(db, organizationId)
   const updated = await deriveOnboardingStatus(db, organizationId)
-  return { ok: true, status: updated }
+  return { ok: true, blockers: [], status: updated }
+}
+
+/** `GET /api/onboarding/status` — ucun TAM davranışı (index.mjs yalnız devreder). */
+export async function handleOnboardingStatusRequest(params: {
+  db: Db
+  organizationId: string
+}): Promise<{ httpStatus: number; body: Record<string, unknown> }> {
+  const status = await deriveOnboardingStatus(params.db, params.organizationId)
+  return { httpStatus: 200, body: { ok: true, ...status } }
+}
+
+/**
+ * `POST /api/onboarding/complete` — ucun TAM davranışı.
+ *
+ * İmza BİLİNÇLİ olarak istek gövdesi İÇERMEZ: tamamlanma gerçeği yalnız
+ * sunucu durumundan türetilir.
+ */
+export async function handleOnboardingCompleteRequest(params: {
+  db: Db
+  organizationId: string
+}): Promise<{ httpStatus: number; body: Record<string, unknown> }> {
+  const result = await completeOnboarding(params.db, params.organizationId)
+  if (!result.ok) {
+    return {
+      httpStatus: 409,
+      body: {
+        ok: false,
+        message: 'Onboarding tamamlanamadı; eksik adımlar var.',
+        ...result.status,
+      },
+    }
+  }
+  return { httpStatus: 200, body: { ok: true, ...result.status } }
 }
