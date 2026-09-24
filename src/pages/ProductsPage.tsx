@@ -208,6 +208,7 @@ export function ProductsPage({
   return (
     <>
       <PageHeader
+        tourId="products-catalog"
         title="Ürünler"
         description="Bağlı satış kanalındaki ürün ve varyantları yönetin."
         actions={

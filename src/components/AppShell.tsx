@@ -1,6 +1,7 @@
 import {
   Bug,
   ClipboardList,
+  Compass,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -19,6 +20,22 @@ interface AppShellProps {
   activePage: PageKey
   onNavigate: (page: PageKey) => void
   children: ReactNode
+  /** Ürün turunu elle (yeniden) başlatır; verilmezse düğme gösterilmez. */
+  onStartTour?: () => void
+  /** Tur başlatılamadıysa DÜRÜST sebep. */
+  tourNotice?: string | null
+  /**
+   * Tur açıkken arka plan ETKİLEŞİMİ KİLİTLİDİR: vurgulanan bir operasyon
+   * düğmesi yanlışlıkla tetiklenemez. Tur kendi navigasyonunu programatik
+   * olarak yapar.
+   */
+  interactionLocked?: boolean
+}
+
+/** Arka plan olayını tur açıkken durdurur (yakalama aşamasında). */
+function blockWhileLocked(event: { preventDefault: () => void; stopPropagation: () => void }) {
+  event.preventDefault()
+  event.stopPropagation()
 }
 
 const navItems: Array<{
@@ -40,13 +57,24 @@ export function AppShell({
   activePage,
   onNavigate,
   children,
+  onStartTour,
+  tourNotice,
+  interactionLocked = false,
 }: AppShellProps) {
   // AuthGate içinde context her zaman mevcuttur; testlerde/izole render'da
   // yoksa kullanıcı bloğu sessizce gizlenir (throw yok).
   const auth = useContext(AuthContext)
   const sessionUser = auth?.user ?? null
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      inert={interactionLocked || undefined}
+      aria-hidden={interactionLocked || undefined}
+      onClickCapture={interactionLocked ? blockWhileLocked : undefined}
+      onPointerDownCapture={interactionLocked ? blockWhileLocked : undefined}
+      onKeyDownCapture={interactionLocked ? blockWhileLocked : undefined}
+      onSubmitCapture={interactionLocked ? blockWhileLocked : undefined}
+    >
       <aside className="sidebar">
         <div className="brand">
           {/*
@@ -69,6 +97,8 @@ export function AppShell({
                 key={item.key}
                 type="button"
                 className={active ? 'nav-item active' : 'nav-item'}
+                // Tur çapası TEK navigasyon tanımından türetilir (ikinci liste yok).
+                data-tour={`nav-${item.key}`}
                 onClick={() => onNavigate(item.key)}
               >
                 <Icon size={18} />
@@ -95,6 +125,25 @@ export function AppShell({
                 <LogOut size={15} />
                 Çıkış Yap
               </button>
+            </div>
+          ) : null}
+
+          {onStartTour ? (
+            <div className="sidebar-tour-block">
+              <button
+                type="button"
+                className="sidebar-tour"
+                data-tour-replay
+                onClick={onStartTour}
+              >
+                <Compass size={15} />
+                Ürün Turunu Başlat
+              </button>
+              {tourNotice ? (
+                <p className="sidebar-tour-notice" role="status">
+                  {tourNotice}
+                </p>
+              ) : null}
             </div>
           ) : null}
 

@@ -512,6 +512,7 @@ export function OrdersPage({
   return (
     <div className="orders-workspace">
       <PageHeader
+        tourId="orders-workspace"
         title="Siparişler"
         description="Pazaryeri, statü, kargo, arama ve tarih filtresiyle operasyon listesini yönet."
         actions={

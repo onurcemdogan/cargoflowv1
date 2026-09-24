@@ -2,12 +2,17 @@ import {
   Suspense,
   lazy,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
 import { AppShell } from './components/AppShell'
+import { AuthContext } from './auth/AuthProvider'
+import { ProductTour } from './tour/ProductTour'
+import { PRODUCT_TOUR_V1 } from './tour/productTourDefinition'
+import { useProductTourController } from './tour/useProductTourController'
 import { RouteSkeleton } from './components/RouteSkeleton'
 import type { PrintPreviewMode } from './components/PrintPreviewModal'
 
@@ -183,6 +188,28 @@ function App() {
   // gelsin görseller doğru zenginleşsin diye en güncel katalog burada tutulur.
   const catalogProductsRef = useRef<CargoProduct[]>([])
   const [activePage, setActivePage] = useState<PageKey>('dashboard')
+
+  // ═══ ÜRÜN TURU (ONBOARDING DEĞİL) ══════════════════════════════════════
+  // Bu bileşen yalnız `OnboardingGate` kurulumu tamamlanmış gördüğünde
+  // bağlanır; tur onboarding'i TEKRAR sorgulamaz. Tercih organizasyon +
+  // kullanıcı kapsamlıdır; kimliği doğrulanmış kapsam yoksa (geliştirme
+  // atlatması / legacy) tur OTOMATİK AÇILMAZ.
+  const authContext = useContext(AuthContext)
+  const tourScope = useMemo(
+    () =>
+      authContext && !authContext.devBypass && authContext.user
+        ? {
+            organizationId: authContext.user.organization.id,
+            username: authContext.user.username,
+          }
+        : null,
+    [authContext],
+  )
+  const productTour = useProductTourController({
+    scope: tourScope,
+    currentPage: activePage,
+    navigate: (page) => handleNavigate(page),
+  })
   const [integrationConfig, setIntegrationConfig] = useState<IntegrationConfig>(
     () => integrationConfigService.loadIntegrationConfig(),
   )
@@ -1768,7 +1795,14 @@ function App() {
   }
 
   return (
-    <AppShell activePage={effectivePage} onNavigate={handleNavigate}>
+    <>
+    <AppShell
+      activePage={effectivePage}
+      onNavigate={handleNavigate}
+      onStartTour={() => void productTour.start()}
+      tourNotice={productTour.notice}
+      interactionLocked={productTour.active}
+    >
       {effectivePage === 'dashboard' ? (
         <DashboardPage
           orders={orders}
@@ -1973,6 +2007,19 @@ function App() {
         </Suspense>
       ) : null}
     </AppShell>
+    {/* AppShell'in KARDEŞİ: portal olayları React ağacında kabarcıklanır; tur
+        kabuğun içinde olsaydı arka plan kilidi turun KENDİ düğmelerini de
+        yutardı. */}
+    {productTour.active ? (
+      <ProductTour
+        key={productTour.runId}
+        steps={PRODUCT_TOUR_V1}
+        onNavigate={handleNavigate}
+        onComplete={productTour.complete}
+        onDismiss={productTour.dismiss}
+      />
+    ) : null}
+    </>
   )
 }
 

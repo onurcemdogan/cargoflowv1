@@ -137,6 +137,7 @@ export function IntegrationsPage({
   return (
     <div className="integrations-workspace">
       <PageHeader
+        tourId="integrations-settings"
         title="Entegrasyonlar / Ayarlar"
         description="Pazaryeri ve kargo bağlantılarını tek ekrandan yönetin."
       />

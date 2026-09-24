@@ -544,7 +544,7 @@ export function DashboardPage({
 
   return (
     <div className="dashboard-page dashboard-analytics" data-testid="dashboard-analytics">
-      <header className="dashboard-analytics-header">
+      <header className="dashboard-analytics-header" data-tour="dashboard-overview">
         <div>
           <h1>Dashboard</h1>
           <p>Satış ve kargo operasyon verilerinizi tek ekrandan takip edin.</p>
