@@ -35,7 +35,8 @@
 // Depoda Postgres RLS YOKTUR. İzolasyon UYGULAMA KAPSAMIYLA sağlanır:
 // buradaki HER sorgu `organization_id` eşitliği taşır ve bu dosyada
 // kapsamsız `select` YAZILAMAZ (testle kilitli).
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, eq } from 'drizzle-orm'
+import { normalizeProviderKey } from './connectorKernel.ts'
 import { integrationSyncState, marketplaceAccounts } from '../db/schema.ts'
 import {
   connectionKey,
@@ -137,7 +138,9 @@ export async function loadIntegrationHealth(
   // SATIR BAŞINA bir bağlantı. `provider::account` anahtarı ile deterministik.
   const connections = new Map<string, ConnectionRow>()
   for (const row of rows) {
-    const providerKey = String(row.provider ?? '').toLowerCase()
+    // AYNI kanonik anahtar: iki kaynak (senkron satırı / hesap satırı) tek
+    // bağlantıda buluşur — `trendyol::<id>` ikiye BÖLÜNMEZ.
+    const providerKey = normalizeProviderKey(row.provider)
     const accountId = row.marketplaceAccountId ? String(row.marketplaceAccountId) : null
     connections.set(connectionKey(providerKey, accountId), {
       providerKey,
@@ -167,7 +170,22 @@ export async function loadIntegrationHealth(
   // kimliği GERÇEKTİR. Sahte id ÜRETİLMEZ; sağlayıcı ÇÖKERTİLMEZ.
   //
   // Eski (hesapsız) senkron satırları `legacy` olarak KALIR.
-  const accountRows: Record<string, unknown>[] = await db
+  //
+  // ═══ SAĞLAYICI ANAHTARI KANONİKLEŞTİRME ══════════════════════════════
+  //
+  // ÖLÇÜLEN KUSUR: süzme SQL'de `inArray(marketplace, ['trendyol', …])` ile
+  // yapılıyordu. Üretimdeki Trendyol hesap yolu `'Trendyol'` yazar ve
+  // PostgreSQL metin karşılaştırması büyük/küçük harfe DUYARLIDIR: senkron
+  // etmemiş GERÇEK bir Trendyol hesabı listelenmiyor, sağlık `none` / `null`
+  // yer tutucusuna düşüyordu.
+  //
+  // Düzeltme: önce KİRACI kapsamlı satırlar okunur, sonra depolanan değer
+  // kanonik anahtara (`normalizeProviderKey`: trim + küçük harf) çevrilir ve
+  // desteklenen sağlayıcılarla KANONİK olarak karşılaştırılır. Depodaki
+  // değer YENİDEN YAZILMAZ (göç yok); okuyucu tarihsel yazımı tolere eder.
+  // Desteklenmeyen satır sağlayıcı UYDURMAZ.
+  const supportedProviders = new Set<string>(HEALTH_SUPPORTED_PROVIDERS)
+  const tenantAccountRows: Record<string, unknown>[] = await db
     .select({
       id: marketplaceAccounts.id,
       marketplace: marketplaceAccounts.marketplace,
@@ -177,11 +195,11 @@ export async function loadIntegrationHealth(
       and(
         // KİRACI SINIRI — istisnasız.
         eq(marketplaceAccounts.organizationId, organizationId),
-        inArray(marketplaceAccounts.marketplace, [...HEALTH_SUPPORTED_PROVIDERS]),
       ),
     )
-  for (const row of accountRows) {
-    const providerKey = String(row.marketplace ?? '').toLowerCase()
+  for (const row of tenantAccountRows) {
+    const providerKey = normalizeProviderKey(row.marketplace)
+    if (!supportedProviders.has(providerKey)) continue
     const accountId = String(row.id)
     const key = connectionKey(providerKey, accountId)
     // Senkron satırı VARSA o kazanır (gerçek durum daha zengindir).
