@@ -57,6 +57,11 @@ const ProductsPage = lazy(async () => ({
 }))
 import { apiDebugService } from './services/apiDebugService'
 import {
+  fetchPrintCapabilities,
+  findRawCapability,
+  type PrintTransportCapability,
+} from './services/printCapabilityService'
+import {
   auditLogService,
   integrationConfigService,
   workflowService,
@@ -192,6 +197,25 @@ function App() {
   const [printerSettings] = useState<PrinterSettings>(() =>
     integrationConfigService.loadPrinterSettings(),
   )
+  // ═══ BASKI YETENEĞİ — SUNUCU GERÇEĞİ ═══════════════════════════════════
+  //
+  // ÖLÇÜLEN KUSUR: sunucu `/api/printing/capabilities` ile dürüst çalışma
+  // zamanı yeteneğini yayınlıyordu ama ARAYÜZ TÜKETMİYORDU; kayıtlı bir
+  // yazıcı adı Linux çalışma zamanında bile "bağlı" gösterebiliyordu.
+  //
+  // Yetenek burada BİR KEZ okunur ve baskı yüzeylerine taşınır. Okunamazsa
+  // `null` kalır — "bilmiyorum" ASLA "bağlı" sayılmaz.
+  const [rawPrintCapability, setRawPrintCapability] =
+    useState<PrintTransportCapability | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void fetchPrintCapabilities(printerSettings.printerName).then((snapshot) => {
+      if (!cancelled) setRawPrintCapability(findRawCapability(snapshot))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [printerSettings.printerName])
   const [labelTemplate, setLabelTemplate] = useState<LabelTemplate>(() =>
     integrationConfigService.loadLabelTemplate(),
   )
@@ -1910,6 +1934,7 @@ function App() {
           mappingConfig={labelMappingConfig}
           previewDrafts={labelPreviewDrafts}
           printerSettings={printerSettings}
+          rawPrintCapability={rawPrintCapability}
           busy={ordersState.ordersLoading}
           products={productsState.products}
           labelPrintTemplate={organizationLabelPrintTemplate}

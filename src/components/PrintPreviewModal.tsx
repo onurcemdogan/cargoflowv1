@@ -22,6 +22,11 @@ import {
   resolveNormalizedDesi,
 } from '../utils/desi'
 
+import {
+  resolveRawPrintActionGate,
+  type PrintTransportCapability,
+} from '../services/printCapabilityService'
+
 export type PrintPreviewMode = 'preview' | 'download' | 'print'
 
 interface PrintPreviewModalProps {
@@ -32,6 +37,14 @@ interface PrintPreviewModalProps {
   mappingConfig: SuratLabelMappingConfig
   previewDrafts?: Record<string, LabelPreviewOverrides>
   printerSettings: PrinterSettings
+  /**
+   * SUNUCUNUN BİLDİRDİĞİ ham baskı yeteneği.
+   *
+   * Yetenek yoksa kullanıcıya GÖNDEREMEYECEĞİ bir iş VAAT EDİLMEZ: aksiyon
+   * gönderimden ÖNCE kapatılır ve sebep gösterilir. Bu bir kolaylıktır;
+   * GERÇEK sınır sunucudadır (yetenek yoksa `/api/printing/jobs` 409 döner).
+   */
+  rawPrintCapability?: PrintTransportCapability | null
   busy: boolean
   // Organizasyon kapsamli urun katalogu (etiket renk/beden tamamlama).
   products?: CargoProduct[]
@@ -55,6 +68,7 @@ export function PrintPreviewModal({
   mappingConfig,
   previewDrafts = {},
   printerSettings,
+  rawPrintCapability = null,
   busy,
   products = [],
   labelPrintTemplate = 'cargoflow_html',
@@ -119,8 +133,13 @@ export function PrintPreviewModal({
   )
   const needsReprintConfirmation =
     mode === 'print' && includePreviouslyPrinted && printedCount > 0
+  // HAM BASKI KAPISI — yalnız sunucu tarafı RAW hedefini kapatır.
+  // Tarayıcı baskısı ve indirme sunucu çalışma zamanından BAĞIMSIZDIR.
+  const rawGate = resolveRawPrintActionGate(printerSettings, rawPrintCapability)
+  const rawBlocked = mode === 'print' && rawGate.blocked
   const canConfirm =
     selectedForAction.length > 0 &&
+    !rawBlocked &&
     (!needsReprintConfirmation || reprintRiskAccepted)
 
   return (
@@ -150,7 +169,14 @@ export function PrintPreviewModal({
           <Summary label="Uyarılı" value={invalidCount} danger />
         </section>
 
-        {mode === 'print' ? (
+        {rawBlocked ? (
+          <div className="print-confirmation-copy" data-testid="raw-print-unavailable">
+            <strong>Windows RAW yazıcı baskısı şu anda kullanılamıyor.</strong>
+            <span>{rawGate.reason}</span>
+          </div>
+        ) : null}
+
+        {mode === 'print' && !rawBlocked ? (
           <div className="print-confirmation-copy">
             <strong>
               {printerSettings.mode === 'local-agent'

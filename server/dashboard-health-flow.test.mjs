@@ -155,3 +155,109 @@ test('Hiç credential yok → not_configured ("bağlantı bulunamadı" doğru g�
   assert.equal(trendyol.configured, false)
   assert.equal(trendyol.status, 'not_configured')
 })
+
+/* ═══════════════════════════════════════════════════════════════════════
+   PANO YAZICI GERÇEĞİ — SAKLANMIŞ AD "BAĞLI" YAPMAZ
+   ═══════════════════════════════════════════════════════════════════════
+
+   ÖLÇÜLEN KUSUR: pano yazıcı sağlığını
+
+     printerSettings.mode !== 'download' && printerSettings.printerName
+
+   ifadesinden türetiyordu. Linux bir API çalışma zamanında, kayıtlı bir
+   yazıcı adı yüzünden SERVER_WINDOWS_RAW GERÇEKTEN kullanılamazken
+   "bağlı / Windows RAW baskı" gösterilebiliyordu.                        */
+
+const RAW_PRINTER_SETTINGS = {
+  printerName: 'Zebra ZD220',
+  mode: 'local-agent',
+  labelSize: '100x100',
+  defaultFormat: 'zpl',
+}
+
+test('PRINT-CAP-UI-1/4: Linux çalışma zamanında kayıtlı yazıcı adı BAĞLI ÜRETMEZ', async (t) => {
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+    optimizeDeps: { noDiscovery: true, include: [] },
+  })
+  t.after(() => vite.close())
+  // GERÇEK PANO ÖZETİNDEN geçilir: yardımcıyı tek başına ölçmek, panonun
+  // KENDİ kuralına geri dönmesini YAKALAMAZDI (ilk yazımda öyleydi;
+  // mutasyon yalnız kaynak taramasını düşürdü).
+  const { buildDashboardSummary } = await vite.ssrLoadModule(
+    '/src/dashboard/dashboardSummary.ts',
+  )
+  const { describeServerRawCapability } = await vite.ssrLoadModule(
+    '/server/printing/printTransport.ts',
+  )
+  const summaryOf = (printerSettings, rawPrintCapability) =>
+    buildDashboardSummary({
+      orders: [],
+      marketplaceIntegrations: [],
+      carrierIntegrations: [],
+      printerSettings,
+      ...(rawPrintCapability === undefined ? {} : { rawPrintCapability }),
+    }).printerHealth
+
+  // ── PRINT-CAP-UI-1: platform=linux, printerName dolu, mode=local-agent ─
+  const linuxCapability = describeServerRawCapability({
+    platform: 'linux',
+    printerName: RAW_PRINTER_SETTINGS.printerName,
+  })
+  assert.equal(linuxCapability.available, false)
+  assert.equal(linuxCapability.reason, 'RUNTIME_NOT_WINDOWS')
+
+  const linux = summaryOf(RAW_PRINTER_SETTINGS, linuxCapability)
+  assert.notEqual(linux.status, 'connected', 'Linux çalışma zamanında BAĞLI DİYEMEZ')
+  assert.match(linux.detail, /kullanılamıyor/)
+  // "Windows RAW baskı" VAADİ KALKAR.
+  assert.equal(/^Windows RAW baskı$/.test(linux.detail), false)
+
+  // ── PRINT-CAP-UI-4: yetenek HİÇ okunamadıysa da BAĞLI DEĞİL ───────────
+  const unknown = summaryOf(RAW_PRINTER_SETTINGS, undefined)
+  assert.notEqual(unknown.status, 'connected', 'yalnız yazıcı adı BAĞLI üretemez')
+
+  // ── KARŞIT KANIT: sunucu GERÇEKTEN uygun derse BAĞLI olur ─────────────
+  const windows = summaryOf(
+    RAW_PRINTER_SETTINGS,
+    describeServerRawCapability({
+      platform: 'win32',
+      printerName: RAW_PRINTER_SETTINGS.printerName,
+    }),
+  )
+  assert.equal(windows.status, 'connected')
+  assert.equal(windows.detail, 'Windows RAW baskı')
+
+  // ── PRINT-CAP-UI-5/6: tarayıcı ve indirme ETKİLENMEZ ─────────────────
+  const browser = summaryOf({ ...RAW_PRINTER_SETTINGS, mode: 'browser-print' }, null)
+  assert.equal(browser.status, 'connected')
+  assert.match(browser.detail, /Chrome temiz etiket/)
+  const download = summaryOf({ ...RAW_PRINTER_SETTINGS, mode: 'download' }, null)
+  assert.equal(download.status, 'not_configured')
+  assert.equal(download.detail, 'ZPL indirme modu')
+})
+
+test('PRINT-CAP-UI-DASH: pano KENDİ yazıcı kuralını KURMAZ', async (t) => {
+  const vite = await createServer({
+    appType: 'custom',
+    server: { middlewareMode: true, hmr: false },
+    optimizeDeps: { noDiscovery: true, include: [] },
+  })
+  t.after(() => vite.close())
+  const { readFileSync } = await import('node:fs')
+  const { join, dirname } = await import('node:path')
+  const { fileURLToPath } = await import('node:url')
+  const here = dirname(fileURLToPath(import.meta.url))
+  const source = readFileSync(
+    join(here, '..', 'src', 'dashboard', 'dashboardSummary.ts'),
+    'utf8',
+  )
+  // İKİNCİ GERÇEK YOK: eski türetme geri gelemez.
+  assert.equal(
+    /mode !== 'download' && printerSettings\.printerName/.test(source),
+    false,
+    'pano yazıcı durumunu yazıcı adından türetmemeli',
+  )
+  assert.match(source, /resolvePrinterHealth\(printerSettings, rawPrintCapability\)/)
+})

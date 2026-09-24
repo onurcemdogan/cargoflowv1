@@ -283,7 +283,35 @@ test('Dashboard provider bağımsız ve gerçek state kurallarıyla çalışır'
   assert.equal(emptySummary.barcodeWaiting, 0)
   assert.equal(emptySummary.labelReady, 0)
   assert.equal(emptySummary.labelPrinted, 0)
-  assert.equal(emptySummary.printerHealth.status, 'connected')
+  // ═══ KURAL DEĞİŞTİ (PRINT-PLATFORM-001 UI KAPANIŞI) ═══════════════════
+  //
+  // Bu satır ESKİDEN `local-agent + printerName → connected` diyordu. O
+  // kural ÖLÇÜLEREK yanlış bulundu: Linux bir API çalışma zamanında
+  // SERVER_WINDOWS_RAW gerçekten kullanılamazken pano "bağlı" gösteriyordu.
+  //
+  // Korunan gerçek AYNI: yapılandırılmış yazıcı pano tarafından RAPORLANIR.
+  // Değişen: "bağlı" demek için SUNUCU YETENEĞİ gerekir.
+  assert.equal(emptySummary.printerHealth.status, 'not_configured')
+  assert.match(emptySummary.printerHealth.detail, /kullanılamıyor/)
+  assert.equal(emptySummary.printerHealth.name, printerSettings.printerName)
+
+  // Sunucu GERÇEKTEN uygun derse "bağlı" olur.
+  const capablePrinterSummary = buildDashboardSummary({
+    orders: [],
+    ...integrations,
+    printerSettings,
+    rawPrintCapability: {
+      transport: 'SERVER_WINDOWS_RAW',
+      supportsZpl: true,
+      supportsRaster: false,
+      supportsHtml: false,
+      supportsMultiPage: true,
+      available: true,
+      reason: null,
+    },
+  })
+  assert.equal(capablePrinterSummary.printerHealth.status, 'connected')
+  assert.equal(capablePrinterSummary.printerHealth.detail, 'Windows RAW baskı')
 
   const downloadPrinterSummary = buildDashboardSummary({
     orders: [],

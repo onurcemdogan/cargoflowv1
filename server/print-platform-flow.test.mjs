@@ -823,3 +823,46 @@ test('PRINT-REG: paket tam pakete KAYITLI', () => {
   const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   assert.match(String(pkg.scripts['test:print-platform']), /print-platform-flow\.test\.mjs/)
 })
+
+test('PRINT-CAP-UI-7: SUNUCU son sözü söyler — istemci durumu kurcalansa da RAW REDDEDİLİR', async (t) => {
+  // İstemci kapısı bir KOLAYLIKTIR; gerçek sınır SUNUCUDADIR.
+  const server = stripComments(readFileSync(join(here, 'index.mjs'), 'utf8'))
+  const jobsAt = server.indexOf("app.post('/api/printing/jobs'")
+  const jobsRoute = server.slice(jobsAt, server.indexOf('\napp.', jobsAt + 10))
+  // Yetenek denetimi İŞ KURULMADAN ÖNCE gelir ve 409 döner.
+  assert.match(jobsRoute, /describeServerRawCapability/)
+  assert.match(jobsRoute, /transport_unavailable/)
+  assert.ok(
+    jobsRoute.indexOf('capability.available') < jobsRoute.indexOf('submitPrintJob'),
+    'yetenek denetimi iş kurulumundan ÖNCE olmalı',
+  )
+
+  // Davranış: Windows olmayan çalışma zamanında yürütücü HİÇBİR ŞEY basmaz.
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'cap7')
+  const seeded = await seedShipment(db, org)
+
+  const linuxCapability = transport.describeServerRawCapability({
+    platform: 'linux',
+    printerName: 'Zebra-1',
+  })
+  assert.equal(linuxCapability.available, false)
+
+  const attempts = []
+  const linuxExecutor = rawTransport.createWindowsRawExecutor({
+    scriptPath: 'p',
+    platform: 'linux',
+    run: async (...args) => {
+      attempts.push(args)
+      return { stdout: '1', stderr: '' }
+    },
+  })
+  const result = await submit(db, org, [{ orderId: seeded.orderId }], linuxExecutor)
+  assert.equal(result.status, 'FAILED')
+  assert.equal(result.items[0].failure, 'RUNTIME_NOT_SUPPORTED')
+  // SÜREÇ HİÇ ÇALIŞTIRILMADI.
+  assert.equal(attempts.length, 0)
+  // Mantıksal "basıldı" da ÜRETİLMEZ.
+  assert.deepEqual(jobService.resolvePrintedOrderIds(result), [])
+})
