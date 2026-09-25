@@ -9,12 +9,12 @@
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
   "headCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
   "activeWorker": null,
-  "lastImplementationWorker": null,
+  "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [],
   "completedCriteria": [],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "Resume TICIMAX-001. Claude may be quota-limited; fail over to Cursor then Codex. Execute the ticket spec exactly.",
+  "nextAction": "claude exited AUTH_REQUIRED; reconstruct from git and .ai\\recovery\\20260925-181008.",
   "specPath": ".ai/tickets/TICIMAX-001.md"
 }
