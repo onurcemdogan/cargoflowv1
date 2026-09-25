@@ -1,0 +1,38 @@
+name: DevFactory CI
+on:
+  pull_request:
+    branches: [integration/roadmap]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx tsc -b --force
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run test:ui
+      - run: npm run test:dashboard
+      - run: npm run test:label-editor:acceptance
+      - run: npm run test:performance:acceptance
+      - run: npm run test:auto-label:acceptance
+      - run: npm run test:connector-kernel
+      - run: npm run test:contract-packs
+      - run: npm run test:integration-health
+      - run: npm run test:subscription
+      - run: npm run test:billing-party
+      - run: npm run test:woocommerce
+      - run: npm run test:print-platform
+      - run: npm run test:onboarding
+      - run: npm run test:catalog
+      - run: npm run test:product-tour
+      - run: npm run test:landing
+      - run: npm run test:surat

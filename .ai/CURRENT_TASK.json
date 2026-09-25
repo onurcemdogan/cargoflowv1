@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "project": "cargoflow",
+  "ticket": "IKAS-001",
+  "status": "QUEUED",
+  "phase": "BASELINE_AND_CONTRACT_REFRESH",
+  "integrationBranch": "integration/roadmap",
+  "ticketBranch": "agent/IKAS-001",
+  "baselineCommit": "d1f25da4f1cde550db7bf147856861f30f39e6c4",
+  "headCommit": "d1f25da4f1cde550db7bf147856861f30f39e6c4",
+  "activeWorker": null,
+  "lastImplementationWorker": null,
+  "reviewer": null,
+  "contributors": [],
+  "completedCriteria": [],
+  "failingTests": [],
+  "blockers": [],
+  "nextAction": "Prove baseline and refresh the ikas contract pack before implementation.",
+  "specPath": ".ai/tickets/IKAS-001.md"
+}
