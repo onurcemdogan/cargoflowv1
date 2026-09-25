@@ -1,13 +1,13 @@
 # Generated shift context
 
-Generated: 2026-09-25T23:18:19.921788+00:00
+Generated: 2026-09-25T23:20:05.301821+00:00
 Project: cargoflow
 Ticket: TICIMAX-001
 Status: IN_PROGRESS
 Phase: READY
 Branch: agent/TICIMAX-001
 Baseline: 8a91c6ec4e5e996956a432fe8f86953d82d4c2b3
-HEAD: 680c5e030522c7d80796d9132cc9706c0b985136
+HEAD: 0afeccade4e830f9d083f5492a79bd89a9777dfb
 Last implementation worker: claude
 Reviewer: None
 Next action: Execute TICIMAX-001 exactly from .ai/tickets/TICIMAX-001.md using refreshed official Ticimax contract evidence. Do not start ARAS-EXPANSION.
@@ -20,6 +20,7 @@ M .ai/CURRENT_CONTEXT.md
 
 ## Recent commits
 ```
+0afecca wip(TICIMAX-001): checkpoint claude
 680c5e0 wip(TICIMAX-001): checkpoint claude
 24ff67c TICIMAX-001: refresh official contract evidence and resume
 800d35e wip(TICIMAX-001): checkpoint cursor
@@ -29,7 +30,6 @@ M .ai/CURRENT_CONTEXT.md
 377485d wip(TICIMAX-001): checkpoint codex
 8fdb92b wip(TICIMAX-001): checkpoint cursor
 c6a27b8 wip(TICIMAX-001): checkpoint claude
-7b1522b TICIMAX-001: recover from false worker auth classification
 ```
 
 ## Diff stat
