@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "IKAS-001",
-  "status": "IN_PROGRESS",
-  "phase": "REVIEW_APPROVED_CI_PENDING",
+  "status": "MERGED",
+  "phase": "MERGED",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/IKAS-001",
   "baselineCommit": "d1f25da4f1cde550db7bf147856861f30f39e6c4",
-  "headCommit": "03f259c6e9f01601babd4f09aad98a2a95b56925",
+  "headCommit": "5522877c6db354c9a121fdd1f5b6a455da5b0011",
   "activeWorker": null,
   "lastImplementationWorker": "Codex",
   "reviewer": "Cursor",
@@ -15,6 +15,6 @@
   "completedCriteria": [],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "Checkpoint and push the independently reviewed OAuth HTTP 400 fix, then wait for DevFactory CI on PR #6. Do not advance tickets.",
+  "nextAction": "Merge PR #6 into integration/roadmap, then stop. Do not start another roadmap ticket without supervisor selection.",
   "specPath": ".ai/tickets/IKAS-001.md"
 }
