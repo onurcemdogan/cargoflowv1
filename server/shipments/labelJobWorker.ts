@@ -204,7 +204,6 @@ export async function drainLabelJobScheduler(
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined
   const expired = new Promise<'expired'>((resolve) => {
     timeoutHandle = setTimeout(() => resolve('expired'), Math.max(0, graceMs))
-    timeoutHandle.unref?.()
   })
   const finished = await Promise.race([
     activeCycle.then(() => 'finished' as const).catch(() => 'finished' as const),

@@ -1,0 +1,66 @@
+{
+  "schemaVersion": 1,
+  "autoAdvance": true,
+  "tasks": [
+    {
+      "id": "IKAS-001",
+      "status": "READY",
+      "dependsOn": [],
+      "spec": ".ai/tickets/IKAS-001.md",
+      "priority": 100
+    },
+    {
+      "id": "TICIMAX-001",
+      "status": "SPEC_REQUIRED",
+      "dependsOn": [
+        "IKAS-001"
+      ],
+      "spec": ".ai/tickets/TICIMAX-001.md",
+      "priority": 90
+    },
+    {
+      "id": "ARAS-EXPANSION",
+      "status": "SPEC_REQUIRED",
+      "dependsOn": [
+        "TICIMAX-001"
+      ],
+      "spec": ".ai/tickets/ARAS-EXPANSION.md",
+      "priority": 80
+    },
+    {
+      "id": "LIVE-PROVIDER-VERIFICATION",
+      "status": "BLOCKED_HUMAN",
+      "dependsOn": [
+        "IKAS-001"
+      ],
+      "requires": [
+        "real_provider_credentials"
+      ],
+      "priority": 70
+    },
+    {
+      "id": "PILOT-HARDENING",
+      "status": "WAITING",
+      "dependsOn": [
+        "LIVE-PROVIDER-VERIFICATION"
+      ],
+      "priority": 60
+    },
+    {
+      "id": "PRODUCTION-READINESS",
+      "status": "WAITING",
+      "dependsOn": [
+        "PILOT-HARDENING"
+      ],
+      "priority": 50
+    },
+    {
+      "id": "PRODUCTION-ROLLOUT",
+      "status": "HUMAN_APPROVAL",
+      "dependsOn": [
+        "PRODUCTION-READINESS"
+      ],
+      "priority": 10
+    }
+  ]
+}

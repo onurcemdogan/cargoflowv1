@@ -42,3 +42,9 @@ order-backfill-*.json
 
 # CargoFlow yol haritasi runtime raporlari (git disi)
 .var/cargoflow-roadmap/
+
+.ai/.runtime/
+
+.ai/runtime-logs/
+
+.ai/recovery/
