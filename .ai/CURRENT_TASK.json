@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "TICIMAX-001",
-  "status": "IN_PROGRESS",
+  "status": "BLOCKED_HUMAN",
   "phase": "READY",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/TICIMAX-001",
@@ -15,6 +15,6 @@
   "completedCriteria": [],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "codex exited AUTH_REQUIRED; reconstruct from git and .ai\\recovery\\20260925-175733.",
+  "nextAction": "All enabled workers require authentication. Re-authenticate at least one CLI, then clear its authBlocked entry in .ai/.runtime/supervisor-state.json.",
   "specPath": ".ai/tickets/TICIMAX-001.md"
 }
