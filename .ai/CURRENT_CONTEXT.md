@@ -1,25 +1,27 @@
 # Generated shift context
 
-Generated: 2026-09-25T15:26:14.859985+00:00
+Generated: 2026-09-25T15:35:00+00:00
 Project: cargoflow
 Ticket: TICIMAX-001
-Status: IN_PROGRESS
-Phase: READY
+Status: BLOCKED_HUMAN
+Phase: IDENTITY_AND_CONTRACT_GATE
 Branch: agent/TICIMAX-001
 Baseline: 8a91c6ec4e5e996956a432fe8f86953d82d4c2b3
-HEAD: 3bbeb78711076e8df004ff75a46b4920ac21fc13
-Last implementation worker: claude
+HEAD: 12b0b9c8af9a1b9795ba7cfffe108be11f7c9265
+Last implementation worker: cursor
 Reviewer: None
-Next action: Resume TICIMAX-001 after verified Windows worker-launch fix. Claude quota may fail over to Cursor, then Codex if required.
+Next action: Human must refresh SiparisServis WSDL/PDF and confirm SelectSiparis parameter/field names; then resume agent/TICIMAX-001. Shell/network were Rejected this session.
 
 ## Git status
 ```
 M .ai/CURRENT_CONTEXT.md
  M .ai/CURRENT_TASK.json
+ M .ai/HANDOFF.md
 ```
 
 ## Recent commits
 ```
+12b0b9c wip(TICIMAX-001): checkpoint claude
 3bbeb78 TICIMAX-001: resume after verified Windows launcher fix
 9e95c45 wip(TICIMAX-001): checkpoint auth-blocked
 377485d wip(TICIMAX-001): checkpoint codex
@@ -29,14 +31,11 @@ c6a27b8 wip(TICIMAX-001): checkpoint claude
 5467b7a wip(TICIMAX-001): checkpoint auth-blocked
 b1810b6 wip(TICIMAX-001): checkpoint codex
 38cc2d1 wip(TICIMAX-001): checkpoint cursor
-c77defd wip(TICIMAX-001): checkpoint claude
 ```
 
 ## Diff stat
 ```
-.ai/CURRENT_CONTEXT.md | 12 ++++++------
- .ai/CURRENT_TASK.json  |  4 ++--
- 2 files changed, 8 insertions(+), 8 deletions(-)
+.ai meta state only (BLOCKED_HUMAN handoff)
 ```
 
 ## Required reading
