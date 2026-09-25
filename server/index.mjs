@@ -369,6 +369,9 @@ const TENANT_AUTH_PATHS = [
   '/api/trendyol',
   '/api/integrations/trendyol',
   '/api/integrations/surat',
+  // ikas mağaza uçları org kapsamlıdır: AYNI auth kapısının ARKASINDA durur
+  // (listede olmayan org-kapsamlı uç `request.auth` boş kalır ve 404 döner).
+  '/api/integrations/ikas',
   '/api/analytics/orders',
   '/api/analytics/claims',
   '/api/orders',
@@ -2631,6 +2634,78 @@ app.post('/api/integrations/woocommerce/stores/disconnect', async (request, resp
     response.status(result.httpStatus).json(result.body)
   } catch {
     response.status(500).json({ ok: false, message: 'Bağlantı kaldırılamadı.' })
+  }
+})
+
+// ── IKAS MAĞAZALARI (İÇ TEST, ÇOK MAĞAZA, HESAP KAPSAMLI) ───────────────
+//
+// Uç davranışı `connectors/ikas/ikasHttpHandlers.ts` içindedir; burada
+// YALNIZ kiracı kapsamı çözülür. Kiracı gövdeden ALINMAZ. Sır/belirteç
+// HİÇBİR yanıtta dönmez. WEBHOOK UCU YOKTUR (imza sözleşmesi belgelenmedi).
+app.get('/api/integrations/ikas/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/ikas/ikasHttpHandlers.ts')
+    const result = await handlers.handleIkasListStores({
+      db: context.db,
+      organizationId: context.organizationId,
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'ikas mağazaları okunamadı.' })
+  }
+})
+
+app.post('/api/integrations/ikas/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/ikas/ikasHttpHandlers.ts')
+    const client = await import('./connectors/ikas/ikasClient.ts')
+    const result = await handlers.handleIkasConnect({
+      db: context.db,
+      organizationId: context.organizationId,
+      body: request.body ?? {},
+      options: { transport: client.fetchIkasTransport },
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'ikas mağazası kaydedilemedi.' })
+  }
+})
+
+app.post('/api/integrations/ikas/stores/disconnect', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/ikas/ikasHttpHandlers.ts')
+    const result = await handlers.handleIkasDisconnect({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: String(request.body?.marketplaceAccountId ?? ''),
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Bağlantı kaldırılamadı.' })
+  }
+})
+
+app.post('/api/integrations/ikas/stores/orders-read-test', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/ikas/ikasHttpHandlers.ts')
+    const client = await import('./connectors/ikas/ikasClient.ts')
+    const result = await handlers.handleIkasOrdersReadTest({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: String(request.body?.marketplaceAccountId ?? ''),
+      options: { transport: client.fetchIkasTransport },
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Sipariş okuma testi tamamlanamadı.' })
   }
 })
 

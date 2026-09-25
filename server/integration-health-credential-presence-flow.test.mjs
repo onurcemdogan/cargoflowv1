@@ -342,15 +342,27 @@ test('IHB-13: uc nokta UYDURMAZ — gozlenemeyen saglayici UNKNOWN bildirir', ()
   assert.match(service, /'ABSENT'/)
   assert.match(service, /'UNKNOWN'/)
   // Kimlik kaliciligi OLMAYAN saglayicilar icin HICBIR deger yazilmaz.
-  for (const fabricated of ['ikas', 'ticimax']) {
+  for (const fabricated of ['ticimax']) {
     assert.equal(
       service.includes(fabricated),
       false,
       `kimlik kaliciligi olmayan saglayici icin uydurma deger: ${fabricated}`,
     )
   }
-  // Woo varligi LITERAL DEGIL, GERCEK SATIRLARDAN turetilir.
+  // SUPERSEDED (IKAS-001): ikas artik GERCEK hesap kapsamli kimlik
+  // kaliciligina sahiptir (connector_credentials). Eski capa "ikas hic
+  // gecmez" diyordu; o gun dogruydu cunku kalicilik YOKTU. Degismez olan
+  // ilke GUCLENDIRILEREK korunur: ikas YALNIZ hesap kapsamli saglayici
+  // listesinde gecer ve varligi ASLA literal bir degerle yazilmaz.
+  assert.match(
+    service,
+    /ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS = \['woocommerce', 'ikas'\] as const/,
+  )
+  assert.equal(service.split('ikas').length - 1, 1, 'ikas yalniz listede gecer')
+  // Woo/ikas varligi LITERAL DEGIL, GERCEK SATIRLARDAN turetilir.
   assert.match(service, /listAccountsWithCredential/)
-  assert.equal(service.includes("'woocommerce': 'PRESENT'"), false)
-  assert.equal(service.includes("woocommerce: 'PRESENT'"), false)
+  for (const provider of ['woocommerce', 'ikas']) {
+    assert.equal(service.includes(`'${provider}': 'PRESENT'`), false)
+    assert.equal(service.includes(`${provider}: 'PRESENT'`), false)
+  }
 })
