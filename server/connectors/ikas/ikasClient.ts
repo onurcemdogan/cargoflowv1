@@ -181,6 +181,7 @@ const RETRYABLE: ReadonlySet<IkasErrorClass> = new Set([
 async function send(
   request: IkasTransportRequest,
   options: IkasClientOptions,
+  nonRetryableHttpStatuses: readonly number[] = [],
 ): Promise<{ ok: true; response: IkasTransportResponse } | { ok: false; errorClass: IkasErrorClass }> {
   // Savunma derinliği: yalnız izinli iki hedef.
   if (!isAllowedIkasRequestUrl(request.url)) {
@@ -194,7 +195,7 @@ async function send(
       const response = await options.transport(request)
       const httpClass = classifyHttp(response.status)
       outcome =
-        httpClass && RETRYABLE.has(httpClass)
+        httpClass && RETRYABLE.has(httpClass) && !nonRetryableHttpStatuses.includes(response.status)
           ? { ok: false, errorClass: httpClass }
           : { ok: true, response }
     } catch (error) {
@@ -238,6 +239,7 @@ export async function requestIkasToken(
       body,
     },
     options,
+    [400], // Return OAuth credential rejection to the token-specific mapping without retrying.
   )
   if (!sent.ok) return { ok: false, errorClass: sent.errorClass, httpStatus: null }
   const status = sent.response.status

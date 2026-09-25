@@ -284,6 +284,80 @@ test('IKAS-AUTH-1/2: belirteç isteği mağaza hostuna form gövdesiyle; sır so
   assert.equal(graphqlCall.body.includes('SECRET-A-xyz'), false, 'sır GraphQL gövdesine GİTMEZ')
 })
 
+test('IKAS-AUTH-400: token HTTP 400 is AUTH_FAILED without retries', async () => {
+  const creds = { storeName: 'magazaa', tokenUrl: 'https://magazaa.myikas.com/api/admin/oauth/token', clientId: 'cid-A', clientSecret: 'SECRET-A-xyz' }
+  let tokenRequests = 0
+  const sleeps = []
+  const result = await client.requestIkasToken(creds, {
+    transport: async (request) => {
+      assert.equal(request.url, creds.tokenUrl)
+      tokenRequests += 1
+      return { status: 400, bodyText: JSON.stringify({ error: 'invalid_client' }) }
+    },
+    retryDelaysMs: [10, 20],
+    sleep: async (ms) => { sleeps.push(ms) },
+  })
+  assert.equal(tokenRequests, 1)
+  assert.deepEqual(sleeps, [])
+  assert.deepEqual(result, { ok: false, errorClass: 'AUTH_FAILED', httpStatus: 400 })
+})
+
+test('IKAS-GQL-400: GraphQL HTTP 400 remains PROVIDER_ERROR', async () => {
+  const creds = { storeName: 'magazaa', tokenUrl: 'https://magazaa.myikas.com/api/admin/oauth/token', clientId: 'cid-A', clientSecret: 'SECRET-A-xyz' }
+  const fake = fakeIkas()
+  let graphqlRequests = 0
+  const result = await client.fetchIkasMerchant(creds, options(fake, {
+    retryDelaysMs: [10, 20],
+    transport: async (request) => {
+      if (request.url === creds.tokenUrl) return fake.transport(request)
+      graphqlRequests += 1
+      return { status: 400, bodyText: '{}' }
+    },
+  }))
+  assert.equal(result.ok, false)
+  assert.equal(result.errorClass, 'PROVIDER_ERROR')
+  assert.equal(fake.state.tokenRequests, 1, 'GraphQL 400 must not refresh the token')
+  assert.equal(graphqlRequests, 3, 'existing GraphQL retry behavior is preserved')
+})
+
+test('IKAS-AUTH-RETRY: transient token failures recover or exhaust the bounded retry budget', async (t) => {
+  const creds = { storeName: 'magazaa', tokenUrl: 'https://magazaa.myikas.com/api/admin/oauth/token', clientId: 'cid-A', clientSecret: 'SECRET-A-xyz' }
+  for (const [failure, errorClass] of [
+    [429, 'RATE_LIMITED'],
+    [500, 'PROVIDER_ERROR'],
+    [503, 'PROVIDER_ERROR'],
+    ['NETWORK', 'NETWORK_ERROR'],
+    ['TIMEOUT', 'TIMEOUT'],
+  ]) {
+    for (const recovers of [false, true]) {
+      await t.test(`${failure}: ${recovers ? 'recovers on final attempt' : 'stops at retry limit'}`, async () => {
+        const fake = fakeIkas()
+        let tokenRequests = 0
+        const sleeps = []
+        const result = await client.requestIkasToken(creds, options(fake, {
+          retryDelaysMs: [10, 20],
+          sleep: async (ms) => { sleeps.push(ms) },
+          transport: async (request) => {
+            assert.equal(request.url, creds.tokenUrl)
+            tokenRequests += 1
+            if (recovers && tokenRequests === 3) return fake.transport(request)
+            if (typeof failure === 'string') throw new client.IkasTransportError(failure)
+            return { status: failure, bodyText: '{}' }
+          },
+        }))
+        assert.equal(tokenRequests, 3, 'initial request plus exactly two retries')
+        assert.deepEqual(sleeps, [10, 20])
+        if (recovers) {
+          assert.equal(result.ok, true)
+          assert.equal(result.data.expiresInSec, 14400)
+        } else {
+          assert.deepEqual(result, { ok: false, errorClass, httpStatus: null })
+        }
+      })
+    }
+  }
+})
+
 test('IKAS-AUTH-4/5 + ömür: 401 → BİR KEZ yenile/tekrarla; ikinci 401 durur; ömür yanıttan', async () => {
   const creds = { storeName: 'magazaa', tokenUrl: 'https://magazaa.myikas.com/api/admin/oauth/token', clientId: 'cid-A', clientSecret: 'SECRET-A-xyz' }
   // (4) belirteç iptal edildi → tek yenileme, tek tekrar, başarı
