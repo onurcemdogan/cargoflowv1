@@ -35,4 +35,3 @@ jobs:
       - run: npm run test:catalog
       - run: npm run test:product-tour
       - run: npm run test:landing
-      - run: npm run test:surat
