@@ -1,58 +1,53 @@
 {
-  "schemaVersion": 1,
-  "project": "cargoflow",
-  "ticket": "TICIMAX-001",
-  "status": "BLOCKED_HUMAN",
-  "phase": "IDENTITY_AND_CONTRACT_GATE",
-  "integrationBranch": "integration/roadmap",
-  "ticketBranch": "agent/TICIMAX-001",
-  "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
-  "headCommit": "12b0b9c8af9a1b9795ba7cfffe108be11f7c9265",
-  "activeWorker": null,
-  "lastImplementationWorker": "cursor",
-  "reviewer": null,
-  "contributors": [
-    "cursor"
-  ],
-  "completedCriteria": [
-    "Reconstructed git: branch agent/TICIMAX-001, HEAD 12b0b9c8af9a1b9795ba7cfffe108be11f7c9265, dirty only .ai/CURRENT_CONTEXT.md + .ai/CURRENT_TASK.json",
-    "Confirmed no server/connectors/ticimax implementation yet; only providers/ticimax/contracts/siparisservis-v1.json + catalog stage off",
-    "Contract pack IDENTITY_FIELDS.store = mağaza alan adı (normalize); UyeKodu documented as secret only — identity candidate proven at pack level, not UyeKodu",
-    "Stopped before credential/account persistence and before SelectSiparis adapter (no invented SOAP field names)"
-  ],
-  "failingTests": [],
-  "blockers": [
-    {
-      "id": "TICIMAX_WSDL_REFRESH",
-      "severity": "Ticket requires refresh of current official SiparisServis contract/WSDL before implementation. No .wsdl in repo; session shell + network (WebFetch/WebSearch/curl) all Rejected. Cannot refresh or pin live WSDL evidence.",
-      "humanAction": "Allow network/shell for https://static.ticimax.com/dokumanlar/SiparisServis.pdf and/or provide a tenant WSDL from https://{magazaAlanAdi}/Servis/SiparisServis.svc?wsdl (sanitized, no UyeKodu). Commit refreshed evidence under providers/ticimax/."
-    },
-    {
-      "id": "TICIMAX_SELECTSIPARIS_PARAM_NAMES",
-      "severity": "Unresolved official naming conflict: ticket lists SelectSiparis params WebSiparisFiltre + WebSiparisSayfalama; frozen pack lists objects SiparisFiltre + SiparisSayfalama. fieldLevelVerified=false; pack OPEN_QUESTIONS require WSDL for filter/pagination field names. Inventing either name set would violate AGENTS.md / ticket stop conditions.",
-      "humanAction": "Confirm from official PDF/WSDL the exact SelectSiparis parameter type names and SiparisFiltre/Sayfalama (or WebSiparis*) element names needed for bounded deterministic pagination."
-    }
-  ],
-  "nextAction": "Human: unblock WSDL/PDF refresh + confirm SelectSiparis parameter/field names. Then resume agent/TICIMAX-001; do not start ARAS-EXPANSION.",
-  "specPath": ".ai/tickets/TICIMAX-001.md",
-  "verdicts": {
-    "TICIMAX_CONTRACT": "FROZEN_PACK_PRESENT — providers/ticimax/contracts/siparisservis-v1.json (RETRIEVED_AT 2026-09-19); live refresh NOT_PERFORMED this session",
-    "TICIMAX_WSDL": "BLOCKED — no WSDL in tree; network/shell denied; cannot refresh",
-    "TICIMAX_ACCOUNT_IDENTITY": "CONTRACT_LEVEL_PASS_CANDIDATE — providerAccountId = normalized mağaza alan adı / store origin; MUST NEVER be UyeKodu/hash/order/member/invented id. Persistence deferred until WSDL gate clears",
-    "TICIMAX_SECRET_SAFETY": "NOT_IMPLEMENTED",
-    "TICIMAX_CONNECTION_TEST": "NOT_IMPLEMENTED",
-    "TICIMAX_MULTI_STORE": "NOT_IMPLEMENTED",
-    "TICIMAX_ORDERS_READ": "NOT_IMPLEMENTED",
-    "TICIMAX_PAGINATION": "BLOCKED — field names unverified",
-    "TICIMAX_RECONCILIATION": "NOT_IMPLEMENTED",
-    "TICIMAX_WEBHOOK": "DISABLED_UNVERIFIED",
-    "TICIMAX_HEALTH_ACCOUNT_SCOPE": "NOT_IMPLEMENTED",
-    "TICIMAX_TENANT_ISOLATION": "NOT_IMPLEMENTED",
-    "TICIMAX_LIVE_WRITE_GATE": "NOT_IMPLEMENTED",
-    "TICIMAX_ROLLOUT": "STILL_OFF — catalog ticimax:off; must not silently become pilot/GA",
-    "MIGRATION": "NOT_REQUIRED_YET",
-    "LIVE_PROVIDER_VERIFICATION": "NOT_PERFORMED",
-    "PILOT_READY": "NO",
-    "TICIMAX_001": "BLOCKED_HUMAN"
-  }
+    "schemaVersion":  1,
+    "project":  "cargoflow",
+    "ticket":  "TICIMAX-001",
+    "status":  "IN_PROGRESS",
+    "phase":  "READY",
+    "integrationBranch":  "integration/roadmap",
+    "ticketBranch":  "agent/TICIMAX-001",
+    "baselineCommit":  "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
+    "headCommit":  "12b0b9c8af9a1b9795ba7cfffe108be11f7c9265",
+    "activeWorker":  null,
+    "lastImplementationWorker":  "cursor",
+    "reviewer":  null,
+    "contributors":  [
+                         "cursor"
+                     ],
+    "completedCriteria":  [
+                              "Reconstructed git: branch agent/TICIMAX-001, HEAD 12b0b9c8af9a1b9795ba7cfffe108be11f7c9265, dirty only .ai/CURRENT_CONTEXT.md + .ai/CURRENT_TASK.json",
+                              "Confirmed no server/connectors/ticimax implementation yet; only providers/ticimax/contracts/siparisservis-v1.json + catalog stage off",
+                              "Contract pack IDENTITY_FIELDS.store = maÄŸaza alan adÄ± (normalize); UyeKodu documented as secret only â€” identity candidate proven at pack level, not UyeKodu",
+                              "Stopped before credential/account persistence and before SelectSiparis adapter (no invented SOAP field names)",
+                              "Human verified live official Ticimax SiparisServis documentation and refreshed PDF evidence under providers/ticimax/evidence.",
+                              "Official SelectSiparis contract confirmed as UyeKodu + WebSiparisFiltre + WebSiparisSayfalama."
+                          ],
+    "failingTests":  [
+
+                     ],
+    "blockers":  [
+
+                 ],
+    "nextAction":  "Execute TICIMAX-001 exactly from .ai/tickets/TICIMAX-001.md using refreshed official Ticimax contract evidence. Do not start ARAS-EXPANSION.",
+    "specPath":  ".ai/tickets/TICIMAX-001.md",
+    "verdicts":  {
+                     "TICIMAX_CONTRACT":  "FROZEN_PACK_PRESENT â€” providers/ticimax/contracts/siparisservis-v1.json (RETRIEVED_AT 2026-09-19); live refresh NOT_PERFORMED this session",
+                     "TICIMAX_WSDL":  "BLOCKED â€” no WSDL in tree; network/shell denied; cannot refresh",
+                     "TICIMAX_ACCOUNT_IDENTITY":  "CONTRACT_LEVEL_PASS_CANDIDATE â€” providerAccountId = normalized maÄŸaza alan adÄ± / store origin; MUST NEVER be UyeKodu/hash/order/member/invented id. Persistence deferred until WSDL gate clears",
+                     "TICIMAX_SECRET_SAFETY":  "NOT_IMPLEMENTED",
+                     "TICIMAX_CONNECTION_TEST":  "NOT_IMPLEMENTED",
+                     "TICIMAX_MULTI_STORE":  "NOT_IMPLEMENTED",
+                     "TICIMAX_ORDERS_READ":  "NOT_IMPLEMENTED",
+                     "TICIMAX_PAGINATION":  "BLOCKED â€” field names unverified",
+                     "TICIMAX_RECONCILIATION":  "NOT_IMPLEMENTED",
+                     "TICIMAX_WEBHOOK":  "DISABLED_UNVERIFIED",
+                     "TICIMAX_HEALTH_ACCOUNT_SCOPE":  "NOT_IMPLEMENTED",
+                     "TICIMAX_TENANT_ISOLATION":  "NOT_IMPLEMENTED",
+                     "TICIMAX_LIVE_WRITE_GATE":  "NOT_IMPLEMENTED",
+                     "TICIMAX_ROLLOUT":  "STILL_OFF â€” catalog ticimax:off; must not silently become pilot/GA",
+                     "MIGRATION":  "NOT_REQUIRED_YET",
+                     "LIVE_PROVIDER_VERIFICATION":  "NOT_PERFORMED",
+                     "PILOT_READY":  "NO",
+                     "TICIMAX_001":  "BLOCKED_HUMAN"
+                 }
 }
