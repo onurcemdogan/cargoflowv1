@@ -1,16 +1,16 @@
 # Generated shift context
 
-Generated: 2026-09-25T14:57:30.107466+00:00
+Generated: 2026-09-25T14:57:33.408346+00:00
 Project: cargoflow
 Ticket: TICIMAX-001
 Status: IN_PROGRESS
 Phase: READY
 Branch: agent/TICIMAX-001
 Baseline: 8a91c6ec4e5e996956a432fe8f86953d82d4c2b3
-HEAD: c77defddc9664eef4a59c9100e00416f5b5076c9
-Last implementation worker: cursor
+HEAD: 38cc2d195e632d4cba207c33b7750a00e5cde349
+Last implementation worker: codex
 Reviewer: None
-Next action: claude exited AUTH_REQUIRED; reconstruct from git and .ai\recovery\20260925-175726.
+Next action: cursor exited AUTH_REQUIRED; reconstruct from git and .ai\recovery\20260925-175730.
 
 ## Git status
 ```
@@ -20,6 +20,7 @@ M .ai/CURRENT_CONTEXT.md
 
 ## Recent commits
 ```
+38cc2d1 wip(TICIMAX-001): checkpoint cursor
 c77defd wip(TICIMAX-001): checkpoint claude
 fe06844 SUPERVISOR: select TICIMAX-001
 8a91c6e TICIMAX-001: freeze contract and identity gates
@@ -29,7 +30,6 @@ d1f25da LANDING-001: public landing on /, organization app on /app, admin unchan
 3a65aca PRODUCT-TOUR-001: non-blocking, replayable, accessible product tour (v1)
 d79014b CATALOG-001: server-paged product catalog browser with account-scoped truth
 7e42637 fix(integration-health): canonicalize provider key before supported-provider filter
-77f0a37 ONBOARDING-001: provider-aware, account-scoped, truthful, resumable first-run setup
 ```
 
 ## Diff stat
