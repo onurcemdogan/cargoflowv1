@@ -39,6 +39,7 @@ import {
 } from '../utils/integrationConfigured'
 import { ShippingPayerSection } from '../integrations/ShippingPayerSection'
 import { WooCommerceSection } from '../integrations/WooCommerceSection'
+import { IkasSection } from '../integrations/IkasSection'
 import {
   integrationCategoryTabs,
   suratDetailTabs,
@@ -238,7 +239,8 @@ export function IntegrationsPage({
         ) : null}
 
         {activeCategory !== 'marketplaces' &&
-        activeCategory !== 'carriers' ? (
+        activeCategory !== 'carriers' &&
+        activeCategory !== 'commerceSites' ? (
           <EmptyIntegrationCategory
             {...emptyCategoryMessages[activeCategory]}
           />
@@ -277,6 +279,13 @@ export function IntegrationsPage({
           />
         ) : null}
       </form>
+
+      {/*
+        E-TİCARET SİTELERİ — ikas (İÇ TEST). Formun DIŞINDA durur: bölümün
+        kendi düğmeleri vardır ve ikas alanında Enter, sayfanın ayar formunu
+        GÖNDEREMEZ.
+      */}
+      {activeCategory === 'commerceSites' ? <IkasSection /> : null}
     </div>
   )
 }

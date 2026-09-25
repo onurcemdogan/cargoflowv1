@@ -2,12 +2,22 @@
   "PROVIDER": "ikas",
   "PROVIDER_KIND": "commerce_platform",
   "DISPLAY_NAME": "ikas",
-  "CONTRACT_PACK_VERSION": 1,
-  "RETRIEVED_AT": "2026-09-19",
+  "CONTRACT_PACK_VERSION": 2,
+  "RETRIEVED_AT": "2026-09-25",
   "SOURCE_URLS": [
     "https://ikas.dev/docs/api/getting-started/authentication",
+    "https://ikas.dev/docs/api/admin-api/merchant",
     "https://ikas.dev/docs/api/admin-api/orders",
-    "https://ikas.dev/docs/api/admin-api/webhooks"
+    "https://ikas.dev/docs/api/admin-api/webhooks",
+    "https://ikas.dev/docs/api/type-definitions/admin-api/inputs/pagination-input",
+    "https://ikas.dev/docs/api/type-definitions/admin-api/inputs/date-filter-input",
+    "https://ikas.dev/docs/api/type-definitions/admin-api/objects/order",
+    "https://ikas.dev/docs/api/type-definitions/admin-api/objects/order-pagination-response",
+    "https://ikas.dev/docs/api/type-definitions/admin-api/objects/order-package",
+    "https://ikas.dev/docs/api/type-definitions/admin-api/objects/order-line-item",
+    "https://ikas.dev/docs/api/type-definitions/admin-api/objects/order-line-variant",
+    "https://ikas.dev/docs/api/type-definitions/admin-api/objects/order-address",
+    "https://ikas.dev/docs/api/type-definitions/admin-api/scalars/timestamp"
   ],
   "SOURCE_TIER": "1-official-developer-portal",
   "API_VERSION": {
@@ -18,64 +28,200 @@
   },
   "AUTH_MODEL": {
     "flow": "oauth2-client_credentials (private app)",
-    "credentials": ["client_id", "client_secret"],
+    "credentials": [
+      "client_id",
+      "client_secret"
+    ],
     "requestHeader": "Authorization: Bearer <access_token>",
     "provisioning": "ikas Dashboard → Apps → My Apps → Create Private App; scope seçimi orada yapılır.",
     "verified": true,
-    "tokenLifetime": { "documented": false, "verified": false, "note": "TTL yayımlanmamış; istemci 401'de bir kez yenileyip tekrar dener." }
+    "tokenLifetime": {
+      "documented": true,
+      "verified": true,
+      "expiresInSeconds": 14400,
+      "responseShape": "{ access_token, token_type: Bearer, expires_in: 14400 }",
+      "refreshToken": {
+        "documented": false,
+        "note": "Yenileme belirteci YOK: süre dolunca client_credentials ile yeni belirteç alınır."
+      },
+      "note": "Resmî yanıt örneği expires_in=14400 (4 saat) belgeler. İstemci süreyi YANITTAN okur, güvenlik payı düşer; 401de bir kez yeniler."
+    },
+    "tokenEndpoint": {
+      "url": "https://<your_store_name>.myikas.com/api/admin/oauth/token",
+      "method": "POST",
+      "contentType": "application/x-www-form-urlencoded",
+      "body": [
+        "grant_type=client_credentials",
+        "client_id",
+        "client_secret"
+      ],
+      "verified": true
+    }
   },
   "IDENTITY_FIELDS": {
-    "store": "client_id ile ilişkilendirilen mağaza (adaptör kararlı mağaza kimliğini token sahibinden türetir)",
+    "store": "getMerchant.id (Merchant API) — KANONİK providerAccountId",
+    "storeDisplay": "getMerchant.storeName (yoksa kullanıcının girdiği normalize mağaza adı)",
+    "storeIdentityVerified": true,
+    "notIdentity": [
+      "client_id",
+      "client_secret",
+      "access_token",
+      "mağaza URL"
+    ],
+    "storeIdentityNote": "Kimlik bilgisi döndürülür (rotate) ve SIRDIR; kimlik OLAMAZ. Aynı merchant.id ile yeniden bağlanmak YENİ hesap üretmez.",
+    "orderMerchantField": "Order.merchantId: String! — sipariş, bağlı merchant.id ile çapraz doğrulanır",
     "order": "id",
-    "orderHumanReference": "orderNumber (1001'den başlayan sıralı numara)",
+    "orderHumanReference": "orderNumber (String, null olabilir)",
     "orderLine": "orderLineItems[].id",
-    "variant": "orderLineItems[].variant",
+    "variant": "orderLineItems[].variant.id (String, null olabilir)",
     "stableIdVerified": true,
-    "note": "orderNumber SIRALI ve insan-okunur; kimlik olarak `id` kullanılır."
+    "note": "orderNumber insan-okunur referanstır; kimlik olarak `id` kullanılır."
   },
   "PAGINATION": {
     "style": "page-number",
-    "input": "PaginationInput { page, limit }",
-    "response": "OrderPaginationResponse { data, count, hasNext, limit, page }",
+    "input": "PaginationInput { page: Int (varsayılan 1), limit: Int (varsayılan 50, min 1, max 200) }",
+    "response": "OrderPaginationResponse { data: [Order!]!, count: Int!, hasNext: Boolean!, limit: Int!, page: Int! }",
     "verified": true,
-    "maxLimit": { "documented": false, "verified": false }
+    "maxLimit": {
+      "documented": true,
+      "verified": true,
+      "value": 200,
+      "min": 1,
+      "default": 50
+    },
+    "continuation": "hasNext: Boolean! — daha fazla kayıt olup olmadığı",
+    "countNote": "`count` alanının resmî açıklaması belirsizdir; sayfa sonu kararı YALNIZ `hasNext` ile verilir."
   },
   "ORDER_LIST": {
     "query": "listOrder",
     "filters": [
-      "orderedAt (DateFilterInput)", "updatedAt (DateFilterInput)",
-      "customerId (StringFilterInput)", "orderNumber (StringFilterInput)",
+      "orderedAt (DateFilterInput)",
+      "updatedAt (DateFilterInput)",
+      "closedAt (DateFilterInput)",
+      "id (StringFilterInput)",
+      "customerId (StringFilterInput)",
+      "customerEmail (StringFilterInput)",
+      "orderNumber (StringFilterInput)",
       "status (OrderStatusEnumInputFilter)",
       "orderPaymentStatus (OrderPaymentStatusEnumInputFilter)",
       "orderPackageStatus (OrderPackageStatusEnumInputFilter)",
-      "salesChannelId (StringFilterInput)", "search (String)"
+      "salesChannelId (StringFilterInput)",
+      "stockLocationId (StringFilterInput)",
+      "branchId (StringFilterInput)",
+      "search (String)",
+      "pagination (PaginationInput)",
+      "sort (String)"
     ],
     "verified": true,
     "checkpointFilter": {
       "value": "updatedAt (DateFilterInput)",
       "verified": true,
       "note": "Mutabakat ekseni `updatedAt`tır: webhook imzası doğrulanamadığı için DOĞRULUK SİGORTASI budur."
+    },
+    "dateFilterInput": {
+      "fields": [
+        "eq",
+        "gt",
+        "gte",
+        "in",
+        "lt",
+        "lte",
+        "ne",
+        "nin"
+      ],
+      "type": "Timestamp",
+      "verified": true
+    },
+    "sort": {
+      "type": "String",
+      "syntaxDocumented": false,
+      "verified": false,
+      "decision": "Sıralama dizgesi UYDURULMAZ; doğruluk sıralamaya DAYANMAZ (tekilleştirme + hasNext)."
     }
   },
   "ORDER_MODEL": {
     "fields": [
-      "id", "orderNumber", "status", "orderPackageStatus", "orderedAt",
-      "currencyCode", "totalFinalPrice", "customer", "shippingAddress", "orderLineItems"
+      "id",
+      "merchantId",
+      "orderNumber",
+      "status",
+      "orderPackageStatus",
+      "orderedAt",
+      "currencyCode",
+      "totalFinalPrice",
+      "customer",
+      "shippingAddress",
+      "orderLineItems",
+      "orderPackages"
     ],
+    "types": {
+      "id": "ID!",
+      "merchantId": "String!",
+      "orderNumber": "String",
+      "status": "OrderStatusEnum!",
+      "orderPackageStatus": "OrderPackageStatusEnum",
+      "orderedAt": "Timestamp",
+      "currencyCode": "String!",
+      "totalFinalPrice": "Float!",
+      "orderPackages": "[OrderPackage!]"
+    },
+    "updatedAtField": {
+      "documentedOnOrderType": false,
+      "note": "Order tip tanımında `updatedAt`/`createdAt` alanı YOKTUR (yalnız örneklerde görünür). Sorguda SEÇİLMEZ; `updatedAt` yalnız listOrder FİLTRE argümanı olarak kullanılır."
+    },
     "verified": true
   },
   "ORDER_LINE_MODEL": {
     "fields": [
-      "id", "variant", "quantity", "price", "finalPrice", "discount",
-      "status", "options", "taxValue", "stockLocationId", "statusUpdatedAt"
+      "id",
+      "variant",
+      "quantity",
+      "price",
+      "finalPrice",
+      "status",
+      "options",
+      "statusUpdatedAt"
     ],
+    "types": {
+      "id": "ID!",
+      "quantity": "Float!",
+      "price": "Float!",
+      "finalPrice": "Float",
+      "status": "OrderLineItemStatusEnum!",
+      "options": "[OrderLineOption!]",
+      "variant": "OrderLineVariant!"
+    },
+    "variant": {
+      "fields": [
+        "id",
+        "sku",
+        "barcodeList",
+        "name"
+      ],
+      "types": {
+        "id": "String",
+        "sku": "String",
+        "barcodeList": "[String!]",
+        "name": "String!"
+      }
+    },
+    "option": {
+      "fields": [
+        "name",
+        "values { name value }"
+      ],
+      "types": {
+        "name": "String!",
+        "values": "[OrderLineOptionValue!]!"
+      }
+    },
     "verified": true
   },
   "ORDER_STATUSES": {
     "enum": "OrderStatusEnum",
     "values": [],
     "verified": false,
-    "note": "Resmî sayfada enum DEĞERLERİ listelenmemiştir. Statü eşlemesi bu yüzden VERİDEN öğrenilir: bilinmeyen statü `null` kanonik değere düşer ve UI'da ham değer gösterilir — TAHMİN EDİLMEZ."
+    "note": "Resmî tip sayfasında enum DEĞERLERİ listelenmemiştir. Ham statü KORUNUR; kanonik statü `null` kalır — TAHMİN EDİLMEZ."
   },
   "PRODUCT_MODEL": {
     "endpoint": "listProduct (Admin API)",
@@ -86,8 +232,15 @@
   "WEBHOOK_MODEL": {
     "registration": "saveWebhook mutation { endpoint, scopes }",
     "scopeFormat": "store/[resource]/[action]",
-    "exampleScopes": ["store/customer/created", "store/customer/updated"],
-    "orderScopes": { "documented": false, "verified": false, "note": "Sipariş kapsamlarının TAM listesi resmî sayfada yayımlanmamıştır." },
+    "exampleScopes": [
+      "store/customer/created",
+      "store/customer/updated"
+    ],
+    "orderScopes": {
+      "documented": false,
+      "verified": false,
+      "note": "Sipariş kapsamlarının TAM listesi resmî sayfada yayımlanmamıştır."
+    },
     "verified": true
   },
   "WEBHOOK_SIGNATURE": {
@@ -116,7 +269,12 @@
     "canonicalField": "orderedAt / updatedAt (Timestamp)",
     "rule": "Timestamp mutlak andır; yerel duvar saati DEĞİLDİR.",
     "verified": true,
-    "offsetApplied": "YOK — Trendyol'daki gibi manuel ±3 saat UYGULANMAZ (sözleşme gerektirmiyor)."
+    "offsetApplied": "YOK — Trendyol'daki gibi manuel ±3 saat UYGULANMAZ (sözleşme gerektirmiyor).",
+    "timestampScalar": {
+      "encoding": "integer milliseconds since UNIX epoch (JavaScript Date as integer)",
+      "verified": true
+    },
+    "filterEncoding": "DateFilterInput değerleri de Timestamp (epoch ms tam sayı) olarak gönderilir."
   },
   "MONEY_RULES": {
     "representation": "Float (totalFinalPrice)",
@@ -126,29 +284,141 @@
   },
   "PHONE_ADDRESS_FIELDS": {
     "address": [
-      "firstName", "lastName", "addressLine1", "addressLine2", "city", "country",
-      "district", "state", "phone", "postalCode", "company", "taxNumber",
-      "taxOffice", "identityNumber", "isDefault"
+      "firstName",
+      "lastName",
+      "addressLine1",
+      "addressLine2",
+      "city",
+      "country",
+      "district",
+      "state",
+      "phone",
+      "postalCode",
+      "company",
+      "taxNumber",
+      "taxOffice",
+      "identityNumber",
+      "isDefault"
     ],
+    "nestedObjects": {
+      "city": "OrderAddressCity! { id, code, name: String! }",
+      "district": "OrderAddressDistrict { id, code, name: String }",
+      "country": "OrderAddressCountry!",
+      "state": "OrderAddressState"
+    },
     "verified": true,
-    "note": "Adres bloğunda `phone` VARDIR (WooCommerce'in aksine); `district` Türkiye ilçe alanıdır ve taşıyıcı için gereklidir."
+    "note": "city/district/country/state DÜZ METİN DEĞİL, iç içe nesnedir (name alanı). Adres bloğunda `phone` VARDIR; ilçe serbest metinden ÇIKARILMAZ."
   },
   "CAPABILITIES": {
-    "orders.read": { "supported": true, "contractVerified": true, "stage": "internal_test" },
-    "orders.webhook": { "supported": false, "contractVerified": false, "reason": "Webhook imza doğrulaması resmî dokümanda yok; imzasız olay KABUL EDİLMEZ." },
-    "orders.status.write": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
-    "products.read": { "supported": true, "contractVerified": true, "stage": "shadow" },
-    "products.write": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
-    "inventory.read": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
-    "inventory.write": { "supported": false, "contractVerified": false, "reason": "WAVE-1 kapsamı dışında." },
-    "shipments.tracking.write": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
-    "returns.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
-    "finance.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." },
-    "questions.read": { "supported": false, "contractVerified": false, "reason": "Sağlayıcı sunmuyor." }
+    "orders.read": {
+      "supported": true,
+      "contractVerified": true,
+      "stage": "internal_test"
+    },
+    "orders.webhook": {
+      "supported": false,
+      "contractVerified": false,
+      "reason": "Webhook imza doğrulaması resmî dokümanda yok; imzasız olay KABUL EDİLMEZ."
+    },
+    "orders.status.write": {
+      "supported": false,
+      "contractVerified": false,
+      "reason": "WAVE-1 kapsamı dışında."
+    },
+    "products.read": {
+      "supported": true,
+      "contractVerified": true,
+      "stage": "shadow"
+    },
+    "products.write": {
+      "supported": false,
+      "contractVerified": false,
+      "reason": "WAVE-1 kapsamı dışında."
+    },
+    "inventory.read": {
+      "supported": false,
+      "contractVerified": false,
+      "reason": "WAVE-1 kapsamı dışında."
+    },
+    "inventory.write": {
+      "supported": false,
+      "contractVerified": false,
+      "reason": "WAVE-1 kapsamı dışında."
+    },
+    "shipments.tracking.write": {
+      "supported": false,
+      "contractVerified": false,
+      "reason": "Doğrulanmadı."
+    },
+    "returns.read": {
+      "supported": false,
+      "contractVerified": false,
+      "reason": "Doğrulanmadı."
+    },
+    "finance.read": {
+      "supported": false,
+      "contractVerified": false,
+      "reason": "Doğrulanmadı."
+    },
+    "questions.read": {
+      "supported": false,
+      "contractVerified": false,
+      "reason": "Sağlayıcı sunmuyor."
+    }
   },
   "OPEN_QUESTIONS": [
     "Webhook imza/doğrulama modeli yayımlanmamış → orders.webhook KAPALI.",
-    "OrderStatusEnum değerleri yayımlanmamış → statü eşlemesi fail-open değil, bilinmeyen=null.",
-    "Access token TTL ve oran sınırı yayımlanmamış."
-  ]
+    "OrderStatusEnum değerleri yayımlanmamış → kanonik statü null, ham statü korunur.",
+    "Paket oluşma zamanı belgelenmemiş → kanonik paket kimliği DOĞRULANMADI, canlı yazım kapalı.",
+    "`sort` dizge sözdizimi belgelenmemiş → kullanılmaz.",
+    "Oran sınırı yayımlanmamış."
+  ],
+  "MERCHANT_MODEL": {
+    "query": "getMerchant",
+    "fields": [
+      "id",
+      "email",
+      "firstName",
+      "lastName",
+      "merchantName",
+      "phoneNumber",
+      "storeName",
+      "merchantSequence",
+      "address"
+    ],
+    "requiredFields": [
+      "id",
+      "email",
+      "firstName",
+      "lastName"
+    ],
+    "cargoflowSelects": [
+      "id",
+      "storeName"
+    ],
+    "note": "Kişisel alanlar (e-posta, ad, telefon) SEÇİLMEZ; yalnız kimlik ve görünen mağaza adı.",
+    "verified": true
+  },
+  "PACKAGE_MODEL": {
+    "type": "OrderPackage",
+    "fields": [
+      "id",
+      "orderPackageNumber",
+      "orderLineItemIds",
+      "orderPackageFulfillStatus",
+      "trackingInfo"
+    ],
+    "types": {
+      "id": "ID!",
+      "orderPackageNumber": "String! (sipariş numarası - paket sırası)",
+      "orderLineItemIds": "[String!]!",
+      "orderPackageFulfillStatus": "OrderPackageFulfillStatusEnum!",
+      "trackingInfo": "TrackingInfo { barcode, cargoCompany, cargoCompanyId, trackingNumber, trackingLink, isSendNotification }"
+    },
+    "orderPackagesNullable": true,
+    "creationTimingDocumented": false,
+    "cargoflowPackageIdentityVerified": false,
+    "decision": "Paketin NE ZAMAN oluştuğu belgelenmemiştir (paketsiz sipariş olabilir). CargoFlow paket kimliği UYDURULMAZ; order.id paket kimliği olarak KULLANILMAZ. Kanonik canlı sipariş yazımı bu yüzden KAPALIDIR.",
+    "verified": true
+  }
 }
