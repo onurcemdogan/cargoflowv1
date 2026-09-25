@@ -42,14 +42,21 @@ const CONTRACT_PACK_PATHS: Record<string, string> = {
  * CANLI SAYILMAZ: kanonik sipariş yazımı ve karşılama yan etkileri
  * `liveWriteGate` ile KAPALIDIR. `pilot`/`ga` AYRI bir bilettir.
  *
- * ikas/Ticimax `off`: sözleşmeleri doğrulandı, kod yolu YOK.
+ * ikas `internal_test`tir (IKAS-001): OAuth2 client_credentials, merchant.id
+ * kimliği, çok mağaza, hesap kapsamlı şifreli kimlik, yalnız-okuma sipariş
+ * mutabakatı (`updatedAt`). Canlı doğrulama YAPILMADI; webhook imzası
+ * belgelenmediği için webhook YOK. `internal_test` canlı davranışı
+ * ETKİLEMEZ: kanonik yazım ve karşılama yan etkileri `liveWriteGate` ile
+ * KAPALIDIR.
+ *
+ * Ticimax `off`: sözleşmesi doğrulandı, kod yolu YOK.
  *
  * Bu harita KONFİGÜRASYONDUR; sağlık sonucundan ETKİLENMEZ.
  */
 export const ROLLOUT_STAGE_POLICY: Record<string, CapabilityStage> = {
   trendyol: 'ga',
   woocommerce: 'internal_test',
-  ikas: 'off',
+  ikas: 'internal_test',
   ticimax: 'off',
 }
 

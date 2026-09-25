@@ -177,6 +177,7 @@
   "server/onboarding-provider-flow.test.mjs",
   "server/catalog-browse-flow.test.mjs",
   "server/landing-contract-flow.test.mjs",
+  "server/ikas-connector-flow.test.mjs",
   "server/platform-admin-flow.test.mjs",
   "server/production-session-flow.test.mjs",
   "server/surat-network-diagnostics.test.mjs",
