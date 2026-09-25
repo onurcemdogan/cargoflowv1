@@ -24,7 +24,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "Execute TICIMAX-001 exactly from .ai/tickets/TICIMAX-001.md using refreshed official Ticimax contract evidence. Do not start ARAS-EXPANSION.",
+  "nextAction": "claude exited QUOTA_EXHAUSTED; reconstruct from git and .ai\\recovery\\20260926-022828.",
   "specPath": ".ai/tickets/TICIMAX-001.md",
   "verdicts": {
     "TICIMAX_CONTRACT": "FROZEN_PACK_PRESENT â€” providers/ticimax/contracts/siparisservis-v1.json (RETRIEVED_AT 2026-09-19); live refresh NOT_PERFORMED this session",
@@ -45,5 +45,12 @@
     "LIVE_PROVIDER_VERIFICATION": "NOT_PERFORMED",
     "PILOT_READY": "NO",
     "TICIMAX_001": "BLOCKED_HUMAN"
+  },
+  "controlDecision": {
+    "action": "RETRY_WORKER",
+    "provider": "cursor",
+    "choice": "TRY_NEXT",
+    "reason": "Claude exited QUOTA_EXHAUSTED with an available alternate contributor (cursor); on LOW-risk RETRY_WORKER, advance to the next worker rather than block waiting for the exhausted quota.",
+    "decidedAt": "2026-09-25T23:28:48.427245+00:00"
   }
 }
