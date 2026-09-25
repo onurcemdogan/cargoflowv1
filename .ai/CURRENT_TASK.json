@@ -9,12 +9,12 @@
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
   "headCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
   "activeWorker": null,
-  "lastImplementationWorker": "cursor",
+  "lastImplementationWorker": "codex",
   "reviewer": null,
   "contributors": [],
   "completedCriteria": [],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "cursor exited AUTH_REQUIRED; reconstruct from git and .ai\\recovery\\20260925-181012.",
+  "nextAction": "codex exited AUTH_REQUIRED; reconstruct from git and .ai\\recovery\\20260925-181015.",
   "specPath": ".ai/tickets/TICIMAX-001.md"
 }
