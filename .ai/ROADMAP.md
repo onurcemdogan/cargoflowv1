@@ -4,12 +4,12 @@
 Connector Kernel → Contract Packs → Integration Health → Subscription → Shipping Billing Party → WooCommerce-001 → Print Platform-001 → Onboarding-001 → Catalog-001 → Product Tour-001 → Landing-001.
 
 ## ACTIVE
-None — supervisor selection required.
+TICIMAX-001 ? auto-selected by DevFactory.
 
 ## QUEUED
-1. TICIMAX-001 — requires refreshed exact ticket/contract review before implementation.
-2. Carrier expansion / Aras phase.
-3. Live-provider verification for internal_test connectors.
-4. Pilot hardening.
-5. Production-readiness review.
-6. Production rollout — HUMAN APPROVAL REQUIRED.
+1. ARAS-EXPANSION ? SPEC_REQUIRED.
+2. LIVE-PROVIDER-VERIFICATION ? BLOCKED_HUMAN.
+3. PILOT-HARDENING ? WAITING.
+4. PRODUCTION-READINESS ? WAITING.
+5. PRODUCTION-ROLLOUT ? HUMAN_APPROVAL.
+

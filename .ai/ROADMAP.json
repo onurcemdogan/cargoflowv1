@@ -11,7 +11,7 @@
     },
     {
       "id": "TICIMAX-001",
-      "status": "READY",
+      "status": "IN_PROGRESS",
       "dependsOn": [
         "IKAS-001"
       ],
