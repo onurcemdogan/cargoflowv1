@@ -4,7 +4,7 @@
 Connector Kernel → Contract Packs → Integration Health → Subscription → Shipping Billing Party → WooCommerce-001 → Print Platform-001 → Onboarding-001 → Catalog-001 → Product Tour-001 → Landing-001.
 
 ## ACTIVE
-IKAS-001 — account-scoped ikas connector, read-only orders, internal_test only.
+None — supervisor selection required.
 
 ## QUEUED
 1. TICIMAX-001 — requires refreshed exact ticket/contract review before implementation.

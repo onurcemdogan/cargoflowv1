@@ -5,7 +5,7 @@ Implemented only the verified OAuth token HTTP 400 review finding on 2026-09-25.
 Accepted baseline: d1f25da
 Active ticket: IKAS-001
 Branch: `agent/IKAS-001`
-HEAD: `03f259c6e9f01601babd4f09aad98a2a95b56925`
+HEAD: `5522877c6db354c9a121fdd1f5b6a455da5b0011`
 Worker: Codex (implementer; no self-approval).
 
 The worktree was clean at startup. In `server/connectors/ikas/ikasClient.ts`,
@@ -28,7 +28,9 @@ Validation:
 - `git diff --check`: passed (exit 0).
 
 Independent Cursor review: REVIEW_APPROVED. BLOCKERS: None.
-Next exact action: checkpoint/push the reviewed fix, then wait for PR #6 DevFactory CI.
+DevFactory CI run 36140848661 passed on code head 5522877c6db354c9a121fdd1f5b6a455da5b0011.
+Terminal MERGED state is persisted before the GitHub merge, per the DevFactory merge contract.
+Next exact action: merge PR #6 into integration/roadmap, then STOP.
 No production deployment or live-provider verification was performed.
 
 Do not start TICIMAX or ARAS.
