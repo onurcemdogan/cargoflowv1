@@ -36,22 +36,23 @@
   },
   "PAGINATION": {
     "style": "filtre + sayfalama nesnesi",
-    "objects": ["SiparisFiltre", "SiparisSayfalama"],
+    "objects": ["WebSiparisFiltre", "WebSiparisSayfalama"],
     "verified": true,
     "fieldLevelVerified": false,
-    "note": "`SiparisFiltre` ve `SiparisSayfalama` nesnelerinin VARLIĞI doğrulandı; alan adlarının tamamı PDF'ten güvenilir biçimde çıkarılamadı → adaptör WSDL'den tip üretir, alan adı TAHMİN ETMEZ."
+    "note": "Resmî SelectSiparis imzası WebSiparisFiltre + WebSiparisSayfalama kullanır (providers/ticimax/evidence/TICIMAX-001-contract-evidence.md). Paket-eski SiparisFiltre/SiparisSayfalama adları SOAP yerine GEÇMEZ. Alan adları doğrulanmadı → adaptör WSDL/PDF alan listesinden üretir, TAHMİN ETMEZ."
   },
   "ORDER_LIST": {
     "method": "SelectSiparis",
+    "parameters": ["UyeKodu", "WebSiparisFiltre", "WebSiparisSayfalama"],
     "relatedMethods": [
       "SelectSiparisKargoPaket", "SelectSiparisOdeme",
       "SelectSiparisUrun", "SelectSiparisUrunDurumlari"
     ],
     "verified": true,
     "checkpointFilter": {
-      "value": "SiparisFiltre tarih alanları",
+      "value": "WebSiparisFiltre tarih alanları",
       "verified": false,
-      "note": "Tarih alan adları doğrulanamadı; bağlantı sihirbazı WSDL'den okunan gerçek alanları kullanır."
+      "note": "Tarih alan adları doğrulanamadı; WSDL veya resmî PDF alan listesi gelmeden checkpoint filtresi YAZILMAZ."
     }
   },
   "ORDER_MODEL": {
@@ -133,7 +134,8 @@
     "questions.read": { "supported": false, "contractVerified": false, "reason": "Doğrulanmadı." }
   },
   "OPEN_QUESTIONS": [
-    "SiparisFiltre / SiparisSayfalama alan adları — WSDL'den okunmalı.",
+    "WebSiparisFiltre / WebSiparisSayfalama alan adları — WSDL veya resmî PDF alan listesinden okunmalı (fieldLevelVerified=false).",
+    "SelectSiparis SOAP gövde öğe adları (UyeKodu/f/s vs tip adları) ve XML namespace URI'leri.",
     "Statü ve ödeme tipi sayısal kod↔anlam tablosu.",
     "Tarih alanlarının saat dilimi — DOĞRULANANA KADAR ÇEVRİM YOK.",
     "Hata kodu listesi ve oran sınırı."

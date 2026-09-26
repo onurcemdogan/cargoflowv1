@@ -49,7 +49,10 @@ const CONTRACT_PACK_PATHS: Record<string, string> = {
  * ETKİLEMEZ: kanonik yazım ve karşılama yan etkileri `liveWriteGate` ile
  * KAPALIDIR.
  *
- * Ticimax `off`: sözleşmesi doğrulandı, kod yolu YOK.
+ * Ticimax `off`: sözleşme paketi ve iskelet bağlayıcı (`server/connectors/ticimax/`)
+ * var olabilir, ama SelectSiparis tel sözleşmesi doğrulanana ve canlı probe
+ * geçene kadar yayın aşaması `off` kalır. İskelet tek başına `pilot`/`ga`
+ * (veya sessizce `internal_test`) YAPMAZ.
  *
  * Bu harita KONFİGÜRASYONDUR; sağlık sonucundan ETKİLENMEZ.
  */

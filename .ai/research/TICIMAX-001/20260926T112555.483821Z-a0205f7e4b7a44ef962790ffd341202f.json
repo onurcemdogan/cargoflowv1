@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "createdAt": "2026-09-26T11:25:55.483505+00:00",
+    "resolverVersion": "1.0.0",
+    "ticket": "TICIMAX-001",
+    "blockerIndexes": [],
+    "execution": {}
+  },
+  "research": null,
+  "verifier": null,
+  "result": {
+    "status": "RESOLUTION_HUMAN_REQUIRED",
+    "reason": "HUMAN_GATE_OR_UNKNOWN_SCOPE",
+    "dryRun": false,
+    "researchEligible": false,
+    "evidencePath": null,
+    "proposedStateTransition": {
+      "apply": false,
+      "resumeEligible": false,
+      "from": "BLOCKED_HUMAN",
+      "to": "BLOCKED_HUMAN",
+      "ticket": "TICIMAX-001",
+      "resolvedBlockerIndexes": [],
+      "inputHashes": {
+        "C:\\DevFactory\\projects\\cargoflow.toml": "769f74ff9ab8b2fb74e028d6d96cb2787b3e0bebfc17df80bb372587f7880007",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_TASK.json": "9d554d0ee64603a221e374eeb5e57db942b0ea78b7fc95790a86afe09ac515d4",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\tickets\\TICIMAX-001.md": "d1625a908f9dc6fe90565c19ba97f53d70494654ea054a2d2c099c6336e4cc4a",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_CONTEXT.md": "f17ecb2f34b1ea1617aafeebe8d9c146e50955535158bd72adc0a5572433fbf2",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\HANDOFF.md": "81e88b9925dc4d81ef60e89e09ed16ed52cd9ff1a088a61a99fcaac8714ee9bb"
+      }
+    },
+    "ticket": "TICIMAX-001",
+    "eligibility": [
+      {
+        "blockerIndex": 0,
+        "eligible": false,
+        "reason": "NOT_PROVEN_PUBLIC_RESEARCH"
+      },
+      {
+        "blockerIndex": 1,
+        "eligible": false,
+        "reason": "NOT_PROVEN_PUBLIC_RESEARCH"
+      }
+    ]
+  }
+}
