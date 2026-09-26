@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "TICIMAX-001",
-  "status": "BLOCKED_HUMAN",
+  "status": "IN_PROGRESS",
   "phase": "READY",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/TICIMAX-001",
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
-  "headCommit": "915afa824e6818f1cdfa28da22744ce1bd63e5fc",
+  "headCommit": "5b416396ede85b0ea592d9fabd7db301506ff3fc",
   "activeWorker": null,
-  "lastImplementationWorker": "cursor",
+  "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [
     "cursor",
@@ -25,29 +25,18 @@
     "Shell + WebFetch/WebSearch rejected this session; no PDF bytes/WSDL in tree; subagent field extract FAILED"
   ],
   "failingTests": [],
-  "blockers": [
-    {
-      "id": "TICIMAX_FIELD_LEVEL_SCHEMA",
-      "why": "WebSiparisFiltre / WebSiparisSayfalama member names, SelectSiparis SOAP body element names, and XML namespaces are not proven. Pack fieldLevelVerified=false. Official PDFs not on disk; network/shell denied so extraction cannot run.",
-      "humanAction": "Supply one of: (1) sanitized tenant SiparisServis.svc WSDL, (2) local PDFs under providers/ticimax/evidence matching evidence SHA256s plus shell approval for pdftotext, or (3) manual PDF text extract listing every WebSiparisFiltre/WebSiparisSayfalama property with page quotes. Then resume same branch agent/TICIMAX-001."
-    },
-    {
-      "id": "TICIMAX_LOCAL_GATES_SHELL",
-      "why": "Shell tool Rejected — cannot run npm test:ticimax / quality gates even after implementation.",
-      "humanAction": "Allow shell for node/npm in this worktree when field-level schema is cleared."
-    }
-  ],
-  "nextAction": "Human clears TICIMAX_FIELD_LEVEL_SCHEMA (WSDL or PDF field extract). Resume SAME branch agent/TICIMAX-001. Do not start ARAS-EXPANSION. Do not deploy. Do not push protected branches.",
+  "blockers": [],
+  "nextAction": "claude exited QUOTA_EXHAUSTED; reconstruct from git and .ai\\recovery\\20260926-032910.",
   "specPath": ".ai/tickets/TICIMAX-001.md",
   "verdicts": {
-    "TICIMAX_CONTRACT": "EVIDENCE_ALIGNED — pack objects/params now WebSiparisFiltre+WebSiparisSayfalama per providers/ticimax/evidence; RETRIEVED_AT 2026-09-19 pack retained; live PDF re-fetch NOT_PERFORMED this session (network denied)",
-    "TICIMAX_WSDL": "BLOCKED — no WSDL in tree; network/shell denied",
+    "TICIMAX_CONTRACT": "PUBLIC_CONTRACT_PARTIALLY_VERIFIED ? method signature plus WebSiparisFiltre/WebSiparisSayfalama members supported by official Ticimax documentation.",
+    "TICIMAX_WSDL": "DEFERRED_TO_LIVE_PROVIDER_VERIFICATION ? exact SelectSiparis wire wrapper/QNames/namespaces were not provable from public official sources and must not be invented.",
     "TICIMAX_ACCOUNT_IDENTITY": "PASS_CONTRACT — providerAccountId = normalized store origin (mağaza alan adı); MUST NEVER be UyeKodu/hash/order/member/invented id. Persistence deferred until SelectSiparis probe can be built without invented fields",
     "TICIMAX_SECRET_SAFETY": "NOT_IMPLEMENTED",
     "TICIMAX_CONNECTION_TEST": "NOT_IMPLEMENTED",
     "TICIMAX_MULTI_STORE": "NOT_IMPLEMENTED",
     "TICIMAX_ORDERS_READ": "NOT_IMPLEMENTED",
-    "TICIMAX_PAGINATION": "BLOCKED — WebSiparisSayfalama/Filtre field-level members unproven",
+    "TICIMAX_PAGINATION": "MEMBER_NAMES_VERIFIED ? exact wire namespace qualification deferred to LIVE_PROVIDER_VERIFICATION.",
     "TICIMAX_RECONCILIATION": "NOT_IMPLEMENTED",
     "TICIMAX_WEBHOOK": "DISABLED_UNVERIFIED",
     "TICIMAX_HEALTH_ACCOUNT_SCOPE": "NOT_IMPLEMENTED",
@@ -55,15 +44,31 @@
     "TICIMAX_LIVE_WRITE_GATE": "NOT_IMPLEMENTED",
     "TICIMAX_ROLLOUT": "STILL_OFF — catalog ticimax:off; must not silently become pilot/GA",
     "MIGRATION": "NOT_REQUIRED_YET",
-    "LIVE_PROVIDER_VERIFICATION": "NOT_PERFORMED",
+    "LIVE_PROVIDER_VERIFICATION": "REQUIRED_BEFORE_PILOT ? must verify exact SelectSiparis wire-level SOAP contract against a real provider endpoint/WSDL.",
     "PILOT_READY": "NO",
-    "TICIMAX_001": "BLOCKED_HUMAN"
+    "TICIMAX_001": "IN_PROGRESS",
+    "TICIMAX_LOCAL_GATES": "PENDING_WORKER_EXECUTION ? run after Codex research resolution; this is not a research or human gate."
   },
   "controlDecision": {
     "action": "RETRY_WORKER",
     "provider": "cursor",
     "choice": "TRY_NEXT",
-    "reason": "Claude exited QUOTA_EXHAUSTED with an available alternate contributor (cursor); on LOW-risk RETRY_WORKER, advance to the next worker rather than block waiting for the exhausted quota.",
-    "decidedAt": "2026-09-25T23:28:48.427245+00:00"
+    "reason": "Claude exited QUOTA_EXHAUSTED with another contributor (cursor) available; for LOW-risk RETRY_WORKER on an IN_PROGRESS ticket, failover to the next worker is safer than waiting on the exhausted worker.",
+    "decidedAt": "2026-09-26T00:29:23.325118+00:00"
+  },
+  "scopeDecision": {
+    "action": "CHANGE_SCOPE",
+    "provider": "codex",
+    "choice": "DEFER_TO_LIVE_PROVIDER_VERIFICATION",
+    "reason": "TICIMAX-001 may resume only contract-independent implementation. Inventing or hard-coding unverified SOAP wrappers, parameter QNames, namespaces, or nested element qualification is explicitly forbidden. The exact wire contract remains unresolved and must be verified at LIVE_PROVIDER_VERIFICATION before enabling provider integration. Live writes, rollout, and production deployment remain disabled.",
+    "confidence": "HIGH",
+    "requiresHuman": false,
+    "evidencePath": ".ai/research/TICIMAX-001/20260926T002407.812937Z-5b0901a718da4ef091a262c4fac554c2.json",
+    "decidedAt": "2026-09-26T00:29:04.166481+00:00"
+  },
+  "researchResolution": {
+    "status": "DEFERRED_TO_LIVE_PROVIDER_VERIFICATION",
+    "reason": "Repeated official-source research could not prove the SelectSiparis wire-level QNames/namespaces.",
+    "evidencePath": ".ai/research/TICIMAX-001/20260926T002407.812937Z-5b0901a718da4ef091a262c4fac554c2.json"
   }
 }
