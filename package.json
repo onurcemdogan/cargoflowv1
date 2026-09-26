@@ -50,6 +50,7 @@
     "test:product-tour": "vitest run --config vitest.config.ts src/test/productTour.dom.test.tsx",
     "test:landing": "node --test server/landing-contract-flow.test.mjs && vitest run --config vitest.config.ts src/test/landing.dom.test.tsx",
     "test:ikas": "node --test server/ikas-connector-flow.test.mjs && vitest run --config vitest.config.ts src/test/ikasSection.dom.test.tsx",
+    "test:ticimax": "node --test server/ticimax-connector-flow.test.mjs",
     "test:onboarding": "node --test server/onboarding-provider-flow.test.mjs server/tenant-onboarding-flow.test.mjs && vitest run --config vitest.config.ts src/test/onboardingWizard.dom.test.tsx",
     "test:woocommerce": "node --test server/woocommerce-connector-flow.test.mjs server/woocommerce-runtime-closeout-flow.test.mjs server/woocommerce-dns-rebinding-flow.test.mjs",
     "test:billing-model": "npm run test:subscription",

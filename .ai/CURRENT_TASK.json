@@ -2,19 +2,136 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "TICIMAX-001",
-  "status": "READY",
-  "phase": "READY",
+  "status": "MERGE_READY",
+  "phase": "MERGE_READY",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/TICIMAX-001",
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
-  "headCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
+  "headCommit": "4233ab12dc11790e7f22534aff226b24bf834433",
+  "headCommitNote": "Reconciled from .ai/CURRENT_CONTEXT.md shift context; PR7 normalizer repair present on branch tip.",
   "activeWorker": null,
-  "lastImplementationWorker": null,
+  "lastImplementationWorker": "cursor",
   "reviewer": null,
-  "contributors": [],
-  "completedCriteria": [],
+  "contributors": [
+    "cursor",
+    "claude"
+  ],
+  "completedCriteria": [
+    "PR7-F1-ALIASES: normalizeTicimaxOrder uses ORDER_MODEL.knownFields only — no SiparisTarihi/OrderDate/ToplamTutar/ParaBirimi reads",
+    "PR7-F2-OFFSETLESS-DATE: ticimaxDateToInstant fail-closed without explicit timezone; normalize orderDate always null",
+    "PR7-F3-DECIMAL: ticimaxDecimalString rejects non-matching strings; TICIMAX-8b regression",
+    "TICIMAX-8: alias payload leaves totalDecimal/currency/orderDate null",
+    "wire verification=false, rollout off, live writes blocked — preserved",
+    "DEFERRED_TO_LIVE_PROVIDER_VERIFICATION markers preserved in ticimaxWireGate.ts / ticimaxClient.ts"
+  ],
   "failingTests": [],
-  "blockers": [],
-  "nextAction": "Execute TICIMAX-001 exactly from .ai/tickets/TICIMAX-001.md. Stop on contract uncertainty or human-only gates.",
-  "specPath": ".ai/tickets/TICIMAX-001.md"
+  "blockers": [
+    {
+      "id": "TICIMAX_WIRE_SOAP",
+      "reason": "SelectSiparis wire-level QNames/namespaces remain DEFERRED_TO_LIVE_PROVIDER_VERIFICATION (intentional; not inventable).",
+      "humanAction": "Supply tenant WSDL or live SOAP envelope evidence at LIVE_PROVIDER_VERIFICATION before enabling probe/rollout"
+    },
+    {
+      "id": "TICIMAX_LOCAL_GATES_SHELL",
+      "reason": "Cursor worker Shell Rejected — test:ticimax, tsc, lint not executed this session.",
+      "humanAction": "Run gates locally; refresh qualityGates + push/CI as needed"
+    }
+  ],
+  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "specPath": ".ai/tickets/TICIMAX-001.md",
+  "verdicts": {
+    "TICIMAX_CONTRACT": "PUBLIC_CONTRACT_PARTIALLY_VERIFIED",
+    "TICIMAX_WSDL": "DEFERRED_TO_LIVE_PROVIDER_VERIFICATION",
+    "TICIMAX_ACCOUNT_IDENTITY": "PASS_CONTRACT — persist deferred until verified SelectSiparis probe",
+    "TICIMAX_SECRET_SAFETY": "SCAFFOLD — list never returns plaintext UyeKodu; connect never persists while wire off",
+    "TICIMAX_CONNECTION_TEST": "FAIL_CLOSED_WIRE_UNVERIFIED",
+    "TICIMAX_MULTI_STORE": "SCAFFOLD_STUBS",
+    "TICIMAX_ORDERS_READ": "FAIL_CLOSED_NO_SOAP",
+    "TICIMAX_PAGINATION": "SEMANTIC_ONLY — fieldLevelVerified false",
+    "TICIMAX_RECONCILIATION": "HERMETIC_pageFetcher",
+    "TICIMAX_WEBHOOK": "DISABLED_UNVERIFIED",
+    "TICIMAX_HEALTH_ACCOUNT_SCOPE": "NOT_IN_ACCOUNT_SCOPED_LIST",
+    "TICIMAX_TENANT_ISOLATION": "SCAFFOLD_STUBS",
+    "TICIMAX_LIVE_WRITE_GATE": "BLOCKED_BY_ROLLOUT",
+    "TICIMAX_ROLLOUT": "STILL_OFF",
+    "TICIMAX_NORMALIZER": "REPAIRED — knownFields-only; no offset-less UTC in normalize; strict decimals",
+    "MIGRATION": "NOT_REQUIRED_YET",
+    "LIVE_PROVIDER_VERIFICATION": "REQUIRED_BEFORE_PILOT",
+    "PILOT_READY": "NO",
+    "TICIMAX_LOCAL_GATES": "PENDING_SHELL"
+  },
+  "researchResolution": {
+    "status": "DEFERRED_TO_LIVE_PROVIDER_VERIFICATION",
+    "reason": "Repeated official-source research could not prove the SelectSiparis wire-level QNames/namespaces.",
+    "evidencePath": ".ai/research/TICIMAX-001/20260926T002407.812937Z-5b0901a718da4ef091a262c4fac554c2.json"
+  },
+  "reviewFeedback": {
+    "status": "REPAIRED",
+    "fingerprint": "normalizer-knownFields-offsetless-decimal",
+    "findings": [
+      {
+        "id": "PR7-F1-ALIASES",
+        "status": "FIXED",
+        "files": [
+          "server/connectors/ticimax/ticimaxOrderNormalizer.ts",
+          "server/ticimax-connector-flow.test.mjs"
+        ],
+        "evidence": "normalizeTicimaxOrder no longer reads SiparisTarihi/OrderDate/ToplamTutar/ParaBirimi; maps only ORDER_MODEL.knownFields; TICIMAX-8 asserts null money/date/currency with alias payload"
+      },
+      {
+        "id": "PR7-F2-OFFSETLESS-DATE",
+        "status": "FIXED",
+        "files": [
+          "server/connectors/ticimax/ticimaxOrderNormalizer.ts",
+          "providers/ticimax/contracts/siparisservis-v1.json",
+          "server/ticimax-connector-flow.test.mjs"
+        ],
+        "evidence": "ticimaxDateToInstant + hasExplicitTimezone; DATE_TIMEZONE_RULES; TICIMAX-8b offset-less instant null"
+      },
+      {
+        "id": "PR7-F3-DECIMAL",
+        "status": "FIXED",
+        "files": [
+          "server/connectors/ticimax/ticimaxOrderNormalizer.ts",
+          "server/ticimax-connector-flow.test.mjs"
+        ],
+        "evidence": "ticimaxDecimalString invalid → null; TICIMAX-8b comma-decimal null"
+      }
+    ],
+    "updatedAt": "2026-09-26T22:20:00.072520+00:00",
+    "attemptedProviders": [
+      "cursor"
+    ],
+    "history": [
+      {
+        "provider": "cursor",
+        "fingerprint": "normalizer-knownFields-offsetless-decimal",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [
+          "warning: in the working copy of '.ai/HANDOFF.md', LF will be replaced by CRLF the next time Git touches it"
+        ],
+        "at": "2026-09-26T22:20:00.072520+00:00"
+      }
+    ]
+  },
+  "qualityGates": {
+    "evidencePath": ".ai/.runtime/quality-gates.json",
+    "passed": true,
+    "finishedAt": "2026-09-26T22:20:13.607304+00:00",
+    "results": [
+      {
+        "command": [
+          "npm.cmd",
+          "run",
+          "test:ticimax"
+        ],
+        "startedAt": "2026-09-26T22:20:00.976355+00:00",
+        "finishedAt": "2026-09-26T22:20:12.309467+00:00",
+        "durationSeconds": 11.333,
+        "exitCode": 0,
+        "passed": true,
+        "logPath": ".ai/.runtime/20260927-012000-quality-0.log"
+      }
+    ]
+  }
 }
