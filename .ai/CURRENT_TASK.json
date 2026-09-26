@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "TICIMAX-001",
-  "status": "BLOCKED_HUMAN",
-  "phase": "IMPLEMENTATION",
+  "status": "QUALITY_GATE_PENDING",
+  "phase": "QUALITY_GATES",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/TICIMAX-001",
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
@@ -40,7 +40,7 @@
       "humanAction": "Supply tenant WSDL or live SOAP envelope evidence at LIVE_PROVIDER_VERIFICATION before enabling probe/rollout"
     }
   ],
-  "nextAction": "Human clears TICIMAX_LOCAL_GATES_SHELL. Same branch agent/TICIMAX-001: run npm run test:ticimax; if green set READY_FOR_REVIEW. Do not invent SOAP. Do not flip rollout. Do not start ARAS-EXPANSION.",
+  "nextAction": "Run configured local quality gates (lint/test/typecheck/build) via supervisor.",
   "specPath": ".ai/tickets/TICIMAX-001.md",
   "verdicts": {
     "TICIMAX_CONTRACT": "PUBLIC_CONTRACT_PARTIALLY_VERIFIED",
@@ -84,5 +84,10 @@
     "status": "DEFERRED_TO_LIVE_PROVIDER_VERIFICATION",
     "reason": "Repeated official-source research could not prove the SelectSiparis wire-level QNames/namespaces.",
     "evidencePath": ".ai/research/TICIMAX-001/20260926T002407.812937Z-5b0901a718da4ef091a262c4fac554c2.json"
+  },
+  "internalRecovery": {
+    "from": "BLOCKED_HUMAN",
+    "reason": "SHELL_ONLY_LOCAL_QUALITY_GATE",
+    "recoveredAt": "2026-09-26T11:37:15.591142+00:00"
   }
 }
