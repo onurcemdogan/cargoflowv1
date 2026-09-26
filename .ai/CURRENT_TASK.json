@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "TICIMAX-001",
-  "status": "MERGED",
-  "phase": "MERGED",
+  "status": "IN_PROGRESS",
+  "phase": "CI_FAILED",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/TICIMAX-001",
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
@@ -40,7 +40,7 @@
       "humanAction": "Supply tenant WSDL or live SOAP envelope evidence at LIVE_PROVIDER_VERIFICATION before enabling probe/rollout"
     }
   ],
-  "nextAction": "REVIEW_EXHAUSTED local quality gates passed. Final head is frozen. GitHub CI is the final gate; then Codex-only MERGE authorization via the existing merge control plane.",
+  "nextAction": "Final reviewed head failed GitHub CI during restart reconciliation; reproduce the exact failing check.",
   "specPath": ".ai/tickets/TICIMAX-001.md",
   "verdicts": {
     "TICIMAX_CONTRACT": "PUBLIC_CONTRACT_PARTIALLY_VERIFIED",
