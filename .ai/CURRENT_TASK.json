@@ -40,7 +40,7 @@
       "humanAction": "Supply tenant WSDL or live SOAP envelope evidence at LIVE_PROVIDER_VERIFICATION before enabling probe/rollout"
     }
   ],
-  "nextAction": "Final reviewed head failed GitHub CI during restart reconciliation; reproduce the exact failing check.",
+  "nextAction": "claude exited UNKNOWN_EXIT; reconstruct from git and .ai\\recovery\\20260926-144637.",
   "specPath": ".ai/tickets/TICIMAX-001.md",
   "verdicts": {
     "TICIMAX_CONTRACT": "PUBLIC_CONTRACT_PARTIALLY_VERIFIED",
@@ -66,9 +66,9 @@
   "controlDecision": {
     "action": "RETRY_WORKER",
     "provider": "cursor",
-    "choice": "TRY_NEXT",
-    "reason": "Claude exited QUOTA_EXHAUSTED; cursor implementing DEFER_TO_LIVE_PROVIDER_VERIFICATION scope.",
-    "decidedAt": "2026-09-26T00:29:23.325118+00:00"
+    "choice": "WAIT",
+    "reason": "Worker exited UNKNOWN_EXIT with no reliable failure signal while phase is already CI_FAILED; evidence is insufficient to justify RETRY_SAME or TRY_NEXT, so the conservative WAIT path is safest.",
+    "decidedAt": "2026-09-26T11:47:02.991712+00:00"
   },
   "scopeDecision": {
     "action": "CHANGE_SCOPE",
