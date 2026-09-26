@@ -1,8 +1,9 @@
 // TICIMAX SİPARİŞ NORMALLEŞTİRME — PAKETTEKİ BİLİNEN ALANLAR.
 //
 // Kaynak: providers/ticimax/contracts/siparisservis-v1.json ORDER_MODEL.
-// Bilinmeyen statü HAM kalır (kanonik eşleme YOK). Bozuk tarih epoch'a
-// düşmez. Para ondalık DİZGİ olarak korunur.
+// Bilinmeyen statü HAM kalır (kanonik eşleme YOK). Tarih/para/para birimi
+// ORDER_MODEL.knownFields dışında → kanonik alanlar boş (uydurma alias YOK).
+// DATE_TIMEZONE_RULES: kanonik tarih çevrimi KAPALI; ofsetsiz an UTC sanılmaz.
 import { ticimaxOrderExternalId } from './ticimaxIdentity.ts'
 
 export const TICIMAX_KNOWN_ORDER_FIELDS = [
@@ -33,10 +34,10 @@ export interface TicimaxNormalizedOrder {
   memberId: string | null
   trackingNumber: string | null
   customerName: string | null
-  /** ISO an veya null — bozuk/eksik ASLA epoch-zero. */
+  /** ISO an veya null — paket doğrulaması yoksa daima null. */
   orderDate: string | null
   orderDateMalformed: boolean
-  /** Ondalık dizgi — Number() ile yuvarlanmaz. */
+  /** Ondalık dizgi — doğrulanmış kaynak alanı yoksa null. */
   totalDecimal: string | null
   currency: string | null
   rawOrder: Record<string, unknown>
@@ -67,13 +68,18 @@ function text(value: unknown): string | null {
   return trimmed === '' ? null : trimmed
 }
 
-/** Para: ondalık dizgi korunur; ikili aritmetik yok. */
+/** Ofset veya `Z` içeren ISO-8601 anları (yardımcı/test); ofsetsiz değerler UTC sanılmaz. */
+function hasExplicitTimezone(textValue: string): boolean {
+  return /(?:Z|[+-]\d{2}:\d{2})$/i.test(textValue.trim())
+}
+
+/** Para: ondalık dizgi korunur; geçersiz biçim → null (tahmin yok). */
 export function ticimaxDecimalString(value: unknown): string | null {
   if (typeof value === 'string') {
     const trimmed = value.trim()
     if (trimmed === '') return null
     if (/^-?\d+(\.\d+)?$/.test(trimmed)) return trimmed
-    return trimmed
+    return null
   }
   if (typeof value === 'number' && Number.isFinite(value)) {
     const plain = String(value)
@@ -84,10 +90,8 @@ export function ticimaxDecimalString(value: unknown): string | null {
 }
 
 /**
- * Tarih → ISO. Bozuk / boş / epoch-zero ADAYLARI null (sessiz 1970 YOK).
- *
- * Saat dilimi pakette doğrulanmadı → ofset eklenmez; parse edilebilen
- * mutlak anlar ISO'ya çevrilir, aksi halde malformed bayrağı.
+ * Tarih → ISO yalnızca açık zaman dilimi kanıtı varsa; paket kanonik çevrimi kapalı.
+ * Ofsetsiz metin ASLA UTC anına çevrilmez. Doğrulanmamış alanlar normalizeTicimaxOrder'da okunmaz.
  */
 export function ticimaxDateToInstant(value: unknown): {
   instant: string | null
@@ -98,15 +102,10 @@ export function ticimaxDateToInstant(value: unknown): {
     if (!Number.isFinite(value) || value <= 0) {
       return { instant: null, malformed: value === 0 || value < 0 }
     }
-    const date = new Date(value)
-    if (!Number.isFinite(date.getTime()) || date.getTime() <= 0) {
-      return { instant: null, malformed: true }
-    }
-    return { instant: date.toISOString(), malformed: false }
+    return { instant: null, malformed: false }
   }
   const textValue = String(value).trim()
   if (textValue === '') return { instant: null, malformed: false }
-  // Açık epoch / sıfır tarih kalıpları — UYDURULMAZ.
   if (
     textValue === '0' ||
     textValue === '0001-01-01' ||
@@ -114,6 +113,9 @@ export function ticimaxDateToInstant(value: unknown): {
     textValue.startsWith('1970-01-01T00:00:00')
   ) {
     return { instant: null, malformed: true }
+  }
+  if (!hasExplicitTimezone(textValue)) {
+    return { instant: null, malformed: false }
   }
   const ms = Date.parse(textValue)
   if (!Number.isFinite(ms) || ms <= 0) return { instant: null, malformed: true }
@@ -126,13 +128,6 @@ export function normalizeTicimaxOrder(rawOrder: unknown): TicimaxNormalizationRe
   if (!externalOrderId) {
     return { ok: false, rejection: 'MISSING_SIPARIS_ID', externalOrderId: null }
   }
-
-  const dateField =
-    record.SiparisTarihi ?? record.OrderDate ?? record.CreatedAt ?? record.Tarih ?? null
-  const { instant, malformed } = ticimaxDateToInstant(dateField)
-
-  const totalField =
-    record.ToplamTutar ?? record.SiparisToplam ?? record.Total ?? record.Tutar ?? null
 
   return {
     ok: true,
@@ -147,10 +142,10 @@ export function normalizeTicimaxOrder(rawOrder: unknown): TicimaxNormalizationRe
       memberId: text(record.UyeID),
       trackingNumber: text(record.KargoTakipNo),
       customerName: text(record.AliciAdi),
-      orderDate: instant,
-      orderDateMalformed: malformed,
-      totalDecimal: ticimaxDecimalString(totalField),
-      currency: text(record.ParaBirimi) ?? text(record.Currency),
+      orderDate: null,
+      orderDateMalformed: false,
+      totalDecimal: null,
+      currency: null,
       rawOrder: record,
     },
   }

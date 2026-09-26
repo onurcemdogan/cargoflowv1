@@ -339,17 +339,24 @@ test('TICIMAX-3/4: kiracı ve kardeş hesap izolasyonu', async (t) => {
 
 /* ═══ 8. SiparisID kararlı kimlik ═══════════════════════════════════════ */
 
-test('TICIMAX-8: kararlı sipariş kimliği SiparisID; statü ham; para dizgi; epoch yok', () => {
+test('TICIMAX-8: kararlı sipariş kimliği SiparisID; statü ham; doğrulanmamış tarih/para yok', () => {
   const ok = normalizer.normalizeTicimaxOrder(
-    order(42, { SiparisDurumu: 'GaripStatü', ToplamTutar: '119.99', SiparisTarihi: '0001-01-01' }),
+    order(42, {
+      SiparisDurumu: 'GaripStatü',
+      ToplamTutar: '119.99',
+      SiparisTarihi: '0001-01-01',
+      OrderDate: '2026-01-15T10:00:00',
+      ParaBirimi: 'TRY',
+    }),
   )
   assert.equal(ok.ok, true)
   assert.equal(ok.order.externalOrderId, '42')
   assert.equal(ok.order.rawStatus, 'GaripStatü')
   assert.equal(ok.order.canonicalStatus, null)
-  assert.equal(ok.order.totalDecimal, '119.99')
+  assert.equal(ok.order.totalDecimal, null)
+  assert.equal(ok.order.currency, null)
   assert.equal(ok.order.orderDate, null)
-  assert.equal(ok.order.orderDateMalformed, true)
+  assert.equal(ok.order.orderDateMalformed, false)
 
   const missing = normalizer.normalizeTicimaxOrder({ SiparisNo: 'X' })
   assert.equal(missing.ok, false)
@@ -357,6 +364,24 @@ test('TICIMAX-8: kararlı sipariş kimliği SiparisID; statü ham; para dizgi; e
 
   assert.equal(identity.ticimaxOrderExternalId(order(7)), '7')
   assert.equal(identity.ticimaxOrderHumanReference(order(7)), 'SN-7')
+})
+
+test('TICIMAX-8b: normalizer yardımcıları — ofsetsiz tarih, geçersiz ondalık', () => {
+  const offsetLess = normalizer.ticimaxDateToInstant('2026-09-20T12:00:00')
+  assert.equal(offsetLess.instant, null)
+  assert.equal(offsetLess.malformed, false)
+
+  const withZ = normalizer.ticimaxDateToInstant('2026-09-20T12:00:00.000Z')
+  assert.equal(withZ.instant, '2026-09-20T12:00:00.000Z')
+  assert.equal(withZ.malformed, false)
+
+  const epochZero = normalizer.ticimaxDateToInstant('0001-01-01')
+  assert.equal(epochZero.instant, null)
+  assert.equal(epochZero.malformed, true)
+
+  assert.equal(normalizer.ticimaxDecimalString('119.99'), '119.99')
+  assert.equal(normalizer.ticimaxDecimalString('119,99'), null)
+  assert.equal(normalizer.ticimaxDecimalString('not-a-number'), null)
 })
 
 /* ═══ 6–7. İmleç + tekrar sayfa ═════════════════════════════════════════ */

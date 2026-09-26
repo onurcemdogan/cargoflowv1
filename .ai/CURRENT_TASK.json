@@ -2,12 +2,13 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "TICIMAX-001",
-  "status": "MERGE_READY",
-  "phase": "MERGE_READY",
+  "status": "IN_PROGRESS",
+  "phase": "REVIEW_FEEDBACK",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/TICIMAX-001",
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
-  "headCommit": "d212ad731264af1cd3ee863c6b60c8a723b67e8d",
+  "headCommit": "ab9fdb24252f3cc93dd231752cdc6bab96cba1b8",
+  "headCommitNote": "Committed tip reconciled from .git/refs/heads/agent/TICIMAX-001; stale d212ad7 removed from active head. Uncommitted normalizer repair pending commit.",
   "activeWorker": null,
   "lastImplementationWorker": "claude",
   "reviewer": null,
@@ -16,17 +17,12 @@
     "claude"
   ],
   "completedCriteria": [
-    "Reconstructed git from refs: branch agent/TICIMAX-001, HEAD 5c4b413dd1151eeece58f947f0b3b5084cfe593c; recovery 20260926-144637 read (UNKNOWN_EXIT / Claude weekly limit)",
-    "researchResolution.evidencePath read: DEFERRED_TO_LIVE_PROVIDER_VERIFICATION — no SelectSiparis SOAP QNames/namespaces invented",
-    "scopeDecision honored: contract-independent scaffold only; rollout remains off",
-    "server/connectors/ticimax/* scaffold present (endpoint, identity, wireGate, writeGuard, client, connection, normalizer, pagination, sync)",
-    "ticimaxProviderAccountId=storeFingerprint(store origin); UyeKodu secret-only; order id=SiparisID",
-    "TICIMAX_WIRE_CONTRACT.selectSiparisVerified=false; connect→WIRE_CONTRACT_UNVERIFIED persist=false",
-    "sync fail-closed without wire; pageFetcher hermetic path; checkpoint only on SUCCESS; liveWriteGate blocks persist",
-    "package.json test:ticimax + server/ticimax-connector-flow.test.mjs (ticket tests 1–11 as applicable)",
-    "Hermetic DNS mock fixed to [{ address: '203.0.113.10' }]",
-    "ROLLOUT_STAGE_POLICY.ticimax=off; ticimax NOT in ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS",
-    "CI root-cause fix applied (uncommitted): ticimaxWireGate.ts — selectSiparisVerified typed boolean (not as-const literal false) to clear TS2367; ticimaxClient.ts — dropped unused filter/pagination args + eslint-disable for unused _credentials"
+    "Branch HEAD reconciled: ab9fdb24252f3cc93dd231752cdc6bab96cba1b8 (was d212ad7 in stale metadata)",
+    "Review finding 1: unverified field aliases removed from normalizeTicimaxOrder — ORDER_MODEL.knownFields only",
+    "Review finding 2: offset-less dates not converted to UTC; pack canonical date conversion not applied in normalize",
+    "Review finding 3: ticimaxDecimalString rejects invalid decimals (null); TICIMAX-8b regression added",
+    "wire verification=false, rollout off, live writes blocked — preserved",
+    "DEFERRED_TO_LIVE_PROVIDER_VERIFICATION markers preserved"
   ],
   "failingTests": [],
   "blockers": [
@@ -34,9 +30,14 @@
       "id": "TICIMAX_WIRE_SOAP",
       "reason": "SelectSiparis wire-level QNames/namespaces remain DEFERRED_TO_LIVE_PROVIDER_VERIFICATION (intentional; not inventable).",
       "humanAction": "Supply tenant WSDL or live SOAP envelope evidence at LIVE_PROVIDER_VERIFICATION before enabling probe/rollout"
+    },
+    {
+      "id": "TICIMAX_LOCAL_GATES_SHELL",
+      "reason": "Cursor worker Shell Rejected — test:ticimax/tsc/lint/gh not executed after normalizer repair.",
+      "humanAction": "Run gates locally after commit; refresh qualityGates + CI on pushed commit"
     }
   ],
-  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "nextAction": "Commit uncommitted normalizer + test files; run test:ticimax, npx tsc -b --force, npm run lint; push agent/TICIMAX-001; capture GitHub CI on that commit; set READY_FOR_REVIEW when CI green and findings verified.",
   "specPath": ".ai/tickets/TICIMAX-001.md",
   "verdicts": {
     "TICIMAX_CONTRACT": "PUBLIC_CONTRACT_PARTIALLY_VERIFIED",
@@ -53,83 +54,43 @@
     "TICIMAX_TENANT_ISOLATION": "SCAFFOLD_STUBS",
     "TICIMAX_LIVE_WRITE_GATE": "BLOCKED_BY_ROLLOUT",
     "TICIMAX_ROLLOUT": "STILL_OFF",
+    "TICIMAX_NORMALIZER": "REPAIRED_UNCOMMITTED — knownFields-only; no offset-less UTC; strict decimals",
     "MIGRATION": "NOT_REQUIRED_YET",
     "LIVE_PROVIDER_VERIFICATION": "REQUIRED_BEFORE_PILOT",
     "PILOT_READY": "NO",
-    "TICIMAX_001": "BLOCKED_HUMAN",
-    "TICIMAX_LOCAL_GATES": "BLOCKED_SHELL — tsc/lint/test:ticimax not re-run after CI fix",
-    "TICIMAX_CI_ROOT_CAUSE": "IDENTIFIED_AND_PATCHED_UNVERIFIED — TS2367 wireGate as-const + unused selectSiparis args lint"
-  },
-  "controlDecision": {
-    "action": "RETRY_WORKER",
-    "provider": "cursor",
-    "choice": "WAIT",
-    "reason": "Worker exited UNKNOWN_EXIT with no reliable failure signal while phase is already CI_FAILED; evidence is insufficient to justify RETRY_SAME or TRY_NEXT, so the conservative WAIT path is safest.",
-    "decidedAt": "2026-09-26T11:47:02.991712+00:00"
-  },
-  "scopeDecision": {
-    "action": "CHANGE_SCOPE",
-    "provider": "codex",
-    "choice": "DEFER_TO_LIVE_PROVIDER_VERIFICATION",
-    "reason": "TICIMAX-001 may resume only contract-independent implementation. Inventing or hard-coding unverified SOAP wrappers, parameter QNames, namespaces, or nested element qualification is explicitly forbidden. The exact wire contract remains unresolved and must be verified at LIVE_PROVIDER_VERIFICATION before enabling provider integration. Live writes, rollout, and production deployment remain disabled.",
-    "confidence": "HIGH",
-    "requiresHuman": false,
-    "evidencePath": ".ai/research/TICIMAX-001/20260926T002407.812937Z-5b0901a718da4ef091a262c4fac554c2.json",
-    "decidedAt": "2026-09-26T00:29:04.166481+00:00"
+    "TICIMAX_LOCAL_GATES": "PENDING_POST_COMMIT"
   },
   "researchResolution": {
     "status": "DEFERRED_TO_LIVE_PROVIDER_VERIFICATION",
     "reason": "Repeated official-source research could not prove the SelectSiparis wire-level QNames/namespaces.",
     "evidencePath": ".ai/research/TICIMAX-001/20260926T002407.812937Z-5b0901a718da4ef091a262c4fac554c2.json"
   },
-  "internalRecovery": {
-    "from": "BLOCKED_HUMAN",
-    "reason": "SHELL_ONLY_LOCAL_QUALITY_GATE",
-    "recoveredAt": "2026-09-26T11:55:25.672139+00:00"
+  "reviewFeedback": {
+    "status": "REPAIRED_UNCOMMITTED",
+    "fingerprint": "normalizer-knownFields-offsetless-decimal",
+    "findings": [
+      {
+        "id": "PR7-F1-ALIASES",
+        "status": "FIXED",
+        "evidence": "normalizeTicimaxOrder no longer reads SiparisTarihi/OrderDate/ToplamTutar/ParaBirimi; maps only ORDER_MODEL.knownFields; TICIMAX-8 asserts null money/date/currency with alias payload"
+      },
+      {
+        "id": "PR7-F2-OFFSETLESS-DATE",
+        "status": "FIXED",
+        "evidence": "ticimaxDateToInstant + hasExplicitTimezone; siparisservis-v1.json DATE_TIMEZONE_RULES; TICIMAX-8b offset-less instant null"
+      },
+      {
+        "id": "PR7-F3-DECIMAL",
+        "status": "FIXED",
+        "evidence": "ticimaxDecimalString invalid → null; TICIMAX-8b comma-decimal null"
+      }
+    ],
+    "updatedAt": "2026-09-27T00:00:00.000Z"
   },
   "qualityGates": {
     "evidencePath": ".ai/.runtime/quality-gates.json",
-    "passed": true,
-    "finishedAt": "2026-09-26T21:42:15.104777+00:00",
-    "results": [
-      {
-        "command": [
-          "npm.cmd",
-          "run",
-          "test:ticimax"
-        ],
-        "startedAt": "2026-09-26T21:41:59.860223+00:00",
-        "finishedAt": "2026-09-26T21:42:14.043175+00:00",
-        "durationSeconds": 14.183,
-        "exitCode": 0,
-        "passed": true,
-        "logPath": ".ai/.runtime/20260927-004159-quality-0.log"
-      }
-    ]
-  },
-  "reviewExhaustion": {
-    "reason": "ALL_ENABLED_IMPLEMENTATION_WORKERS_CONTRIBUTED",
-    "contributors": [
-      "claude",
-      "cursor"
-    ],
-    "message": "Independent reviewer unavailable because every enabled worker has contributed."
-  },
-  "reviewFeedback": {
-    "fingerprint": null,
-    "attemptedProviders": [
-      "claude"
-    ],
-    "history": [
-      {
-        "provider": "claude",
-        "fingerprint": null,
-        "exitClass": "SUCCESS",
-        "touchedPaths": [],
-        "at": "2026-09-26T21:41:59.029470+00:00"
-      }
-    ],
-    "updatedAt": "2026-09-26T21:41:59.029470+00:00",
-    "status": "REPAIRED"
+    "passed": false,
+    "note": "Stale pre-repair log (14 tests); re-run required after commit includes TICIMAX-8b",
+    "finishedAt": "2026-09-26T21:42:15.104777+00:00"
   }
 }
