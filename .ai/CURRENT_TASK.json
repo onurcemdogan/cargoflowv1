@@ -9,7 +9,7 @@
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
   "headCommit": "a0eca232f3ec0923657f7d472a0b4ceb488b2fde",
   "activeWorker": null,
-  "lastImplementationWorker": "cursor",
+  "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [
     "cursor",
