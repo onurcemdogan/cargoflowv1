@@ -12,17 +12,23 @@ export const TICIMAX_WIRE_DEFER_REASON = 'DEFERRED_TO_LIVE_PROVIDER_VERIFICATION
 /**
  * Tel düzeyinde SelectSiparis sözleşmesi.
  *
- * `selectSiparisVerified` yalnız canlı sağlayıcı / WSDL doğrulamasından
- * sonra `true` yapılabilir. Bu iskelette sabit `false`dır.
+ * `selectSiparisVerified` is typed `boolean` (not literal `false`) so the
+ * fail-closed `=== true` check stays valid under `tsc`. Runtime value stays
+ * `false` until LIVE_PROVIDER_VERIFICATION flips it.
  */
-export const TICIMAX_WIRE_CONTRACT = {
+export const TICIMAX_WIRE_CONTRACT: Readonly<{
+  operation: 'SelectSiparis'
+  selectSiparisVerified: boolean
+  reason: typeof TICIMAX_WIRE_DEFER_REASON
+  note: string
+}> = Object.freeze({
   operation: 'SelectSiparis',
   selectSiparisVerified: false,
   reason: TICIMAX_WIRE_DEFER_REASON,
   note:
     'Method signature (UyeKodu, WebSiparisFiltre, WebSiparisSayfalama) is ' +
     'contract-level verified; SOAP wrapper/QNames/namespaces are not. Do not invent wire XML.',
-} as const
+})
 
 export class TicimaxWireContractError extends Error {
   readonly code = TICIMAX_WIRE_DEFER_REASON

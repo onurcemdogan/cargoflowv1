@@ -111,11 +111,14 @@ function wireBlockedResult(): TicimaxClientResult {
  * SelectSiparis — tel doğrulanmadan SOAP GÖNDERİLMEZ.
  *
  * Kapı önce çalışır; başarısızlıkta ağ yok, gövde yok, sır sızıntısı yok.
+ * Optional filter/pagination args are intentionally omitted until the wire
+ * contract is verified — callers today pass credentials only.
  */
 export async function selectSiparis(
+  // Credentials reserved for the post-verification SOAP adapter; unused while
+  // the wire gate fail-closes before any network I/O.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   _credentials: TicimaxCredentials,
-  _filter?: unknown,
-  _pagination?: unknown,
 ): Promise<TicimaxClientResult> {
   try {
     assertSelectSiparisWireReady()
