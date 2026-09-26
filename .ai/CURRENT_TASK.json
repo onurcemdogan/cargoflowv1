@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "TICIMAX-001",
-  "status": "QUALITY_GATE_PENDING",
-  "phase": "QUALITY_GATES",
+  "status": "READY_FOR_REVIEW",
+  "phase": "QUALITY_GATES_PASSED",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/TICIMAX-001",
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
@@ -40,7 +40,7 @@
       "humanAction": "Supply tenant WSDL or live SOAP envelope evidence at LIVE_PROVIDER_VERIFICATION before enabling probe/rollout"
     }
   ],
-  "nextAction": "Run configured local quality gates (lint/test/typecheck/build) via supervisor.",
+  "nextAction": "Local quality gates passed; proceed to independent review.",
   "specPath": ".ai/tickets/TICIMAX-001.md",
   "verdicts": {
     "TICIMAX_CONTRACT": "PUBLIC_CONTRACT_PARTIALLY_VERIFIED",
@@ -89,5 +89,10 @@
     "from": "BLOCKED_HUMAN",
     "reason": "SHELL_ONLY_LOCAL_QUALITY_GATE",
     "recoveredAt": "2026-09-26T11:37:15.591142+00:00"
+  },
+  "qualityGates": {
+    "evidencePath": ".ai/.runtime/quality-gates.json",
+    "passed": true,
+    "finishedAt": "2026-09-26T11:37:31.378071+00:00"
   }
 }
