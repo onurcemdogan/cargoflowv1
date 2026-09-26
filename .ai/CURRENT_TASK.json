@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "TICIMAX-001",
-  "status": "REVIEW_EXHAUSTED",
-  "phase": "REVIEW_EXHAUSTED",
+  "status": "MERGED",
+  "phase": "MERGED",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/TICIMAX-001",
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
@@ -41,7 +41,7 @@
       "humanAction": "Supply tenant WSDL or live SOAP envelope evidence at LIVE_PROVIDER_VERIFICATION before enabling probe/rollout"
     }
   ],
-  "nextAction": "REVIEW_EXHAUSTED: run configured local quality gates, then Codex-only MERGE control-plane decision.",
+  "nextAction": "REVIEW_EXHAUSTED local quality gates passed. Final head is frozen. GitHub CI is the final gate; then Codex-only MERGE authorization via the existing merge control plane.",
   "specPath": ".ai/tickets/TICIMAX-001.md",
   "verdicts": {
     "TICIMAX_CONTRACT": "PUBLIC_CONTRACT_PARTIALLY_VERIFIED",
@@ -95,7 +95,22 @@
   "qualityGates": {
     "evidencePath": ".ai/.runtime/quality-gates.json",
     "passed": true,
-    "finishedAt": "2026-09-26T11:55:39.030041+00:00"
+    "finishedAt": "2026-09-26T11:56:02.580858+00:00",
+    "results": [
+      {
+        "command": [
+          "npm.cmd",
+          "run",
+          "test:ticimax"
+        ],
+        "startedAt": "2026-09-26T11:55:48.232605+00:00",
+        "finishedAt": "2026-09-26T11:56:02.578423+00:00",
+        "durationSeconds": 14.346,
+        "exitCode": 0,
+        "passed": true,
+        "logPath": ".ai/.runtime/20260926-145548-quality-0.log"
+      }
+    ]
   },
   "reviewExhaustion": {
     "reason": "ALL_ENABLED_IMPLEMENTATION_WORKERS_CONTRIBUTED",
