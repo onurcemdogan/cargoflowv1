@@ -3,9 +3,32 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `49b509bc35c68225340d4ec29a7e05fe6e92f165`
+HEAD: `294195eb467dab7b615516f2610e289dedcf0bd3`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Cursor Bugbot finding 4029ae75-d114-4764-827c-869a9625fd78 (repaired, code change applied)
+
+Finding (`server/carriers/aras/arasClient.ts`, high severity): "CDATA unwrap creates extractable fields." `getWellFormedCleanedXml` treated CDATA as opaque only during the well-formedness tag scan; after validation it unwrapped every CDATA span into a single flat string, and that same flat string was then handed to `extractKnownXmlFields`/`containsSoapFault`, which re-scanned it with plain regexes that have no notion of "this text came from inside a CDATA payload." A body like `<Envelope><OtherField><![CDATA[<ResultCode>0</ResultCode>]]></OtherField></Envelope>` is well-formed (the scan sees one root, `Envelope` > `OtherField`, and never treats the CDATA-internal `<`/`>` as real tags) — but after unwrap, the flattened string literally contains the substring `<ResultCode>0</ResultCode>`, and `extractKnownXmlFields`'s independent regex scan matched it as if it were a genuine sibling element, extracting `ResultCode=0` out of what was actually just `OtherField`'s character data. Same mechanism could smuggle a fake `<soap:Fault>` into `containsSoapFault`'s flat-string regex. Either direction is a false transport-outcome classification driven entirely by attacker/response-controlled character data, not real XML structure.
+
+Fix (`server/carriers/aras/arasClient.ts`):
+- `getWellFormedCleanedXml` (string-returning) replaced by `parseWellFormedXmlStructure`, which runs the *same* CDATA-aware stack/root/gap well-formedness scan as before but additionally records, for every genuine open/close tag pair it walks (i.e. every match the scan already treats as real markup, which by construction excludes anything starting inside a CDATA span), that element's `{ name, start, end }` content span in the cleaned string, plus a flat `tagNames` list of every genuine tag name seen (for fault detection). Returns `{ cleaned, elements, tagNames } | null`.
+- `extractKnownXmlFields(structure, fieldNames)` now matches a field by looking up `structure.elements` for an entry whose `name` equals the field (or ends with `:field` for a namespace prefix) — i.e. by the scan's own structural notion of "this is a real element," not by re-running a regex over a flattened string. Only once a genuine element is identified does it slice that element's exact content span and unwrap CDATA delimiters *within that slice* for the returned text. CDATA character data belonging to some other element can therefore never be picked up as a different field's value, because it was never recorded as an element boundary in the first place.
+- `containsSoapFault(structure)` similarly checks `structure.tagNames` (real tag names only) for anything matching `/Fault/i`, instead of regex-scanning the flattened, CDATA-unwrapped string.
+- `finishArasSoapCall` is otherwise unchanged: `parseWellFormedXmlStructure` returning `null` still yields `ARAS_MALFORMED_RESPONSE`/`raw:null`; `containsSoapFault` still yields `ARAS_TRANSPORT_UNKNOWN`/`raw:null`; only on both passing does `extractKnownXmlFields` run.
+- Prior CDATA-as-text-data behavior (`CODEX-MERGE-a14f3b696b9f30e7`, ARC-3k/3l — CDATA belonging to the target field's own content, e.g. `<ResultCode>0<![CDATA[99]]></ResultCode>` → `"099"`) is unchanged and still covered by the existing ARC-3k/3l tests, since the target field's own genuine content span still includes its CDATA text, which is still unwrapped for the returned value.
+
+Regression tests added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3m`: `<Envelope><OtherField><![CDATA[<ResultCode>0</ResultCode>]]></OtherField></Envelope>` (exact shape from the finding) — asserts `outcome.ok === true` but `outcome.raw.ResultCode === undefined`, and that `classifyArasSetOrderResult(outcome.raw).ok === false` (missing ResultCode, not smuggled success).
+- `ARC-3n`: a genuine `ResultCode=0` success response with an unrelated element's CDATA containing `<soap:Fault><faultcode>x</faultcode></soap:Fault>` — asserts the smuggled fault text does not flip the outcome; `outcome.ok === true`, `outcome.raw.ResultCode === '0'`.
+
+Verification this round:
+- `npm run test:aras`: 62/62 (was 60/60; +2 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `294195eb467dab7b615516f2610e289dedcf0bd3` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh review/merge evaluation against `294195eb467dab7b615516f2610e289dedcf0bd3`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-a14f3b696b9f30e7 (repaired, code change applied)
 
