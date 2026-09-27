@@ -3,41 +3,64 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `READY_FOR_REVIEW` / `IMPLEMENTATION_COMPLETE`
+HEAD: `45e44fb6d23048cbdb6e5e29dfa4e8ef9b55ceb9`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
+PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
 
 ## Summary
 
-Resumed after research resolution for GetOrderWithIntegrationCode/GetBarcode SOAP literals. Implemented full `internal_test` Aras path: proven SOAP transport (SetOrder + verification + GetBarcode), encrypted account-scoped credentials (`connector_credentials`), carrier mutual exclusion with Surat, registry enablement, integration health presence, API + Integrations UI, and deterministic pipeline tests with mock transport.
+`internal_test` Aras carrier path is implemented (SOAP transport, credentials, routing, health, UI, deterministic tests). Supervisor restart flagged **CI_FAILED**; this session reproduced the failing check, confirmed the fix on branch, and verified **GitHub DevFactory CI green** on current HEAD.
+
+## CI failure (reproduced)
+
+| Item | Detail |
+|------|--------|
+| Failed run | `36325213366` on `7f24048` (step: `npm run test:ui`) |
+| Error | Testing Library: multiple `button` elements named **Ayarlar** (Surat + Aras carrier cards) |
+| Fix commit | `3dfac8a` — Aras card primary label **Hesap Bağla**; `desiMultiplierSetting.dom.test.tsx` scopes Surat **Ayarlar** via `within(suratCard)` |
+| Green run | `36325919805` on `45e44fb` — workflow **success** |
+
+No additional product code changes were required in this session beyond state/handoff updates.
 
 ## Evidence
 
 - `.ai/research/ARAS-EXPANSION/20260927T123508.646306Z-d4e2b02830054596b75c122f9c311ea5.json`
 
-## Key files
+## Key implementation files
 
-- `server/carriers/aras/arasClient.ts`, `arasSoapXml.ts`, `arasVerification.ts` (envelope), `arasLabelArtifact.ts` (GetBarcode envelope), `arasShipmentPipeline.ts`, `arasRollout.ts`
-- `server/connectors/aras/*`, `server/shipments/arasProvider.ts`, `trendyolShipmentEligibility.ts` (CN-3/6)
-- `src/integrations/ArasSection.tsx`, `src/pages/IntegrationsPage.tsx`, `server/index.mjs` (aras routes)
-- Tests: `carrier-aras-client-flow.test.mjs`, `carrier-aras-expansion-flow.test.mjs`, `carrier-neutral-foundation-flow.test.mjs` (CN updates)
+- `server/carriers/aras/*`, `server/connectors/aras/*`, `server/shipments/arasProvider.ts`, `trendyolShipmentEligibility.ts`
+- `src/integrations/ArasSection.tsx`, `src/pages/IntegrationsPage.tsx`, `server/index.mjs`
+- Tests: `carrier-aras-*.test.mjs`, `carrier-neutral-foundation-flow.test.mjs`
 
-## Gates run (this session)
+## Gates (cursor session 2026-09-27)
 
 ```bash
-npx tsc -b --force
-npm run lint          # 0 errors (6 pre-existing warnings)
-npm run build
-npm run test:aras     # 51/51
-npm run test:connector-kernel  # 15/15
-npm run test:integration-health # 53/53
-node --test server/carrier-neutral-foundation-flow.test.mjs  # 7/7
-npm run test:surat    # 3269/3269 pass, exit 0 (post CN-6 fixture + suite registry fixes)
+npx tsc -b --force          # ok
+npm run lint                # 0 errors (6 pre-existing warnings)
+npm run build               # ok
+npm run test:ui             # 365/365 (CI regression target)
+npm run test:aras           # 51/51
+npm run test:connector-kernel
+npm run test:integration-health
+npm run test:dashboard
+npm run test:label-editor:acceptance
+npm run test:performance:acceptance
+npm run test:auto-label:acceptance
+npm run test:contract-packs
+npm run test:subscription
+npm run test:billing-party
+npm run test:woocommerce
+npm run test:print-platform
+npm run test:onboarding
+npm run test:landing
+npm run test:ikas
+npm run test:ticimax
+npm run test:catalog
+npm run test:product-tour
+npm run test:surat          # 3269/3269 pass, exit 0 (this session)
 ```
 
-## Surat gate follow-up (this session)
-
-CN-6 left empty `cargoProviderName` non-Surat: updated auto-label/surat-flow fixtures with explicit Sürat carrier; added `server/testing/suratSuiteExclusions.json` + `suratSuiteRegistry.mjs` (Aras/Ticimax suites excluded from `test:surat` orphan checks); removed `carrier-aras-contract-flow.test.mjs` from `suratSuiteFiles.json`; SSC-6 slice widened for COMPLETE response assertion.
-
-## Required verdicts (implementation)
+## Required verdicts
 
 | Verdict | Value |
 |---------|-------|
@@ -64,4 +87,4 @@ CN-6 left empty `cargoProviderName` non-Surat: updated auto-label/surat-flow fix
 
 ## Next action
 
-Review on `agent/ARAS-EXPANSION`; confirm `npm run test:surat` green; no push to protected branches.
+Review PR #8; do not push/merge protected branches. After approval, supervisor merges to `integration/roadmap`.

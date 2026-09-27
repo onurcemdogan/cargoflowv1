@@ -1,54 +1,40 @@
 # Generated shift context
 
-Generated: 2026-09-27T14:20:11.087696+00:00
+Generated: 2026-09-27T14:47:00.000000+00:00
 Project: cargoflow
 Ticket: ARAS-EXPANSION
-Status: IN_PROGRESS
-Phase: CI_FAILED
+Status: READY_FOR_REVIEW
+Phase: IMPLEMENTATION_COMPLETE
 Branch: agent/ARAS-EXPANSION
 Baseline: 7754fcb109c4d8990d97065710e1189121fb58b7
-HEAD: 7f240487095a0e66a7676b27a13b1a9d00f57c92
-Last implementation worker: claude
+HEAD: 45e44fb6d23048cbdb6e5e29dfa4e8ef9b55ceb9
+Last implementation worker: cursor
 Reviewer: None
-Next action: Final reviewed head failed GitHub CI during restart reconciliation; reproduce the exact failing check.
+Next action: Review PR #8; GitHub CI green on HEAD (run 36325919805).
 
 ## Git status
+
 ```
 M .ai/CURRENT_CONTEXT.md
  M .ai/CURRENT_TASK.json
- M src/pages/IntegrationsPage.tsx
- M src/test/desiMultiplierSetting.dom.test.tsx
+ M .ai/HANDOFF.md
 ```
 
 ## Recent commits
+
 ```
+45e44fb wip(ARAS-EXPANSION): checkpoint claude
+3dfac8a fix(ARAS-EXPANSION): disambiguate carrier card settings button in CI
 7f24048 wip(ARAS-EXPANSION): checkpoint ci-failed-recovery
 26380d2 wip(ARAS-EXPANSION): checkpoint review-exhausted-quality-passed
-0a465d9 wip(ARAS-EXPANSION): checkpoint review-exhausted
-43299d6 wip(ARAS-EXPANSION): checkpoint cursor
-e74efee wip(ARAS-EXPANSION): checkpoint cursor
-a2cc205 SUPERVISOR: pin official ARAS SOAP source URLs
-ad9e867 SUPERVISOR: narrow ARAS research to public SOAP schema
-5db76be SUPERVISOR: make ARAS public contract gaps automated
-55f6a40 wip(ARAS-EXPANSION): checkpoint claude
-0b238d0 ARAS-EXPANSION: proven-only SOAP transport client; BLOCKED_HUMAN on identity + wire-contract gaps
 ```
 
-## Diff stat
-```
-warning: in the working copy of '.ai/CURRENT_CONTEXT.md', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it
- .ai/CURRENT_CONTEXT.md                      | 29 +++++++++++++++++++----------
- .ai/CURRENT_TASK.json                       |  4 ++--
- src/pages/IntegrationsPage.tsx              |  2 +-
- src/test/desiMultiplierSetting.dom.test.tsx |  6 +++++-
- 4 files changed, 27 insertions(+), 14 deletions(-)
-```
+## CI note
+
+Reproduced failure: `test:ui` duplicate **Ayarlar** buttons (failed run 36325213366). Fix in `3dfac8a`. Success run 36325919805 on `45e44fb`.
 
 ## Required reading
+
 AGENTS.md
-.ai/PROJECT_SPEC.md
-.ai/ACCEPTED_FOUNDATION.md
-.ai/ROADMAP.md
-.ai/HANDOFF.md
 .ai/tickets/ARAS-EXPANSION.md
+.ai/HANDOFF.md
