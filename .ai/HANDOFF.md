@@ -3,9 +3,26 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `fd4ada89648efeb50f13f0f92e0d76ed77654915`
+HEAD: `b9f5b56cc80552bec79fc009669840ecb7684ae7`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-9e972f27157ce0f7 (repaired, code change applied)
+
+Finding: `getWellFormedCleanedXml` (as of `CODEX-MERGE-df09d9399eeb35cc`) extracted tags with `cleaned.match(/<[^>]+>/g)` and validated only tag-name balance and root-count from that resulting tag list — it never looked at the text sitting between or after those matches. A body like `<Envelope><ResultCode>0</ResultCode></Envelope>garbage` has balanced tags and exactly one root element, so it passed as well-formed even though `garbage` trails the closed root, which is not valid XML. `extractKnownXmlFields` (running on the same returned `cleaned` string) still matched `ResultCode=0` inside the valid portion, so the trailing garbage didn't even need to affect extraction — it just needed the validator to wrongly call the body well-formed, permitting a false create-success classification.
+
+Fix (`server/carriers/aras/arasClient.ts`): switched from `cleaned.match(...)` to `cleaned.matchAll(...)` to get each tag match's index, and track a `cursor` through the scan. Before processing each tag, if `stack.length === 0` (i.e. we are outside any element — before the root opens, between top-level siblings, or after the root has closed), the gap between `cursor` and the current match's index must be whitespace-only or the body is rejected. After the loop, the same check is applied to any content remaining after the last tag. Text inside the root (`stack.length > 0`, e.g. the `0` inside `<ResultCode>0</ResultCode>`) is untouched — only content at document depth 0 is constrained. This also incidentally tightens validation for stray text left behind when a leading comment/PI/DOCTYPE is stripped (e.g. `<!--x-->y<Envelope/>` now correctly fails instead of silently passing).
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3j`: the exact body from the finding, `<Envelope><ResultCode>0</ResultCode></Envelope>garbage` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 58/58 (was 57/57; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `b9f5b56cc80552bec79fc009669840ecb7684ae7` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `b9f5b56cc80552bec79fc009669840ecb7684ae7`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-df09d9399eeb35cc (repaired, code change applied)
 
