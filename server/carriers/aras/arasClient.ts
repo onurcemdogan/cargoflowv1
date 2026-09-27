@@ -210,7 +210,15 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
       // `<ResultCode>`, silently discarding the trailing garbage and letting
       // `extractKnownXmlFields` read ResultCode='0' out of an otherwise
       // malformed body.
-      const nameMatch = /^<\/\s*([A-Za-z_][\w.:-]*)\s*>$/.exec(tag)
+      //
+      // XML also forbids whitespace between `</` and the element name
+      // (ETag ::= '</' Name S? '>') — a raw `<` is only ever the start of a
+      // NEW tag, so `</ ResultCode>` is not a close tag with leading
+      // whitespace, it is not a tag at all. The prior regex's `\s*` right
+      // after `<\/` accepted it anyway, matching the stack top and letting
+      // `extractKnownXmlFields` read ResultCode='0' out of an otherwise
+      // malformed body.
+      const nameMatch = /^<\/([A-Za-z_][\w.:-]*)\s*>$/.exec(tag)
       if (!nameMatch) return null
       const top = stack.pop()
       if (!top || top.name !== nameMatch[1]) return null
@@ -233,8 +241,14 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
       // is, letting `extractKnownXmlFields` read ResultCode='0' out of an
       // otherwise malformed body. Excluding `<` from both value classes
       // forces such tags to fail `nameMatch` and be rejected.
+      //
+      // XML also forbids whitespace between `<` and the element name
+      // (STag ::= '<' Name (...)* S? '>') — the prior regex's `\s*` right
+      // after `<` accepted `< ResultCode>` as a valid open for `ResultCode`
+      // anyway, letting `extractKnownXmlFields` read ResultCode='0' out of
+      // an otherwise malformed body.
       const nameMatch =
-        /^<\s*([A-Za-z_][\w.:-]*)(?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"<]*"|'[^'<]*'))*\s*(\/)?>$/.exec(
+        /^<([A-Za-z_][\w.:-]*)(?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"<]*"|'[^'<]*'))*\s*(\/)?>$/.exec(
           tag,
         )
       if (!nameMatch) return null
