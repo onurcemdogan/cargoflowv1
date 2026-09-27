@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "IN_PROGRESS",
-  "phase": "REVIEW_FEEDBACK",
+  "status": "MERGE_READY",
+  "phase": "MERGE_READY",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
   "headCommit": "4ec62213be61b9d4aa5787f5c58392eccd64d166",
-  "activeWorker": "claude",
+  "activeWorker": null,
   "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [
@@ -48,7 +48,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "CODEX-MERGE-eba1a34bb5502189 repaired at 4ec62213be61b9d4aa5787f5c58392eccd64d166 (code + test only, local gates green). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI (quality) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against 4ec62213be61b9d4aa5787f5c58392eccd64d166. Do not push/merge master/integration/roadmap; only the ticket branch push is in scope, and only after the user/supervisor confirms.",
+  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -69,7 +69,7 @@
   "qualityGates": {
     "evidencePath": ".ai/.runtime/quality-gates.json",
     "passed": true,
-    "finishedAt": "2026-09-27T23:40:14.137881+00:00",
+    "finishedAt": "2026-09-27T23:55:36.503573+00:00",
     "results": [
       {
         "command": [
@@ -77,12 +77,12 @@
           "run",
           "test:ticimax"
         ],
-        "startedAt": "2026-09-27T23:40:02.606167+00:00",
-        "finishedAt": "2026-09-27T23:40:13.344558+00:00",
-        "durationSeconds": 10.738,
+        "startedAt": "2026-09-27T23:55:23.598252+00:00",
+        "finishedAt": "2026-09-27T23:55:35.726103+00:00",
+        "durationSeconds": 12.128,
         "exitCode": 0,
         "passed": true,
-        "logPath": ".ai/.runtime/20260928-024002-quality-0.log"
+        "logPath": ".ai/.runtime/20260928-025523-quality-0.log"
       }
     ]
   },
@@ -266,10 +266,22 @@
           "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
         ],
         "at": "2026-09-27T23:40:00.727706+00:00"
+      },
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-eba1a34bb5502189",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [
+          "server/carrier-aras-client-flow.test.mjs",
+          "server/carriers/aras/arasClient.ts",
+          "warning: in the working copy of '.ai/CURRENT_CONTEXT.md', LF will be replaced by CRLF the next time Git touches it",
+          "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
+        ],
+        "at": "2026-09-27T23:55:18.733308+00:00"
       }
     ],
-    "status": "IN_PROGRESS",
-    "updatedAt": "2026-09-28T00:00:00.000000+00:00",
+    "status": "REPAIRED",
+    "updatedAt": "2026-09-27T23:55:18.733308+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
