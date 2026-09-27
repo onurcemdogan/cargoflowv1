@@ -116,6 +116,23 @@ function findCdataSpans(xml: string): Array<{ start: number; end: number }> {
   }))
 }
 
+// XML forbids a literal '&' in character data unless it starts one of the
+// five predefined entities (lt/gt/amp/apos/quot) or a numeric character
+// reference (&#NNN; / &#xHHHH;) — any other name is an undeclared general
+// entity reference, which is a well-formedness violation without a DTD
+// declaring it (WFC: Entity Declared). The tag-balancing scan below only
+// checked tag structure, so a body like
+// `<Envelope><Other>&undefined;</Other><ResultCode>0</ResultCode></Envelope>`
+// still passed as well-formed (tags balance, one root) even though
+// `&undefined;` is not valid XML, letting `extractKnownXmlFields` read
+// ResultCode='0' out of an otherwise malformed body. CDATA content is exempt
+// — entity syntax is never processed inside a CDATA section — so this check
+// must run only on the parts of the text outside any CDATA span.
+const VALID_ENTITY_REFERENCE = /&(?:lt|gt|amp|apos|quot|#[0-9]+|#x[0-9a-fA-F]+);/g
+function hasInvalidEntityReference(textOutsideCdata: string): boolean {
+  return textOutsideCdata.replace(VALID_ENTITY_REFERENCE, '').includes('&')
+}
+
 // CDATA govdesi harfi harfine metindir — icindeki `<!--...-->` gibi diziler
 // GERCEK bir yorum DEGILDIR. Onceki surum yorum/PI/DOCTYPE'i CDATA
 // sinirlarindan HABERSIZ tek bir regex gecisiyle siliyordu; bu yuzden
@@ -191,13 +208,19 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   let cursor = 0
   for (const match of tagMatches) {
     const tag = match[0]
+    const gap = cleaned.slice(cursor, match.index)
+    // Entity references must be validated everywhere text can appear —
+    // including inside an open element (e.g. `<Other>&undefined;</Other>`),
+    // not just in the outside-the-root gaps checked below — but never inside
+    // CDATA, where '&' is ordinary literal text, not entity syntax.
+    const gapOutsideCdata = gap.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
+    if (hasInvalidEntityReference(gapOutsideCdata)) return null
     // Text seen while `stack` is empty is outside the root element (before
     // it opens, between top-level siblings, or after it closes). That is
     // only valid XML if it is pure whitespace — e.g.
     // `<Envelope>...</Envelope>garbage` must not be treated as well-formed
     // just because its tags happen to balance.
     if (stack.length === 0) {
-      const gap = cleaned.slice(cursor, match.index)
       if (gap.trim().length > 0) return null
     }
     cursor = match.index + tag.length
