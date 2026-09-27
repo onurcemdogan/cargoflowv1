@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `0b40ee1` (pending push)
+HEAD: `3a48671` (pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-eb3de5b61561ebdd (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope>< ResultCode>0</ ResultCode></Envelope>` passes both tag regexes and extracts `ResultCode='0'`, allowing false create success. Reject whitespace between tag delimiters and element names, and add a regression test before reconsidering merge.
+
+Root cause: in `parseWellFormedXmlStructure`, both the opening/self-closing tag regex (anchored end-to-end by `CODEX-MERGE-67921c7e4afaad12`, attribute-hardened by `CODEX-MERGE-4c541f2475a1489c`/`CODEX-MERGE-af151267b7f3521e`) and the closing tag regex (anchored by `CODEX-MERGE-2f65a0c9946b73be`) still had a `\s*` immediately after the leading `<` (opening) or `</` (closing), before the element name capture group. XML's grammar forbids this: `STag ::= '<' Name (S Attribute)* S? '>'` and `ETag ::= '</' Name S? '>'` both require the name to immediately follow the delimiter, with no intervening whitespace — a bare `<` (or `</`) followed by whitespace is not a tag opener with leading space, it simply is not a valid tag at all. Because both anchored regexes still tolerated that whitespace, `< ResultCode>` and `</ ResultCode>` were each accepted as legitimate name-bearing tags. Traced by hand against the exact finding body `<Envelope>< ResultCode>0</ ResultCode></Envelope>`: the opening `< ResultCode>` matched with captured name `"ResultCode"` and was pushed onto the stack, the closing `</ ResultCode>` matched the same name and popped it, so the element was recorded with content `"0"`, `extractKnownXmlFields` read `ResultCode='0'`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts`, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): removed the `\s*` immediately after `<` in the opening/self-closing tag regex (now `/^<([A-Za-z_][\w.:-]*).../`) and immediately after `<\/` in the closing tag regex (now `/^<\/([A-Za-z_][\w.:-]*)\s*>$/`). Whitespace is still permitted (as required by the grammar) between the name and the attributes/`>`/`/>` in both regexes — only the delimiter-to-name gap was tightened. Any tag with whitespace inserted right after `<` or `</` now fails `nameMatch` and the body is rejected as `ARAS_MALFORMED_RESPONSE`. All other well-formedness checks (attribute duplicate-name/`<`-in-value rejection, tag balance, single root, gap/trailing-text checks, CDATA handling) are unchanged.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3t`: the exact body from the finding, `<Envelope>< ResultCode>0</ ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 68/68 (was 67/67; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `3a48671` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `3a48671`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-af151267b7f3521e (repaired, code change applied)
 
