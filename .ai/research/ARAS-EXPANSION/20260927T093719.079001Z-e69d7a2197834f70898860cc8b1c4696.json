@@ -1,0 +1,46 @@
+{
+  "metadata": {
+    "createdAt": "2026-09-27T09:37:19.077644+00:00",
+    "resolverVersion": "1.0.0",
+    "ticket": "ARAS-EXPANSION",
+    "blockerIndexes": [],
+    "execution": {}
+  },
+  "research": null,
+  "verifier": null,
+  "result": {
+    "status": "RESOLUTION_HUMAN_REQUIRED",
+    "reason": "HUMAN_GATE_OR_UNKNOWN_SCOPE",
+    "dryRun": false,
+    "researchEligible": false,
+    "evidencePath": null,
+    "proposedStateTransition": {
+      "apply": false,
+      "resumeEligible": false,
+      "from": "BLOCKED_HUMAN",
+      "to": "BLOCKED_HUMAN",
+      "ticket": "ARAS-EXPANSION",
+      "resolvedBlockerIndexes": [],
+      "inputHashes": {
+        "C:\\DevFactory\\projects\\cargoflow.toml": "283d54c69bc545572d70d3d51d56cc8459ff2310e420c00111b4d14c1d6b5a72",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_TASK.json": "53903378e05d961c71317d6b75d77d3a5cae2327aa022d8a3487e3fe6561b256",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\tickets\\ARAS-EXPANSION.md": "e2a12cd5bd04a37fcc21f9bf8e42bf47055b7def1a2cb5bef54a73d34dc6543f",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_CONTEXT.md": "ed23d85018174c4a52942b876c87d0e42df7c193a6c61939cda829e9e80dd34b",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\HANDOFF.md": "04d9e7ee7aa492b857aee0594c00e7c3d12e28ed77d0e98e7ac57fcf4fe6b279"
+      }
+    },
+    "ticket": "ARAS-EXPANSION",
+    "eligibility": [
+      {
+        "blockerIndex": 0,
+        "eligible": false,
+        "reason": "PROTECTED_BLOCKER"
+      },
+      {
+        "blockerIndex": 1,
+        "eligible": false,
+        "reason": "PROTECTED_BLOCKER"
+      }
+    ]
+  }
+}

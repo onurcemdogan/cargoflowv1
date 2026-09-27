@@ -15,6 +15,9 @@
 // bir barkod/gönderi doğurma riskidir ve baskı ile kayıt arasında sessiz
 // ayrışma yaratır.
 
+import { ARAS_GET_BARCODE_REQUEST_FIELDS } from './arasContract.ts'
+import { buildArasSoap11Envelope, escapeArasXml } from './arasSoapXml.ts'
+
 export const ARAS_LABEL_ARTIFACT_TYPES = ['ZPL', 'EPL', 'IMAGE'] as const
 export type ArasLabelArtifactType = (typeof ARAS_LABEL_ARTIFACT_TYPES)[number]
 
@@ -105,4 +108,49 @@ export function resolveArasReprintArtifact(
     }
   }
   return { ok: true, artifact: stored, errorCode: null }
+}
+
+export interface ArasGetBarcodeEnvelopeBuildResult {
+  ok: boolean
+  envelope: string
+  errorCode: 'ARAS_CREDENTIALS_INCOMPLETE' | 'ARAS_INTEGRATION_CODE_REQUIRED' | null
+  reason: string | null
+}
+
+/** GetBarcode SOAP 1.1 zarfı — Username/Password büyük/küçük harfi kanıtlı (2026-09-27). */
+export function buildArasGetBarcodeEnvelope(params: {
+  credentials?: { userName?: string | null; password?: string | null }
+  integrationCode?: string | null
+}): ArasGetBarcodeEnvelopeBuildResult {
+  const userName = str(params.credentials?.userName)
+  const password = str(params.credentials?.password)
+  const integrationCode = str(params.integrationCode)
+  if (!userName || !password) {
+    return {
+      ok: false, envelope: '',
+      errorCode: 'ARAS_CREDENTIALS_INCOMPLETE',
+      reason: 'Aras kullanıcı adı/parolası eksik.',
+    }
+  }
+  if (!integrationCode) {
+    return {
+      ok: false, envelope: '',
+      errorCode: 'ARAS_INTEGRATION_CODE_REQUIRED',
+      reason: 'IntegrationCode olmadan etiket istenemez.',
+    }
+  }
+  const wire: Record<string, string> = {
+    Username: userName,
+    Password: password,
+    integrationCode,
+  }
+  const inner = ARAS_GET_BARCODE_REQUEST_FIELDS.map(
+    (field) => `      <${field}>${escapeArasXml(wire[field])}</${field}>`,
+  )
+  return {
+    ok: true,
+    envelope: buildArasSoap11Envelope('GetBarcode', inner),
+    errorCode: null,
+    reason: null,
+  }
 }

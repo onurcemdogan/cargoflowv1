@@ -1,41 +1,17 @@
 // ARAS — SOAP TAŞIMA İSTEMCİSİ (yalnız TEST uç noktası; internal_test).
 //
-// Bu modül `arasContract.ts`/`arasSetOrder.ts`'in ürettiği KARARLARI ağa
-// taşır; kendi başına yeni bir iş kuralı ÜRETMEZ. Zarf `buildArasSetOrder-
-// Envelope`dan AYNEN alınır — burada yeniden kurulmaz.
-//
-// ═══ GetOrderWithIntegrationCode — İSTEK ZARFI KANITSIZ ═══════════════════
-//
-// `ARAS_VERIFICATION_OPERATION` sabiti operasyon ADINI kanıtlar
-// (`arasVerification.ts`). Ama bu operasyonun SOAP istek zarfı — parametre
-// adı, sarmalayıcı eleman, büyük/küçük harf — repoda HİÇBİR yerde (bu
-// dosyalar, `docs/cargoflow-roadmap/P5_AUDIT.md`, `STATE.json`) dokümante
-// DEĞİLDİR ve `carrier-aras-contract-flow.test.mjs` de yalnız operasyon adını
-// sınar, bir istek zarfı KURMAZ/SINAMAZ. Bu oturumda resmî WSDL'i yeniden
-// getirme aracı (WebFetch) izni verilmediği için tazelenip kanıtlanamadı.
-//
-// Bu yüzden zarf burada UYDURULMAZ: `callArasVerification` hiçbir ağ
-// çağrısı yapmadan `ARAS_VERIFICATION_CONTRACT_UNPROVEN` ile fail-closed
-// döner. Bkz. `docs/cargoflow-roadmap/P5_AUDIT.md` "ARAS-EXPANSION" bölümü.
-//
-// ═══ GetBarcode — İSTEK ZARFI da KANITSIZ ═════════════════════════════════
-//
-// `arasLabelArtifact.ts` başlığı GİRDİ alan ADLARINI anlatım/yorum
-// düzeyinde belirtir (Username/Password/integrationCode) ama SetOrder'daki
-// gibi test-kilitli bir `buildArasGetBarcodeEnvelope` YOKTUR; tam alan
-// büyük/küçük harfi ve sarmalayıcı yapısı doğrulanmadı. Aynı nedenle
-// `callArasGetBarcode` da ağa ÇIKMADAN fail-closed döner
-// (`ARAS_LABEL_CONTRACT_UNPROVEN`). Ayrıca ön koşul (`VERIFIED_REGISTERED`
-// mı `CREATE_SUBMITTED` mı) da kanıtsızdır (ticket madde 1); kanıt gelene
-// kadar EN KISITLAYICI seçenek uygulanır: yalnız `registered === true`
-// iken bu kapıdan geçilir — bu bir sözleşme iddiası DEĞİL, muhafazakâr bir
-// karardır.
+// Zarf üretimi `buildArasSetOrderEnvelope`, `buildArasGetOrderWithIntegrationCodeEnvelope`
+// ve `buildArasGetBarcodeEnvelope` ile test-kilitlidir; bu modül yalnız POST eder.
 
 import {
   resolveArasEndpoint,
   ARAS_SET_ORDER_RESULT_FIELDS,
+  ARAS_VERIFICATION_RESPONSE_FIELDS,
+  ARAS_GET_BARCODE_RESPONSE_FIELDS,
   type ArasEnvironment,
 } from './arasContract.ts'
+import { buildArasGetOrderWithIntegrationCodeEnvelope } from './arasVerification.ts'
+import { buildArasGetBarcodeEnvelope } from './arasLabelArtifact.ts'
 
 export const ARAS_TRANSPORT_TIMEOUT_MS = 30_000
 
@@ -45,8 +21,8 @@ export type ArasTransportErrorCode =
   | 'ARAS_TRANSPORT_HTTP_ERROR'
   | 'ARAS_TRANSPORT_UNKNOWN'
   | 'ARAS_MALFORMED_RESPONSE'
-  | 'ARAS_VERIFICATION_CONTRACT_UNPROVEN'
-  | 'ARAS_LABEL_CONTRACT_UNPROVEN'
+  | 'ARAS_VERIFICATION_ENVELOPE_INVALID'
+  | 'ARAS_LABEL_ENVELOPE_INVALID'
   | 'ARAS_LABEL_PRECONDITION_NOT_MET'
 
 export class ArasTransportError extends Error {
@@ -71,10 +47,8 @@ export type ArasFetchLike = (
 export interface ArasTransportOutcome {
   ok: boolean
   httpStatus: number | null
-  /** Yalnız KANITLI alan adları — beyaz liste dışı hiçbir şey sızmaz. */
   raw: Record<string, unknown> | null
   errorCode: ArasTransportErrorCode | null
-  /** Ağ sınırı GERÇEKTEN geçildi mi (fetch fiilen çağrıldı mı)? */
   networkCalled: boolean
 }
 
@@ -88,11 +62,6 @@ function decodeXmlEntities(value: string): string {
     .trim()
 }
 
-/**
- * Bilinen alanları isim bazlı, sarmalayıcı/derinlik VARSAYIMI OLMADAN
- * çıkarır. Kanıtlı olmayan bir zarf yerleşimini iddia etmemek için yalnız
- * `fieldNames` listesindeki etiketler aranır; başka her şey YOK SAYILIR.
- */
 export function extractKnownXmlFields(
   xml: string,
   fieldNames: readonly string[],
@@ -111,7 +80,6 @@ export function extractKnownXmlFields(
   return result
 }
 
-/** SOAP Fault, iyi biçimli SOAP zarfı içinde açıkça KANITLI olan tek durumdur. */
 function containsSoapFault(xml: string): boolean {
   return /<[^>]*Fault[\s>]/i.test(xml) || /<faultcode[\s>]/i.test(xml)
 }
@@ -129,11 +97,6 @@ interface PerformArasSoapCallParams {
   knownResponseFields: readonly string[]
 }
 
-/**
- * Tek taşıma yürütücüsü: proven zarfı POST eder, HTTP/ XML seviyesinde
- * sınıflandırır. İş anlamına (ResultCode vb.) HİÇ karışmaz — onu çağıran
- * (`classifyArasSetOrderResult` gibi) zaten test-kilitli fonksiyonlar yapar.
- */
 async function performArasSoapCall(
   params: PerformArasSoapCallParams,
 ): Promise<ArasTransportOutcome> {
@@ -196,7 +159,6 @@ async function performArasSoapCall(
       errorCode: 'ARAS_MALFORMED_RESPONSE',
     }
   }
-  // SOAP Fault: HTTP 200 olsa bile başarı DEĞİLDİR — asla sentezlenmez.
   if (containsSoapFault(bodyText)) {
     return {
       ok: false,
@@ -212,7 +174,6 @@ async function performArasSoapCall(
 }
 
 export interface ArasSetOrderCallParams {
-  /** `buildArasSetOrderEnvelope`in ÜRETTİĞİ zarf — burada DEĞİŞTİRİLMEZ. */
   envelope: string
   environment?: ArasEnvironment
   productionUrl?: string | null
@@ -220,14 +181,6 @@ export interface ArasSetOrderCallParams {
   timeoutMs?: number
 }
 
-/**
- * SetOrder çağrısı — sözleşmenin TAM olarak proven olduğu tek operasyon.
- *
- * SOAPAction, zarfın kendi `xmlns="http://tempuri.org/"` + `SetOrder`
- * eleman adından DOĞRUDAN türer — bu ASMX/.NET'in evrensel taşıma
- * kuralıdır (iş alanı UYDURMASI değildir), tıpkı `Content-Type` başlığı
- * gibi.
- */
 export async function callArasSetOrder(
   params: ArasSetOrderCallParams,
 ): Promise<ArasTransportOutcome> {
@@ -251,9 +204,8 @@ export async function callArasSetOrder(
   })
 }
 
-// ═══ GetOrderWithIntegrationCode — FAIL-CLOSED (zarf kanıtsız) ═══════════
-
 export interface ArasVerificationCallParams {
+  credentials: { userName?: string | null; password?: string | null }
   integrationCode?: string | null
   environment?: ArasEnvironment
   productionUrl?: string | null
@@ -261,27 +213,45 @@ export interface ArasVerificationCallParams {
   timeoutMs?: number
 }
 
-/**
- * Hiçbir ağ çağrısı YAPMADAN fail-closed döner: istek zarfı kanıtlanana
- * kadar telde ne gideceği UYDURULMAZ. `networkCalled` her zaman `false`.
- */
 export async function callArasVerification(
-  params: ArasVerificationCallParams, // eslint-disable-line @typescript-eslint/no-unused-vars
+  params: ArasVerificationCallParams,
 ): Promise<ArasTransportOutcome> {
-  return {
-    ok: false,
-    httpStatus: null,
-    raw: null,
-    networkCalled: false,
-    errorCode: 'ARAS_VERIFICATION_CONTRACT_UNPROVEN',
+  const built = buildArasGetOrderWithIntegrationCodeEnvelope({
+    credentials: params.credentials,
+    integrationCode: params.integrationCode,
+  })
+  if (!built.ok) {
+    return {
+      ok: false,
+      httpStatus: null,
+      raw: null,
+      networkCalled: false,
+      errorCode: 'ARAS_VERIFICATION_ENVELOPE_INVALID',
+    }
   }
+  const resolution = resolveArasEndpoint({
+    environment: params.environment,
+    productionUrl: params.productionUrl,
+  })
+  if (!resolution.ok || !resolution.url) {
+    return {
+      ok: false, httpStatus: null, raw: null, networkCalled: false,
+      errorCode: 'ARAS_ENDPOINT_UNRESOLVED',
+    }
+  }
+  return performArasSoapCall({
+    url: resolution.url,
+    soapAction: 'http://tempuri.org/GetOrderWithIntegrationCode',
+    envelope: built.envelope,
+    fetchImpl: params.fetchImpl,
+    timeoutMs: params.timeoutMs,
+    knownResponseFields: ARAS_VERIFICATION_RESPONSE_FIELDS,
+  })
 }
 
-// ═══ GetBarcode — FAIL-CLOSED (zarf kanıtsız + ön koşul kanıtsız) ═══════
-
 export interface ArasGetBarcodeCallParams {
+  credentials: { userName?: string | null; password?: string | null }
   integrationCode?: string | null
-  /** Çağıranın ÖLÇTÜĞÜ doğrulama durumu — yalnız `true` iken kapı açılır. */
   registered: boolean
   environment?: ArasEnvironment
   productionUrl?: string | null
@@ -301,11 +271,35 @@ export async function callArasGetBarcode(
       errorCode: 'ARAS_LABEL_PRECONDITION_NOT_MET',
     }
   }
-  return {
-    ok: false,
-    httpStatus: null,
-    raw: null,
-    networkCalled: false,
-    errorCode: 'ARAS_LABEL_CONTRACT_UNPROVEN',
+  const built = buildArasGetBarcodeEnvelope({
+    credentials: params.credentials,
+    integrationCode: params.integrationCode,
+  })
+  if (!built.ok) {
+    return {
+      ok: false,
+      httpStatus: null,
+      raw: null,
+      networkCalled: false,
+      errorCode: 'ARAS_LABEL_ENVELOPE_INVALID',
+    }
   }
+  const resolution = resolveArasEndpoint({
+    environment: params.environment,
+    productionUrl: params.productionUrl,
+  })
+  if (!resolution.ok || !resolution.url) {
+    return {
+      ok: false, httpStatus: null, raw: null, networkCalled: false,
+      errorCode: 'ARAS_ENDPOINT_UNRESOLVED',
+    }
+  }
+  return performArasSoapCall({
+    url: resolution.url,
+    soapAction: 'http://tempuri.org/GetBarcode',
+    envelope: built.envelope,
+    fetchImpl: params.fetchImpl,
+    timeoutMs: params.timeoutMs,
+    knownResponseFields: ARAS_GET_BARCODE_RESPONSE_FIELDS,
+  })
 }

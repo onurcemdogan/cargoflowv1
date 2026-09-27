@@ -179,21 +179,37 @@ test('ARC-4b: ResultCode 0 disi basari SAYILMAZ (sinif. degismez)', async () => 
   assert.equal(classified.resultCode, '99')
 })
 
-/* ═══ ARC-5: dogrulama — kanitsiz zarf, AGA HIC CIKILMAZ ════════════════ */
+/* ═══ ARC-5: dogrulama — yalniz GetOrderWithIntegrationCode ═══════════ */
 
-test('ARC-5: GetOrderWithIntegrationCode agdan HIC CIKMAZ (zarf kanitsiz)', async () => {
-  let called = false
-  const fetchImpl = async () => {
-    called = true
-    return { ok: true, status: 200, text: async () => '<a/>' }
+test('ARC-5: GetOrderWithIntegrationCode proven zarf ve SOAPAction ile gider', async () => {
+  const VER = await import('./carriers/aras/arasVerification.ts')
+  const built = VER.buildArasGetOrderWithIntegrationCodeEnvelope({
+    credentials,
+    integrationCode: 'ARAS:org:1:CREATE',
+  })
+  assert.equal(built.ok, true)
+  let sentBody = null
+  let sentAction = null
+  const fetchImpl = async (_url, init) => {
+    sentBody = init.body
+    sentAction = init.headers.SOAPAction
+    return {
+      ok: true, status: 200,
+      text: async () => '<Envelope><IntegrationCode>ARAS:org:1:CREATE</IntegrationCode></Envelope>',
+    }
   }
   const outcome = await CLIENT.callArasVerification({
-    integrationCode: 'ARAS:org:1:CREATE', fetchImpl,
+    credentials,
+    integrationCode: 'ARAS:org:1:CREATE',
+    fetchImpl,
   })
-  assert.equal(called, false)
-  assert.equal(outcome.networkCalled, false)
-  assert.equal(outcome.ok, false)
-  assert.equal(outcome.errorCode, 'ARAS_VERIFICATION_CONTRACT_UNPROVEN')
+  assert.equal(outcome.networkCalled, true)
+  assert.equal(sentBody, built.envelope)
+  assert.equal(sentAction, 'http://tempuri.org/GetOrderWithIntegrationCode')
+  assert.match(sentBody, /<userName>aras-user<\/userName>/)
+  assert.match(sentBody, /<password>aras-pass<\/password>/)
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.IntegrationCode, 'ARAS:org:1:CREATE')
 })
 
 /* ═══ ARC-6: GetBarcode — on kosul + zarf kanitsizligi ══════════════════ */
@@ -208,14 +224,33 @@ test('ARC-6: registered=false iken GetBarcode agdan HIC CIKMAZ', async () => {
   assert.equal(outcome.errorCode, 'ARAS_LABEL_PRECONDITION_NOT_MET')
 })
 
-test('ARC-6b: registered=true olsa bile zarf kanitsiz oldugu icin AGA CIKILMAZ', async () => {
-  let called = false
-  const fetchImpl = async () => { called = true; return { ok: true, status: 200, text: async () => '' } }
-  const outcome = await CLIENT.callArasGetBarcode({
-    integrationCode: 'x', registered: true, fetchImpl,
+test('ARC-6b: registered=true iken GetBarcode proven Username/Password zarfini gonderir', async () => {
+  const LBL = await import('./carriers/aras/arasLabelArtifact.ts')
+  const built = LBL.buildArasGetBarcodeEnvelope({
+    credentials,
+    integrationCode: 'ARAS:org:1:CREATE',
   })
-  assert.equal(called, false)
-  assert.equal(outcome.errorCode, 'ARAS_LABEL_CONTRACT_UNPROVEN')
+  assert.equal(built.ok, true)
+  let sentBody = null
+  const fetchImpl = async (_url, init) => {
+    sentBody = init.body
+    return {
+      ok: true, status: 200,
+      text: async () => '<Envelope><ZebraZpl>^XA^XZ</ZebraZpl></Envelope>',
+    }
+  }
+  const outcome = await CLIENT.callArasGetBarcode({
+    credentials,
+    integrationCode: 'ARAS:org:1:CREATE',
+    registered: true,
+    fetchImpl,
+  })
+  assert.equal(outcome.networkCalled, true)
+  assert.equal(sentBody, built.envelope)
+  assert.match(sentBody, /<Username>aras-user<\/Username>/)
+  assert.match(sentBody, /<Password>aras-pass<\/Password>/)
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ZebraZpl, '^XA^XZ')
 })
 
 /* ═══ ARC-7: reprint icin ag cagrisi yapan bir disa aktarim YOK ═════════ */

@@ -235,7 +235,7 @@ test('SSC-5: tüm statüler 400 → TOTAL_FAILURE (FAILED)', async (t) => {
 // ── 6) Endpoint sözleşmesi (kaynak-seviyesi) ────────────────────────────────
 test('SSC-6: /api/orders/sync — PARTIAL 207 (reconcile YOK) / TOTAL 502 / COMPLETE 200', () => {
   const server = readSrc('server/index.mjs')
-  const block = sliceBlock(server, 'const syncStatus = result.debug?.syncStatus', 6600)
+  const block = sliceBlock(server, 'const syncStatus = result.debug?.syncStatus', 9000)
   // PARTIAL algısı: partial flag veya debug.syncStatus === 'PARTIAL'.
   assert.match(block, /const partial = result\.partial === true \|\| syncStatus === 'PARTIAL'/)
   // TOTAL_FAILURE yalnız PARTIAL DEĞİLKEN 502 döner (kısmi başarı 502 olmaz).
@@ -257,7 +257,7 @@ test('SSC-6: /api/orders/sync — PARTIAL 207 (reconcile YOK) / TOTAL 502 / COMP
   )
   assert.match(block, /const queryWindowExhausted = result\.queryWindowExhausted === true/)
   // COMPLETE → 200 ok:true + reconcile sayaçları.
-  assert.match(block, /ok: true,\s*\n\s*complete: persistResult\.complete/)
+  assert.match(block, /ok: true,\s*\r?\n\s*complete: persistResult\.complete/)
   // lastSuccessfulSyncAt yalnız 'success' (partial değil): status seçimi complete'e bağlı.
   assert.match(block, /const syncOutcome = persistResult\.complete \? 'success' : 'partial'/)
   assert.match(block, /status: syncOutcome/)

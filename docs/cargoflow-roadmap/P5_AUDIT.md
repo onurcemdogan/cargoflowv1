@@ -178,7 +178,15 @@ demek" UYDURULMAZ. `0` dışı başarı VARSAYILMAZ ve ham kod/mesaj korunur.
 
 Dal: `agent/ARAS-EXPANSION`. Ticket: `.ai/tickets/ARAS-EXPANSION.md`.
 
-## 1. ARAS_ACCOUNT_IDENTITY = BLOCKED_HUMAN — kanıt yok
+## 1. ARAS_ACCOUNT_IDENTITY — yerel hesap kaydı (supervisor 2026-09-27)
+
+`internal_test` için sağlayıcı-doğal müşteri kodu ZORUNLU DEĞİLDİR. Hesap
+kapsamı `marketplace_accounts.id` + `connector_credentials` (provider `aras`)
+ile ikas/WooCommerce deseninde tutulur; `providerAccountId` sütunu yerel
+`local-<uuid>` üretilir ve **UserName/Password ile ASLA özdeşleştirilmez**
+(`server/connectors/aras/arasIdentity.ts`, `ARE-1`).
+
+## 1 (eski). ARAS_ACCOUNT_IDENTITY = BLOCKED_HUMAN — SUPERSEDED
 
 Ticket, `TICIMAX-001`'in `UyeKodu` reddiyle aynı disiplinle, credential'dan
 BAĞIMSIZ, kararlı, sağlayıcı-doğal bir Aras hesap/müşteri kimliği ister.
@@ -216,7 +224,20 @@ Sağlamıyorsa, insan `UserName`'i BİLİNÇLİ bir istisna olarak kabul etmeli
 ve bunu `.ai/DECISIONS.md`'ye yazmalıdır — bu ajan bunu TEK BAŞINA karar
 VEREMEZ.
 
-## 2. GetOrderWithIntegrationCode / GetBarcode — istek zarfı kanıtsız
+## 2. GetOrderWithIntegrationCode / GetBarcode — istek zarfı DOĞRULANDI (2026-09-27)
+
+Bağımsız araştırma: `.ai/research/ARAS-EXPANSION/20260927T123508.*.json`.
+Resmî TEST `?op=` sayfaları:
+
+- `GetOrderWithIntegrationCode`: `userName`, `password`, `integrationCode`;
+  SOAPAction `http://tempuri.org/GetOrderWithIntegrationCode`.
+- `GetBarcode`: `Username`, `Password`, `integrationCode` (büyük/küçük harf
+  SetOrder'dan FARKLI); SOAPAction `http://tempuri.org/GetBarcode`.
+
+Kod: `buildArasGetOrderWithIntegrationCodeEnvelope`, `buildArasGetBarcodeEnvelope`,
+`callArasVerification`, `callArasGetBarcode` (`AR-24b/c`, `ARC-5/6b`).
+
+## 2 (eski). GetOrderWithIntegrationCode / GetBarcode — istek zarfı kanıtsız — SUPERSEDED
 
 `ARAS_VERIFICATION_OPERATION` (operasyon adı) ve `GetBarcode`'un yorum
 düzeyinde belirtilen girdi/çıktı alan adları (`arasLabelArtifact.ts`
@@ -241,7 +262,19 @@ oturumda/gelecek oturumda izin verilmesi ve resmî WSDL'in yeniden
 getirilip alıntılanması, ya da (b) Aras entegrasyon ekibinden gerçek bir
 `GetOrderWithIntegrationCode`/`GetBarcode` istek-yanıt zarfı örneği.
 
-## 3. Bu oturumda TAMAMLANAN (kanıtla sınırlı, kimlikten BAĞIMSIZ)
+## 3. ARAS-EXPANSION uygulama özeti (2026-09-27, cursor)
+
+- Taşıma: `arasClient.ts` SetOrder + doğrulama + GetBarcode (TEST endpoint).
+- Boru hattı: `arasShipmentPipeline.ts` (mock `fetchImpl`, reprint storage).
+- Kimlik: `connector_credentials` + `marketplace_accounts` (`arasConnectionService.ts`).
+- Taşıyıcı seçimi: boş `cargoProviderName` Surat varsaymaz; Aras ataması
+  Sürat create'i kapatır (`trendyolShipmentEligibility.ts`, `CN-3/6`).
+- Registry: `aras.enabled=true` (`internal_test`).
+- Sağlık: `ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS` içinde `aras`.
+- UI/API: `ArasSection.tsx`, `/api/integrations/aras/stores`.
+- Kapı: `npm run test:aras` (51 test).
+
+## 3 (eski). Bu oturumda TAMAMLANAN (kanıtla sınırlı, kimlikten BAĞIMSIZ)
 
 - `server/carriers/aras/arasClient.ts`: `SetOrder` için TAM kanıtlı taşıma
   (yalnız `resolveArasEndpoint` URL'i, zarf byte-for-byte, SOAPAction

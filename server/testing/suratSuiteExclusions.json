@@ -1,0 +1,6 @@
+[
+  "server/carrier-aras-client-flow.test.mjs",
+  "server/carrier-aras-contract-flow.test.mjs",
+  "server/carrier-aras-expansion-flow.test.mjs",
+  "server/ticimax-connector-flow.test.mjs"
+]

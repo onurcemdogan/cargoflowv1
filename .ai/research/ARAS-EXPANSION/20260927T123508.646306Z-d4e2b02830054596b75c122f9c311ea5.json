@@ -1,0 +1,142 @@
+{
+  "metadata": {
+    "createdAt": "2026-09-27T12:35:08.645979+00:00",
+    "resolverVersion": "1.0.0",
+    "ticket": "ARAS-EXPANSION",
+    "blockerIndexes": [
+      0
+    ],
+    "execution": {
+      "sourceFetchResearch": [
+        {
+          "url": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode",
+          "sha256": "e4edd8297de56ca64fa04c49eeb5b09fbde270c1fcb15db9791637c1b1eb90c0",
+          "bytes": 42806
+        },
+        {
+          "url": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode",
+          "sha256": "650c393d4017a137b2f8f85b846f91552f96f614629f2e1cba9a5dbf1336a314",
+          "bytes": 47709
+        }
+      ],
+      "research": {
+        "completedWebSearches": 0,
+        "exitCode": 0
+      },
+      "sourceFetchVerifier": [
+        {
+          "url": "https://www.araskargo.com.tr/iletisim",
+          "sha256": "b3cd7f0905b3c17c485510bc5d70c13c13e32862e6c77d204ce812677fbc2a03",
+          "bytes": 64000
+        },
+        {
+          "url": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode",
+          "sha256": "9239fb65ce528ad475e9bbaa5a4964bd09c6fa94d6952b6af57d098943166703",
+          "bytes": 42806
+        },
+        {
+          "url": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode",
+          "sha256": "59e233ce8d2ff13dadded7e43552adb788cd237f6bcdc19ebb8de09d9447c1a0",
+          "bytes": 47709
+        }
+      ],
+      "verifier": {
+        "completedWebSearches": 0,
+        "exitCode": 0
+      }
+    }
+  },
+  "research": {
+    "status": "RESOLVED",
+    "question": "Blocker 0: Independently verify only the public SOAP 1.1 schema for GetOrderWithIntegrationCode and GetBarcode on the official Aras public TEST service at customerservicestest.araskargo.com.tr. Verify operation wrapper names, http://tempuri.org namespace, SOAPAction values, and exact case-sensitive request field names. This task asks only for public schema literals; do not obtain, request, infer, or use any Username/Password credential VALUES.",
+    "official_sources": [
+      {
+        "url": "https://www.araskargo.com.tr/iletisim",
+        "publisher": "Aras Kargo",
+        "observation": "Live-opened corporate contact page identifies ARAS KARGO YURT İÇİ YURT DIŞI TAŞIMACILIK A.Ş. and www.araskargo.com.tr. The supplied service documents are published on a subdomain of this same corporate domain."
+      },
+      {
+        "url": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode",
+        "publisher": "Aras Kargo",
+        "observation": "Fresh supplied HTTPS content contains the operation's public SOAP 1.1 request and response examples on Aras Kargo's customerservicestest subdomain."
+      },
+      {
+        "url": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode",
+        "publisher": "Aras Kargo",
+        "observation": "Fresh supplied HTTPS content contains the operation's public SOAP 1.1 request and response examples on Aras Kargo's customerservicestest subdomain."
+      }
+    ],
+    "claims": [
+      {
+        "claim": "GetOrderWithIntegrationCode: request wrapper GetOrderWithIntegrationCode; namespace http://tempuri.org/; SOAPAction \"http://tempuri.org/GetOrderWithIntegrationCode\"; case-sensitive request fields, in order: userName, password, integrationCode (all string). Response wrapper: GetOrderWithIntegrationCodeResponse; result element: GetOrderWithIntegrationCodeResult.",
+        "evidence": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode — The SOAP 1.1 section explicitly shows these wrapper elements, xmlns declaration, SOAPAction header, and ordered request child elements.",
+        "confidence": "HIGH"
+      },
+      {
+        "claim": "GetBarcode: request wrapper GetBarcode; namespace http://tempuri.org/; SOAPAction \"http://tempuri.org/GetBarcode\"; case-sensitive request fields, in order: Username, Password, integrationCode (all string). Response wrapper: GetBarcodeResponse; result element: GetBarcodeResult.",
+        "evidence": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode — The SOAP 1.1 section explicitly shows these wrapper elements, xmlns declaration, SOAPAction header, and ordered request child elements.",
+        "confidence": "HIGH"
+      },
+      {
+        "claim": "Both SOAP 1.1 examples target /arascargoservice/arascargoservice.asmx on customerservicestest.araskargo.com.tr, use text/xml; charset=utf-8, and declare the SOAP envelope namespace http://schemas.xmlsoap.org/soap/envelope/. The operation namespace includes a trailing slash.",
+        "evidence": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode and https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode — Both SOAP 1.1 examples display the same POST path, Host, Content-Type, envelope namespace, and operation xmlns=\"http://tempuri.org/\".",
+        "confidence": "HIGH"
+      }
+    ],
+    "unresolved": [],
+    "summary": "Verified the public SOAP 1.1 literals for both TEST operations. Field casing differs: userName/password versus Username/Password. No credential values were obtained, requested, inferred, or used; no service operation was invoked."
+  },
+  "verifier": {
+    "verdict": "VERIFIED",
+    "reason": "The fresh official source content independently supports every schema claim for both TEST operations. The operation namespace is exactly http://tempuri.org/ (including the trailing slash). Both SOAP 1.1 examples use envelope namespace http://schemas.xmlsoap.org/soap/envelope/, Content-Type text/xml; charset=utf-8, and POST path /arascargoservice/arascargoservice.asmx on customerservicestest.araskargo.com.tr. Verification covers public schema literals only; no credential values were obtained or used, and no operation was invoked.",
+    "official_sources": [
+      {
+        "url": "https://www.araskargo.com.tr/iletisim",
+        "publisher": "Aras Kargo",
+        "observation": "Fresh corporate page content identifies ARAS KARGO YURT İÇİ YURT DIŞI TAŞIMACILIK A.Ş. and its domain www.araskargo.com.tr; independent live search also located this page. Both service documents are published within that corporate domain on customerservicestest.araskargo.com.tr."
+      },
+      {
+        "url": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode",
+        "publisher": "Aras Kargo",
+        "observation": "Fresh SOAP 1.1 content shows request wrapper GetOrderWithIntegrationCode, namespace http://tempuri.org/, SOAPAction \"http://tempuri.org/GetOrderWithIntegrationCode\", and ordered case-sensitive string fields userName, password, integrationCode. Response wrapper is GetOrderWithIntegrationCodeResponse; result element is GetOrderWithIntegrationCodeResult."
+      },
+      {
+        "url": "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode",
+        "publisher": "Aras Kargo",
+        "observation": "Fresh SOAP 1.1 content shows request wrapper GetBarcode, namespace http://tempuri.org/, SOAPAction \"http://tempuri.org/GetBarcode\", and ordered case-sensitive string fields Username, Password, integrationCode. Response wrapper is GetBarcodeResponse; result element is GetBarcodeResult."
+      }
+    ]
+  },
+  "result": {
+    "status": "RESOLUTION_ACCEPTED",
+    "reason": "INDEPENDENTLY_VERIFIED",
+    "dryRun": false,
+    "researchEligible": true,
+    "evidencePath": null,
+    "proposedStateTransition": {
+      "apply": false,
+      "resumeEligible": true,
+      "from": "BLOCKED_EXTERNAL",
+      "to": "IN_PROGRESS",
+      "ticket": "ARAS-EXPANSION",
+      "resolvedBlockerIndexes": [
+        0
+      ],
+      "inputHashes": {
+        "C:\\DevFactory\\projects\\cargoflow.toml": "283d54c69bc545572d70d3d51d56cc8459ff2310e420c00111b4d14c1d6b5a72",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_TASK.json": "fcccd33287e627ce77860a4094e0a3d088f64df80b1fe6d1f3ad34f25b56a925",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\tickets\\ARAS-EXPANSION.md": "61690fa05a226e2519ea56ae1c59dadf50aa24616e25bed40b23fdeb9920e14e",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_CONTEXT.md": "ed23d85018174c4a52942b876c87d0e42df7c193a6c61939cda829e9e80dd34b",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\HANDOFF.md": "79eb1c6f5fc1ae564554b19d1d5cc753ac9b1ba459b82199fe448bcd39bfe8db"
+      }
+    },
+    "ticket": "ARAS-EXPANSION",
+    "eligibility": [
+      {
+        "blockerIndex": 0,
+        "eligible": true,
+        "reason": "SUPERVISOR_RESEARCHABLE_EXTERNAL"
+      }
+    ]
+  }
+}

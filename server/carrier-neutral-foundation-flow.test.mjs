@@ -55,27 +55,17 @@ test('CN-2: gorunen ad dogrulamasi DB anahtari olarak KULLANILMAZ', () => {
 const BLOCK_END = String.fromCharCode(10) + '  )'
 
 test('CN-3: create on kontrolu YABANCI tasiyiciyi ENGELLER', () => {
-  // `suratAssigned === false` create'i kapatan kosullardan BIRIDIR ve
-  // PAYLASILAN yuklem listesinde yasar.
-  //
-  // YAPISI DEGISTI, NIYET AYNI: liste artik BIR KEZ
-  // `canCallSuratAfterPickingUpdate` icinde yazilir; gercek karar ondan
-  // TURETILIR. Boylece "Created disinda engel var mi?" ile "create
-  // acilabilir mi?" sorulari ASLA ayrisamaz — ikinci bir kopya YOK.
-  assert.match(ELIGIBILITY, /suratAssigned !== false,/)
+  // Aras atanmis siparis Surat yoluna GIREMEZ; Surat yalniz acik atamada acilir.
+  assert.match(ELIGIBILITY, /suratAssigned === true/)
+  assert.match(ELIGIBILITY, /!arasAssigned/)
   const sharedAt = ELIGIBILITY.indexOf(
     'const canCallSuratAfterPickingUpdate = Boolean(',
   )
   assert.ok(sharedAt > 0, 'paylasilan yuklem listesi bulunamadi')
   const sharedEnd = ELIGIBILITY.indexOf(BLOCK_END, sharedAt)
   const sharedList = ELIGIBILITY.slice(sharedAt, sharedEnd)
-  // Yabanci tasiyici kosulu PAYLASILAN listenin ICINDE.
-  assert.match(sharedList, /suratAssigned !== false,/)
-  // Ve listede `suratAssigned` TEK KEZ gecer: ikinci kopya yok.
-  assert.equal(
-    (ELIGIBILITY.match(/suratAssigned !== false,/g) ?? []).length, 1,
-    'yabanci tasiyici kosulu IKINCI kez kopyalanmis',
-  )
+  assert.match(sharedList, /suratAssigned === true/)
+  assert.match(sharedList, /!arasAssigned/)
   // Gercek kapi paylasilan listeden TUREtilir; kendi listesini KURMAZ.
   const gateAt = ELIGIBILITY.indexOf(
     'const canCallGonderiyiKargoyaGonder = Boolean(',
@@ -110,52 +100,44 @@ test('CN-4: istemci plani DESTEKLENMEYEN tasiyiciyi ayri kovaya koyar', () => {
 
 /* ═══ SAĞLAYICI KAYDI GENİŞLEMEYE AÇIK ══════════════════════════════ */
 
-test('CN-5: tasiyici kaydi cok saglayicili ve Aras KAPALI duruyor', () => {
+test('CN-5: tasiyici kaydi — Surat ve Aras internal_test icin ETKIN', () => {
   assert.match(REGISTRY, /export const carrierProviderRegistry/)
-  // Aras yalnizca GORUNUM kaydidir; entegrasyon DEGILDIR.
-  assert.match(REGISTRY, /aras: \{[\s\S]*?enabled: false,/)
-  // Surat TEK etkin tasiyicidir; ikinci bir taşıyıcı sessizce acilmamali.
+  // ARAS-EXPANSION: kanitli TEST SOAP yolu tamamlandiginda Aras acilir.
+  assert.match(REGISTRY, /aras: \{[\s\S]*?enabled: true,/)
+  assert.match(REGISTRY, /surat: \{[\s\S]*?enabled: true,/)
   const enabled = [...REGISTRY.matchAll(/(\w+): \{[\s\S]*?enabled: (true|false),/g)]
   const carrierStart = REGISTRY.indexOf('carrierProviderRegistry')
   const enabledCarriers = enabled
     .filter((m) => m.index > carrierStart && m[2] === 'true')
     .map((m) => m[1])
   assert.deepEqual(
-    enabledCarriers, ['surat'],
+    enabledCarriers.sort(), ['aras', 'surat'].sort(),
     `beklenmeyen etkin tasiyici: ${enabledCarriers.join(', ')}`,
   )
 })
 
 /* ═══ BİLİNEN VE BİLEREK ALINAN VARSAYILAN ══════════════════════════ */
 
-test('CN-6: tasiyici adi YOKSA Surat varsayilir — BILINCLI ve TEK YERDE', () => {
-  // OLCUM: `suratAssigned` yalniz cargoProviderName VARSA hesaplanir; yoksa
-  // null kalir ve `!== false` kosulundan GECER. Istemci plani da ayni sekilde
-  // bos adi Surat sayar.
-  //
-  // NEDEN BUGUN DOGRU: Trendyol paketi Picking'e alinmadan cargoProviderName
-  // BOS gelebilir; bunu bloklamak calisan akisi durdururdu. Surat da su an TEK
-  // etkin tasiyicidir (CN-5), yani "bilinmeyen" ile "Surat" pratikte ayni.
-  //
-  // NEDEN IKINCI TASIYICIDA DEGISMELI: Aras etkinlestiginde adi bos bir
-  // siparis Surat yoluna girmeye devam eder ve YANLIS tasiyiciya gidebilir.
-  // Bu test o gunun sessizce gelmesini ENGELLER: davranis degistiginde burasi
-  // duser ve karar BILINCLI verilir.
-  assert.match(ELIGIBILITY, /const suratAssigned = cargoProviderName\n\s*\? isSuratCargoProviderName\(cargoProviderName\)\n\s*: null/)
-  assert.match(PLAN, /isSuratOrder: \(order: CargoOrder\) => boolean/)
+test('CN-6: bos cargoProviderName artik Surat varsaymaz (cok tasiyici)', () => {
+  // ARAS-EXPANSION: ikinci tasiyici acildiginda bos ad fail-closed — ne Surat ne Aras.
+  assert.match(ELIGIBILITY, /const suratAssigned = cargoProviderName/)
+  assert.match(ELIGIBILITY, /suratAssigned === true/)
+  assert.match(ELIGIBILITY, /!arasAssigned/)
   const app = read('..', 'src', 'App.tsx')
-  assert.match(app, /!order\.cargoProviderName \|\|/)
+  assert.doesNotMatch(app, /!order\.cargoProviderName \|\|\s*\n\s*\/surat\|sürat/)
+  assert.match(app, /if \(!name\) return false/)
 })
 
 /* ═══ İKİNCİ TAŞIYICI İÇİN GEREKEN — HENÜZ YOK ══════════════════════ */
 
-test('CN-7: Aras icin uydurma wire sozlesmesi YOK', () => {
-  // P5 sinirinin kendisi test edilir: dis sozlesme gelmeden Aras'a ait
-  // endpoint/auth/alan adi repoya GIRMEMELIDIR.
+test('CN-7: Aras wire kodu yalniz kanitli carriers/aras altinda', () => {
+  // ON KOŞUL DEGISTI: TEST SOAP sözleşmesi `server/carriers/aras/*` altinda
+  // kanitlandi. index.mjs ve istemci plani icinde uydurma adaptor YASAK;
+  // tasima `arasClient.ts` uzerinden sinirlanir.
   const forbidden = /aras[A-Za-z]*(Client|Adapter|Endpoint|Soap|Rest|Wsdl)/i
-  assert.equal(
-    forbidden.test(SOURCE), false,
-    'index.mjs icinde Aras adaptor/endpoint izi var — sozlesme YOK',
-  )
-  assert.equal(forbidden.test(PLAN), false)
+  assert.equal(forbidden.test(SOURCE), false, 'index.mjs icinde Aras adaptor izi')
+  assert.equal(forbidden.test(PLAN), false, 'suratCreatePrintPlan icinde Aras adaptor izi')
+  const arasClient = read('carriers', 'aras', 'arasClient.ts')
+  assert.match(arasClient, /callArasSetOrder/)
+  assert.match(arasClient, /callArasVerification/)
 })

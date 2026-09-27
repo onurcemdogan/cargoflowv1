@@ -2,38 +2,66 @@
 
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
-Status: `BLOCKED_EXTERNAL` / `RESEARCH_REQUIRED`
+Status: `READY_FOR_REVIEW` / `IMPLEMENTATION_COMPLETE`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 
-## Completed and verified
+## Summary
 
-- Real TEST-only Aras `SetOrder` transport exists in `server/carriers/aras/arasClient.ts`.
-- `server/carrier-aras-client-flow.test.mjs`: 14/14 green.
-- `npm run test:aras`: 39/39 green (25 existing + 14 client tests).
-- TypeScript build, lint, connector-kernel and integration-health gates were green in the implementation session.
-- Credential persistence path was identified as the existing account-scoped integration credential infrastructure; no separate carrier-secret store should be invented.
+Resumed after research resolution for GetOrderWithIntegrationCode/GetBarcode SOAP literals. Implemented full `internal_test` Aras path: proven SOAP transport (SetOrder + verification + GetBarcode), encrypted account-scoped credentials (`connector_credentials`), carrier mutual exclusion with Surat, registry enablement, integration health presence, API + Integrations UI, and deterministic pipeline tests with mock transport.
 
-## Supervisor clarification
+## Evidence
 
-- `ARAS_ACCOUNT_IDENTITY` is no longer an unresolved blocker for this
-  `internal_test` ticket. Use the existing CargoFlow integration/account
-  record's stable non-secret local primary key for account scoping.
-  `UserName` / `Password` remain secrets and are never identity.
-  A future provider-native Aras customer/account identifier is optional
-  verified provider metadata, not a prerequisite.
+- `.ai/research/ARAS-EXPANSION/20260927T123508.646306Z-d4e2b02830054596b75c122f9c311ea5.json`
 
-- The only remaining public research blocker is
-  `ARAS_VERIFICATION_LABEL_CONTRACT`: independently verify the exact
-  SOAP 1.1 wrapper names, `http://tempuri.org` namespace, SOAPAction,
-  and case-sensitive request field names for
-  `GetOrderWithIntegrationCode` and `GetBarcode` from Aras's official
-  public TEST service. No credential values are needed or requested.
+## Key files
 
-- After that public schema evidence is independently verified, resume
-  the same `agent/ARAS-EXPANSION` branch automatically.
+- `server/carriers/aras/arasClient.ts`, `arasSoapXml.ts`, `arasVerification.ts` (envelope), `arasLabelArtifact.ts` (GetBarcode envelope), `arasShipmentPipeline.ts`, `arasRollout.ts`
+- `server/connectors/aras/*`, `server/shipments/arasProvider.ts`, `trendyolShipmentEligibility.ts` (CN-3/6)
+- `src/integrations/ArasSection.tsx`, `src/pages/IntegrationsPage.tsx`, `server/index.mjs` (aras routes)
+- Tests: `carrier-aras-client-flow.test.mjs`, `carrier-aras-expansion-flow.test.mjs`, `carrier-neutral-foundation-flow.test.mjs` (CN updates)
 
-## Next automatic action
+## Gates run (this session)
 
-DevFactory should run public provider-contract research, persist verified evidence, obtain Codex control-plane authorization to resume, and continue the same ticket with Claude/Cursor. Do not ask the user unless the automated research proves that a genuinely private tenant-only value/evidence is required for the current safe step.
+```bash
+npx tsc -b --force
+npm run lint          # 0 errors (6 pre-existing warnings)
+npm run build
+npm run test:aras     # 51/51
+npm run test:connector-kernel  # 15/15
+npm run test:integration-health # 53/53
+node --test server/carrier-neutral-foundation-flow.test.mjs  # 7/7
+npm run test:surat    # 3269/3269 pass, exit 0 (post CN-6 fixture + suite registry fixes)
+```
 
-`LIVE-PROVIDER-VERIFICATION` remains a separate roadmap gate for real credential values and any real TEST-account call. Do not deploy or advance beyond `internal_test`.
+## Surat gate follow-up (this session)
+
+CN-6 left empty `cargoProviderName` non-Surat: updated auto-label/surat-flow fixtures with explicit Sürat carrier; added `server/testing/suratSuiteExclusions.json` + `suratSuiteRegistry.mjs` (Aras/Ticimax suites excluded from `test:surat` orphan checks); removed `carrier-aras-contract-flow.test.mjs` from `suratSuiteFiles.json`; SSC-6 slice widened for COMPLETE response assertion.
+
+## Required verdicts (implementation)
+
+| Verdict | Value |
+|---------|-------|
+| ARAS_CONTRACT | VERIFIED_PUBLIC_OFFICIAL_TEST_CONTRACT |
+| ARAS_PRODUCTION_ENDPOINT | UNVERIFIED |
+| ARAS_ACCOUNT_IDENTITY | LOCAL_MARKETPLACE_ACCOUNT_SCOPE |
+| ARAS_SECRET_SAFETY | ENCRYPTED_AT_REST_NO_PLAINTEXT_API |
+| ARAS_CONNECTION_TEST | NOT_LIVE_NETWORK (internal_test store only) |
+| ARAS_MULTI_ACCOUNT | SIBLING_ISOLATED |
+| ARAS_CARRIER_SELECTION_SEAM | EXPLICIT_CARGO_NAME_REQUIRED |
+| ARAS_ORDER_CREATE | MOCK_PIPELINE_PROVEN |
+| ARAS_VERIFICATION | GetOrderWithIntegrationCode_ONLY |
+| ARAS_LABEL_ARTIFACT | GetBarcode → persist → reprint storage |
+| ARAS_REPRINT_FROM_STORAGE | YES (no refetch) |
+| ARAS_COD | FAIL_CLOSED_UNVERIFIED_VALUE_TABLE |
+| ARAS_HEALTH_ACCOUNT_SCOPE | aras::marketplaceAccountId |
+| ARAS_TENANT_ISOLATION | APPLICATION_SCOPED |
+| ARAS_LIVE_WRITE_GATE | BLOCKED internal_test |
+| ARAS_ROLLOUT | INTERNAL_TEST |
+| MIGRATION | NONE (connector_credentials path) |
+| LIVE_PROVIDER_VERIFICATION | NOT_PERFORMED |
+| PILOT_READY | NO |
+| ARAS_EXPANSION | READY_FOR_REVIEW |
+
+## Next action
+
+Review on `agent/ARAS-EXPANSION`; confirm `npm run test:surat` green; no push to protected branches.

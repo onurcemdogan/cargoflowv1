@@ -40,6 +40,7 @@ import {
 import { ShippingPayerSection } from '../integrations/ShippingPayerSection'
 import { WooCommerceSection } from '../integrations/WooCommerceSection'
 import { IkasSection } from '../integrations/IkasSection'
+import { ArasSection } from '../integrations/ArasSection'
 import {
   integrationCategoryTabs,
   suratDetailTabs,
@@ -117,7 +118,7 @@ export function IntegrationsPage({
   const [activeCategory, setActiveCategory] =
     useState<IntegrationCategory>('marketplaces')
   const [activeIntegration, setActiveIntegration] = useState<
-    'trendyol' | 'surat' | null
+    'trendyol' | 'surat' | 'aras' | null
   >(null)
   const [activeTrendyolTab, setActiveTrendyolTab] =
     useState<TrendyolDetailTab>('general')
@@ -213,29 +214,45 @@ export function IntegrationsPage({
         ) : null}
 
         {activeCategory === 'carriers' ? (
-          <IntegrationCard
-            type="carrier"
-            title="Sürat Kargo"
-            description="Gönderi, ortak barkod ve takip entegrasyonu"
-            configured={suratConfigured}
-            test={suratTest}
-            facts={[
-              ['Müşteri Kodu', form.surat.kullaniciAdi || '-'],
-              ['Ortam', form.surat.ortam === 'live' ? 'Canlı' : 'Test'],
-              ['Anlaşmalı', suratConfigured ? 'Evet' : 'Kurulum gerekli'],
-              ['Son bağlantı', formatTestDate(suratTest)],
-            ]}
-            busy={busy}
-            primaryAction={{
-              label: 'Test Et',
-              icon: <TestTube2 size={16} />,
-              onClick: () => onTestSurat(form),
-            }}
-            onSettings={() => {
-              setActiveIntegration('surat')
-              setActiveSuratTab('general')
-            }}
-          />
+          <>
+            <IntegrationCard
+              type="carrier"
+              title="Sürat Kargo"
+              description="Gönderi, ortak barkod ve takip entegrasyonu"
+              configured={suratConfigured}
+              test={suratTest}
+              facts={[
+                ['Müşteri Kodu', form.surat.kullaniciAdi || '-'],
+                ['Ortam', form.surat.ortam === 'live' ? 'Canlı' : 'Test'],
+                ['Anlaşmalı', suratConfigured ? 'Evet' : 'Kurulum gerekli'],
+                ['Son bağlantı', formatTestDate(suratTest)],
+              ]}
+              busy={busy}
+              primaryAction={{
+                label: 'Test Et',
+                icon: <TestTube2 size={16} />,
+                onClick: () => onTestSurat(form),
+              }}
+              onSettings={() => {
+                setActiveIntegration('surat')
+                setActiveSuratTab('general')
+              }}
+            />
+            <IntegrationCard
+              type="carrier"
+              title="Aras Kargo"
+              description="INTERNAL TEST — resmî test SOAP uç noktası"
+              configured={false}
+              facts={[['Yayın', 'internal_test'], ['Canlı gönderi', 'Kapalı']]}
+              busy={busy}
+              primaryAction={{
+                label: 'Ayarlar',
+                icon: <TestTube2 size={16} />,
+                onClick: () => setActiveIntegration('aras'),
+              }}
+              onSettings={() => setActiveIntegration('aras')}
+            />
+          </>
         ) : null}
 
         {activeCategory !== 'marketplaces' &&
@@ -277,6 +294,10 @@ export function IntegrationsPage({
             onSave={onSave}
             onTest={onTestSurat}
           />
+        ) : null}
+
+        {activeCategory === 'carriers' && activeIntegration === 'aras' ? (
+          <ArasSection />
         ) : null}
       </form>
 

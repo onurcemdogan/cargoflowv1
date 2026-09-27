@@ -2,39 +2,42 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "BLOCKED_EXTERNAL",
-  "phase": "RESEARCH_REQUIRED",
+  "status": "READY_FOR_REVIEW",
+  "phase": "IMPLEMENTATION_COMPLETE",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "8cffdf71600f2a81acfc6fc1d6a33a62d4f258da",
+  "headCommit": "a2cc2058c9aa2f4bdff1260a262348682d58e0e9",
   "activeWorker": null,
-  "lastImplementationWorker": "claude",
+  "lastImplementationWorker": "cursor",
   "reviewer": null,
   "contributors": [
-    "claude"
+    "claude",
+    "cursor"
   ],
   "completedCriteria": [
-    "ARAS transport client (server/carriers/aras/arasClient.ts): SetOrder submission over resolveArasEndpoint's URL, byte-for-byte reuse of buildArasSetOrderEnvelope, HTTP/SOAP-fault/timeout/malformed-XML classified as failure (never synthesized success), response parsed via name-only extraction limited to ARAS_SET_ORDER_RESULT_FIELDS.",
-    "server/carrier-aras-client-flow.test.mjs: 14 tests (ARC-1..ARC-7 incl. sub-cases), REAL_CARRIER_NETWORK=1 guarded, no live network.",
-    "npm run test:aras gate added (package.json, .ai/QUALITY_GATES.md) covering both carrier-aras-contract-flow.test.mjs (25/25, pre-existing) and the new client tests (14/14) = 39/39 passing.",
-    "npx tsc -b --force: clean. npm run lint: 0 errors (6 pre-existing unrelated warnings). npm run build: clean.",
-    "npm run test:connector-kernel (15/15) and npm run test:integration-health (53/53): clean, no regression.",
-    "Credential-storage path researched (not written): Surat carrier credentials use the SAME integration_credentials/credentialService infrastructure as marketplace connectors (server/integrations/activeSuratIntegration.ts -> server/connectors/credentialService.ts), so Aras is connector-shaped, not a separate carrier table. Recorded in docs/cargoflow-roadmap/P5_AUDIT.md.",
-    "Findings recorded in docs/cargoflow-roadmap/P5_AUDIT.md under 'ARAS-EXPANSION — KIMLIK KAPISI + TASIMA KATMANI (2026-09-27)'."
+    "Verified SOAP envelopes for GetOrderWithIntegrationCode (userName/password/integrationCode) and GetBarcode (Username/Password/integrationCode) wired in arasClient with test locks AR-24b/c, ARC-5/6b; evidence .ai/research/ARAS-EXPANSION/20260927T123508.646306Z-d4e2b02830054596b75c122f9c311ea5.json",
+    "SetOrder + verification + GetBarcode transport on TEST endpoint only; pipeline runArasInternalTestPipeline (mock fetch) through label persist + reprint-from-storage (ARE-9)",
+    "Account-scoped encrypted credentials via connector_credentials + marketplace_accounts (arasConnectionService); sibling + tenant isolation tests ARE-2..4",
+    "ARAS_ACCOUNT_IDENTITY: local marketplace_accounts.id scope; UserName/Password rejected as providerAccountId (ARE-1, arasIdentity.ts)",
+    "Carrier selection: empty cargoProviderName no longer defaults to Surat; Aras-assigned shipments block Surat create (CN-3/6, ARE-6/7); aras.enabled=true",
+    "Integration Health: aras in ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS; presence key aras::<accountId> (ARE-5)",
+    "UI: ArasSection + /api/integrations/aras/stores; internal_test labeling",
+    "Rollout: ARAS_ROLLOUT_STAGE=internal_test; canArasCarrierAffectLiveFulfillment false (ARE-8)",
+    "npm run test:aras 51/51; tsc/lint/build clean; test:connector-kernel 15/15; test:integration-health 53/53; carrier-neutral CN-1..7 updated",
+    "P5_AUDIT.md + .ai/DECISIONS.md updated for identity, SOAP verification, CN-6",
+    "npm run test:surat 3269/3269 after CN-6 test fixture alignment and surat suite registry exclusions"
   ],
   "failingTests": [],
-  "blockers": [
-    {
-      "id": "ARAS_VERIFICATION_LABEL_CONTRACT",
-      "kind": "PUBLIC_PROVIDER_CONTRACT",
-      "summary": "Independently verify only the public SOAP 1.1 schema for GetOrderWithIntegrationCode and GetBarcode on the official Aras public TEST service at customerservicestest.araskargo.com.tr. Verify operation wrapper names, http://tempuri.org namespace, SOAPAction values, and exact case-sensitive request field names. This task asks only for public schema literals; do not obtain, request, infer, or use any Username/Password credential VALUES.",
-      "sourceUrls": [
-        "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode",
-        "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode"
-      ]
-    }
-  ],
-  "nextAction": "Automatically verify the remaining public Aras SOAP schema blocker. Use the pinned official TEST source URLs with deterministic read-only HTTPS source acquisition plus Codex research/verifier, then resume ARAS-EXPANSION.",
-  "specPath": ".ai/tickets/ARAS-EXPANSION.md"
+  "blockers": [],
+  "nextAction": "Different-model review on agent/ARAS-EXPANSION.",
+  "specPath": ".ai/tickets/ARAS-EXPANSION.md",
+  "researchResolution": {
+    "status": "VERIFIED",
+    "resolvedAt": "2026-09-27T12:41:40.189115+00:00",
+    "evidencePath": ".ai/research/ARAS-EXPANSION/20260927T123508.646306Z-d4e2b02830054596b75c122f9c311ea5.json",
+    "resolvedBlockerIndexes": [
+      0
+    ]
+  }
 }

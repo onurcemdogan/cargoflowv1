@@ -8,3 +8,5 @@
 - internal_test/shadow cannot mutate live fulfillment.
 - ikas webhook remains disabled until a verifiable signature contract exists.
 - Product Tour is UX preference, not onboarding truth.
+- With Surat + Aras both enabled, empty `cargoProviderName` does not default to Surat; create/print preflight requires an explicit carrier assignment (fail-closed ambiguity).
+- Aras `internal_test` account scope uses `marketplace_accounts` + `connector_credentials` (provider `aras`); `UserName`/`Password` are never `providerAccountId`.
