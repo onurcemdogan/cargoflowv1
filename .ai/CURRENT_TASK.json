@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "REVIEW_EXHAUSTED",
-  "phase": "REVIEW_EXHAUSTED",
+  "status": "MERGE_READY",
+  "phase": "MERGE_READY",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
@@ -31,7 +31,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_EXHAUSTED: run configured local quality gates, then Codex-only MERGE control-plane decision.",
+  "nextAction": "REVIEW_EXHAUSTED local quality gates passed. Final head is frozen. GitHub CI is the final gate; then Codex-only MERGE authorization via the existing merge control plane.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -52,227 +52,21 @@
   "qualityGates": {
     "evidencePath": ".ai/.runtime/quality-gates.json",
     "passed": true,
-    "finishedAt": "2026-09-27T14:46:27.000000+00:00",
+    "finishedAt": "2026-09-27T15:17:47.336842+00:00",
     "results": [
       {
         "command": [
-          "npx",
-          "tsc",
-          "-b",
-          "--force"
-        ],
-        "exitCode": 0,
-        "passed": true,
-        "note": "cursor session 2026-09-27"
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "lint"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "build"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:ui"
-        ],
-        "exitCode": 0,
-        "passed": true,
-        "note": "365 tests; fixes CI duplicate Ayarlar failure"
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:aras"
-        ],
-        "exitCode": 0,
-        "passed": true,
-        "note": "51 tests"
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:connector-kernel"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:integration-health"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:dashboard"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:label-editor:acceptance"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:performance:acceptance"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:auto-label:acceptance"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:contract-packs"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:subscription"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:billing-party"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:woocommerce"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:print-platform"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:onboarding"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:landing"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:ikas"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
+          "npm.cmd",
           "run",
           "test:ticimax"
         ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:catalog"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:product-tour"
-        ],
-        "exitCode": 0,
-        "passed": true
-      },
-      {
-        "command": [
-          "npm",
-          "run",
-          "test:surat"
-        ],
+        "startedAt": "2026-09-27T15:17:35.031928+00:00",
+        "finishedAt": "2026-09-27T15:17:46.483239+00:00",
+        "durationSeconds": 11.451,
         "exitCode": 0,
         "passed": true,
-        "note": "3269/3269 pass, exit 0 (full re-run completed this session)"
+        "logPath": ".ai/.runtime/20260927-181735-quality-0.log"
       }
-    ],
-    "ci": {
-      "workflow": "DevFactory CI",
-      "runId": 36325919805,
-      "headSha": "45e44fb6d23048cbdb6e5e29dfa4e8ef9b55ceb9",
-      "conclusion": "success",
-      "failedCheckReproduced": "npm run test:ui — Found multiple elements with the role button and name Ayarlar (run 36325213366 on 7f24048)"
-    }
+    ]
   }
 }
