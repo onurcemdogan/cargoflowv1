@@ -161,6 +161,24 @@ function hasInvalidEntityReference(textOutsideCdata: string): boolean {
   return textOutsideCdata.replace(VALID_ENTITY_REFERENCE, '').includes('&')
 }
 
+// Character legality (the Char production) is a document-wide XML
+// constraint, not a property of entity-reference syntax — it applies to
+// EVERY literal character, including inside CDATA (CDATA only suppresses
+// markup/entity recognition, not the underlying character-legality rule).
+// `hasInvalidEntityReference` only inspects `&`-prefixed syntax, so it never
+// caught an actual illegal byte typed directly into the response: a body
+// like `<Envelope><Other>\x00</Other><ResultCode>0</ResultCode></Envelope>`
+// (a literal NUL, not the entity `&#0;` already rejected above) still passed
+// as well-formed, letting `extractKnownXmlFields` read ResultCode='0' out of
+// an otherwise malformed body. This checks raw characters against the same
+// `isValidXmlCodePoint` rule used for numeric character references.
+function hasInvalidLiteralChar(text: string): boolean {
+  for (const ch of text) {
+    if (!isValidXmlCodePoint(ch.codePointAt(0)!)) return true
+  }
+  return false
+}
+
 // CDATA govdesi harfi harfine metindir — icindeki `<!--...-->` gibi diziler
 // GERCEK bir yorum DEGILDIR. Onceki surum yorum/PI/DOCTYPE'i CDATA
 // sinirlarindan HABERSIZ tek bir regex gecisiyle siliyordu; bu yuzden
@@ -237,6 +255,10 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   for (const match of tagMatches) {
     const tag = match[0]
     const gap = cleaned.slice(cursor, match.index)
+    // Raw character legality applies to the FULL gap, CDATA included — a
+    // literal illegal character (e.g. an actual NUL byte) is invalid XML
+    // whether or not it sits inside a CDATA section.
+    if (hasInvalidLiteralChar(gap)) return null
     // Entity references must be validated everywhere text can appear —
     // including inside an open element (e.g. `<Other>&undefined;</Other>`),
     // not just in the outside-the-root gaps checked below — but never inside
@@ -325,6 +347,7 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
       ]
       const attrNames = attrMatches.map((m) => m[1])
       if (new Set(attrNames).size !== attrNames.length) return null
+      if (attrMatches.some((m) => hasInvalidLiteralChar(m[2] ?? m[3] ?? ''))) return null
       if (attrMatches.some((m) => hasInvalidEntityReference(m[2] ?? m[3] ?? ''))) return null
       tagNames.push(nameMatch[1])
       if (stack.length === 0) {
