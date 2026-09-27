@@ -7,7 +7,7 @@
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "707473c86e661c20adbe89408d468bc378e52691",
+  "headCommit": "834579b3579c97c5119f0ef7c87465d71eb6f277",
   "activeWorker": "claude",
   "lastImplementationWorker": "claude",
   "reviewer": null,
@@ -34,7 +34,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "Fix applied for CODEX-MERGE-f45d49551e813508 (arasClient.ts XML well-formedness). Local gates green (test:aras 55/55, tsc clean, lint clean, carrier-aras-expansion-flow 11/11) but not yet committed/pushed or re-run through GitHub CI. Commit with checkpoint message, push to origin/agent/ARAS-EXPANSION, wait for GitHub CI to go green on the new head, then request a fresh Codex merge decision against the new headCommit.",
+  "nextAction": "Fix for CODEX-MERGE-f45d49551e813508 committed (834579b) and pushed to origin/agent/ARAS-EXPANSION; PR #8 headRefOid confirmed 834579b3579c97c5119f0ef7c87465d71eb6f277 via gh pr view. GitHub CI mergeStateStatus was UNKNOWN immediately after push (checks still queuing) — supervisor/next worker should poll GitHub Actions on this head until it settles (SUCCESS/FAILURE), then request a fresh Codex merge decision against 834579b3579c97c5119f0ef7c87465d71eb6f277.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -74,10 +74,10 @@
   },
   "externalReview": {
     "prNumber": 8,
-    "prHeadSha": "707473c86e661c20adbe89408d468bc378e52691",
-    "ciStatus": "SUCCESS",
+    "prHeadSha": "834579b3579c97c5119f0ef7c87465d71eb6f277",
+    "ciStatus": "UNKNOWN",
     "humanReviewStatus": "CLEAR",
-    "externalReviewStatus": "CLEAN",
+    "externalReviewStatus": "PENDING_RECHECK",
     "actionableFindingCount": 0,
     "historicalFindingCount": 0,
     "bugbotAvailability": {
@@ -87,11 +87,11 @@
       "conclusion": "SUCCESS"
     },
     "remainingFindings": [],
-    "evaluatedAt": "2026-09-27T17:33:25.271032+00:00"
+    "evaluatedAt": "2026-09-27T17:41:00.000000+00:00"
   },
   "reviewFeedback": {
     "fingerprint": "CODEX-MERGE-f45d49551e813508",
-    "headSha": "707473c86e661c20adbe89408d468bc378e52691",
+    "headSha": "834579b3579c97c5119f0ef7c87465d71eb6f277",
     "bugIds": [
       "CODEX-MERGE-f45d49551e813508"
     ],

@@ -2,8 +2,8 @@
 
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
-Status: `MERGE_READY`
-HEAD: `707473c86e661c20adbe89408d468bc378e52691`
+Status: `CI_PENDING`
+HEAD: `834579b3579c97c5119f0ef7c87465d71eb6f277`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
 
@@ -25,7 +25,7 @@ Verification this round:
 - `npm run lint`: 0 errors (6 pre-existing unrelated warnings).
 - `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
 
-**Not yet done:** commit/push to `origin/agent/ARAS-EXPANSION` and a fresh GitHub CI run on the new head — do that next, then request a fresh Codex merge decision against the new head.
+Committed as `834579b3579c97c5119f0ef7c87465d71eb6f277` and pushed to `origin/agent/ARAS-EXPANSION`; `gh pr view 8` confirms `headRefOid` matches. GitHub CI (`quality`) and Cursor Bugbot were both `pending` immediately after push (run `36337651152`). **Not yet done:** wait for those checks to settle to a terminal state, then request a fresh Codex merge decision against `834579b3579c97c5119f0ef7c87465d71eb6f277`. If `quality` fails, diagnose via the run log before re-touching `arasClient.ts` — the local `npm run test:aras` (55/55), `tsc -b --force`, and `npm run lint` all passed before push, so a CI-only failure would point at an environment or flake, not the structural-XML fix itself.
 
 ## Codex merge-control finding CODEX-MERGE-ca1dce80fe96b617 (repaired, no code change needed — 3rd recurrence, root cause identified)
 
