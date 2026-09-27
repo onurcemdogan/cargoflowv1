@@ -223,8 +223,18 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
       // `<ResultCode>` with the bogus ` !` silently discarded as if it were
       // attribute syntax, letting `extractKnownXmlFields` read ResultCode='0'
       // out of an otherwise malformed body.
+      //
+      // XML forbids a literal, unescaped `<` inside an attribute value (it
+      // must be written as `&lt;`) — a raw `<` there is always the start of
+      // a new tag, never data. The value classes below previously accepted
+      // any non-quote character (`[^"]*` / `[^']*`), so a tag like
+      // `<ResultCode a="<">` still matched: the embedded `<` was treated as
+      // ordinary attribute text instead of the well-formedness violation it
+      // is, letting `extractKnownXmlFields` read ResultCode='0' out of an
+      // otherwise malformed body. Excluding `<` from both value classes
+      // forces such tags to fail `nameMatch` and be rejected.
       const nameMatch =
-        /^<\s*([A-Za-z_][\w.:-]*)(?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"]*"|'[^']*'))*\s*(\/)?>$/.exec(
+        /^<\s*([A-Za-z_][\w.:-]*)(?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"<]*"|'[^'<]*'))*\s*(\/)?>$/.exec(
           tag,
         )
       if (!nameMatch) return null
@@ -234,9 +244,9 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
       // attribute twice (e.g. `<ResultCode a="1" a="2">`), which XML forbids
       // (duplicate attribute names are a well-formedness violation). Extract
       // every attribute name in the tag and reject if any repeats.
-      const attrNames = [...tag.matchAll(/([A-Za-z_][\w.:-]*)\s*=\s*(?:"[^"]*"|'[^']*')/g)].map(
-        (m) => m[1],
-      )
+      const attrNames = [
+        ...tag.matchAll(/([A-Za-z_][\w.:-]*)\s*=\s*(?:"[^"<]*"|'[^'<]*')/g),
+      ].map((m) => m[1])
       if (new Set(attrNames).size !== attrNames.length) return null
       tagNames.push(nameMatch[1])
       if (stack.length === 0) {

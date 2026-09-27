@@ -313,6 +313,18 @@ test('ARC-3r: acilis etiketinde tekrarlanan oznitelik adi (<ResultCode a="1" a="
   assert.equal(outcome.raw, null)
 })
 
+test('ARC-3s: acilis etiketinde oznitelik degerinde escape edilmemis "<" (<ResultCode a="<">) basari SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultCode a="<">0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+  assert.equal(outcome.raw, null)
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {
