@@ -13,10 +13,24 @@ Spec: `.ai/tickets/ARAS-EXPANSION.md`
 - TypeScript build, lint, connector-kernel and integration-health gates were green in the implementation session.
 - Credential persistence path was identified as the existing account-scoped integration credential infrastructure; no separate carrier-secret store should be invented.
 
-## Remaining external research — automated, not human
+## Supervisor clarification
 
-1. `ARAS_ACCOUNT_IDENTITY`: public evidence does not prove a provider-native non-secret account identifier. This is a provider-contract question, not a missing credential value. For `internal_test`, use the existing CargoFlow integration/account record's stable non-secret local key for account scoping; do not use `UserName`, `Password`, or their hashes as identity. If official Aras material exposes a provider-native customer/account ID, record it as provider metadata after verification.
-2. `ARAS_VERIFICATION_LABEL_CONTRACT`: pin the exact public TEST SOAP request shapes for `GetOrderWithIntegrationCode` and `GetBarcode` from official public WSDL/documentation. A prior interactive WebFetch permission rejection is a tooling event, not a human gate. DevFactory research/Codex should perform this research non-interactively.
+- `ARAS_ACCOUNT_IDENTITY` is no longer an unresolved blocker for this
+  `internal_test` ticket. Use the existing CargoFlow integration/account
+  record's stable non-secret local primary key for account scoping.
+  `UserName` / `Password` remain secrets and are never identity.
+  A future provider-native Aras customer/account identifier is optional
+  verified provider metadata, not a prerequisite.
+
+- The only remaining public research blocker is
+  `ARAS_VERIFICATION_LABEL_CONTRACT`: independently verify the exact
+  SOAP 1.1 wrapper names, `http://tempuri.org` namespace, SOAPAction,
+  and case-sensitive request field names for
+  `GetOrderWithIntegrationCode` and `GetBarcode` from Aras's official
+  public TEST service. No credential values are needed or requested.
+
+- After that public schema evidence is independently verified, resume
+  the same `agent/ARAS-EXPANSION` branch automatically.
 
 ## Next automatic action
 

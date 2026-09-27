@@ -26,16 +26,11 @@
   "failingTests": [],
   "blockers": [
     {
-      "id": "ARAS_ACCOUNT_IDENTITY",
-      "kind": "PUBLIC_PROVIDER_CONTRACT",
-      "summary": "Current public contract evidence does not prove a provider-native Aras account identity. UserName/Password are credential fields and must not be used as canonical identity. Research official public Aras integration/onboarding material automatically; for internal_test, the implementation may use the existing CargoFlow local integration/account record as the non-secret account key."
-    },
-    {
       "id": "ARAS_VERIFICATION_LABEL_CONTRACT",
       "kind": "PUBLIC_PROVIDER_CONTRACT",
-      "summary": "GetOrderWithIntegrationCode and GetBarcode exact SOAP request envelope details are not yet pinned in-tree. Resolve from the official public TEST WSDL/documentation through automated research; do not require an interactive WebFetch permission dialog."
+      "summary": "Independently verify only the public SOAP 1.1 schema for GetOrderWithIntegrationCode and GetBarcode on the official Aras public TEST service at customerservicestest.araskargo.com.tr. Verify operation wrapper names, http://tempuri.org namespace, SOAPAction values, and exact case-sensitive request field names. This task asks only for public schema literals; do not obtain, request, infer, or use any Username/Password credential VALUES."
     }
   ],
-  "nextAction": "Automated public provider-contract research via Codex; then resume the same ARAS-EXPANSION ticket with verified evidence.",
+  "nextAction": "Automatically verify the single remaining public Aras SOAP schema blocker with Codex using official TEST documentation, persist the evidence, then resume ARAS-EXPANSION. ARAS account identity is already defined for internal_test by the existing CargoFlow local integration/account key and is not a research blocker.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md"
 }
