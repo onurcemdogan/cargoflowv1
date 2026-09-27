@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "MERGE_READY",
-  "phase": "MERGE_READY",
+  "status": "IN_PROGRESS",
+  "phase": "REVIEW_FEEDBACK",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "1915a0a3b1d58208bf553e0fc9471dabe84986c7",
-  "activeWorker": null,
+  "headCommit": "fd4ada89648efeb50f13f0f92e0d76ed77654915",
+  "activeWorker": "claude",
   "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [
@@ -31,11 +31,12 @@
     "CODEX-MERGE-61123b9a11e6de29: drizzle/meta/0014_snapshot.json complete at origin/PR head 8b0cdd7 (91245 bytes, JSON.parse ok); npm run db:check no drift; Codex frozen-head 45e44fb predates migration commit cd84632 — finding outdated, no product diff",
     "CODEX-MERGE-ca1dce80fe96b617: re-verified drizzle/meta/0014_snapshot.json at actual current PR head 707473c (gh pr view 8 headRefOid == git rev-parse HEAD == git rev-parse origin/agent/ARAS-EXPANSION); file unchanged since cd84632, still 91245 bytes / 3315 lines, JSON.parse ok, npm run db:check reports no drift. Root cause of recurring truncation perception identified: GitHub REST API `pulls/8/files` returns `patch: null` for this entry (additions:3315, changes:3315) because the file's diff exceeds GitHub's per-file patch size threshold — any Codex evidence pipeline reading that API's `patch` field will see no diff content for this file and can misreport it as truncated, independent of which commit is evaluated. This is a diff-transport limitation of the review pipeline, not a repository defect; git blob and drizzle-kit check both confirm completeness.",
     "CODEX-MERGE-f45d49551e813508: fixed. server/carriers/aras/arasClient.ts looksLikeXml() replaced first/last-character heuristic with a stack-based structural well-formedness check (isWellFormedXml/stripNonElementXmlConstructs) that rejects mismatched or unclosed open/close tags (e.g. `<Envelope><ResultCode>0</ResultCode></Foo>`), so extractKnownXmlFields is never reached for malformed bodies and no spurious ResultCode=0 success classification can occur. Added regression tests ARC-3f (mismatched tags) and ARC-3g (unclosed tag) to server/carrier-aras-client-flow.test.mjs, both asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 55/55 (was 51/51 + 4 new); tsc -b --force clean; lint 0 errors (6 pre-existing unrelated warnings); carrier-aras-expansion-flow.test.mjs 11/11.",
-    "CODEX-MERGE-a7c6cff547743657: fixed. server/carriers/aras/arasClient.ts had a validation/extraction mismatch — well-formedness checking ran on a comment/CDATA/PI/DOCTYPE-stripped copy of the body (isWellFormedXml), but extractKnownXmlFields ran on the original, unstripped bodyText, so `<Envelope><!--<ResultCode>0</ResultCode>--></Envelope>` passed validation (stripped body is a valid empty <Envelope>) while the field-extraction regex still matched ResultCode=0 out of the commented-out text, falsely indicating create success. Fix: isWellFormedXml renamed to getWellFormedCleanedXml, now returns the cleaned/stripped body (or null if not well-formed) instead of a boolean; finishArasSoapCall uses that single cleaned string as the only source for both the SOAP-fault check and extractKnownXmlFields, so anything removed by stripNonElementXmlConstructs (comments/CDATA/PI/DOCTYPE) can never be extracted as a field. Downstream server/carriers/aras/arasContract.ts classifyArasSetOrderResult already treats a missing ResultCode as ARAS_SET_ORDER_RESULT_MISSING (not success), so no other caller changes were needed. Added regression test ARC-3h to server/carrier-aras-client-flow.test.mjs asserting the comment-hidden ResultCode is not extracted (outcome.ok=true, raw.ResultCode=undefined). npm run test:aras 56/56 (was 55/55 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11."
+    "CODEX-MERGE-a7c6cff547743657: fixed. server/carriers/aras/arasClient.ts had a validation/extraction mismatch — well-formedness checking ran on a comment/CDATA/PI/DOCTYPE-stripped copy of the body (isWellFormedXml), but extractKnownXmlFields ran on the original, unstripped bodyText, so `<Envelope><!--<ResultCode>0</ResultCode>--></Envelope>` passed validation (stripped body is a valid empty <Envelope>) while the field-extraction regex still matched ResultCode=0 out of the commented-out text, falsely indicating create success. Fix: isWellFormedXml renamed to getWellFormedCleanedXml, now returns the cleaned/stripped body (or null if not well-formed) instead of a boolean; finishArasSoapCall uses that single cleaned string as the only source for both the SOAP-fault check and extractKnownXmlFields, so anything removed by stripNonElementXmlConstructs (comments/CDATA/PI/DOCTYPE) can never be extracted as a field. Downstream server/carriers/aras/arasContract.ts classifyArasSetOrderResult already treats a missing ResultCode as ARAS_SET_ORDER_RESULT_MISSING (not success), so no other caller changes were needed. Added regression test ARC-3h to server/carrier-aras-client-flow.test.mjs asserting the comment-hidden ResultCode is not extracted (outcome.ok=true, raw.ResultCode=undefined). npm run test:aras 56/56 (was 55/55 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11.",
+    "CODEX-MERGE-df09d9399eeb35cc: fixed. server/carriers/aras/arasClient.ts getWellFormedCleanedXml's stack-based tag matcher only checked that every open tag had a matching, properly nested close tag; it never verified the body has exactly one root element. A body like `<Envelope/><ResultCode>0</ResultCode>` self-closes the root immediately (skipped, no stack push) then opens/closes a sibling ResultCode at the same top level — the stack ends empty (balanced) so the body passed as well-formed despite having two top-level elements, and extractKnownXmlFields then read ResultCode=0 from the stray sibling, permitting false create success. Fix: track a rootCount incremented whenever an element (open or self-closing) starts at stack.length===0; return null (malformed) if rootCount exceeds 1 during the scan or is not exactly 1 at the end. Added regression test ARC-3i to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 57/57 (was 56/56 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed fd4ada8 and pushed to origin/agent/ARAS-EXPANSION."
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "nextAction": "CODEX_MERGE_REMEDIATION: fix for CODEX-MERGE-df09d9399eeb35cc committed (fd4ada8) and pushed to origin/agent/ARAS-EXPANSION. Wait for GitHub CI (quality) and Cursor Bugbot to reach a terminal state on fd4ada89648efeb50f13f0f92e0d76ed77654915, then request a fresh Codex merge decision against that commit.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -75,10 +76,10 @@
   },
   "externalReview": {
     "prNumber": 8,
-    "prHeadSha": "834579b3579c97c5119f0ef7c87465d71eb6f277",
-    "ciStatus": "UNKNOWN",
+    "prHeadSha": "246ddf92cac20e2b421382fe057e657814264cd1",
+    "ciStatus": "SUCCESS",
     "humanReviewStatus": "CLEAR",
-    "externalReviewStatus": "PENDING_RECHECK",
+    "externalReviewStatus": "CLEAN",
     "actionableFindingCount": 0,
     "historicalFindingCount": 0,
     "bugbotAvailability": {
@@ -88,17 +89,15 @@
       "conclusion": "SUCCESS"
     },
     "remainingFindings": [],
-    "evaluatedAt": "2026-09-27T17:52:19.000000+00:00"
+    "evaluatedAt": "2026-09-27T18:02:39.551140+00:00"
   },
   "reviewFeedback": {
-    "fingerprint": "CODEX-MERGE-a7c6cff547743657",
-    "headSha": "1915a0a3b1d58208bf553e0fc9471dabe84986c7",
+    "fingerprint": "CODEX-MERGE-df09d9399eeb35cc",
+    "headSha": "fd4ada89648efeb50f13f0f92e0d76ed77654915",
     "bugIds": [
-      "CODEX-MERGE-a7c6cff547743657"
+      "CODEX-MERGE-df09d9399eeb35cc"
     ],
-    "attemptedProviders": [
-      "claude"
-    ],
+    "attemptedProviders": [],
     "history": [
       {
         "provider": "claude",
@@ -240,19 +239,36 @@
           "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
         ],
         "at": "2026-09-27T17:55:07.671391+00:00"
+      },
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-df09d9399eeb35cc",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [
+          "server/carriers/aras/arasClient.ts",
+          "server/carrier-aras-client-flow.test.mjs"
+        ],
+        "at": "2026-09-27T18:15:00.000000+00:00",
+        "commands": [
+          "npm run test:aras",
+          "npx tsc -b --force",
+          "npm run lint",
+          "node --test server/carrier-aras-expansion-flow.test.mjs",
+          "git push origin agent/ARAS-EXPANSION"
+        ]
       }
     ],
-    "status": "REPAIRED",
-    "updatedAt": "2026-09-27T17:55:07.671391+00:00",
+    "status": "AWAITING_CI",
+    "updatedAt": "2026-09-27T18:15:00.000000+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
-        "bugId": "CODEX-MERGE-a7c6cff547743657",
+        "bugId": "CODEX-MERGE-df09d9399eeb35cc",
         "title": "Codex merge authorization finding",
         "severity": "high",
         "path": null,
         "line": null,
-        "body": "arasClient.ts validates XML after stripping comments but extracts fields from the original body. Thus <Envelope><!--<ResultCode>0</ResultCode>--></Envelope> passes validation and yields ResultCode=0, falsely indicating create success. Parse and extract actual XML elements consistently, and add a regression test before reconsidering merge.",
+        "body": "arasClient.ts still accepts malformed XML: <Envelope/><ResultCode>0</ResultCode> passes getWellFormedCleanedXml and extracts ResultCode=0 despite having multiple roots, permitting false create success. Require strict XML parsing and a regression test before merge; green CI does not cover this defect.",
         "threadId": null,
         "outdated": false,
         "source": "codex-merge-control"

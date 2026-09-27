@@ -3,9 +3,26 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `1915a0a3b1d58208bf553e0fc9471dabe84986c7`
+HEAD: `fd4ada89648efeb50f13f0f92e0d76ed77654915`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-df09d9399eeb35cc (repaired, code change applied)
+
+Finding: `getWellFormedCleanedXml`'s stack-based tag matcher (added for `CODEX-MERGE-f45d49551e813508`) only verified that every open tag had a matching, properly nested close tag — it never checked that the body has exactly **one** root element. A body like `<Envelope/><ResultCode>0</ResultCode>` self-closes the root immediately (self-closing tags were just `continue`d, never pushed to the stack) and then opens/closes a sibling `<ResultCode>` at the same top level; the stack ends empty (balanced) so the whole thing passed as well-formed even though it has two top-level elements, which is not valid XML. `extractKnownXmlFields` then read `ResultCode=0` out of the stray sibling, permitting a false create-success classification — exactly the multi-root case the original stack-balance check didn't cover.
+
+Fix (`server/carriers/aras/arasClient.ts`): `getWellFormedCleanedXml` now tracks a `rootCount`, incremented whenever an element (opening or self-closing) begins at `stack.length === 0`. If `rootCount` ever exceeds `1` mid-scan, or is not exactly `1` once the stack is empty at the end, the body is rejected as malformed. No other logic changed — `finishArasSoapCall` still branches on `null` vs. a cleaned string.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3i`: the exact body from the finding, `<Envelope/><ResultCode>0</ResultCode>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 57/57 (was 56/56; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `fd4ada89648efeb50f13f0f92e0d76ed77654915` (code + test only) and pushed to `origin/agent/ARAS-EXPANSION`. **Not yet done:** wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `fd4ada89648efeb50f13f0f92e0d76ed77654915`. Do not push/merge `master`/`integration/roadmap`.
 
 ## Codex merge-control finding CODEX-MERGE-a7c6cff547743657 (repaired, code change applied)
 
