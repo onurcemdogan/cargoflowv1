@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `3a48671` (pending push)
+HEAD: `5ec22c2` (pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-ff386c6c9acf66cb (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><Other>&undefined;</Other><ResultCode>0</ResultCode></Envelope>` passes tag balancing and yields `ResultCode='0'` because entity references in character data are never validated. This permits false create success. Require strict XML validation and a regression test before reconsidering merge.
+
+Root cause: in `parseWellFormedXmlStructure`, the tag-matching scan validated tag balance, nesting, single-root, and outside-root gap text — but never inspected character data (text between tags) for entity-reference well-formedness. XML forbids a literal `&` in text unless it starts one of the five predefined entities (`lt`/`gt`/`amp`/`apos`/`quot`) or a numeric character reference (`&#NNN;`/`&#xHHHH;`); any other name is an undeclared general entity reference, which is a well-formedness violation without a DTD declaring it (WFC: Entity Declared). A body like `<Envelope><Other>&undefined;</Other><ResultCode>0</ResultCode></Envelope>` therefore still passed as well-formed — its tags balance, it has exactly one root, and there is no stray text outside the root — despite `&undefined;` being invalid XML. Traced by hand against the exact finding body: `extractKnownXmlFields` read `ResultCode='0'` from the accepted structure, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success, so the malformed body was misclassified as a successful create — confirmed as a live, reproducible bug against the current `arasClient.ts`, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `hasInvalidEntityReference(text)`, which strips every valid entity reference (a `VALID_ENTITY_REFERENCE` regex covering the 5 predefined names plus decimal/hex numeric character references) out of the given text and reports whether any `&` remains. In the tag-matching scan, the inter-tag gap text (`cleaned.slice(cursor, match.index)`) is now always computed up front — previously it was only computed when `stack.length === 0`, so text inside an open element (like `<Other>&undefined;</Other>`) was never examined at all. Any CDATA span is stripped out of that gap before validation, since entity syntax is never processed inside CDATA (consistent with the existing CDATA-opacity handling from `CODEX-MERGE-a14f3b696b9f30e7`/`CODEX-MERGE-8222e34b89e08fa9`). If the remaining (non-CDATA) text contains an invalid entity reference, the body is now rejected as malformed — this check runs unconditionally, both inside and outside the root, before the pre-existing outside-root whitespace-only check. All other well-formedness checks (tag balance, single root, gap/trailing-text, attribute duplicate-name/`<`-in-value rejection, delimiter-to-name whitespace, CDATA handling) are unchanged.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3u`: the exact body from the finding, `<Envelope><Other>&undefined;</Other><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 69/69 (was 68/68; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `5ec22c2cb82668fbea9bcca52705fab1bde26820` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `5ec22c2cb82668fbea9bcca52705fab1bde26820`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-eb3de5b61561ebdd (repaired, code change applied)
 
