@@ -24,6 +24,7 @@ npm run test:product-tour
 npm run test:landing
 npm run test:ikas
 npm run test:surat
+npm run test:aras
 ```
 
 No skip/todo/weakened assertions. Mutation proof when the active ticket requires it.

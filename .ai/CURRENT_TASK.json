@@ -2,19 +2,30 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "READY",
-  "phase": "READY",
+  "status": "BLOCKED_HUMAN",
+  "phase": "IDENTITY_GATE_AND_CONTRACT_GAP",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "activeWorker": null,
-  "lastImplementationWorker": null,
+  "headCommit": "8cffdf71600f2a81acfc6fc1d6a33a62d4f258da",
+  "activeWorker": "claude",
+  "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [],
-  "completedCriteria": [],
+  "completedCriteria": [
+    "ARAS transport client (server/carriers/aras/arasClient.ts): SetOrder submission over resolveArasEndpoint's URL, byte-for-byte reuse of buildArasSetOrderEnvelope, HTTP/SOAP-fault/timeout/malformed-XML classified as failure (never synthesized success), response parsed via name-only extraction limited to ARAS_SET_ORDER_RESULT_FIELDS.",
+    "server/carrier-aras-client-flow.test.mjs: 14 tests (ARC-1..ARC-7 incl. sub-cases), REAL_CARRIER_NETWORK=1 guarded, no live network.",
+    "npm run test:aras gate added (package.json, .ai/QUALITY_GATES.md) covering both carrier-aras-contract-flow.test.mjs (25/25, pre-existing) and the new client tests (14/14) = 39/39 passing.",
+    "npx tsc -b --force: clean. npm run lint: 0 errors (6 pre-existing unrelated warnings). npm run build: clean.",
+    "npm run test:connector-kernel (15/15) and npm run test:integration-health (53/53): clean, no regression.",
+    "Credential-storage path researched (not written): Surat carrier credentials use the SAME integration_credentials/credentialService infrastructure as marketplace connectors (server/integrations/activeSuratIntegration.ts -> server/connectors/credentialService.ts), so Aras is connector-shaped, not a separate carrier table. Recorded in docs/cargoflow-roadmap/P5_AUDIT.md.",
+    "Findings recorded in docs/cargoflow-roadmap/P5_AUDIT.md under 'ARAS-EXPANSION — KIMLIK KAPISI + TASIMA KATMANI (2026-09-27)'."
+  ],
   "failingTests": [],
-  "blockers": [],
-  "nextAction": "Execute ARAS-EXPANSION exactly from .ai/tickets/ARAS-EXPANSION.md. Stop on contract uncertainty or human-only gates.",
+  "blockers": [
+    "ARAS_ACCOUNT_IDENTITY: no stable, provider-native, non-secret Aras account identity field is provable from current contract evidence. UserName/Password are credentials (arasSetOrder.ts SECRET_FIELDS, same reasoning as Ticimax's rejected UyeKodu). OrgReceiverCustId is the RECEIVER's identity (per-shipment, not per-account). SenderAccountAddressId is an unexplained field name with no documented semantics (existence != stable identity, mirrors the COD field existence-vs-value-table distinction already in arasContract.ts). Ticimax/WooCommerce's store-origin-as-identity pattern does not transfer: Aras uses one single shared TEST endpoint for all customers, not a per-merchant URL. Per ticket stop condition 3 / acceptance criteria 3, no credential/account persistence code was written.",
+    "ARAS verification/label wire contract gap: GetOrderWithIntegrationCode's and GetBarcode's exact SOAP request envelope shape (parameter wrapper, exact field casing) is not proven anywhere in the repo (only SetOrder has a test-locked envelope builder). Attempted to refresh the official WSDL via WebFetch to close this gap; the tool-use permission dialog was not approved in this session, so the fetch could not run. arasClient.ts's callArasVerification/callArasGetBarcode therefore fail closed (ARAS_VERIFICATION_CONTRACT_UNPROVEN / ARAS_LABEL_CONTRACT_UNPROVEN) and never touch the network for these two operations."
+  ],
+  "nextAction": "Human must resolve BOTH: (1) ARAS_ACCOUNT_IDENTITY — either confirm/supply an official, non-secret, stable Aras account identifier distinct from UserName (e.g. from Aras's integration/onboarding docs or support), or explicitly accept a documented risk-accepted alternative and record it in .ai/DECISIONS.md (this agent cannot decide this itself per the ticket's identity gate). (2) Grant WebFetch tool permission (or supply a captured real GetOrderWithIntegrationCode/GetBarcode request+response example) so the exact SOAP envelope for those two operations can be built without guessing. Only after both are resolved should credential storage, identity, carrier-selection seam, Integration Health wiring, UI, migration, and provider-registry enablement (ticket items 2-8) proceed.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md"
 }
