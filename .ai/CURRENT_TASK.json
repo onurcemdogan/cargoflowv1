@@ -7,7 +7,7 @@
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "45e44fb6d23048cbdb6e5e29dfa4e8ef9b55ceb9",
+  "headCommit": "cd846323cd7bb0647ad004d749a94a215f7dc286",
   "activeWorker": null,
   "lastImplementationWorker": "claude",
   "reviewer": null,
@@ -31,7 +31,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "nextAction": "Verified at current PR head cd846323cd7bb0647ad004d749a94a215f7dc286: drizzle/meta/0014_snapshot.json is complete (91245 bytes, valid JSON, `npm run db:check` reports no drift) and drizzle/0014_dark_leader.sql + drizzle/meta/_journal.json are consistent. The finding's frozen-head reference (45e44fb) predated the prior remediation commit (cd84632) that introduced the full migration; GitHub CI is green (run 36331757952) and PR #8 head already matches cd846323 on origin. Request a fresh Codex merge decision evaluated against headCommit cd846323cd7bb0647ad004d749a94a215f7dc286.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -71,7 +71,7 @@
   },
   "externalReview": {
     "prNumber": 8,
-    "prHeadSha": "ed305ab9ab6926ed07297c82200eac15654a6417",
+    "prHeadSha": "cd846323cd7bb0647ad004d749a94a215f7dc286",
     "ciStatus": "SUCCESS",
     "humanReviewStatus": "CLEAR",
     "externalReviewStatus": "UNAVAILABLE",
@@ -84,18 +84,25 @@
       "conclusion": "NEUTRAL"
     },
     "remainingFindings": [],
-    "evaluatedAt": "2026-09-27T15:42:23.464691+00:00"
+    "evaluatedAt": "2026-09-27T17:12:14.248039+00:00"
   },
   "reviewFeedback": {
-    "fingerprint": "CODEX-MERGE-88024a2f97499c26",
-    "headSha": "45e44fb6d23048cbdb6e5e29dfa4e8ef9b55ceb9",
+    "fingerprint": "CODEX-MERGE-61123b9a11e6de29",
+    "headSha": "cd846323cd7bb0647ad004d749a94a215f7dc286",
     "bugIds": [
-      "CODEX-MERGE-88024a2f97499c26"
+      "CODEX-MERGE-61123b9a11e6de29"
     ],
     "attemptedProviders": [
       "claude"
     ],
     "history": [
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-61123b9a11e6de29",
+        "exitClass": "VERIFIED_NO_CHANGE_NEEDED",
+        "touchedPaths": [],
+        "at": "2026-09-27T17:17:03.252000+00:00"
+      },
       {
         "provider": "claude",
         "fingerprint": "CODEX-MERGE-88024a2f97499c26",
@@ -117,18 +124,18 @@
       }
     ],
     "status": "REPAIRED",
-    "updatedAt": "2026-09-27T16:02:14.643365+00:00",
+    "updatedAt": "2026-09-27T17:17:03.252000+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
-        "bugId": "CODEX-MERGE-88024a2f97499c26",
+        "bugId": "CODEX-MERGE-61123b9a11e6de29",
         "title": "Codex merge authorization finding",
         "severity": "high",
-        "path": null,
+        "path": "drizzle/meta/0014_snapshot.json",
         "line": null,
-        "body": "The supplied diff shows two unresolved implementation defects: arasShipmentPipeline.ts reports persistedArtifact using only an in-memory alias, without durable storage or a storage-backed reprint; arasClient.ts clears its timeout before response.text(), leaving response-body reads unbounded. Green CI does not resolve these defects. Automated fixes and regression evidence are needed before merge.",
+        "body": "Risk-sensitive evidence is incomplete: drizzle/meta/0014_snapshot.json is truncated and riskEvidenceComplete is false. Obtain the complete baseline-to-frozen-head evidence for automated review before approving merge; green CI does not resolve this evidence gap.",
         "threadId": null,
-        "outdated": false,
+        "outdated": true,
         "source": "codex-merge-control"
       }
     ]

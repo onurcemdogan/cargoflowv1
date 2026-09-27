@@ -2,10 +2,23 @@
 
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
-Status: `READY_FOR_REVIEW` / `IMPLEMENTATION_COMPLETE`
-HEAD: `45e44fb6d23048cbdb6e5e29dfa4e8ef9b55ceb9`
+Status: `MERGE_READY`
+HEAD: `cd846323cd7bb0647ad004d749a94a215f7dc286`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-61123b9a11e6de29 (repaired, no code change needed)
+
+Codex's merge-control gate rejected merge citing `drizzle/meta/0014_snapshot.json` as truncated (`riskEvidenceComplete: false`), evaluated against a stale frozen-head reference (`45e44fb`, the pre-remediation checkpoint). That commit genuinely predates the file: `git show 45e44fb:drizzle/meta/0014_snapshot.json` returns "does not exist". The prior remediation round (fingerprint `CODEX-MERGE-88024a2f97499c26`, fixed by claude) had already added the complete migration (`drizzle/0014_dark_leader.sql`, `drizzle/meta/0014_snapshot.json`, `drizzle/meta/_journal.json`) as part of fixing the persisted-artifact/timeout defects, committed at `cd84632` and already pushed to origin.
+
+Verified this session at current PR head `cd846323` (== `origin/agent/ARAS-EXPANSION` == `gh pr view 8` headRefOid):
+- `drizzle/meta/0014_snapshot.json` is 91245 bytes, parses as valid JSON, not truncated.
+- `npm run db:check` (drizzle-kit check) reports no drift across the migration chain.
+- `gh pr checks 8`: `quality` check passes on head `cd846323` (Cursor Bugbot still skipping — quota, pre-existing/unrelated).
+
+No source changes were required this session — the evidence gap Codex flagged does not exist at the actual current PR head, only at the stale frozen-head sha it evaluated against. Updated `.ai/CURRENT_TASK.json` (`headCommit`, `reviewFeedback.headSha` → `cd846323`; `reviewFeedback.status` → `REPAIRED`; finding marked `outdated: true`) and `.ai/CURRENT_CONTEXT.md` accordingly.
+
+**Next action for supervisor:** request a fresh Codex merge decision against `headCommit cd846323cd7bb0647ad004d749a94a215f7dc286` (not `45e44fb`) so the merge-control gate re-evaluates the current, complete evidence.
 
 ## Summary
 
