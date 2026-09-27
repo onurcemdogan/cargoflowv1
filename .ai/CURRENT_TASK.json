@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "BLOCKED_HUMAN",
-  "phase": "IDENTITY_GATE_AND_CONTRACT_GAP",
+  "status": "BLOCKED_EXTERNAL",
+  "phase": "RESEARCH_REQUIRED",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
@@ -25,9 +25,17 @@
   ],
   "failingTests": [],
   "blockers": [
-    "ARAS_ACCOUNT_IDENTITY: no stable, provider-native, non-secret Aras account identity field is provable from current contract evidence. UserName/Password are credentials (arasSetOrder.ts SECRET_FIELDS, same reasoning as Ticimax's rejected UyeKodu). OrgReceiverCustId is the RECEIVER's identity (per-shipment, not per-account). SenderAccountAddressId is an unexplained field name with no documented semantics (existence != stable identity, mirrors the COD field existence-vs-value-table distinction already in arasContract.ts). Ticimax/WooCommerce's store-origin-as-identity pattern does not transfer: Aras uses one single shared TEST endpoint for all customers, not a per-merchant URL. Per ticket stop condition 3 / acceptance criteria 3, no credential/account persistence code was written.",
-    "ARAS verification/label wire contract gap: GetOrderWithIntegrationCode's and GetBarcode's exact SOAP request envelope shape (parameter wrapper, exact field casing) is not proven anywhere in the repo (only SetOrder has a test-locked envelope builder). Attempted to refresh the official WSDL via WebFetch to close this gap; the tool-use permission dialog was not approved in this session, so the fetch could not run. arasClient.ts's callArasVerification/callArasGetBarcode therefore fail closed (ARAS_VERIFICATION_CONTRACT_UNPROVEN / ARAS_LABEL_CONTRACT_UNPROVEN) and never touch the network for these two operations."
+    {
+      "id": "ARAS_ACCOUNT_IDENTITY",
+      "kind": "PUBLIC_PROVIDER_CONTRACT",
+      "summary": "Current public contract evidence does not prove a provider-native Aras account identity. UserName/Password are credential fields and must not be used as canonical identity. Research official public Aras integration/onboarding material automatically; for internal_test, the implementation may use the existing CargoFlow local integration/account record as the non-secret account key."
+    },
+    {
+      "id": "ARAS_VERIFICATION_LABEL_CONTRACT",
+      "kind": "PUBLIC_PROVIDER_CONTRACT",
+      "summary": "GetOrderWithIntegrationCode and GetBarcode exact SOAP request envelope details are not yet pinned in-tree. Resolve from the official public TEST WSDL/documentation through automated research; do not require an interactive WebFetch permission dialog."
+    }
   ],
-  "nextAction": "claude exited TRANSIENT_ERROR; reconstruct from git and .ai\\recovery\\20260927-123706.",
+  "nextAction": "Automated public provider-contract research via Codex; then resume the same ARAS-EXPANSION ticket with verified evidence.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md"
 }

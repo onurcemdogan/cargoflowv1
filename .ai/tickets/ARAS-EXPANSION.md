@@ -127,16 +127,19 @@ inference.
      for precedent of loosening a CHECK constraint safely).
 
 3. **Carrier identity / account model**
-   - Establish account-scoped Aras identity following the same discipline
-     as `TICIMAX-001`'s identity gate: prove a stable, provider-native Aras
-     account/customer identity from the verified contract before persisting
-     it as canonical. `UserName` is a credential, not an identity, by the
-     same reasoning `UyeKodu` was rejected for Ticimax — do not use
-     `UserName`, `Password`, or any hash of them as account identity.
-   - If no stable provider-native identity field is provable from the
-     current contract evidence, set `CURRENT_TASK.status = BLOCKED_HUMAN`
-     and stop before credential/account persistence, exactly as
-     `TICIMAX-001.md` requires for its own identity gate.
+   - Account isolation is a CargoFlow persistence concern and must not depend
+     on discovering a provider-native identifier before `internal_test` work
+     can continue. Use the existing connector/integration account record's
+     stable, non-secret local primary key (after inspecting the repository's
+     established account-scoping path) as `providerAccountId`. Do not invent
+     a second identity store.
+   - `UserName`/`Password` remain credentials and must never be used, hashed,
+     or transformed into account identity.
+   - If official Aras documentation later proves a stable provider-native
+     customer/account ID, persist it as verified provider metadata; it is not
+     a prerequisite for the local account key used by this `internal_test`
+     ticket. Public uncertainty about that provider-native field is
+     `BLOCKED_EXTERNAL` / `RESEARCH_REQUIRED`, not a human gate.
    - Multiple Aras accounts (sibling stores/organizations) must never bleed
      credentials, sync state, or shipment data across each other, per
      `PROJECT_SPEC.md`'s "account-scoped providers never bleed" principle.
@@ -275,19 +278,21 @@ inference.
    shape already proven in `arasSetOrder.ts`.
 2. Aras account credentials are encrypted at rest, never logged, never
    returned plaintext, and scoped per account with proven sibling isolation.
-3. A stable, provider-native Aras account identity is used as
-   `providerAccountId`; `UserName`/`Password`/hashes of them are never used
-   as identity. If this cannot be proven from current contract evidence,
-   `CURRENT_TASK.status = BLOCKED_HUMAN` and no identity/credential
-   persistence code is written.
+3. `providerAccountId` uses the existing CargoFlow integration/account
+   record's stable non-secret local key; `UserName`/`Password`/hashes of them
+   are never used as identity. A verified provider-native Aras account ID may
+   be stored as metadata when discovered but is not required for this ticket.
 4. A shipment can be routed to Aras instead of Sürat through a real
    carrier-selection seam; Sürat's create path provably still rejects
    Aras-owned shipments (existing `CN-3`-style guarantee) and a new
    equivalent guarantee exists in the other direction.
 5. Order create → verification → label retrieval → immutable persistence →
-   reprint-from-storage works end-to-end against the **test** endpoint only,
-   entirely behind `internal_test` rollout, with zero path by which this can
-   trigger a live production Aras shipment or a Sürat side effect.
+   reprint-from-storage works end-to-end through the TEST-endpoint client
+   boundary using deterministic fixtures/mock transport in this ticket. A
+   real TEST-account network call requires actual credential values and stays
+   in the separate `LIVE-PROVIDER-VERIFICATION` roadmap item. There remains
+   zero path by which this ticket can trigger a production Aras shipment or a
+   Sürat side effect.
 6. COD shipments remain fail-closed without verified value tables; no value
    table is invented anywhere in the new code.
 7. `ResultCode` values other than `"0"` are never treated as success
@@ -434,30 +439,29 @@ bypass, COD fail-closed, and reprint-without-refetch — mirroring
 
 ## Stop conditions
 
-Use `BLOCKED_HUMAN` (not an assumption) whenever, and only whenever, one of
-these is genuinely true:
+Terminal `BLOCKED_HUMAN` is exceptional and supervisor-owned. The implementation
+worker must not create it merely because this ticket contains a stop condition.
 
-1. **Missing external credentials**: no Aras TEST account
-   (username/password) is available to exercise the client end-to-end.
-   Pure-logic tests (already 25/25) and transport-layer unit tests using
-   canned fixtures may still proceed without live credentials; only actual
-   TEST-service calls require them.
-2. **Missing live-provider evidence**: a required behavior (e.g. exact
-   precondition for `GetBarcode`, real shape of a SOAP fault, real
-   `ResultCode` values beyond `"0"`) cannot be confirmed from
-   `server/carriers/aras/*`, `docs/cargoflow-roadmap/P5_AUDIT.md`, or a
-   freshly fetched and cited official document. Stop and record the gap in
-   `P5_AUDIT.md` rather than inferring the answer.
-3. **Explicit approval required**: the carrier-native account identity
-   field cannot be proven stable from current contract evidence (identity
-   gate, mirrors `TICIMAX-001.md`); or a change would need to touch
-   `PRODUCTION-ROLLOUT`/`PRODUCTION-READINESS`/`PILOT-HARDENING` scope; or a
-   supervisor/human must approve moving past `internal_test`.
+1. **Actual missing secret value required now**: if a real TEST-account network
+   call is necessary for the current safe step and the required Username/Password
+   values are genuinely unavailable, stop as `BLOCKED_HUMAN`. Lack of live
+   credentials does **not** block fixture-based transport, persistence, routing,
+   health, UI, or deterministic local tests; real-provider execution belongs to
+   `LIVE-PROVIDER-VERIFICATION`.
+2. **Public provider-contract uncertainty**: missing/unclear WSDL fields, SOAP
+   wrappers, account-identity semantics, response shapes, or other facts that can
+   be researched from official public sources are `BLOCKED_EXTERNAL` with
+   `phase=RESEARCH_REQUIRED`. DevFactory/Codex must research them automatically;
+   an interactive WebFetch/shell permission failure is not a human gate. Only if
+   automated research establishes that genuinely private tenant-only evidence is
+   both unavailable and required for the current safe step may this become human.
+3. **Explicit authorization**: production rollout, deployment, destructive or
+   security-sensitive action, or a true business/human approval remains
+   `BLOCKED_HUMAN` / `HUMAN_APPROVAL`. This ticket never authorizes those actions.
 
-Do not use `BLOCKED_HUMAN` as a substitute for normal engineering work that
-this ticket's existing evidence already supports (e.g. do not block on "no
-WSDL" — the WSDL/contract evidence for `SetOrder`/`GetBarcode`/
-`GetOrderWithIntegrationCode` already exists and is cited above).
+Do not use `BLOCKED_HUMAN` for CI/test/lint/build failures, worker shell/tool
+rejection, model/provider quota, public documentation gaps, provider account
+identity ambiguity, or generic ticket wording.
 
 ## Required verdicts
 
