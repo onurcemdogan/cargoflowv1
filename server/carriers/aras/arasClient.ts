@@ -215,23 +215,27 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
       const top = stack.pop()
       if (!top || top.name !== nameMatch[1]) return null
       elements.push({ name: top.name, start: top.contentStart, end: match.index })
-    } else if (/\/\s*>$/.test(tag)) {
-      const nameMatch = /^<\s*([A-Za-z_][\w.:-]*)/.exec(tag)
-      if (!nameMatch) return null
-      tagNames.push(nameMatch[1])
-      if (stack.length === 0) {
-        rootCount += 1
-        if (rootCount > 1) return null
-      }
     } else {
-      const nameMatch = /^<\s*([A-Za-z_][\w.:-]*)/.exec(tag)
+      // An opening/self-closing tag permits the name to be followed only by
+      // whitespace-separated `name="value"` (or `'value'`) attributes, then
+      // an optional `/` and `>`. Matching only the name PREFIX (as before)
+      // would let `<ResultCode !>` be accepted as a valid open for
+      // `<ResultCode>` with the bogus ` !` silently discarded as if it were
+      // attribute syntax, letting `extractKnownXmlFields` read ResultCode='0'
+      // out of an otherwise malformed body.
+      const nameMatch =
+        /^<\s*([A-Za-z_][\w.:-]*)(?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"]*"|'[^']*'))*\s*(\/)?>$/.exec(
+          tag,
+        )
       if (!nameMatch) return null
       tagNames.push(nameMatch[1])
       if (stack.length === 0) {
         rootCount += 1
         if (rootCount > 1) return null
       }
-      stack.push({ name: nameMatch[1], contentStart: cursor })
+      if (!nameMatch[2]) {
+        stack.push({ name: nameMatch[1], contentStart: cursor })
+      }
     }
   }
   // Trailing text after the last tag is also outside the root once it has
