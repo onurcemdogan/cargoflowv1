@@ -3,9 +3,29 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `c7967df` (pending push)
+HEAD: `18e838f90d0e052a9396b8fc0a9638ee4b16369b` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-94d9708343f9b1d6 (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><Other>&#0;</Other><ResultCode>0</ResultCode></Envelope>`. `VALID_ENTITY_REFERENCE` accepts numeric references without validating XML character ranges, so this invalid response yields `ResultCode='0'` and false create success. Require strict character-reference validation and regression tests before reconsideration.
+
+Root cause: `VALID_ENTITY_REFERENCE` (the regex hardened for entity-reference well-formedness by `CODEX-MERGE-ff386c6c9acf66cb`/`CODEX-MERGE-fd3a21282f11cc5f`) accepted any `&#[0-9]+;` (decimal) or `&#x[0-9a-fA-F]+;` (hex) purely by syntax shape — it never checked whether the numeric code point the reference names is itself a legal XML character. XML 1.0's `Char` production is `#x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]`, which explicitly excludes the C0 control range (including NUL, `#x0`) and the UTF-16 surrogate range. A body like `<Envelope><Other>&#0;</Other><ResultCode>0</ResultCode></Envelope>` therefore still passed `hasInvalidEntityReference` — the reference `&#0;` is syntactically a well-formed numeric character reference, it just names an illegal character — so `extractKnownXmlFields` read `ResultCode='0'` and `classifyArasSetOrderResult` (`arasContract.ts`) treated `ResultCode === '0'` as success. Confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `isValidXmlCodePoint(codePoint)`, implementing the XML 1.0 `Char` production exactly (the 3 discrete control-char exceptions plus the 3 valid ranges, in order up to the full Unicode range including astral code points). `hasInvalidEntityReference` now iterates every `VALID_ENTITY_REFERENCE` match via `matchAll`; for any match whose body starts with `#` (i.e. a numeric reference, decimal or hex), it parses the referenced code point and rejects the text (`return true`) if `isValidXmlCodePoint` is false. This runs in addition to — not instead of — the pre-existing check (`replace(...).includes('&')`) that catches undeclared *named* entity references (e.g. `&undefined;`) and bare `&`. The five predefined named entities (`lt`/`gt`/`amp`/`apos`/`quot`) are untouched by the new check since they never look like numeric references and always resolve to valid XML characters. Both the inter-tag gap-text call site (added for `CODEX-MERGE-ff386c6c9acf66cb`) and the attribute-value call site (added for `CODEX-MERGE-fd3a21282f11cc5f`) call the same `hasInvalidEntityReference`, so both now benefit from the range check with no additional call-site changes needed.
+
+Regression tests added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3w`: the exact body from the finding, `<Envelope><Other>&#0;</Other><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+- `ARC-3x`: legitimate numeric character references (`&#9;` tab, `&#x20;` space) — asserts `outcome.ok === true` and `outcome.raw.ResultCode === '0'`, confirming the range check does not regress valid numeric references.
+
+Verification this round:
+- `npm run test:aras`: 72/72 (was 70/70; +2 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `18e838f90d0e052a9396b8fc0a9638ee4b16369b` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `18e838f90d0e052a9396b8fc0a9638ee4b16369b`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-fd3a21282f11cc5f (repaired, code change applied)
 
