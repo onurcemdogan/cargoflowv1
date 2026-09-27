@@ -246,7 +246,7 @@ export function IntegrationsPage({
               facts={[['Yayın', 'internal_test'], ['Canlı gönderi', 'Kapalı']]}
               busy={busy}
               primaryAction={{
-                label: 'Ayarlar',
+                label: 'Hesap Bağla',
                 icon: <TestTube2 size={16} />,
                 onClick: () => setActiveIntegration('aras'),
               }}
