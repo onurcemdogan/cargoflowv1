@@ -3,7 +3,7 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `MERGE_READY`
-HEAD: `cd846323cd7bb0647ad004d749a94a215f7dc286`
+HEAD: `8b0cdd70c0b735de25f7c569857ed3b2a2324a06`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
 
@@ -11,14 +11,14 @@ PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
 
 Codex's merge-control gate rejected merge citing `drizzle/meta/0014_snapshot.json` as truncated (`riskEvidenceComplete: false`), evaluated against a stale frozen-head reference (`45e44fb`, the pre-remediation checkpoint). That commit genuinely predates the file: `git show 45e44fb:drizzle/meta/0014_snapshot.json` returns "does not exist". The prior remediation round (fingerprint `CODEX-MERGE-88024a2f97499c26`, fixed by claude) had already added the complete migration (`drizzle/0014_dark_leader.sql`, `drizzle/meta/0014_snapshot.json`, `drizzle/meta/_journal.json`) as part of fixing the persisted-artifact/timeout defects, committed at `cd84632` and already pushed to origin.
 
-Verified this session at current PR head `cd846323` (== `origin/agent/ARAS-EXPANSION` == `gh pr view 8` headRefOid):
-- `drizzle/meta/0014_snapshot.json` is 91245 bytes, parses as valid JSON, not truncated.
+Verified at origin/PR head `8b0cdd7` (`gh pr view 8` headRefOid == `git rev-parse origin/agent/ARAS-EXPANSION`):
+- `drizzle/meta/0014_snapshot.json` is 91245 bytes, parses as valid JSON, not truncated (same blob since migration commit `cd84632`; no drizzle diff on later wip checkpoints).
 - `npm run db:check` (drizzle-kit check) reports no drift across the migration chain.
-- `gh pr checks 8`: `quality` check passes on head `cd846323` (Cursor Bugbot still skipping — quota, pre-existing/unrelated).
+- Stale Codex frozen-head `45e44fb` still has no `drizzle/meta/0014_snapshot.json` in git — that is why automated review reported `riskEvidenceComplete: false`.
 
-No source changes were required this session — the evidence gap Codex flagged does not exist at the actual current PR head, only at the stale frozen-head sha it evaluated against. Updated `.ai/CURRENT_TASK.json` (`headCommit`, `reviewFeedback.headSha` → `cd846323`; `reviewFeedback.status` → `REPAIRED`; finding marked `outdated: true`) and `.ai/CURRENT_CONTEXT.md` accordingly.
+**Cursor session (2026-09-27):** Completed claude's TRANSIENT_ERROR repair path — no product/source changes; updated `.ai/CURRENT_TASK.json`, `.ai/CURRENT_CONTEXT.md`, this handoff.
 
-**Next action for supervisor:** request a fresh Codex merge decision against `headCommit cd846323cd7bb0647ad004d749a94a215f7dc286` (not `45e44fb`) so the merge-control gate re-evaluates the current, complete evidence.
+**Next action for supervisor:** request a fresh Codex merge decision against `headCommit 8b0cdd70c0b735de25f7c569857ed3b2a2324a06` (not `45e44fb`) so the merge-control gate re-evaluates the current, complete evidence.
 
 ## Summary
 

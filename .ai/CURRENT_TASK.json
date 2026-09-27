@@ -2,14 +2,14 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "IN_PROGRESS",
-  "phase": "REVIEW_FEEDBACK",
+  "status": "MERGE_READY",
+  "phase": "MERGE_READY",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "cd846323cd7bb0647ad004d749a94a215f7dc286",
+  "headCommit": "8b0cdd70c0b735de25f7c569857ed3b2a2324a06",
   "activeWorker": null,
-  "lastImplementationWorker": "claude",
+  "lastImplementationWorker": "cursor",
   "reviewer": null,
   "contributors": [
     "claude",
@@ -27,11 +27,12 @@
     "npm run test:aras 51/51; tsc/lint/build clean; test:connector-kernel 15/15; test:integration-health 53/53; carrier-neutral CN-1..7 updated",
     "P5_AUDIT.md + .ai/DECISIONS.md updated for identity, SOAP verification, CN-6",
     "npm run test:surat 3269/3269 after CN-6 test fixture alignment and surat suite registry exclusions",
-    "CI_FAILED reconciliation: reproduced GitHub DevFactory CI failure on npm run test:ui (multiple role=button name Ayarlar after Aras card); fix already on branch 3dfac8a (Aras primary Hesap Bağla + within(suratCard) in desiMultiplierSetting.dom.test.tsx); local test:ui 365/365; GitHub run 36325919805 success on head 45e44fb"
+    "CI_FAILED reconciliation: reproduced GitHub DevFactory CI failure on npm run test:ui (multiple role=button name Ayarlar after Aras card); fix already on branch 3dfac8a (Aras primary Hesap Bağla + within(suratCard) in desiMultiplierSetting.dom.test.tsx); local test:ui 365/365; GitHub run 36325919805 success on head 45e44fb",
+    "CODEX-MERGE-61123b9a11e6de29: drizzle/meta/0014_snapshot.json complete at origin/PR head 8b0cdd7 (91245 bytes, JSON.parse ok); npm run db:check no drift; Codex frozen-head 45e44fb predates migration commit cd84632 — finding outdated, no product diff"
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_FEEDBACK repair via claude exited TRANSIENT_ERROR; reconstruct from git and .ai\\recovery\\20260927-201837.",
+  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -52,7 +53,7 @@
   "qualityGates": {
     "evidencePath": ".ai/.runtime/quality-gates.json",
     "passed": true,
-    "finishedAt": "2026-09-27T16:02:32.409050+00:00",
+    "finishedAt": "2026-09-27T17:20:47.468912+00:00",
     "results": [
       {
         "command": [
@@ -60,18 +61,18 @@
           "run",
           "test:ticimax"
         ],
-        "startedAt": "2026-09-27T16:02:16.707998+00:00",
-        "finishedAt": "2026-09-27T16:02:30.919396+00:00",
-        "durationSeconds": 14.211,
+        "startedAt": "2026-09-27T17:20:35.098325+00:00",
+        "finishedAt": "2026-09-27T17:20:46.640365+00:00",
+        "durationSeconds": 11.542,
         "exitCode": 0,
         "passed": true,
-        "logPath": ".ai/.runtime/20260927-190216-quality-0.log"
+        "logPath": ".ai/.runtime/20260927-202035-quality-0.log"
       }
     ]
   },
   "externalReview": {
     "prNumber": 8,
-    "prHeadSha": "cd846323cd7bb0647ad004d749a94a215f7dc286",
+    "prHeadSha": "8b0cdd70c0b735de25f7c569857ed3b2a2324a06",
     "ciStatus": "SUCCESS",
     "humanReviewStatus": "CLEAR",
     "externalReviewStatus": "UNAVAILABLE",
@@ -88,12 +89,13 @@
   },
   "reviewFeedback": {
     "fingerprint": "CODEX-MERGE-61123b9a11e6de29",
-    "headSha": "cd846323cd7bb0647ad004d749a94a215f7dc286",
+    "headSha": "8b0cdd70c0b735de25f7c569857ed3b2a2324a06",
     "bugIds": [
       "CODEX-MERGE-61123b9a11e6de29"
     ],
     "attemptedProviders": [
-      "claude"
+      "claude",
+      "cursor"
     ],
     "history": [
       {
@@ -131,10 +133,36 @@
           "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
         ],
         "at": "2026-09-27T17:18:36.840849+00:00"
+      },
+      {
+        "provider": "cursor",
+        "fingerprint": "CODEX-MERGE-61123b9a11e6de29",
+        "exitClass": "VERIFIED_NO_CHANGE_NEEDED",
+        "touchedPaths": [
+          ".ai/CURRENT_TASK.json",
+          ".ai/CURRENT_CONTEXT.md",
+          ".ai/HANDOFF.md"
+        ],
+        "at": "2026-09-27T17:22:00.000000+00:00",
+        "commands": [
+          "git rev-parse HEAD",
+          "git cat-file -s cd846323:drizzle/meta/0014_snapshot.json",
+          "git show 45e44fb:drizzle/meta/0014_snapshot.json",
+          "node -e JSON.parse drizzle/meta/0014_snapshot.json",
+          "npm run db:check",
+          "gh pr view 8 --json headRefOid"
+        ]
+      },
+      {
+        "provider": "cursor",
+        "fingerprint": "CODEX-MERGE-61123b9a11e6de29",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [],
+        "at": "2026-09-27T17:20:34.083764+00:00"
       }
     ],
     "status": "REPAIRED",
-    "updatedAt": "2026-09-27T17:18:36.840849+00:00",
+    "updatedAt": "2026-09-27T17:20:34.083764+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
