@@ -129,7 +129,35 @@ function findCdataSpans(xml: string): Array<{ start: number; end: number }> {
 // — entity syntax is never processed inside a CDATA section — so this check
 // must run only on the parts of the text outside any CDATA span.
 const VALID_ENTITY_REFERENCE = /&(?:lt|gt|amp|apos|quot|#[0-9]+|#x[0-9a-fA-F]+);/g
+
+// A numeric character reference is only well-formed XML if the code point it
+// names is itself a legal XML character. XML 1.0 restricts Char to:
+// #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF] —
+// notably excluding the C0 control range (e.g. NUL, #x0) and surrogates. The
+// prior regex accepted any `&#[0-9]+;` / `&#x[0-9a-fA-F]+;` purely by syntax,
+// so `&#0;` (NUL) matched as "valid" without checking what it resolves to,
+// letting `<Envelope><Other>&#0;</Other><ResultCode>0</ResultCode></Envelope>`
+// pass as well-formed and `extractKnownXmlFields` read ResultCode='0' out of
+// an otherwise malformed body.
+function isValidXmlCodePoint(codePoint: number): boolean {
+  return (
+    codePoint === 0x9 ||
+    codePoint === 0xa ||
+    codePoint === 0xd ||
+    (codePoint >= 0x20 && codePoint <= 0xd7ff) ||
+    (codePoint >= 0xe000 && codePoint <= 0xfffd) ||
+    (codePoint >= 0x10000 && codePoint <= 0x10ffff)
+  )
+}
+
 function hasInvalidEntityReference(textOutsideCdata: string): boolean {
+  for (const match of textOutsideCdata.matchAll(VALID_ENTITY_REFERENCE)) {
+    const body = match[0].slice(1, -1)
+    if (body[0] !== '#') continue
+    const isHex = body[1] === 'x' || body[1] === 'X'
+    const codePoint = parseInt(body.slice(isHex ? 2 : 1), isHex ? 16 : 10)
+    if (!isValidXmlCodePoint(codePoint)) return true
+  }
   return textOutsideCdata.replace(VALID_ENTITY_REFERENCE, '').includes('&')
 }
 
