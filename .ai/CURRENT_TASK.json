@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "MERGE_READY",
-  "phase": "MERGE_READY",
+  "status": "IN_PROGRESS",
+  "phase": "REVIEW_FEEDBACK",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "49b509bc35c68225340d4ec29a7e05fe6e92f165",
-  "activeWorker": null,
+  "headCommit": "f36f5787435d4d6887caf03cd7f7a01afc8da82c",
+  "activeWorker": "claude",
   "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [
@@ -34,11 +34,12 @@
     "CODEX-MERGE-a7c6cff547743657: fixed. server/carriers/aras/arasClient.ts had a validation/extraction mismatch — well-formedness checking ran on a comment/CDATA/PI/DOCTYPE-stripped copy of the body (isWellFormedXml), but extractKnownXmlFields ran on the original, unstripped bodyText, so `<Envelope><!--<ResultCode>0</ResultCode>--></Envelope>` passed validation (stripped body is a valid empty <Envelope>) while the field-extraction regex still matched ResultCode=0 out of the commented-out text, falsely indicating create success. Fix: isWellFormedXml renamed to getWellFormedCleanedXml, now returns the cleaned/stripped body (or null if not well-formed) instead of a boolean; finishArasSoapCall uses that single cleaned string as the only source for both the SOAP-fault check and extractKnownXmlFields, so anything removed by stripNonElementXmlConstructs (comments/CDATA/PI/DOCTYPE) can never be extracted as a field. Downstream server/carriers/aras/arasContract.ts classifyArasSetOrderResult already treats a missing ResultCode as ARAS_SET_ORDER_RESULT_MISSING (not success), so no other caller changes were needed. Added regression test ARC-3h to server/carrier-aras-client-flow.test.mjs asserting the comment-hidden ResultCode is not extracted (outcome.ok=true, raw.ResultCode=undefined). npm run test:aras 56/56 (was 55/55 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11.",
     "CODEX-MERGE-df09d9399eeb35cc: fixed. server/carriers/aras/arasClient.ts getWellFormedCleanedXml's stack-based tag matcher only checked that every open tag had a matching, properly nested close tag; it never verified the body has exactly one root element. A body like `<Envelope/><ResultCode>0</ResultCode>` self-closes the root immediately (skipped, no stack push) then opens/closes a sibling ResultCode at the same top level — the stack ends empty (balanced) so the body passed as well-formed despite having two top-level elements, and extractKnownXmlFields then read ResultCode=0 from the stray sibling, permitting false create success. Fix: track a rootCount incremented whenever an element (open or self-closing) starts at stack.length===0; return null (malformed) if rootCount exceeds 1 during the scan or is not exactly 1 at the end. Added regression test ARC-3i to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 57/57 (was 56/56 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed fd4ada8 and pushed to origin/agent/ARAS-EXPANSION.",
     "CODEX-MERGE-9e972f27157ce0f7: fixed. server/carriers/aras/arasClient.ts getWellFormedCleanedXml extracted tags via cleaned.match(/<[^>]+>/g) and validated only tag-name balance/root-count from that tag list — it never inspected the text between/after those matches, so `<Envelope><ResultCode>0</ResultCode></Envelope>garbage` passed as well-formed (tags balance, exactly one root) despite trailing non-XML content after the root closed, and extractKnownXmlFields (running on the same cleaned string) still extracted ResultCode=0, permitting false create success. Fix: switched to cleaned.matchAll(...) to get match indices, tracked a cursor, and reject (return null) if any gap between consecutive tag matches — or the trailing content after the final tag — is non-whitespace while stack.length===0 (i.e. outside the root: before it opens, between top-level siblings, or after it closes). Text inside the root (stack.length>0, e.g. element content like the '0' in <ResultCode>0</ResultCode>) is unaffected. Added regression test ARC-3j to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 58/58 (was 57/57 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed b9f5b56 (code + test only).",
-    "CODEX-MERGE-a14f3b696b9f30e7: fixed. server/carriers/aras/arasClient.ts stripNonElementXmlConstructs deleted CDATA sections entirely, in the same pass as comments/PI/DOCTYPE, before getWellFormedCleanedXml returned its single cleaned string for both validation and extractKnownXmlFields. But CDATA is real element character data, not a discardable construct — per XML, `<ResultCode>0<![CDATA[99]]></ResultCode>` has text content \"099\" (literal text and CDATA concatenate). Deleting the CDATA delimiters and payload made that body extract ResultCode=0 instead of 099, permitting false create-success classification exactly as the finding describes. Fix: stripNonElementXmlConstructs no longer touches CDATA (only strips comments/PI/DOCTYPE, which remain genuinely discardable markup). getWellFormedCleanedXml now locates CDATA spans up front and filters the tag-matching scan to ignore any match starting inside one (so embedded `<`/`>` characters inside CDATA payloads are never treated as markup — this is exactly why CDATA sections exist), runs the existing stack/root/gap well-formedness checks unchanged, and only after validation succeeds does it unwrap CDATA delimiters (`<![CDATA[x]]>` -> `x`) in the returned cleaned string, so the same single string used for the SOAP-fault check and extractKnownXmlFields now preserves CDATA text instead of losing it. Added regression tests ARC-3k (exact body from the finding, asserts raw.ResultCode === '099') and ARC-3l (CDATA payload containing literal `<`/`>` characters is preserved as text, not parsed as a tag) to server/carrier-aras-client-flow.test.mjs. npm run test:aras 60/60 (was 58/58 + 2 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 49b509b (code + test only)."
+    "CODEX-MERGE-a14f3b696b9f30e7: fixed. server/carriers/aras/arasClient.ts stripNonElementXmlConstructs deleted CDATA sections entirely, in the same pass as comments/PI/DOCTYPE, before getWellFormedCleanedXml returned its single cleaned string for both validation and extractKnownXmlFields. But CDATA is real element character data, not a discardable construct — per XML, `<ResultCode>0<![CDATA[99]]></ResultCode>` has text content \"099\" (literal text and CDATA concatenate). Deleting the CDATA delimiters and payload made that body extract ResultCode=0 instead of 099, permitting false create-success classification exactly as the finding describes. Fix: stripNonElementXmlConstructs no longer touches CDATA (only strips comments/PI/DOCTYPE, which remain genuinely discardable markup). getWellFormedCleanedXml now locates CDATA spans up front and filters the tag-matching scan to ignore any match starting inside one (so embedded `<`/`>` characters inside CDATA payloads are never treated as markup — this is exactly why CDATA sections exist), runs the existing stack/root/gap well-formedness checks unchanged, and only after validation succeeds does it unwrap CDATA delimiters (`<![CDATA[x]]>` -> `x`) in the returned cleaned string, so the same single string used for the SOAP-fault check and extractKnownXmlFields now preserves CDATA text instead of losing it. Added regression tests ARC-3k (exact body from the finding, asserts raw.ResultCode === '099') and ARC-3l (CDATA payload containing literal `<`/`>` characters is preserved as text, not parsed as a tag) to server/carrier-aras-client-flow.test.mjs. npm run test:aras 60/60 (was 58/58 + 2 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 49b509b (code + test only).",
+    "CODEX-MERGE-8222e34b89e08fa9: fixed. server/carriers/aras/arasClient.ts stripNonElementXmlConstructs stripped comments/PI/DOCTYPE with a single CDATA-unaware regex pass over the whole body, so a comment-shaped substring sitting INSIDE a CDATA payload was deleted as if it were a real comment. Body `<ResultCode><![CDATA[0<!--99-->]]></ResultCode>` therefore had its CDATA content corrupted from the literal text \"0<!--99-->\" to \"0\" before extraction even ran (parseWellFormedXmlStructure locates CDATA spans on the ALREADY-stripped string, so by then the damage was done) — permitting a rejected create (per the finding's premise, the true value is not '0') to be misclassified as successful once ResultCode extracted as exactly '0'. Fix: introduced findCdataSpans(xml) and rewrote stripNonElementXmlConstructs to locate CDATA spans on the RAW (pre-strip) body first, then strip comments/PI/DOCTYPE via a single indexed matchAll pass that skips any match whose start index falls inside a CDATA span — so CDATA content (including any comment-shaped substrings within it) passes through the strip step untouched, and parseWellFormedXmlStructure's existing cdataSpans computation (now reusing findCdataSpans) still runs correctly on the resulting cleaned string. No other logic changed. Added regression test ARC-3o to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting outcome.raw.ResultCode === '0<!--99-->' and classifyArasSetOrderResult(outcome.raw).ok === false. npm run test:aras 63/63 (was 62/62 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed f36f578 (code + test only)."
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "nextAction": "CODEX_MERGE_REMEDIATION: Codex rejected merge without a human-only boundary. Route the concrete finding to Claude/Cursor implementation, run local quality gates, GitHub CI, external review, then request a fresh Codex merge decision. Finding: arasClient.ts strips comments before identifying CDATA spans. A response containing <ResultCode><![CDATA[0<!--99-->]]></ResultCode> therefore extracts '0', although its actual value is '0<!--99-->'. This can falsely classify a rejected create as successful. Preserve CDATA content during parsing and add a regression test before merge.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -78,65 +79,29 @@
   },
   "externalReview": {
     "prNumber": 8,
-    "prHeadSha": "fc54343a18ff324a5b0b927806a242e7eba9f433",
+    "prHeadSha": "cc7f0af36a1d79f52c6807ba6d232a66b2ef5724",
     "ciStatus": "SUCCESS",
     "humanReviewStatus": "CLEAR",
-    "externalReviewStatus": "REVIEW_FEEDBACK",
-    "actionableFindingCount": 1,
-    "historicalFindingCount": 0,
+    "externalReviewStatus": "CLEAN",
+    "actionableFindingCount": 0,
+    "historicalFindingCount": 1,
     "bugbotAvailability": {
       "status": "AVAILABLE",
       "reason": "COMPLETED_REVIEW_SIGNAL",
       "checkName": "Cursor Bugbot",
-      "conclusion": "NEUTRAL"
+      "conclusion": "SUCCESS"
     },
-    "remainingFindings": [
-      {
-        "bugId": "4029ae75-d114-4764-827c-869a9625fd78",
-        "severity": null,
-        "title": "CDATA unwrap creates extractable fields",
-        "path": "server/carriers/aras/arasClient.ts",
-        "line": 179,
-        "body": "### CDATA unwrap creates extractable fields\n\n**High Severity**\n\n<!-- DESCRIPTION START -->\n`getWellFormedCleanedXml` treats CDATA as opaque during the tag scan, then unwraps it before `extractKnownXmlFields` and `containsSoapFault` run. Markup that was only character data is then matched as real fields, so a well-formed root whose CDATA contains a `ResultCode` of `0` classifies as create success.\n<!-- DESCRIPTION END -->\n\n<!-- BUGBOT_BUG_ID: 4029ae75-d114-4764-827c-869a9625fd78 -->\n\n<!-- LOCATIONS START\nserver/carriers/aras/arasClient.ts#L124-L179\nserver/carriers/aras/arasClient.ts#L64-L81\nserver/carriers/aras/arasClient.ts#L268-L280\nLOCATIONS END -->\n<details>\n<summary>Additional Locations (2)</summary>\n\n- [`server/carriers/aras/arasClient.ts#L64-L81`](https://github.com/onurcemdogan/cargoflowv1/blob/fc54343a18ff324a5b0b927806a242e7eba9f433/server/carriers/aras/arasClient.ts#L64-L81)\n- [`server/carriers/aras/arasClient.ts#L268-L280`](https://github.com/onurcemdogan/cargoflowv1/blob/fc54343a18ff324a5b0b927806a242e7eba9f433/server/carriers/aras/arasClient.ts#L268-L280)\n\n</details>\n\n<div><a href=\"https://cursor.com/open?link=eyJ2ZXJzaW9uIjoxLCJ0eXBlIjoiQlVHQk9UX0ZJWF9JTl9DVVJTT1IiLCJkYXRhIjp7InJlZGlzS2V5IjoiYnVnYm90OjM4NjcxZDNhLTU4ZGUtNGQ5YS1hOGU0LWIzNDNlNzhhN2E1NSIsImVuY3J5cHRpb25LZXkiOiJvLWwtQTdZYkZlRkE1R0dueTJhNVlEMzZrcUhPc09DS0I0dURNbU9ONUJFIiwiYnJhbmNoIjoiYWdlbnQvQVJBUy1FWFBBTlNJT04iLCJyZXBvT3duZXIiOiJvbnVyY2VtZG9nYW4iLCJyZXBvTmFtZSI6ImNhcmdvZmxvd3YxIiwicHJvdmlkZXIiOiJnaXRodWIifX0\" target=\"_blank\" rel=\"noopener noreferrer\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://cursor.com/assets/images/fix-in-cursor-dark.png\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://cursor.com/assets/images/fix-in-cursor-light.png\"><img alt=\"Fix in Cursor\" width=\"115\" height=\"28\" src=\"https://cursor.com/assets/images/fix-in-cursor-dark.png\"></picture></a>&nbsp;<a href=\"https://cursor.com/agents?link=eyJ2ZXJzaW9uIjoxLCJ0eXBlIjoiQlVHQk9UX0ZJWF9JTl9XRUIiLCJkYXRhIjp7InJlZGlzS2V5IjoiYnVnYm90OjM4NjcxZDNhLTU4ZGUtNGQ5YS1hOGU0LWIzNDNlNzhhN2E1NSIsImVuY3J5cHRpb25LZXkiOiJvLWwtQTdZYkZlRkE1R0dueTJhNVlEMzZrcUhPc09DS0I0dURNbU9ONUJFIiwiYnJhbmNoIjoiYWdlbnQvQVJBUy1FWFBBTlNJT04iLCJyZXBvT3duZXIiOiJvbnVyY2VtZG9nYW4iLCJyZXBvTmFtZSI6ImNhcmdvZmxvd3YxIiwicHJOdW1iZXIiOjgsImNvbW1pdFNoYSI6ImZjNTQzNDNhMThmZjMyNGE1YjBiOTI3ODA2YTI0MmU3ZWJhOWY0MzMiLCJwcm92aWRlciI6ImdpdGh1YiJ9fQ\" target=\"_blank\" rel=\"noopener noreferrer\"><picture><source media=\"(prefers-color-scheme: dark)\" srcset=\"https://cursor.com/assets/images/fix-in-web-dark.png\"><source media=\"(prefers-color-scheme: light)\" srcset=\"https://cursor.com/assets/images/fix-in-web-light.png\"><img alt=\"Fix in Web\" width=\"99\" height=\"28\" src=\"https://cursor.com/assets/images/fix-in-web-dark.png\"></picture></a></div>\n\n\n<sup>Reviewed by [Cursor Bugbot](https://cursor.com/bugbot) for commit fc54343a18ff324a5b0b927806a242e7eba9f433. Configure [here](https://www.cursor.com/dashboard/bugbot).</sup>\n",
-        "threadId": "PRRT_kwDOTee1bc6mdTOz",
-        "commentCommit": "fc54343a18ff324a5b0b927806a242e7eba9f433",
-        "outdated": false,
-        "resolved": false,
-        "actionable": true,
-        "author": "cursor"
-      }
-    ],
-    "evaluatedAt": "2026-09-27T18:49:18.895809+00:00"
+    "remainingFindings": [],
+    "evaluatedAt": "2026-09-27T19:04:43.497263+00:00"
   },
   "reviewFeedback": {
-    "fingerprint": "603d3fe662d279a22b5a68c9636b207725628ebfd0256ab9fa71d228cf6edd40",
-    "headSha": "fc54343a18ff324a5b0b927806a242e7eba9f433",
+    "fingerprint": "CODEX-MERGE-8222e34b89e08fa9",
+    "headSha": "49b509bc35c68225340d4ec29a7e05fe6e92f165",
     "bugIds": [
-      "4029ae75-d114-4764-827c-869a9625fd78"
+      "CODEX-MERGE-8222e34b89e08fa9"
     ],
-    "attemptedProviders": [
-      "claude"
-    ],
+    "attemptedProviders": [],
     "history": [
-      {
-        "provider": "claude",
-        "fingerprint": "CODEX-MERGE-f45d49551e813508",
-        "exitClass": "SUCCESS",
-        "touchedPaths": [
-          "server/carriers/aras/arasClient.ts",
-          "server/carrier-aras-client-flow.test.mjs",
-          ".ai/CURRENT_TASK.json",
-          ".ai/CURRENT_CONTEXT.md",
-          ".ai/HANDOFF.md"
-        ],
-        "at": "2026-09-27T17:40:00.000000+00:00",
-        "commands": [
-          "npm run test:aras",
-          "npx tsc -b --force",
-          "npm run lint",
-          "node --test server/carrier-aras-expansion-flow.test.mjs"
-        ]
-      },
       {
         "provider": "claude",
         "fingerprint": "CODEX-MERGE-f45d49551e813508",
@@ -271,20 +236,38 @@
           "server/carriers/aras/arasClient.ts"
         ],
         "at": "2026-09-27T18:55:31.001121+00:00"
+      },
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-8222e34b89e08fa9",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [
+          "server/carriers/aras/arasClient.ts",
+          "server/carrier-aras-client-flow.test.mjs"
+        ],
+        "at": "2026-09-27T19:08:01+03:00",
+        "commands": [
+          "npm run test:aras",
+          "npx tsc -b --force",
+          "npm run lint",
+          "node --test server/carrier-aras-expansion-flow.test.mjs"
+        ]
       }
     ],
-    "status": "REPAIRED",
-    "updatedAt": "2026-09-27T18:55:31.001121+00:00",
+    "status": "IN_PROGRESS",
+    "updatedAt": "2026-09-27T19:08:01+03:00",
+    "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
-        "bugId": "4029ae75-d114-4764-827c-869a9625fd78",
-        "title": "CDATA unwrap creates extractable fields",
-        "severity": null,
-        "path": "server/carriers/aras/arasClient.ts",
-        "line": 179,
-        "description": "### CDATA unwrap creates extractable fields\n\n**High Severity**\n\n<!-- DESCRIPTION START -->\n`getWellFormedCleanedXml` treats CDATA as opaque during the tag scan, then unwraps it before `extractKnownXmlFields` and `containsSoapFault` run. Markup that was only character data is then matched as real fields, so a well-formed root whose CDATA contains a `ResultCode` of `0` classifies as create success.\n<!-- DESCRIPTION END -->\n\n<!-- BUGBOT_BUG_ID: 4029ae75-d114-4764-827c-869a9625fd78 -->\n\n<!-- LOCATIONS START\nserver/carriers/aras/arasClient.ts#L124-L179\nserver/carriers/aras/arasClient.ts#L64-L81\nserver/carriers/aras/arasClient.ts#L268-L280\nLOCATIONS END -->\n<details>\n<summary>Additional Locations (2)</summary>\n\n- [`server/carriers/aras/arasClient.ts#L64-L81`](https://github.com/onurcemdogan/cargoflowv1/blob/fc54343a18ff324a5b0b927806a242e7eba9f433/server/carriers/aras/arasClient.ts#L64-L81)\n- [`server/carriers/aras/arasClient.ts#L268-L280`](https://github.com/onurcemdogan/cargoflowv1/blob/fc54343a18ff324a5b0b927806a242e7eba9f433/server/carriers/aras/arasClient.ts#L268-L280)\n\n</details>\n\n<div><a href=\"https://cursor.com/open?link=eyJ2ZXJzaW9uIjoxLCJ0eXBlIjoiQlVHQk9UX0ZJWF9JTl9DVVJTT1IiLCJ",
-        "threadId": "PRRT_kwDOTee1bc6mdTOz",
-        "outdated": false
+        "bugId": "CODEX-MERGE-8222e34b89e08fa9",
+        "title": "Codex merge authorization finding",
+        "severity": "high",
+        "path": null,
+        "line": null,
+        "body": "arasClient.ts strips comments before identifying CDATA spans. A response containing <ResultCode><![CDATA[0<!--99-->]]></ResultCode> therefore extracts '0', although its actual value is '0<!--99-->'. This can falsely classify a rejected create as successful. Preserve CDATA content during parsing and add a regression test before merge.",
+        "threadId": null,
+        "outdated": false,
+        "source": "codex-merge-control"
       }
     ]
   },

@@ -3,9 +3,31 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `294195eb467dab7b615516f2610e289dedcf0bd3`
+HEAD: `f36f5787435d4d6887caf03cd7f7a01afc8da82c`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-8222e34b89e08fa9 (repaired, code change applied)
+
+Finding: `arasClient.ts` strips comments before identifying CDATA spans. A response containing `<ResultCode><![CDATA[0<!--99-->]]></ResultCode>` therefore extracts `'0'`, although its actual value is `'0<!--99-->'`. This can falsely classify a rejected create as successful.
+
+Root cause: `stripNonElementXmlConstructs` removed comments/PI/DOCTYPE with a single CDATA-unaware regex pass over the whole raw body. A comment-shaped substring sitting *inside* a CDATA payload (`<!--99-->` inside `<![CDATA[0<!--99-->]]>`) was indistinguishable, from that regex's perspective, from a real comment, so it was deleted. This happened *before* `parseWellFormedXmlStructure` located CDATA spans (it only found them on the already-stripped string), so the CDATA content was corrupted from the literal text `"0<!--99-->"` to `"0"` before extraction ever ran. `extractKnownXmlFields` then returned `ResultCode: '0'`, and since `classifyArasSetOrderResult` treats exactly `'0'` as success, a response whose true value was `'0<!--99-->'` (i.e. not `'0'` — per the finding's premise, a rejected create) could be misclassified as a successful create.
+
+Fix (`server/carriers/aras/arasClient.ts`):
+- Added `findCdataSpans(xml)`, extracted from the span-location logic `parseWellFormedXmlStructure` already used, now shared by both call sites.
+- Rewrote `stripNonElementXmlConstructs` to locate CDATA spans on the **raw, pre-strip** body first, then strip comments/PI/DOCTYPE via a single indexed `matchAll` pass over the combined pattern, skipping any match whose start index falls inside a located CDATA span. Matches outside CDATA are still removed exactly as before. Because the CDATA boundaries are computed before any stripping happens, a comment-shaped (or PI/DOCTYPE-shaped) substring inside a CDATA payload is now left completely untouched, delimiters and all.
+- `parseWellFormedXmlStructure` is otherwise unchanged: it still calls `stripNonElementXmlConstructs(trimmed)` to get `cleaned`, then computes `cdataSpans` on `cleaned` via the shared `findCdataSpans` helper (previously an inline duplicate of the same regex) before doing the CDATA-aware tag scan. Since `cleaned` no longer has CDATA-internal content corrupted, these spans and the subsequent element/field extraction are now correct.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3o`: the exact body from the finding, `<Envelope><ResultCode><![CDATA[0<!--99-->]]></ResultCode></Envelope>` — asserts `outcome.ok === true` (body is well-formed) and `outcome.raw.ResultCode === '0<!--99-->'` (CDATA text, including the comment-shaped substring, is preserved verbatim), and `classifyArasSetOrderResult(outcome.raw).ok === false` (correctly not classified as success, since the raw value is not exactly `'0'`).
+
+Verification this round:
+- `npm run test:aras`: 63/63 (was 62/62; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `f36f5787435d4d6887caf03cd7f7a01afc8da82c` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `f36f5787435d4d6887caf03cd7f7a01afc8da82c`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Cursor Bugbot finding 4029ae75-d114-4764-827c-869a9625fd78 (repaired, code change applied)
 
