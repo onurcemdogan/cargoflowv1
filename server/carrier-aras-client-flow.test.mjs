@@ -262,6 +262,21 @@ test('ARC-3n: CDATA icine gizlenmis sahte <soap:Fault> govdesi gercek FAULT SAYI
   assert.equal(outcome.raw.ResultCode, '0')
 })
 
+test('ARC-3o: CDATA icindeki yorum-benzeri metin ("<!--99-->") GERCEK YORUM SAYILIP SILINMEZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultCode><![CDATA[0<!--99-->]]></ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultCode, '0<!--99-->')
+
+  const C_mod = await import('./carriers/aras/arasContract.ts')
+  const classified = C_mod.classifyArasSetOrderResult(outcome.raw)
+  assert.equal(classified.ok, false)
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

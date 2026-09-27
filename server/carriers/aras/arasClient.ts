@@ -109,11 +109,38 @@ function containsSoapFault(structure: ArasXmlStructure): boolean {
   return structure.tagNames.some((name) => /Fault/i.test(name))
 }
 
+function findCdataSpans(xml: string): Array<{ start: number; end: number }> {
+  return [...xml.matchAll(/<!\[CDATA\[[\s\S]*?\]\]>/g)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length,
+  }))
+}
+
+// CDATA govdesi harfi harfine metindir — icindeki `<!--...-->` gibi diziler
+// GERCEK bir yorum DEGILDIR. Onceki surum yorum/PI/DOCTYPE'i CDATA
+// sinirlarindan HABERSIZ tek bir regex gecisiyle siliyordu; bu yuzden
+// `<ResultCode><![CDATA[0<!--99-->]]></ResultCode>` govdesinde CDATA
+// icindeki `<!--99-->` gercek bir yorum sanilip silinir, CDATA govdesi
+// "0<!--99-->" yerine "0" olarak cikarilirdi (reddedilen bir create'in
+// sahte basariya donmesine yol acabilirdi). Simdi CDATA sinirlari STRIP
+// ISLEMINDEN ONCE, ham govde uzerinde bulunur; yalnizca bu sinirlarin
+// DISINDA baslayan yorum/PI/DOCTYPE eslesmeleri silinir — CDATA govdesi
+// (sinirlayicilariyla birlikte) bu gecisten tamamen etkilenmeden cikar.
 function stripNonElementXmlConstructs(xml: string): string {
-  return xml
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<\?[\s\S]*?\?>/g, '')
-    .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
+  const cdataSpans = findCdataSpans(xml)
+  const insideCdata = (index: number) =>
+    cdataSpans.some((span) => index >= span.start && index < span.end)
+
+  const stripPattern = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!DOCTYPE[\s\S]*?>/gi
+  let result = ''
+  let cursor = 0
+  for (const match of xml.matchAll(stripPattern)) {
+    if (insideCdata(match.index)) continue
+    result += xml.slice(cursor, match.index)
+    cursor = match.index + match[0].length
+  }
+  result += xml.slice(cursor)
+  return result
 }
 
 // Bir onceki uygulama yalnizca ilk karakterin '<' ve govdenin bir
@@ -150,10 +177,7 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   if (!trimmed.startsWith('<')) return null
 
   const cleaned = stripNonElementXmlConstructs(trimmed)
-  const cdataSpans = [...cleaned.matchAll(/<!\[CDATA\[[\s\S]*?\]\]>/g)].map((m) => ({
-    start: m.index,
-    end: m.index + m[0].length,
-  }))
+  const cdataSpans = findCdataSpans(cleaned)
   const insideCdata = (index: number) =>
     cdataSpans.some((span) => index >= span.start && index < span.end)
 
