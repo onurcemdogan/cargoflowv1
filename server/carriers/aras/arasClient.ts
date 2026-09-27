@@ -62,26 +62,51 @@ function decodeXmlEntities(value: string): string {
     .trim()
 }
 
+interface ArasXmlElement {
+  name: string
+  start: number
+  end: number
+}
+
+interface ArasXmlStructure {
+  cleaned: string
+  elements: ArasXmlElement[]
+  tagNames: string[]
+}
+
+function unwrapCdataText(value: string): string {
+  return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+}
+
 export function extractKnownXmlFields(
-  xml: string,
+  structure: ArasXmlStructure,
   fieldNames: readonly string[],
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {}
   for (const field of fieldNames) {
-    const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-    const re = new RegExp(
-      `<(?:[A-Za-z0-9_]+:)?${escaped}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[A-Za-z0-9_]+:)?${escaped}>`,
-      'g',
-    )
-    const matches = [...xml.matchAll(re)]
-    if (matches.length === 0) continue
-    result[field] = decodeXmlEntities(matches[0][1])
+    // `structure.elements` was built from the CDATA-aware tag scan below, so
+    // it only ever contains GENUINE elements (real open/close tag pairs
+    // outside any CDATA span). A field is matched by that structural
+    // identity, not by re-scanning text for tag-shaped substrings — so CDATA
+    // payload text that merely *looks* like `<Field>...</Field>` (smuggled
+    // inside some unrelated element's character data) can never be picked up
+    // as if it were a real `Field` element.
+    const candidates = structure.elements
+      .filter((el) => el.name === field || el.name.endsWith(`:${field}`))
+      .sort((a, b) => a.start - b.start)
+    if (candidates.length === 0) continue
+    const raw = structure.cleaned.slice(candidates[0].start, candidates[0].end)
+    result[field] = decodeXmlEntities(unwrapCdataText(raw))
   }
   return result
 }
 
-function containsSoapFault(xml: string): boolean {
-  return /<[^>]*Fault[\s>]/i.test(xml) || /<faultcode[\s>]/i.test(xml)
+function containsSoapFault(structure: ArasXmlStructure): boolean {
+  // Same reasoning as extractKnownXmlFields: fault detection runs over the
+  // structurally-real tag names only, so CDATA text that merely contains the
+  // literal characters "<soap:Fault>" cannot flip a genuine success response
+  // into a false fault (or vice versa).
+  return structure.tagNames.some((name) => /Fault/i.test(name))
 }
 
 function stripNonElementXmlConstructs(xml: string): string {
@@ -109,15 +134,18 @@ function stripNonElementXmlConstructs(xml: string): string {
 //
 // CDATA yorum/PI/DOCTYPE gibi ATILACAK bir yapi DEGILDIR — gercek eleman
 // verisidir. XML'de `<ResultCode>0<![CDATA[99]]></ResultCode>` govde metni
-// "099" anlamina gelir. Onceki uygulama CDATA'yi digerleriyle birlikte
-// SILIYORDU, bu da ayni govdeyi ResultCode=0 (099 degil) olarak cikarip
-// sahte create-basarisina izin veriyordu. Bu yuzden CDATA govdesi burada
-// iki asamada ele alinir: once etiket taramasi sirasinda OPAK kabul edilir
-// (icindeki `<`/`>` karakterleri sahte etiket sayilmaz), tarama gecerlilige
-// hukmettikten SONRA sinirlayicilari kaldirilip ic metin oldugu gibi
-// govdeye geri yazilir — boylece extractKnownXmlFields'a giden tek govde
-// hem dogrulanmis hem de CDATA metnini korumus olur.
-function getWellFormedCleanedXml(xml: string): string | null {
+// "099" anlamina gelir. Bu yuzden etiket taramasi CDATA govdesini hep OPAK
+// kabul eder (icindeki `<`/`>` karakterleri sahte etiket sayilmaz) — tek
+// gercek kaynagi bu taramanin urettigi `elements` (gercek acilis/kapanis
+// cifti) listesidir. Onceki surum dogrulamadan SONRA CDATA sinirlayicilarini
+// kaldirip TEK bir duz metin dondururdu ve extractKnownXmlFields o duz metni
+// yeniden regex ile tarardi; bu da bir alanin CDATA govdesine gizlenmis
+// `<ResultCode>0</ResultCode>` gibi sahte-etiket metnini gercek bir eleman
+// sanip cikarmasina (ve sahte create-basarisina) izin veriyordu. Simdi
+// cikarim yalniz bu taramanin belirledigi GERCEK eleman sinirlarindan metin
+// dilimler; CDATA sinirlayicilari yalniz o dilim icinde, cikarimdan SONRA
+// kaldirilir — asla yeniden etiket olarak taranmaz.
+function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   const trimmed = xml.trim()
   if (!trimmed.startsWith('<')) return null
 
@@ -132,7 +160,9 @@ function getWellFormedCleanedXml(xml: string): string | null {
   const tagMatches = [...cleaned.matchAll(/<[^>]+>/g)].filter((m) => !insideCdata(m.index))
   if (tagMatches.length === 0) return null
 
-  const stack: string[] = []
+  const stack: Array<{ name: string; contentStart: number }> = []
+  const elements: ArasXmlElement[] = []
+  const tagNames: string[] = []
   let rootCount = 0
   let cursor = 0
   for (const match of tagMatches) {
@@ -151,8 +181,13 @@ function getWellFormedCleanedXml(xml: string): string | null {
     if (tag.startsWith('</')) {
       const nameMatch = /^<\/\s*([A-Za-z_][\w.:-]*)/.exec(tag)
       if (!nameMatch) return null
-      if (stack.pop() !== nameMatch[1]) return null
+      const top = stack.pop()
+      if (!top || top.name !== nameMatch[1]) return null
+      elements.push({ name: top.name, start: top.contentStart, end: match.index })
     } else if (/\/\s*>$/.test(tag)) {
+      const nameMatch = /^<\s*([A-Za-z_][\w.:-]*)/.exec(tag)
+      if (!nameMatch) return null
+      tagNames.push(nameMatch[1])
       if (stack.length === 0) {
         rootCount += 1
         if (rootCount > 1) return null
@@ -160,11 +195,12 @@ function getWellFormedCleanedXml(xml: string): string | null {
     } else {
       const nameMatch = /^<\s*([A-Za-z_][\w.:-]*)/.exec(tag)
       if (!nameMatch) return null
+      tagNames.push(nameMatch[1])
       if (stack.length === 0) {
         rootCount += 1
         if (rootCount > 1) return null
       }
-      stack.push(nameMatch[1])
+      stack.push({ name: nameMatch[1], contentStart: cursor })
     }
   }
   // Trailing text after the last tag is also outside the root once it has
@@ -176,7 +212,7 @@ function getWellFormedCleanedXml(xml: string): string | null {
   // stack-balance check alone does not catch it.
   if (stack.length !== 0) return null
   if (rootCount !== 1) return null
-  return cleaned.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+  return { cleaned, elements, tagNames }
 }
 
 interface PerformArasSoapCallParams {
@@ -256,8 +292,8 @@ function finishArasSoapCall(
       errorCode: 'ARAS_TRANSPORT_HTTP_ERROR',
     }
   }
-  const cleanedXml = getWellFormedCleanedXml(bodyText)
-  if (cleanedXml === null) {
+  const structure = parseWellFormedXmlStructure(bodyText)
+  if (structure === null) {
     return {
       ok: false,
       httpStatus: response.status,
@@ -266,7 +302,7 @@ function finishArasSoapCall(
       errorCode: 'ARAS_MALFORMED_RESPONSE',
     }
   }
-  if (containsSoapFault(cleanedXml)) {
+  if (containsSoapFault(structure)) {
     return {
       ok: false,
       httpStatus: response.status,
@@ -276,7 +312,7 @@ function finishArasSoapCall(
     }
   }
 
-  const raw = extractKnownXmlFields(cleanedXml, knownResponseFields)
+  const raw = extractKnownXmlFields(structure, knownResponseFields)
   return { ok: true, httpStatus: response.status, raw, networkCalled: true, errorCode: null }
 }
 

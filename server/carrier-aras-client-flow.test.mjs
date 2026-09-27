@@ -235,6 +235,33 @@ test('ARC-3l: CDATA icinde sahte kapanan/acilan etiket karakterleri gercek etike
   assert.equal(outcome.raw.ResultCode, '<not-a-tag>0')
 })
 
+test('ARC-3m: CDATA icine gizlenmis sahte <ResultCode>0</ResultCode> govdesi GERCEK ALAN SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><OtherField><![CDATA[<ResultCode>0</ResultCode>]]></OtherField></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultCode, undefined)
+
+  const C_mod = await import('./carriers/aras/arasContract.ts')
+  const classified = C_mod.classifyArasSetOrderResult(outcome.raw)
+  assert.equal(classified.ok, false)
+})
+
+test('ARC-3n: CDATA icine gizlenmis sahte <soap:Fault> govdesi gercek FAULT SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultCode>0</ResultCode>'
+      + '<Note><![CDATA[<soap:Fault><faultcode>x</faultcode></soap:Fault>]]></Note></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultCode, '0')
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {
