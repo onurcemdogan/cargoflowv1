@@ -3,9 +3,31 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `b9f5b56cc80552bec79fc009669840ecb7684ae7`
+HEAD: `49b509bc35c68225340d4ec29a7e05fe6e92f165`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-a14f3b696b9f30e7 (repaired, code change applied)
+
+Finding: `arasClient.ts` deletes CDATA content before extracting response fields. `stripNonElementXmlConstructs` removed `<![CDATA[...]]>` sections in the same pass as comments/PI/DOCTYPE, before `getWellFormedCleanedXml` returned its single cleaned string for both the SOAP-fault check and `extractKnownXmlFields`. But CDATA is real element character data, not a discardable construct — per XML, `<Envelope><ResultCode>0<![CDATA[99]]></ResultCode></Envelope>` has `ResultCode` text content `"099"` (a literal text node and a CDATA section concatenate into one logical value). Deleting the CDATA delimiters and payload made that exact body extract `ResultCode=0` instead of `099`, permitting a false create-success classification.
+
+Fix (`server/carriers/aras/arasClient.ts`):
+- `stripNonElementXmlConstructs` no longer touches CDATA — it only strips comments/PI/DOCTYPE, which remain genuinely discardable markup with no data value.
+- `getWellFormedCleanedXml` now locates every CDATA span in the comment/PI/DOCTYPE-stripped body up front (via `cleaned.matchAll(/<!\[CDATA\[[\s\S]*?\]\]>/g)`), then filters the tag-matching scan (`cleaned.matchAll(/<[^>]+>/g)`) to discard any match whose start index falls inside a CDATA span. This is necessary because CDATA sections exist specifically to embed literal `<`/`>` characters without them being parsed as markup — without the filter, a CDATA payload containing those characters could either produce spurious "tags" that break the stack/root/gap checks, or (worst case) accidentally validate a body that isn't actually well-formed.
+- The existing stack-based well-formedness checks (tag balance, single root, whitespace-only text outside the root) are otherwise unchanged and run only against the filtered, real tag matches.
+- Only once validation succeeds does the function unwrap CDATA delimiters in the string it returns (`cleaned.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')`) — so the single string handed to both `containsSoapFault` and `extractKnownXmlFields` preserves the CDATA text instead of losing it, keeping the "one cleaned string, one source of truth" invariant established for `CODEX-MERGE-a7c6cff547743657`.
+
+Regression tests added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3k`: the exact body from the finding, `<Envelope><ResultCode>0<![CDATA[99]]></ResultCode></Envelope>` — asserts `outcome.ok === true` and `outcome.raw.ResultCode === '099'`.
+- `ARC-3l`: a CDATA payload containing literal `<`/`>` characters (`<![CDATA[<not-a-tag>]]>`) — asserts the payload is preserved as text and not misparsed as a tag.
+
+Verification this round:
+- `npm run test:aras`: 60/60 (was 58/58; +2 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `49b509bc35c68225340d4ec29a7e05fe6e92f165` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `49b509bc35c68225340d4ec29a7e05fe6e92f165`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-9e972f27157ce0f7 (repaired, code change applied)
 
