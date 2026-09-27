@@ -181,6 +181,17 @@ test('ARC-3g: kapatilmamis acilis etiketi basari SAYILMAZ', async () => {
   assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
 })
 
+test('ARC-3h: yorum icine gizlenmis ResultCode=0 CIKARILMAZ (dogrulama ve cikarim ayni govde uzerinde calisir)', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><!--<ResultCode>0</ResultCode>--></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultCode, undefined)
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

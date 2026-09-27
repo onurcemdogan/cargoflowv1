@@ -98,33 +98,39 @@ function stripNonElementXmlConstructs(xml: string): string {
 // gecerli XML sayip extractKnownXmlFields'in ResultCode=0'i cikarmasina
 // ve olusturma siniflandirmasinin sahte basariya donmesine izin
 // veriyordu. Yerine yigin tabanli acilis/kapanis eslestirmesi konur.
-function isWellFormedXml(xml: string): boolean {
+//
+// Dogrulama yorum/CDATA/PI/DOCTYPE'i STRIP EDILMIS govde uzerinde calisir;
+// alan cikarimi da AYNI strip edilmis govde uzerinde calismalidir. Aksi
+// halde `<Envelope><!--<ResultCode>0</ResultCode>--></Envelope>` gecerli
+// XML sayilir (govde strip edildiginde bos bir Envelope kalir) ama
+// extractKnownXmlFields orijinal (strip edilmemis) govde uzerinde
+// calisirsa yorum icindeki ResultCode=0'i yine de cikarip sahte basariya
+// yol acar. Bu yuzden strip edilmis govde tek gecerlilik/cikarim
+// kaynagi olarak dondurulur.
+function getWellFormedCleanedXml(xml: string): string | null {
   const trimmed = xml.trim()
-  if (!trimmed.startsWith('<')) return false
+  if (!trimmed.startsWith('<')) return null
 
   const cleaned = stripNonElementXmlConstructs(trimmed)
   const tags = cleaned.match(/<[^>]+>/g)
-  if (!tags || tags.length === 0) return false
+  if (!tags || tags.length === 0) return null
 
   const stack: string[] = []
   for (const tag of tags) {
     if (tag.startsWith('</')) {
       const nameMatch = /^<\/\s*([A-Za-z_][\w.:-]*)/.exec(tag)
-      if (!nameMatch) return false
-      if (stack.pop() !== nameMatch[1]) return false
+      if (!nameMatch) return null
+      if (stack.pop() !== nameMatch[1]) return null
     } else if (/\/\s*>$/.test(tag)) {
       continue
     } else {
       const nameMatch = /^<\s*([A-Za-z_][\w.:-]*)/.exec(tag)
-      if (!nameMatch) return false
+      if (!nameMatch) return null
       stack.push(nameMatch[1])
     }
   }
-  return stack.length === 0
-}
-
-function looksLikeXml(xml: string): boolean {
-  return isWellFormedXml(xml)
+  if (stack.length !== 0) return null
+  return cleaned
 }
 
 interface PerformArasSoapCallParams {
@@ -204,7 +210,8 @@ function finishArasSoapCall(
       errorCode: 'ARAS_TRANSPORT_HTTP_ERROR',
     }
   }
-  if (!looksLikeXml(bodyText)) {
+  const cleanedXml = getWellFormedCleanedXml(bodyText)
+  if (cleanedXml === null) {
     return {
       ok: false,
       httpStatus: response.status,
@@ -213,7 +220,7 @@ function finishArasSoapCall(
       errorCode: 'ARAS_MALFORMED_RESPONSE',
     }
   }
-  if (containsSoapFault(bodyText)) {
+  if (containsSoapFault(cleanedXml)) {
     return {
       ok: false,
       httpStatus: response.status,
@@ -223,7 +230,7 @@ function finishArasSoapCall(
     }
   }
 
-  const raw = extractKnownXmlFields(bodyText, knownResponseFields)
+  const raw = extractKnownXmlFields(cleanedXml, knownResponseFields)
   return { ok: true, httpStatus: response.status, raw, networkCalled: true, errorCode: null }
 }
 
