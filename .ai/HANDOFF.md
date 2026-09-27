@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `f36f5787435d4d6887caf03cd7f7a01afc8da82c`
+HEAD: `9dac45e` (pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-2f65a0c9946b73be (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><ResultCode>0</ResultCode junk></Envelope>` passes the prefix-only closing-tag check and extracts `ResultCode='0'`, permitting false create success. Require strict XML validation and a regression test before merge.
+
+Root cause: in `parseWellFormedXmlStructure`, the closing-tag branch matched the element name with `/^<\/\s*([A-Za-z_][\w.:-]*)/` — a **prefix** match with no end anchor. XML forbids anything but whitespace between a closing tag's name and its `>` (unlike an opening tag, a closing tag cannot carry attributes), but this regex never checked what came after the captured name. So the tag `</ResultCode junk>` still captured group `"ResultCode"`, matched the stack top, and was accepted as a legitimate close — the trailing `" junk"` was silently discarded rather than causing rejection. Traced by hand: for body `<Envelope><ResultCode>0</ResultCode junk></Envelope>`, `extractKnownXmlFields` then read `ResultCode` from `cleaned.slice(22,23)` = `"0"`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — so the malformed body was misclassified as a successful create, exactly as the finding describes. This was a live, reproducible bug (not stale evidence), confirmed against the current `arasClient.ts` before patching.
+
+Fix (`server/carriers/aras/arasClient.ts`): anchored the closing-tag regex to `/^<\/\s*([A-Za-z_][\w.:-]*)\s*>$/` — it now requires the entire tag to be `</`, optional whitespace, the name, optional whitespace, and `>` with nothing else. Any non-whitespace between the name and `>` (e.g. `" junk"`) now fails the match, `nameMatch` is `null`, and the function returns `null` (`ARAS_MALFORMED_RESPONSE`) instead of silently accepting the tag. Opening/self-closing tag matching is unchanged (attributes remain legitimately permitted there).
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3p`: the exact body from the finding, `<Envelope><ResultCode>0</ResultCode junk></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 64/64 (was 63/63; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `9dac45e` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `9dac45e`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-8222e34b89e08fa9 (repaired, code change applied)
 
