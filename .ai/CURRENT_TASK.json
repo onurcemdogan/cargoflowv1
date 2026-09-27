@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "IN_PROGRESS",
-  "phase": "REVIEW_FEEDBACK",
+  "status": "MERGE_READY",
+  "phase": "MERGE_READY",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
   "headCommit": "c7967df480b24459b6ea91c4f5819ba37f3fdcab",
-  "activeWorker": "claude",
+  "activeWorker": null,
   "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [
@@ -46,7 +46,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "CODEX_MERGE_REMEDIATION: Codex rejected merge without a human-only boundary. Route the concrete finding to Claude/Cursor implementation, run local quality gates, GitHub CI, external review, then request a fresh Codex merge decision. Finding: arasClient.ts still accepts malformed XML: <Envelope><Other a=\"&undefined;\"/><ResultCode>0</ResultCode></Envelope> passes because entity validation checks text gaps but not attribute values, allowing ResultCode='0' to produce false create success. Require strict XML validation covering attributes and a regression test before reconsideration.",
+  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -67,7 +67,7 @@
   "qualityGates": {
     "evidencePath": ".ai/.runtime/quality-gates.json",
     "passed": true,
-    "finishedAt": "2026-09-27T23:11:36.648889+00:00",
+    "finishedAt": "2026-09-27T23:24:10.258831+00:00",
     "results": [
       {
         "command": [
@@ -75,12 +75,12 @@
           "run",
           "test:ticimax"
         ],
-        "startedAt": "2026-09-27T23:11:25.272523+00:00",
-        "finishedAt": "2026-09-27T23:11:35.904929+00:00",
-        "durationSeconds": 10.632,
+        "startedAt": "2026-09-27T23:23:58.403020+00:00",
+        "finishedAt": "2026-09-27T23:24:09.491632+00:00",
+        "durationSeconds": 11.089,
         "exitCode": 0,
         "passed": true,
-        "logPath": ".ai/.runtime/20260928-021125-quality-0.log"
+        "logPath": ".ai/.runtime/20260928-022358-quality-0.log"
       }
     ]
   },
@@ -107,7 +107,9 @@
     "bugIds": [
       "CODEX-MERGE-fd3a21282f11cc5f"
     ],
-    "attemptedProviders": [],
+    "attemptedProviders": [
+      "claude"
+    ],
     "history": [
       {
         "provider": "claude",
@@ -262,10 +264,21 @@
           "npm run lint",
           "node --test server/carrier-aras-expansion-flow.test.mjs"
         ]
+      },
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-fd3a21282f11cc5f",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [
+          "server/carrier-aras-client-flow.test.mjs",
+          "server/carriers/aras/arasClient.ts",
+          "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
+        ],
+        "at": "2026-09-27T23:23:57.164970+00:00"
       }
     ],
-    "status": "IN_PROGRESS",
-    "updatedAt": "2026-09-28T00:00:00.000000+00:00",
+    "status": "REPAIRED",
+    "updatedAt": "2026-09-27T23:23:57.164970+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
