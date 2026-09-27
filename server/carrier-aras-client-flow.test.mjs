@@ -277,6 +277,18 @@ test('ARC-3o: CDATA icindeki yorum-benzeri metin ("<!--99-->") GERCEK YORUM SAYI
   assert.equal(classified.ok, false)
 })
 
+test('ARC-3p: kapanis etiketinde adin ardindan bosluk-disi gereksiz metin (</ResultCode junk>) basari SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultCode>0</ResultCode junk></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+  assert.equal(outcome.raw, null)
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

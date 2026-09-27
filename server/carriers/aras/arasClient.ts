@@ -203,7 +203,14 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
     cursor = match.index + tag.length
 
     if (tag.startsWith('</')) {
-      const nameMatch = /^<\/\s*([A-Za-z_][\w.:-]*)/.exec(tag)
+      // A closing tag permits only whitespace between the element name and
+      // `>` — unlike an opening tag, it cannot carry attributes. Matching
+      // only the name PREFIX (as opening/self-closing tags legitimately do)
+      // would let `</ResultCode junk>` be accepted as a valid close for
+      // `<ResultCode>`, silently discarding the trailing garbage and letting
+      // `extractKnownXmlFields` read ResultCode='0' out of an otherwise
+      // malformed body.
+      const nameMatch = /^<\/\s*([A-Za-z_][\w.:-]*)\s*>$/.exec(tag)
       if (!nameMatch) return null
       const top = stack.pop()
       if (!top || top.name !== nameMatch[1]) return null
