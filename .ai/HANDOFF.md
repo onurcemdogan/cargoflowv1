@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `42dd0f4` (pending push)
+HEAD: `5efa7fc` (pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-4c541f2475a1489c (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><ResultCode a="1" a="2">0</ResultCode></Envelope>` passes its opening-tag regex despite duplicate attributes, extracts `ResultCode='0'`, and permits false create success. Replace the partial XML validator with complete validation and add a regression test before reconsidering merge.
+
+Root cause: in `parseWellFormedXmlStructure`, the opening/self-closing tag regex (anchored end-to-end by `CODEX-MERGE-67921c7e4afaad12`) validates that each attribute individually looks like `name="value"` (or `'value'`) via a repeated `(?:...)*` group — but a regex repetition group has no memory of names it already consumed in earlier repetitions, so it never enforced that attribute *names* be distinct within one tag. XML's well-formedness rules explicitly forbid an element from carrying the same attribute name twice. A tag like `<ResultCode a="1" a="2">` therefore still matched cleanly — both `a="1"` and `a="2"` are individually valid attribute syntax — so `extractKnownXmlFields` read `ResultCode='0'` from the accepted element and `classifyArasSetOrderResult` (`arasContract.ts`) treated `ResultCode === '0'` as success. Confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body `<Envelope><ResultCode a="1" a="2">0</ResultCode></Envelope>`, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): after the existing anchored `nameMatch` regex succeeds (confirming the tag's only content besides the element name is zero or more well-formed attribute assignments), extract every attribute name in the tag with `tag.matchAll(/([A-Za-z_][\w.:-]*)\s*=\s*(?:"[^"]*"|'[^']*')/g)` and reject the tag (`return null`, surfacing as `ARAS_MALFORMED_RESPONSE`) if `new Set(attrNames).size !== attrNames.length` — i.e. if any attribute name repeats. This scan is safe to run unconditionally on any tag that already passed `nameMatch`, since that anchored regex guarantees there is nothing in the tag besides the name and valid attribute syntax to misinterpret. Legitimate tags with distinct attribute names (e.g. real SOAP envelopes carrying `xmlns:soap="..." xmlns:xsi="..."`) are unaffected. Closing-tag matching, self-closing detection, and all prior well-formedness checks (tag balance, single root, gap/trailing-text checks, CDATA handling) are unchanged.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3r`: the exact body from the finding, `<Envelope><ResultCode a="1" a="2">0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 66/66 (was 65/65; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `5efa7fc` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `5efa7fc`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-67921c7e4afaad12 (repaired, code change applied)
 
