@@ -228,6 +228,16 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
           tag,
         )
       if (!nameMatch) return null
+      // The `(?:...)* ` repetition above only checks that each attribute
+      // individually looks like `name="value"` — it never tracks whether a
+      // name has already appeared, so it still accepts a tag with the SAME
+      // attribute twice (e.g. `<ResultCode a="1" a="2">`), which XML forbids
+      // (duplicate attribute names are a well-formedness violation). Extract
+      // every attribute name in the tag and reject if any repeats.
+      const attrNames = [...tag.matchAll(/([A-Za-z_][\w.:-]*)\s*=\s*(?:"[^"]*"|'[^']*')/g)].map(
+        (m) => m[1],
+      )
+      if (new Set(attrNames).size !== attrNames.length) return null
       tagNames.push(nameMatch[1])
       if (stack.length === 0) {
         rootCount += 1
