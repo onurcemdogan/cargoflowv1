@@ -116,20 +116,33 @@ function getWellFormedCleanedXml(xml: string): string | null {
   if (!tags || tags.length === 0) return null
 
   const stack: string[] = []
+  let rootCount = 0
   for (const tag of tags) {
     if (tag.startsWith('</')) {
       const nameMatch = /^<\/\s*([A-Za-z_][\w.:-]*)/.exec(tag)
       if (!nameMatch) return null
       if (stack.pop() !== nameMatch[1]) return null
     } else if (/\/\s*>$/.test(tag)) {
-      continue
+      if (stack.length === 0) {
+        rootCount += 1
+        if (rootCount > 1) return null
+      }
     } else {
       const nameMatch = /^<\s*([A-Za-z_][\w.:-]*)/.exec(tag)
       if (!nameMatch) return null
+      if (stack.length === 0) {
+        rootCount += 1
+        if (rootCount > 1) return null
+      }
       stack.push(nameMatch[1])
     }
   }
+  // XML requires exactly one root element; a self-closed root followed by a
+  // sibling (e.g. `<Envelope/><ResultCode>0</ResultCode>`) leaves the stack
+  // empty at the end even though there are two top-level elements, so the
+  // stack-balance check alone does not catch it.
   if (stack.length !== 0) return null
+  if (rootCount !== 1) return null
   return cleaned
 }
 
