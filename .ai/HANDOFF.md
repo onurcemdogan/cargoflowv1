@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `9dac45e` (pending push)
+HEAD: `42dd0f4` (pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-67921c7e4afaad12 (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed opening tags: `<Envelope><ResultCode !>0</ResultCode></Envelope>` passes the prefix-only opening-tag check and extracts `ResultCode='0'`, permitting false create success. Require complete XML validation and a regression test before reconsidering merge.
+
+Root cause: in `parseWellFormedXmlStructure`, both the opening-tag and self-closing-tag branches matched the element name with `/^<\s*([A-Za-z_][\w.:-]*)/` — a **prefix** match with no end anchor, never checking what came after the captured name. Unlike a closing tag (already anchored by `CODEX-MERGE-2f65a0c9946b73be`), an opening tag legitimately *can* carry attributes, so the fix couldn't simply forbid trailing content — it needed to validate that content is actually attribute syntax. The prior code validated neither: for `<ResultCode !>`, the regex matched `"ResultCode"` and silently discarded the bogus `" !"` as if it were legitimate attributes. Traced by hand against the exact finding body `<Envelope><ResultCode !>0</ResultCode></Envelope>`: the closing tag `</ResultCode>` still matched the stack top by name, so the element was recorded with content `"0"`, `extractKnownXmlFields` read `ResultCode='0'`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts`, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): replaced the prefix-only opening/self-closing regex with a full-match regex requiring the name to be followed only by zero or more whitespace-separated `name="value"` (or `'value'`) attributes, then an optional `/` and `>`, anchored at both ends: `/^<\s*([A-Za-z_][\w.:-]*)(?:\s+[A-Za-z_][\w.:-]*\s*=\s*(?:"[^"]*"|'[^']*'))*\s*(\/)?>$/`. Any non-whitespace, non-attribute content between the name and the tag's end (e.g. `" !"`) now fails the match, so the body is rejected as `ARAS_MALFORMED_RESPONSE` instead of the garbage being silently discarded. Self-closing detection is now derived from the same match (capture group 2) instead of a separate `/\/\s*>$/` pre-check, so there is a single source of truth for what counts as a valid opening/self-closing tag. Legitimate attributes (e.g. `xmlns:soap="..."` on real SOAP envelopes) still parse correctly. Closing-tag matching is unchanged.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3q`: the exact body from the finding, `<Envelope><ResultCode !>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 65/65 (was 64/64; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `42dd0f4` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `42dd0f4`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-2f65a0c9946b73be (repaired, code change applied)
 
