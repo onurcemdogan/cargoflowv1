@@ -3,9 +3,43 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `MERGE_READY`
-HEAD: `8b0cdd70c0b735de25f7c569857ed3b2a2324a06`
+HEAD: `707473c86e661c20adbe89408d468bc378e52691`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-f45d49551e813508 (repaired, code change applied)
+
+Finding: `arasClient.ts` did not validate XML well-formedness — `looksLikeXml` only checked that the body started with `<letter` and ended with `</tag>`, so a response with mismatched tags (e.g. `<Envelope><ResultCode>0</ResultCode></Foo>`) passed the check. `extractKnownXmlFields` then extracted `ResultCode=0` via per-field regex regardless of overall structure, which could let a malformed/tampered response be classified as a successful create.
+
+Fix (`server/carriers/aras/arasClient.ts`): replaced the heuristic with `isWellFormedXml` — a dependency-free, stack-based tag matcher. It strips comments/CDATA/PI/DOCTYPE, tokenizes remaining `<...>` tags, and pushes/pops a stack on open/close tags, rejecting the body unless every open tag has a matching, properly nested close and the stack ends empty. `looksLikeXml` now delegates to it. No new dependency added (considered `jsdom`, already a devDependency, but it's HTML-oriented and only available in devDependencies — not appropriate to promote into server runtime for this).
+
+Because `finishArasSoapCall` already gates `extractKnownXmlFields` behind `looksLikeXml`, this one change closes the gap: malformed bodies now return `ARAS_MALFORMED_RESPONSE` / `raw: null` before any field extraction happens.
+
+Regression tests added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3f`: mismatched open/close tags containing `ResultCode>0` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+- `ARC-3g`: unclosed opening tag — asserts `ARAS_MALFORMED_RESPONSE`.
+
+Verification this round:
+- `npm run test:aras`: 55/55 (was 51/51; +4 net from the 2 new tests plus 2 pre-existing that were recounted in the same run).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+**Not yet done:** commit/push to `origin/agent/ARAS-EXPANSION` and a fresh GitHub CI run on the new head — do that next, then request a fresh Codex merge decision against the new head.
+
+## Codex merge-control finding CODEX-MERGE-ca1dce80fe96b617 (repaired, no code change needed — 3rd recurrence, root cause identified)
+
+Same complaint as the two prior fingerprints (`CODEX-MERGE-61123b9a11e6de29` twice): "`drizzle/meta/0014_snapshot.json` is explicitly truncated in the supplied frozen-head diff." This round evaluated `headSha 8b0cdd70c0b735de25f7c569857ed3b2a2324a06`, which was already stale by the time of remediation — `gh pr view 8` shows the actual current PR head is `707473c86e661c20adbe89408d468bc378e52691` (matches local `HEAD` and `origin/agent/ARAS-EXPANSION`), `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`.
+
+Re-verified independently at `707473c`:
+- `drizzle/meta/0014_snapshot.json`: 91245 bytes, 3315 lines, `JSON.parse` ok, unchanged since migration commit `cd84632` (`git log -- drizzle/meta/0014_snapshot.json` shows one commit).
+- `npm run db:check` (drizzle-kit check): "Everything's fine" — no drift.
+
+**New this round — likely root cause of the recurring false positive:** `gh api repos/onurcemdogan/cargoflowv1/pulls/8/files -q '... | select(.filename=="drizzle/meta/0014_snapshot.json")'` returns `{"additions":3315,"deletions":0,"changes":3315,"status":"added","patch":null}`. GitHub's REST files-API omits the `patch` field once a file's diff exceeds its per-file size threshold — which this generated migration snapshot does. Any automated reviewer (Codex) that sources its "supplied diff" evidence from that API field will see **no diff content at all** for this file, independent of which commit/head is evaluated, and can reasonably describe that as "truncated." This is a property of the diff-transport the merge-control pipeline uses, not a repository defect: the git blob is complete and the migration is drift-free.
+
+**Recommendation for supervisor:** if this exact evidence-completeness complaint recurs on a 4th fingerprint, treat it as a known limitation of the merge-control evidence pipeline (GitHub files-API `patch:null` on large generated files) rather than routing another implementation remediation — either have the pipeline fall back to a git blob fetch for files where `patch` is null, or manually override the gate with this handoff as evidence.
+
+**Next action for supervisor:** request a fresh Codex merge decision against `headCommit 707473c86e661c20adbe89408d468bc378e52691`.
 
 ## Codex merge-control finding CODEX-MERGE-61123b9a11e6de29 (repaired, no code change needed)
 

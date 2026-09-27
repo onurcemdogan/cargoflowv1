@@ -161,6 +161,26 @@ test('ARC-3e: yanit basliklari doner ama govde HIC BITMEZSE zaman asimi yine dev
   assert.equal(outcome.errorCode, 'ARAS_TRANSPORT_TIMEOUT')
 })
 
+test('ARC-3f: eslesmeyen acilis/kapanis etiketli govde basari SAYILMAZ (ResultCode=0 icerse bile)', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultCode>0</ResultCode></Foo>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+  assert.equal(outcome.raw, null)
+})
+
+test('ARC-3g: kapatilmamis acilis etiketi basari SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(200, '<Envelope><ResultCode>0</ResultCode>')
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

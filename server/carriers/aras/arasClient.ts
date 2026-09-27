@@ -84,8 +84,47 @@ function containsSoapFault(xml: string): boolean {
   return /<[^>]*Fault[\s>]/i.test(xml) || /<faultcode[\s>]/i.test(xml)
 }
 
+function stripNonElementXmlConstructs(xml: string): string {
+  return xml
+    .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<\?[\s\S]*?\?>/g, '')
+    .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
+}
+
+// Bir onceki uygulama yalnizca ilk karakterin '<' ve govdenin bir
+// kapanis etiketiyle bitip bitmedigini kontrol ediyordu; bu, etiketleri
+// eslesmeyen (ornegin <foo><ResultCode>0</ResultCode></bar>) bir govdeyi
+// gecerli XML sayip extractKnownXmlFields'in ResultCode=0'i cikarmasina
+// ve olusturma siniflandirmasinin sahte basariya donmesine izin
+// veriyordu. Yerine yigin tabanli acilis/kapanis eslestirmesi konur.
+function isWellFormedXml(xml: string): boolean {
+  const trimmed = xml.trim()
+  if (!trimmed.startsWith('<')) return false
+
+  const cleaned = stripNonElementXmlConstructs(trimmed)
+  const tags = cleaned.match(/<[^>]+>/g)
+  if (!tags || tags.length === 0) return false
+
+  const stack: string[] = []
+  for (const tag of tags) {
+    if (tag.startsWith('</')) {
+      const nameMatch = /^<\/\s*([A-Za-z_][\w.:-]*)/.exec(tag)
+      if (!nameMatch) return false
+      if (stack.pop() !== nameMatch[1]) return false
+    } else if (/\/\s*>$/.test(tag)) {
+      continue
+    } else {
+      const nameMatch = /^<\s*([A-Za-z_][\w.:-]*)/.exec(tag)
+      if (!nameMatch) return false
+      stack.push(nameMatch[1])
+    }
+  }
+  return stack.length === 0
+}
+
 function looksLikeXml(xml: string): boolean {
-  return /<[a-zA-Z]/.test(xml) && /<\/[a-zA-Z:]+>\s*$/.test(xml.trim())
+  return isWellFormedXml(xml)
 }
 
 interface PerformArasSoapCallParams {
