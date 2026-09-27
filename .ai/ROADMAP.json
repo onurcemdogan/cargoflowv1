@@ -11,7 +11,7 @@
     },
     {
       "id": "TICIMAX-001",
-      "status": "IN_PROGRESS",
+      "status": "MERGED",
       "dependsOn": [
         "IKAS-001"
       ],
@@ -20,7 +20,7 @@
     },
     {
       "id": "ARAS-EXPANSION",
-      "status": "SPEC_REQUIRED",
+      "status": "READY",
       "dependsOn": [
         "TICIMAX-001"
       ],

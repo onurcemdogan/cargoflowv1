@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "TICIMAX-001",
-  "status": "MERGE_READY",
-  "phase": "MERGE_READY",
+  "status": "MERGED",
+  "phase": "MERGED",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/TICIMAX-001",
   "baselineCommit": "8a91c6ec4e5e996956a432fe8f86953d82d4c2b3",
@@ -25,19 +25,8 @@
     "DEFERRED_TO_LIVE_PROVIDER_VERIFICATION markers preserved in ticimaxWireGate.ts / ticimaxClient.ts"
   ],
   "failingTests": [],
-  "blockers": [
-    {
-      "id": "TICIMAX_WIRE_SOAP",
-      "reason": "SelectSiparis wire-level QNames/namespaces remain DEFERRED_TO_LIVE_PROVIDER_VERIFICATION (intentional; not inventable).",
-      "humanAction": "Supply tenant WSDL or live SOAP envelope evidence at LIVE_PROVIDER_VERIFICATION before enabling probe/rollout"
-    },
-    {
-      "id": "TICIMAX_LOCAL_GATES_SHELL",
-      "reason": "Cursor worker Shell Rejected — test:ticimax, tsc, lint not executed this session.",
-      "humanAction": "Run gates locally; refresh qualityGates + push/CI as needed"
-    }
-  ],
-  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "blockers": [],
+  "nextAction": "Current ticket is merged. Automatically select the next eligible READY roadmap ticket.",
   "specPath": ".ai/tickets/TICIMAX-001.md",
   "verdicts": {
     "TICIMAX_CONTRACT": "PUBLIC_CONTRACT_PARTIALLY_VERIFIED",
