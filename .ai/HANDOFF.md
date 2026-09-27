@@ -3,9 +3,30 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `18e838f90d0e052a9396b8fc0a9638ee4b16369b` (committed, pending push)
+HEAD: `4ec62213be61b9d4aa5787f5c58392eccd64d166` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-eba1a34bb5502189 (repaired, code change applied)
+
+Finding: `arasClient.ts` validates numeric character references (`&#NNN;`) but still accepts a *literal* invalid XML character typed directly into the body. A response containing an actual `U+0000` byte inside `<Other>`, followed by `<ResultCode>0</ResultCode>`, passes the supplied parser and yields a success code. Require XML character legality throughout the response (not just for entity references) and add regression coverage before reconsidering merge.
+
+Root cause: `hasInvalidEntityReference` (hardened for numeric-reference code-point legality by `CODEX-MERGE-94d9708343f9b1d6`) only ever inspects text reached via `&`-prefixed entity/numeric-reference syntax. XML character legality (the `Char` production) is a document-wide constraint on every literal character — it applies regardless of whether that character arrived as a raw byte or an escaped reference, and it applies even inside CDATA (CDATA only suppresses markup/entity *recognition*, not the underlying character-legality rule). A body like `<Envelope><Other>\u0000</Other><ResultCode>0</ResultCode></Envelope>` (an actual NUL byte, not the entity `&#0;` already rejected by the prior fix) therefore still passed as well-formed — there is no `&` anywhere in it, so `hasInvalidEntityReference` never had anything to flag — so `extractKnownXmlFields` read `ResultCode='0'` and `classifyArasSetOrderResult` (`arasContract.ts`) treated `ResultCode === '0'` as success. Confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding scenario, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `hasInvalidLiteralChar(text)`, which iterates every code point of the given text via `for...of` (which iterates by Unicode code point, so both surrogate pairs and unpaired surrogates are handled correctly — an unpaired surrogate correctly fails `isValidXmlCodePoint` since the surrogate range is excluded from `Char`) and applies the same `isValidXmlCodePoint` rule already used for numeric character references. Wired into `parseWellFormedXmlStructure` at two call sites: (1) the full inter-tag gap, checked *before* any CDATA carve-out — unlike the entity-reference check (which is CDATA-exempt, since entity syntax isn't processed there), raw character legality applies inside CDATA too, so this check must see the un-stripped gap; and (2) each attribute value, alongside the existing duplicate-attribute-name and entity-reference checks. No other well-formedness logic changed.
+
+Regression tests added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3y`: the exact finding scenario, `<Envelope><Other>\u0000</Other><ResultCode>0</ResultCode></Envelope>` (literal NUL in character data) — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+- `ARC-3z`: literal NUL inside an attribute value, `<Envelope><Other a="\u0000"/><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+- `ARC-3aa`: literal NUL inside a CDATA span, `<Envelope><Other><![CDATA[\u0000]]></Other><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null` (confirms character legality is enforced even where CDATA otherwise makes markup/entities opaque).
+
+Verification this round:
+- `npm run test:aras`: 75/75 (was 72/72; +3 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `4ec62213be61b9d4aa5787f5c58392eccd64d166` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `4ec62213be61b9d4aa5787f5c58392eccd64d166`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-94d9708343f9b1d6 (repaired, code change applied)
 
