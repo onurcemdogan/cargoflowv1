@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "IN_PROGRESS",
-  "phase": "REVIEW_FEEDBACK",
+  "status": "MERGE_READY",
+  "phase": "MERGE_READY",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
   "headCommit": "f36f5787435d4d6887caf03cd7f7a01afc8da82c",
-  "activeWorker": "claude",
+  "activeWorker": null,
   "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [
@@ -39,7 +39,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "CODEX_MERGE_REMEDIATION: Codex rejected merge without a human-only boundary. Route the concrete finding to Claude/Cursor implementation, run local quality gates, GitHub CI, external review, then request a fresh Codex merge decision. Finding: arasClient.ts strips comments before identifying CDATA spans. A response containing <ResultCode><![CDATA[0<!--99-->]]></ResultCode> therefore extracts '0', although its actual value is '0<!--99-->'. This can falsely classify a rejected create as successful. Preserve CDATA content during parsing and add a regression test before merge.",
+  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -60,7 +60,7 @@
   "qualityGates": {
     "evidencePath": ".ai/.runtime/quality-gates.json",
     "passed": true,
-    "finishedAt": "2026-09-27T18:55:43.107850+00:00",
+    "finishedAt": "2026-09-27T19:10:15.607527+00:00",
     "results": [
       {
         "command": [
@@ -68,12 +68,12 @@
           "run",
           "test:ticimax"
         ],
-        "startedAt": "2026-09-27T18:55:31.904778+00:00",
-        "finishedAt": "2026-09-27T18:55:42.285098+00:00",
-        "durationSeconds": 10.38,
+        "startedAt": "2026-09-27T19:10:04.262346+00:00",
+        "finishedAt": "2026-09-27T19:10:14.795887+00:00",
+        "durationSeconds": 10.534,
         "exitCode": 0,
         "passed": true,
-        "logPath": ".ai/.runtime/20260927-215531-quality-0.log"
+        "logPath": ".ai/.runtime/20260927-221004-quality-0.log"
       }
     ]
   },
@@ -100,7 +100,9 @@
     "bugIds": [
       "CODEX-MERGE-8222e34b89e08fa9"
     ],
-    "attemptedProviders": [],
+    "attemptedProviders": [
+      "claude"
+    ],
     "history": [
       {
         "provider": "claude",
@@ -252,10 +254,22 @@
           "npm run lint",
           "node --test server/carrier-aras-expansion-flow.test.mjs"
         ]
+      },
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-8222e34b89e08fa9",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [
+          "server/carrier-aras-client-flow.test.mjs",
+          "server/carriers/aras/arasClient.ts",
+          "warning: in the working copy of '.ai/CURRENT_CONTEXT.md', LF will be replaced by CRLF the next time Git touches it",
+          "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
+        ],
+        "at": "2026-09-27T19:10:03.175322+00:00"
       }
     ],
-    "status": "IN_PROGRESS",
-    "updatedAt": "2026-09-27T19:08:01+03:00",
+    "status": "REPAIRED",
+    "updatedAt": "2026-09-27T19:10:03.175322+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
