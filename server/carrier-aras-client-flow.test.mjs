@@ -213,6 +213,28 @@ test('ARC-3j: kok elemani kapandiktan sonra govde disi metin basari SAYILMAZ', a
   assert.equal(outcome.raw, null)
 })
 
+test('ARC-3k: CDATA icindeki ResultCode metni SILINMEZ, alan degerine katilir (0<![CDATA[99]]> -> "099")', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultCode>0<![CDATA[99]]></ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultCode, '099')
+})
+
+test('ARC-3l: CDATA icinde sahte kapanan/acilan etiket karakterleri gercek etiket SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultCode><![CDATA[<not-a-tag>]]>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultCode, '<not-a-tag>0')
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

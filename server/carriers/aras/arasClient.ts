@@ -86,7 +86,6 @@ function containsSoapFault(xml: string): boolean {
 
 function stripNonElementXmlConstructs(xml: string): string {
   return xml
-    .replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<\?[\s\S]*?\?>/g, '')
     .replace(/<!DOCTYPE[\s\S]*?>/gi, '')
@@ -99,20 +98,38 @@ function stripNonElementXmlConstructs(xml: string): string {
 // ve olusturma siniflandirmasinin sahte basariya donmesine izin
 // veriyordu. Yerine yigin tabanli acilis/kapanis eslestirmesi konur.
 //
-// Dogrulama yorum/CDATA/PI/DOCTYPE'i STRIP EDILMIS govde uzerinde calisir;
-// alan cikarimi da AYNI strip edilmis govde uzerinde calismalidir. Aksi
-// halde `<Envelope><!--<ResultCode>0</ResultCode>--></Envelope>` gecerli
-// XML sayilir (govde strip edildiginde bos bir Envelope kalir) ama
+// Dogrulama yorum/PI/DOCTYPE'i STRIP EDILMIS govde uzerinde calisir; alan
+// cikarimi da AYNI govde uzerinde calismalidir. Aksi halde
+// `<Envelope><!--<ResultCode>0</ResultCode>--></Envelope>` gecerli XML
+// sayilir (govde strip edildiginde bos bir Envelope kalir) ama
 // extractKnownXmlFields orijinal (strip edilmemis) govde uzerinde
 // calisirsa yorum icindeki ResultCode=0'i yine de cikarip sahte basariya
-// yol acar. Bu yuzden strip edilmis govde tek gecerlilik/cikarim
-// kaynagi olarak dondurulur.
+// yol acar. Bu yuzden strip edilmis govde tek gecerlilik/cikarim kaynagi
+// olarak dondurulur.
+//
+// CDATA yorum/PI/DOCTYPE gibi ATILACAK bir yapi DEGILDIR — gercek eleman
+// verisidir. XML'de `<ResultCode>0<![CDATA[99]]></ResultCode>` govde metni
+// "099" anlamina gelir. Onceki uygulama CDATA'yi digerleriyle birlikte
+// SILIYORDU, bu da ayni govdeyi ResultCode=0 (099 degil) olarak cikarip
+// sahte create-basarisina izin veriyordu. Bu yuzden CDATA govdesi burada
+// iki asamada ele alinir: once etiket taramasi sirasinda OPAK kabul edilir
+// (icindeki `<`/`>` karakterleri sahte etiket sayilmaz), tarama gecerlilige
+// hukmettikten SONRA sinirlayicilari kaldirilip ic metin oldugu gibi
+// govdeye geri yazilir — boylece extractKnownXmlFields'a giden tek govde
+// hem dogrulanmis hem de CDATA metnini korumus olur.
 function getWellFormedCleanedXml(xml: string): string | null {
   const trimmed = xml.trim()
   if (!trimmed.startsWith('<')) return null
 
   const cleaned = stripNonElementXmlConstructs(trimmed)
-  const tagMatches = [...cleaned.matchAll(/<[^>]+>/g)]
+  const cdataSpans = [...cleaned.matchAll(/<!\[CDATA\[[\s\S]*?\]\]>/g)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length,
+  }))
+  const insideCdata = (index: number) =>
+    cdataSpans.some((span) => index >= span.start && index < span.end)
+
+  const tagMatches = [...cleaned.matchAll(/<[^>]+>/g)].filter((m) => !insideCdata(m.index))
   if (tagMatches.length === 0) return null
 
   const stack: string[] = []
@@ -159,7 +176,7 @@ function getWellFormedCleanedXml(xml: string): string | null {
   // stack-balance check alone does not catch it.
   if (stack.length !== 0) return null
   if (rootCount !== 1) return null
-  return cleaned
+  return cleaned.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
 }
 
 interface PerformArasSoapCallParams {
