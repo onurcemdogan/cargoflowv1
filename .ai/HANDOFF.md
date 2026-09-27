@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `5ec22c2` (pending push)
+HEAD: `c7967df` (pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-fd3a21282f11cc5f (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><Other a="&undefined;"/><ResultCode>0</ResultCode></Envelope>` passes because entity validation checks text gaps but not attribute values, allowing `ResultCode='0'` to produce false create success. Require strict XML validation covering attributes and a regression test before reconsideration.
+
+Root cause: `hasInvalidEntityReference` (added for `CODEX-MERGE-ff386c6c9acf66cb`) was wired only into the inter-tag gap-text check in `parseWellFormedXmlStructure`. Attribute values are character data too and are subject to the identical well-formedness rule (a literal `&` in text is only valid XML if it starts one of the five predefined entities or a numeric character reference), but the opening/self-closing tag's attribute-value character classes (`[^"<]*` / `[^'<]*`, hardened against raw `<` for `CODEX-MERGE-af151267b7f3521e`) accepted any other `&name;` as ordinary attribute text. A body like `<Envelope><Other a="&undefined;"/><ResultCode>0</ResultCode></Envelope>` therefore still passed as well-formed: tags balance, there is exactly one root, and the only inter-tag gap text is whitespace (the invalid entity sits inside an attribute value, not a text gap, so the existing check never saw it). `extractKnownXmlFields` then read `ResultCode='0'`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): the attribute-matching regex (already used to collect `attrNames` for the duplicate-attribute-name check added for `CODEX-MERGE-4c541f2475a1489c`) now also captures each attribute's value via alternation capture groups (`(?:"([^"<]*)"|'([^'<]*)')`). After the existing duplicate-name check, every captured value (`m[2] ?? m[3]`) is passed through the same `hasInvalidEntityReference` helper used for gap text. Since attributes cannot contain CDATA, no CDATA carve-out is needed for this check (unlike the gap-text check, which strips CDATA spans first). Any attribute value containing an invalid entity reference now rejects the tag, so the body is classified `ARAS_MALFORMED_RESPONSE` instead of the invalid reference being silently accepted as text. All other well-formedness checks (tag balance, single root, gap/trailing-text checks, duplicate-attribute-name/`<`-in-value rejection, delimiter-to-name whitespace, CDATA handling, gap-text entity checks) are unchanged.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3v`: the exact body from the finding, `<Envelope><Other a="&undefined;"/><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 70/70 (was 69/69; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `c7967df480b24459b6ea91c4f5819ba37f3fdcab` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `c7967df480b24459b6ea91c4f5819ba37f3fdcab`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-ff386c6c9acf66cb (repaired, code change applied)
 
