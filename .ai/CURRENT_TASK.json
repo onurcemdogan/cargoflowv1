@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "MERGE_READY",
-  "phase": "MERGE_READY",
+  "status": "IN_PROGRESS",
+  "phase": "REVIEW_FEEDBACK",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "5efa7fcfd34cf0d3157d33fdd83857038da0040e",
-  "activeWorker": null,
+  "headCommit": "0b40ee1fbf98e005ce9511d693c3957525d9b06e",
+  "activeWorker": "claude",
   "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [
@@ -38,11 +38,12 @@
     "CODEX-MERGE-8222e34b89e08fa9: fixed. server/carriers/aras/arasClient.ts stripNonElementXmlConstructs stripped comments/PI/DOCTYPE with a single CDATA-unaware regex pass over the whole body, so a comment-shaped substring sitting INSIDE a CDATA payload was deleted as if it were a real comment. Body `<ResultCode><![CDATA[0<!--99-->]]></ResultCode>` therefore had its CDATA content corrupted from the literal text \"0<!--99-->\" to \"0\" before extraction even ran (parseWellFormedXmlStructure locates CDATA spans on the ALREADY-stripped string, so by then the damage was done) — permitting a rejected create (per the finding's premise, the true value is not '0') to be misclassified as successful once ResultCode extracted as exactly '0'. Fix: introduced findCdataSpans(xml) and rewrote stripNonElementXmlConstructs to locate CDATA spans on the RAW (pre-strip) body first, then strip comments/PI/DOCTYPE via a single indexed matchAll pass that skips any match whose start index falls inside a CDATA span — so CDATA content (including any comment-shaped substrings within it) passes through the strip step untouched, and parseWellFormedXmlStructure's existing cdataSpans computation (now reusing findCdataSpans) still runs correctly on the resulting cleaned string. No other logic changed. Added regression test ARC-3o to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting outcome.raw.ResultCode === '0<!--99-->' and classifyArasSetOrderResult(outcome.raw).ok === false. npm run test:aras 63/63 (was 62/62 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed f36f578 (code + test only).",
     "CODEX-MERGE-2f65a0c9946b73be: fixed. server/carriers/aras/arasClient.ts parseWellFormedXmlStructure matched a closing tag's element name with a PREFIX-only regex (/^<\\/\\s*([A-Za-z_][\\w.:-]*)/, no end anchor), never checking what followed the captured name. XML forbids anything but whitespace between a closing tag's name and its '>' (unlike an opening tag, a closing tag cannot carry attributes), so a tag like `</ResultCode junk>` still captured group \"ResultCode\", matched the stack top, and was accepted as a legitimate close — the trailing \" junk\" was silently discarded instead of causing rejection. Traced by hand against the exact finding body `<Envelope><ResultCode>0</ResultCode junk></Envelope>`: extractKnownXmlFields read ResultCode='0' from the accepted structure, and classifyArasSetOrderResult (arasContract.ts) treats ResultCode==='0' as success, so the malformed body was misclassified as a successful create — confirmed as a live, reproducible bug against the current arasClient.ts, not stale/outdated evidence. Fix: anchored the closing-tag regex to /^<\\/\\s*([A-Za-z_][\\w.:-]*)\\s*>$/ so the entire tag must be '</', optional whitespace, the name, optional whitespace, and '>' with nothing else; any non-whitespace between the name and '>' now fails the match and the body is rejected as ARAS_MALFORMED_RESPONSE. Opening/self-closing tag matching unchanged (attributes remain legitimately permitted there). Added regression test ARC-3p to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 64/64 (was 63/63 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 9dac45e (code + test only).",
     "CODEX-MERGE-67921c7e4afaad12: fixed. server/carriers/aras/arasClient.ts parseWellFormedXmlStructure matched opening/self-closing tag element names with a PREFIX-only regex (/^<\\s*([A-Za-z_][\\w.:-]*)/, no end anchor), never checking what followed the captured name. Unlike closing tags (anchored by CODEX-MERGE-2f65a0c9946b73be), opening tags legitimately can carry attributes, so this required validating that trailing content is actual attribute syntax rather than forbidding it outright. A tag like `<ResultCode !>` still captured group \"ResultCode\" and was accepted as a legitimate open — the bogus \" !\" was silently discarded as if it were attributes. Traced by hand against the exact finding body `<Envelope><ResultCode !>0</ResultCode></Envelope>`: the closing `</ResultCode>` matched the stack top by name, extractKnownXmlFields read ResultCode='0' from the accepted element, and classifyArasSetOrderResult (arasContract.ts) treats ResultCode==='0' as success, so the malformed body was misclassified as a successful create — confirmed as a live, reproducible bug against the current arasClient.ts, not stale/outdated evidence. Fix: replaced the prefix-only opening/self-closing regex with a full-match regex anchored at both ends, /^<\\s*([A-Za-z_][\\w.:-]*)(?:\\s+[A-Za-z_][\\w.:-]*\\s*=\\s*(?:\"[^\"]*\"|'[^']*'))*\\s*(\\/)?>$/, requiring the name to be followed only by zero or more whitespace-separated name=\"value\" attributes, an optional '/', and '>'; any other trailing content now fails the match and the body is rejected as ARAS_MALFORMED_RESPONSE. Self-closing detection now derives from the same match's capture group instead of a separate pre-check regex, giving one source of truth for valid opening/self-closing tags; legitimate attributes (e.g. xmlns:soap on real SOAP envelopes) still parse correctly. Closing-tag matching unchanged. Added regression test ARC-3q to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 65/65 (was 64/64 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 42dd0f42cddf16ac5348f8f319462ce66ae0e72b (code + test only).",
-    "CODEX-MERGE-4c541f2475a1489c: fixed. server/carriers/aras/arasClient.ts parseWellFormedXmlStructure's opening/self-closing tag regex (anchored by CODEX-MERGE-67921c7e4afaad12) validated that each attribute individually matched name=\"value\" (or '...') syntax via a repeated (?:...)* group, but never tracked whether an attribute NAME had already appeared earlier in the same tag — XML forbids duplicate attribute names on one element (a well-formedness constraint), and nothing in the prior regex enforced it. A tag like `<ResultCode a=\"1\" a=\"2\">` therefore still matched cleanly (both repetitions individually look like valid attribute syntax), so extractKnownXmlFields read ResultCode='0' from the accepted element and classifyArasSetOrderResult (arasContract.ts) treated ResultCode==='0' as success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body `<Envelope><ResultCode a=\"1\" a=\"2\">0</ResultCode></Envelope>`. Fix: after nameMatch succeeds, extract every attribute name in the tag via tag.matchAll(/([A-Za-z_][\\w.:-]*)\\s*=\\s*(?:\"[^\"]*\"|'[^']*')/g) and reject (return null, ARAS_MALFORMED_RESPONSE) if the resulting name list has any duplicate (new Set(attrNames).size !== attrNames.length). This scan is safe to run unconditionally on any tag that already passed the anchored nameMatch regex, since that regex guarantees the tag's only content besides the element name is zero or more well-formed attribute assignments. Legitimate tags with distinct attribute names (e.g. xmlns:soap=\"...\" xmlns:xsi=\"...\") are unaffected. Added regression test ARC-3r to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 66/66 (was 65/65 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 5efa7fc (code + test only)."
+    "CODEX-MERGE-4c541f2475a1489c: fixed. server/carriers/aras/arasClient.ts parseWellFormedXmlStructure's opening/self-closing tag regex (anchored by CODEX-MERGE-67921c7e4afaad12) validated that each attribute individually matched name=\"value\" (or '...') syntax via a repeated (?:...)* group, but never tracked whether an attribute NAME had already appeared earlier in the same tag — XML forbids duplicate attribute names on one element (a well-formedness constraint), and nothing in the prior regex enforced it. A tag like `<ResultCode a=\"1\" a=\"2\">` therefore still matched cleanly (both repetitions individually look like valid attribute syntax), so extractKnownXmlFields read ResultCode='0' from the accepted element and classifyArasSetOrderResult (arasContract.ts) treated ResultCode==='0' as success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body `<Envelope><ResultCode a=\"1\" a=\"2\">0</ResultCode></Envelope>`. Fix: after nameMatch succeeds, extract every attribute name in the tag via tag.matchAll(/([A-Za-z_][\\w.:-]*)\\s*=\\s*(?:\"[^\"]*\"|'[^']*')/g) and reject (return null, ARAS_MALFORMED_RESPONSE) if the resulting name list has any duplicate (new Set(attrNames).size !== attrNames.length). This scan is safe to run unconditionally on any tag that already passed the anchored nameMatch regex, since that regex guarantees the tag's only content besides the element name is zero or more well-formed attribute assignments. Legitimate tags with distinct attribute names (e.g. xmlns:soap=\"...\" xmlns:xsi=\"...\") are unaffected. Added regression test ARC-3r to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 66/66 (was 65/65 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 5efa7fc (code + test only).",
+    "CODEX-MERGE-af151267b7f3521e: fixed. server/carriers/aras/arasClient.ts parseWellFormedXmlStructure's attribute-value pattern accepted any character except the delimiting quote ([^\"]*/[^']*) inside a quoted attribute value — but XML forbids a literal, unescaped '<' in an attribute value (it must be written as &lt;); a raw '<' there is always the start of a new tag, never data. A tag like `<ResultCode a=\"<\">` therefore still matched cleanly (the embedded '<' was accepted as ordinary attribute text), so extractKnownXmlFields read ResultCode='0' from the accepted element and classifyArasSetOrderResult (arasContract.ts) treated ResultCode==='0' as success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body `<Envelope><ResultCode a=\"<\">0</ResultCode></Envelope>`. Fix: excluded '<' from both attribute-value character classes ([^\"<]*/[^'<]*) in the opening/self-closing tag nameMatch regex AND the attrNames duplicate-name scan regex (kept in sync so both regexes agree on what counts as a valid attribute value), so any tag with an embedded raw '<' in an attribute value now fails nameMatch and the body is rejected as ARAS_MALFORMED_RESPONSE. Legitimate attribute values without a raw '<' (e.g. xmlns:soap=\"...\") are unaffected. Added regression test ARC-3s to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 67/67 (was 66/66 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 0b40ee1 (code + test only)."
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "nextAction": "Push 0b40ee1 to origin/agent/ARAS-EXPANSION (with user/supervisor confirmation), wait for GitHub CI (quality) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against 0b40ee1fbf98e005ce9511d693c3957525d9b06e. Do not push/merge master/integration/roadmap.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -82,7 +83,7 @@
   },
   "externalReview": {
     "prNumber": 8,
-    "prHeadSha": "9d652f8f9ec9519658d7a3cd125f75f382f37834",
+    "prHeadSha": "711a5d8c171a4de8dc026cbb5b290779eabdbd3e",
     "ciStatus": "SUCCESS",
     "humanReviewStatus": "CLEAR",
     "externalReviewStatus": "CLEAN",
@@ -95,46 +96,16 @@
       "conclusion": "SUCCESS"
     },
     "remainingFindings": [],
-    "evaluatedAt": "2026-09-27T22:23:10.251192+00:00"
+    "evaluatedAt": "2026-09-27T22:37:09.340425+00:00"
   },
   "reviewFeedback": {
-    "fingerprint": "CODEX-MERGE-4c541f2475a1489c",
+    "fingerprint": "CODEX-MERGE-af151267b7f3521e",
     "headSha": "5efa7fcfd34cf0d3157d33fdd83857038da0040e",
     "bugIds": [
-      "CODEX-MERGE-4c541f2475a1489c"
+      "CODEX-MERGE-af151267b7f3521e"
     ],
-    "attemptedProviders": [
-      "claude"
-    ],
+    "attemptedProviders": [],
     "history": [
-      {
-        "provider": "claude",
-        "fingerprint": "CODEX-MERGE-9e972f27157ce0f7",
-        "exitClass": "SUCCESS",
-        "touchedPaths": [
-          "server/carrier-aras-client-flow.test.mjs",
-          "server/carriers/aras/arasClient.ts",
-          "warning: in the working copy of '.ai/CURRENT_CONTEXT.md', LF will be replaced by CRLF the next time Git touches it",
-          "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
-        ],
-        "at": "2026-09-27T18:20:48.478871+00:00"
-      },
-      {
-        "provider": "claude",
-        "fingerprint": "CODEX-MERGE-a14f3b696b9f30e7",
-        "exitClass": "SUCCESS",
-        "touchedPaths": [
-          "server/carriers/aras/arasClient.ts",
-          "server/carrier-aras-client-flow.test.mjs"
-        ],
-        "at": "2026-09-27T18:45:00.000000+00:00",
-        "commands": [
-          "npm run test:aras",
-          "npx tsc -b --force",
-          "npm run lint",
-          "node --test server/carrier-aras-expansion-flow.test.mjs"
-        ]
-      },
       {
         "provider": "claude",
         "fingerprint": "CODEX-MERGE-a14f3b696b9f30e7",
@@ -266,19 +237,35 @@
           "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
         ],
         "at": "2026-09-27T22:27:52.664749+00:00"
+      },
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-af151267b7f3521e",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [
+          "server/carriers/aras/arasClient.ts",
+          "server/carrier-aras-client-flow.test.mjs"
+        ],
+        "at": "2026-09-28T00:00:00.000000+00:00",
+        "commands": [
+          "npm run test:aras",
+          "npx tsc -b --force",
+          "npm run lint",
+          "node --test server/carrier-aras-expansion-flow.test.mjs"
+        ]
       }
     ],
-    "status": "REPAIRED",
-    "updatedAt": "2026-09-27T22:27:52.664749+00:00",
+    "status": "IN_PROGRESS",
+    "updatedAt": "2026-09-28T00:00:00.000000+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
-        "bugId": "CODEX-MERGE-4c541f2475a1489c",
+        "bugId": "CODEX-MERGE-af151267b7f3521e",
         "title": "Codex merge authorization finding",
         "severity": "high",
         "path": null,
         "line": null,
-        "body": "arasClient.ts still accepts malformed XML: <Envelope><ResultCode a=\"1\" a=\"2\">0</ResultCode></Envelope> passes its opening-tag regex despite duplicate attributes, extracts ResultCode='0', and permits false create success. Replace the partial XML validator with complete validation and add a regression test before reconsidering merge.",
+        "body": "arasClient.ts still accepts malformed XML: <Envelope><ResultCode a=\"<\">0</ResultCode></Envelope> passes the attribute regex and extracts ResultCode='0', permitting false create success. Reject invalid XML attribute values through complete XML validation and add a regression test before reconsidering merge. Green CI and clean PR signals do not resolve this defect.",
         "threadId": null,
         "outdated": false,
         "source": "codex-merge-control"

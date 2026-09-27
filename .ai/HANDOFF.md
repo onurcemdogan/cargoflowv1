@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `5efa7fc` (pending push)
+HEAD: `0b40ee1` (pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-af151267b7f3521e (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><ResultCode a="<">0</ResultCode></Envelope>` passes the attribute regex and extracts `ResultCode='0'`, permitting false create success. Reject invalid XML attribute values through complete XML validation and add a regression test before reconsidering merge.
+
+Root cause: in `parseWellFormedXmlStructure`, the attribute-value pattern used by both the opening/self-closing tag `nameMatch` regex (anchored end-to-end by `CODEX-MERGE-67921c7e4afaad12`) and the `attrNames` duplicate-name scan (added for `CODEX-MERGE-4c541f2475a1489c`) accepted **any** character except the delimiting quote — `[^"]*` inside double quotes, `[^']*` inside single quotes. XML forbids a literal, unescaped `<` inside an attribute value (it must be written as `&lt;`); a raw `<` there is always the start of a new tag, never data. Neither regex enforced this. A tag like `<ResultCode a="<">` therefore still matched cleanly — the embedded `<` was accepted as ordinary attribute text — so `extractKnownXmlFields` read `ResultCode='0'` from the accepted element and `classifyArasSetOrderResult` (`arasContract.ts`) treated `ResultCode === '0'` as success. Confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body `<Envelope><ResultCode a="<">0</ResultCode></Envelope>`, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): excluded `<` from both attribute-value character classes — `[^"<]*` and `[^'<]*` — in the opening/self-closing tag `nameMatch` regex and the `attrNames` scan regex, kept in sync so both regexes agree on what counts as a valid attribute value. Any tag with an embedded raw `<` in an attribute value now fails `nameMatch` entirely, so the body is rejected as `ARAS_MALFORMED_RESPONSE` instead of the `<` being silently accepted as text. Legitimate attribute values that don't contain a raw `<` (e.g. real SOAP envelopes carrying `xmlns:soap="..."`) are unaffected. Closing-tag matching, duplicate-attribute-name rejection, tag balance, single-root, gap/trailing-text checks, and CDATA handling are all unchanged.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3s`: the exact body from the finding, `<Envelope><ResultCode a="<">0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 67/67 (was 66/66; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `0b40ee1` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on this head, then request a fresh Codex merge decision against `0b40ee1fbf98e005ce9511d693c3957525d9b06e`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-4c541f2475a1489c (repaired, code change applied)
 
