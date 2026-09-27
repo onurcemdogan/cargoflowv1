@@ -281,10 +281,23 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
       // attribute twice (e.g. `<ResultCode a="1" a="2">`), which XML forbids
       // (duplicate attribute names are a well-formedness violation). Extract
       // every attribute name in the tag and reject if any repeats.
-      const attrNames = [
-        ...tag.matchAll(/([A-Za-z_][\w.:-]*)\s*=\s*(?:"[^"<]*"|'[^'<]*')/g),
-      ].map((m) => m[1])
+      //
+      // Attribute VALUES are character data too, so the same entity-reference
+      // well-formedness rule checked for text between tags (see
+      // `hasInvalidEntityReference` above) applies here — a raw `&` in an
+      // attribute value is only valid XML if it starts one of the five
+      // predefined entities or a numeric character reference. The value
+      // classes above (`[^"<]*` / `[^'<]*`) accept any other `&name;` as
+      // ordinary text, so `<Other a="&undefined;"/>` still matched even
+      // though `&undefined;` is an undeclared entity reference. Attributes
+      // cannot contain CDATA, so the check runs directly on each captured
+      // value with no CDATA carve-out.
+      const attrMatches = [
+        ...tag.matchAll(/([A-Za-z_][\w.:-]*)\s*=\s*(?:"([^"<]*)"|'([^'<]*)')/g),
+      ]
+      const attrNames = attrMatches.map((m) => m[1])
       if (new Set(attrNames).size !== attrNames.length) return null
+      if (attrMatches.some((m) => hasInvalidEntityReference(m[2] ?? m[3] ?? ''))) return null
       tagNames.push(nameMatch[1])
       if (stack.length === 0) {
         rootCount += 1

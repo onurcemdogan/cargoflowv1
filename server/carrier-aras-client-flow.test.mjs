@@ -349,6 +349,18 @@ test('ARC-3u: karakter verisinde tanimsiz varlik basvurusu (&undefined;) basari 
   assert.equal(outcome.raw, null)
 })
 
+test('ARC-3v: oznitelik degerinde tanimsiz varlik basvurusu (&undefined;) basari SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><Other a="&undefined;"/><ResultCode>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+  assert.equal(outcome.raw, null)
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {
