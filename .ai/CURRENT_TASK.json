@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "REVIEW_EXHAUSTED",
-  "phase": "REVIEW_EXHAUSTED",
+  "status": "MERGE_READY",
+  "phase": "MERGE_READY",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
@@ -30,7 +30,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_EXHAUSTED: run configured local quality gates, then Codex-only MERGE control-plane decision.",
+  "nextAction": "REVIEW_EXHAUSTED local quality gates passed. Final head is frozen. GitHub CI is the final gate; then Codex-only MERGE authorization via the existing merge control plane.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -47,5 +47,25 @@
       "cursor"
     ],
     "message": "Independent reviewer unavailable because every enabled worker has contributed."
+  },
+  "qualityGates": {
+    "evidencePath": ".ai/.runtime/quality-gates.json",
+    "passed": true,
+    "finishedAt": "2026-09-27T14:12:09.712890+00:00",
+    "results": [
+      {
+        "command": [
+          "npm.cmd",
+          "run",
+          "test:ticimax"
+        ],
+        "startedAt": "2026-09-27T14:11:57.594234+00:00",
+        "finishedAt": "2026-09-27T14:12:08.813249+00:00",
+        "durationSeconds": 11.219,
+        "exitCode": 0,
+        "passed": true,
+        "logPath": ".ai/.runtime/20260927-171157-quality-0.log"
+      }
+    ]
   }
 }
