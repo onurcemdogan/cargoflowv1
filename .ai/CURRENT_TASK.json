@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "MERGE_READY",
-  "phase": "MERGE_READY",
+  "status": "IN_PROGRESS",
+  "phase": "REVIEW_FEEDBACK",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
@@ -31,7 +31,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "Verified at current PR head cd846323cd7bb0647ad004d749a94a215f7dc286: drizzle/meta/0014_snapshot.json is complete (91245 bytes, valid JSON, `npm run db:check` reports no drift) and drizzle/0014_dark_leader.sql + drizzle/meta/_journal.json are consistent. The finding's frozen-head reference (45e44fb) predated the prior remediation commit (cd84632) that introduced the full migration; GitHub CI is green (run 36331757952) and PR #8 head already matches cd846323 on origin. Request a fresh Codex merge decision evaluated against headCommit cd846323cd7bb0647ad004d749a94a215f7dc286.",
+  "nextAction": "REVIEW_FEEDBACK repair via claude exited TRANSIENT_ERROR; reconstruct from git and .ai\\recovery\\20260927-201837.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -121,10 +121,20 @@
           "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
         ],
         "at": "2026-09-27T16:02:14.643365+00:00"
+      },
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-61123b9a11e6de29",
+        "exitClass": "TRANSIENT_ERROR",
+        "touchedPaths": [
+          "warning: in the working copy of '.ai/CURRENT_CONTEXT.md', LF will be replaced by CRLF the next time Git touches it",
+          "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
+        ],
+        "at": "2026-09-27T17:18:36.840849+00:00"
       }
     ],
     "status": "REPAIRED",
-    "updatedAt": "2026-09-27T17:17:03.252000+00:00",
+    "updatedAt": "2026-09-27T17:18:36.840849+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
