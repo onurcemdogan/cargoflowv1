@@ -112,12 +112,25 @@ function getWellFormedCleanedXml(xml: string): string | null {
   if (!trimmed.startsWith('<')) return null
 
   const cleaned = stripNonElementXmlConstructs(trimmed)
-  const tags = cleaned.match(/<[^>]+>/g)
-  if (!tags || tags.length === 0) return null
+  const tagMatches = [...cleaned.matchAll(/<[^>]+>/g)]
+  if (tagMatches.length === 0) return null
 
   const stack: string[] = []
   let rootCount = 0
-  for (const tag of tags) {
+  let cursor = 0
+  for (const match of tagMatches) {
+    const tag = match[0]
+    // Text seen while `stack` is empty is outside the root element (before
+    // it opens, between top-level siblings, or after it closes). That is
+    // only valid XML if it is pure whitespace — e.g.
+    // `<Envelope>...</Envelope>garbage` must not be treated as well-formed
+    // just because its tags happen to balance.
+    if (stack.length === 0) {
+      const gap = cleaned.slice(cursor, match.index)
+      if (gap.trim().length > 0) return null
+    }
+    cursor = match.index + tag.length
+
     if (tag.startsWith('</')) {
       const nameMatch = /^<\/\s*([A-Za-z_][\w.:-]*)/.exec(tag)
       if (!nameMatch) return null
@@ -137,6 +150,9 @@ function getWellFormedCleanedXml(xml: string): string | null {
       stack.push(nameMatch[1])
     }
   }
+  // Trailing text after the last tag is also outside the root once it has
+  // closed (e.g. `</Envelope>garbage`) and must be whitespace-only.
+  if (cleaned.slice(cursor).trim().length > 0) return null
   // XML requires exactly one root element; a self-closed root followed by a
   // sibling (e.g. `<Envelope/><ResultCode>0</ResultCode>`) leaves the stack
   // empty at the end even though there are two top-level elements, so the
