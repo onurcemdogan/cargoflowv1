@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `834579b3579c97c5119f0ef7c87465d71eb6f277`
+HEAD: `1915a0a3b1d58208bf553e0fc9471dabe84986c7`
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-a7c6cff547743657 (repaired, code change applied)
+
+Finding: `arasClient.ts` validated XML well-formedness on a comment/CDATA/PI/DOCTYPE-**stripped** copy of the body (`isWellFormedXml`), but `extractKnownXmlFields` extracted fields from the **original, unstripped** `bodyText`. So a response like `<Envelope><!--<ResultCode>0</ResultCode>--></Envelope>` passed validation — the stripped body is just a valid empty `<Envelope>` — while the per-field regex still matched `ResultCode=0` out of the commented-out text, which could let a tampered/malformed response be classified as a successful create.
+
+Fix (`server/carriers/aras/arasClient.ts`): renamed `isWellFormedXml` to `getWellFormedCleanedXml`. Instead of returning a boolean, it now returns the cleaned (comments/CDATA/PI/DOCTYPE-stripped) body string when well-formed, or `null` otherwise. `finishArasSoapCall` calls this once and uses the **same** cleaned string as the sole input to both the SOAP-fault check (`containsSoapFault`) and `extractKnownXmlFields`, so anything removed during stripping can never be extracted as a field. `looksLikeXml` was removed (no longer needed — `finishArasSoapCall` branches directly on whether `getWellFormedCleanedXml` returned `null`).
+
+Downstream `server/carriers/aras/arasContract.ts` (`classifyArasSetOrderResult`) already treats a missing `ResultCode` as `ARAS_SET_ORDER_RESULT_MISSING`, not success, so no caller changes were needed — the fix is fully contained to extraction consistency in `arasClient.ts`.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3h`: body with `ResultCode=0` hidden inside an XML comment — asserts `outcome.ok === true` (body is well-formed once the comment is stripped) but `outcome.raw.ResultCode === undefined` (the commented-out field is never extracted).
+
+Verification this round:
+- `npm run test:aras`: 56/56 (was 55/55; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed as `1915a0a3b1d58208bf553e0fc9471dabe84986c7` (code + test only; `.ai/*` docs sync is a separate commit per this branch's established pattern). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state on the new head, then request a fresh Codex merge decision against `1915a0a3b1d58208bf553e0fc9471dabe84986c7`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-f45d49551e813508 (repaired, code change applied)
 
