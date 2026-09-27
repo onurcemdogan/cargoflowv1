@@ -24,6 +24,7 @@ const { connectionKey } = await import('./connectors/integrationHealth.ts')
 const eligibility = await import('./shipments/trendyolShipmentEligibility.ts')
 const pipeline = await import('./carriers/aras/arasShipmentPipeline.ts')
 const rollout = await import('./carriers/aras/arasRollout.ts')
+const artifactStoreModule = await import('./carriers/aras/arasLabelArtifactStore.ts')
 
 function migrationStatements() {
   const dir = join(root, 'drizzle')
@@ -157,9 +158,8 @@ test('ARE-8: internal_test rollout canli yan etki acamaz', () => {
   assert.equal(rollout.canArasCarrierAffectLiveFulfillment(), false)
 })
 
-test('ARE-9: boru hatti mock tasima ile create-verify-label-reprint', async () => {
-  const calls = []
-  const fetchImpl = async (_url, init) => {
+function arasFetchImpl(calls) {
+  return async (_url, init) => {
     calls.push(init.headers.SOAPAction)
     const body = init.body
     if (body.includes('<SetOrder')) {
@@ -169,9 +169,10 @@ test('ARE-9: boru hatti mock tasima ile create-verify-label-reprint', async () =
       }
     }
     if (body.includes('GetOrderWithIntegrationCode')) {
+      const requested = body.match(/<integrationCode>([\s\S]*?)<\/integrationCode>/)?.[1] ?? ''
       return {
         ok: true, status: 200,
-        text: async () => '<Envelope><IntegrationCode>ARAS:org1:ord1:CREATE</IntegrationCode></Envelope>',
+        text: async () => `<Envelope><IntegrationCode>${requested}</IntegrationCode></Envelope>`,
       }
     }
     if (body.includes('<GetBarcode')) {
@@ -182,12 +183,21 @@ test('ARE-9: boru hatti mock tasima ile create-verify-label-reprint', async () =
     }
     return { ok: false, status: 500, text: async () => '<Envelope/>' }
   }
+}
+
+test('ARE-9: boru hatti mock tasima ile create-verify-label-reprint (KALICI depo)', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const artifactStore = artifactStoreModule.createDbArasLabelArtifactStore(db)
+  const calls = []
   const outcome = await pipeline.runArasInternalTestPipeline({
-    organizationId: 'org1',
+    organizationId: org,
     orderId: 'ord1',
     credentials: { userName: 'u', password: 'p' },
     shipmentFields: { ReceiverName: 'A', ReceiverAddress: 'B' },
-    fetchImpl,
+    fetchImpl: arasFetchImpl(calls),
+    artifactStore,
   })
   assert.equal(outcome.ok, true)
   assert.equal(outcome.verificationState, 'VERIFIED_REGISTERED')
@@ -197,16 +207,83 @@ test('ARE-9: boru hatti mock tasima ile create-verify-label-reprint', async () =
     'http://tempuri.org/GetOrderWithIntegrationCode',
     'http://tempuri.org/GetBarcode',
   ])
+
+  // KALICILIK KANITI: satır DB'de gerçekten var ve şifreli — düz metin YOK.
+  const rows = await db.select().from(schema.arasLabelArtifacts)
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].artifactEncrypted.includes('^XA^XZ'), false)
+
+  // REPRINT-FROM-STORAGE: taşıyıcı TEKRAR ÇAĞRILMADAN, yalnız depodan okur.
+  const callsBeforeReprint = calls.length
+  const reloaded = await artifactStore.load(org, outcome.integrationCode)
+  assert.equal(reloaded?.content, '^XA^XZ')
+  assert.equal(calls.length, callsBeforeReprint, 'reprint taşıyıcıya GİTMEZ')
+
+  // İMMUTABLE YAZIM: aynı integrationCode için ikinci bir persist() çağrısı
+  // (ör. eşzamanlı retry) mevcut kaydı DEĞİŞTİRMEZ.
+  const overwriteAttempt = await artifactStore.persist(org, outcome.integrationCode, {
+    type: 'ZPL', content: '^DIFFERENT^', encoding: 'text',
+  })
+  assert.equal(overwriteAttempt, false)
+  const stillOriginal = await artifactStore.load(org, outcome.integrationCode)
+  assert.equal(stillOriginal?.content, '^XA^XZ')
+  const rowsAfterOverwriteAttempt = await db.select().from(schema.arasLabelArtifacts)
+  assert.equal(rowsAfterOverwriteAttempt.length, 1)
 })
 
-test('ARE-10: COD dogrulanmamis deger tablosu boru hattinda reddedilir', async () => {
+test('ARE-9b: depoda artefakt yokken reprint FAIL-CLOSED olur (taşıyıcıya yeniden gidilmez)', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const artifactStore = artifactStoreModule.createDbArasLabelArtifactStore(db)
+  const calls = []
   const outcome = await pipeline.runArasInternalTestPipeline({
-    organizationId: 'org1',
+    organizationId: org,
+    orderId: 'ord-fail',
+    credentials: { userName: 'u', password: 'p' },
+    shipmentFields: { ReceiverName: 'A', ReceiverAddress: 'B' },
+    fetchImpl: async (_url, init) => {
+      calls.push(init.headers.SOAPAction)
+      const body = init.body
+      if (body.includes('<SetOrder')) {
+        return {
+          ok: true, status: 200,
+          text: async () => '<Envelope><ResultCode>0</ResultCode><ResultMessage>OK</ResultMessage></Envelope>',
+        }
+      }
+      if (body.includes('GetOrderWithIntegrationCode')) {
+        const requested = body.match(/<integrationCode>([\s\S]*?)<\/integrationCode>/)?.[1] ?? ''
+        return {
+          ok: true, status: 200,
+          text: async () => `<Envelope><IntegrationCode>${requested}</IntegrationCode></Envelope>`,
+        }
+      }
+      // GetBarcode boş/basılamaz artefakt döner: hiçbir şey depoya yazılmaz.
+      if (body.includes('<GetBarcode')) {
+        return { ok: true, status: 200, text: async () => '<Envelope/>' }
+      }
+      return { ok: false, status: 500, text: async () => '<Envelope/>' }
+    },
+    artifactStore,
+  })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.persistedArtifact, null)
+  const rows = await db.select().from(schema.arasLabelArtifacts)
+  assert.equal(rows.length, 0)
+})
+
+test('ARE-10: COD dogrulanmamis deger tablosu boru hattinda reddedilir', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const outcome = await pipeline.runArasInternalTestPipeline({
+    organizationId: org,
     orderId: 'ord2',
     credentials: { userName: 'u', password: 'p' },
     shipmentFields: { ReceiverName: 'A', ReceiverAddress: 'B' },
     cod: { isCod: true, codAmount: 10 },
     fetchImpl: async () => ({ ok: true, status: 200, text: async () => '<Envelope/>' }),
+    artifactStore: artifactStoreModule.createDbArasLabelArtifactStore(db),
   })
   assert.equal(outcome.ok, false)
   assert.equal(outcome.errorCode, 'ARAS_COD_VALUE_TABLE_UNVERIFIED')

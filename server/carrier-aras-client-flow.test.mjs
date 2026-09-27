@@ -138,6 +138,29 @@ test('ARC-3d: zaman asimi basari SAYILMAZ', async () => {
   assert.equal(outcome.errorCode, 'ARAS_TRANSPORT_TIMEOUT')
 })
 
+test('ARC-3e: yanit basliklari doner ama govde HIC BITMEZSE zaman asimi yine devrededir', async () => {
+  // Sunucu 200 ile hemen doner ama gövde akışı hiç kapanmaz (asılı kalır).
+  // Zamanlayıcı `doFetch` cozulur cozulmez temizlenirse bu okuma SÜRESİZ
+  // askıda kalırdı; düzeltmeden sonra abort sinyali `response.text()`i de
+  // keser ve sonuç zaman aşımı olarak sınıflanır.
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = async (_url, init) => ({
+    ok: true,
+    status: 200,
+    text: () =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener('abort', () => {
+          const error = new Error('aborted')
+          error.name = 'AbortError'
+          reject(error)
+        })
+      }),
+  })
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl, timeoutMs: 5 })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_TRANSPORT_TIMEOUT')
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

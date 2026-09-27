@@ -103,44 +103,59 @@ async function performArasSoapCall(
   const doFetch = params.fetchImpl ?? (globalThis.fetch as unknown as ArasFetchLike)
   const controller = new AbortController()
   const timeoutMs = params.timeoutMs ?? ARAS_TRANSPORT_TIMEOUT_MS
+  // ÖNEMLİ: zamanlayıcı yalnız `doFetch` çözümlenene KADAR değil, gövde
+  // (`response.text()`) TAMAMEN okunana kadar aktif kalır. Aksi halde bir
+  // sunucu başlıkları hemen dönüp gövdeyi sonsuza dek akıtabilir (veya hiç
+  // kapatmayabilir) ve okuma SÜRESİZ askıda kalırdı — timeout yalnız ilk
+  // aşamayı korumuş olurdu.
   const timer = setTimeout(() => controller.abort(), timeoutMs)
-  let response: Awaited<ReturnType<ArasFetchLike>>
   try {
-    response = await doFetch(params.url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'text/xml; charset=utf-8',
-        SOAPAction: params.soapAction,
-      },
-      body: params.envelope,
-      signal: controller.signal,
-    })
-  } catch (error) {
-    const aborted = (error as Error)?.name === 'AbortError'
-    return {
-      ok: false,
-      httpStatus: null,
-      raw: null,
-      networkCalled: true,
-      errorCode: aborted ? 'ARAS_TRANSPORT_TIMEOUT' : 'ARAS_TRANSPORT_UNKNOWN',
+    let response: Awaited<ReturnType<ArasFetchLike>>
+    try {
+      response = await doFetch(params.url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/xml; charset=utf-8',
+          SOAPAction: params.soapAction,
+        },
+        body: params.envelope,
+        signal: controller.signal,
+      })
+    } catch (error) {
+      const aborted = (error as Error)?.name === 'AbortError'
+      return {
+        ok: false,
+        httpStatus: null,
+        raw: null,
+        networkCalled: true,
+        errorCode: aborted ? 'ARAS_TRANSPORT_TIMEOUT' : 'ARAS_TRANSPORT_UNKNOWN',
+      }
     }
+
+    let bodyText: string
+    try {
+      bodyText = await response.text()
+    } catch (error) {
+      const aborted = (error as Error)?.name === 'AbortError'
+      return {
+        ok: false,
+        httpStatus: response.status,
+        raw: null,
+        networkCalled: true,
+        errorCode: aborted ? 'ARAS_TRANSPORT_TIMEOUT' : 'ARAS_MALFORMED_RESPONSE',
+      }
+    }
+    return finishArasSoapCall(response, bodyText, params.knownResponseFields)
   } finally {
     clearTimeout(timer)
   }
+}
 
-  let bodyText: string
-  try {
-    bodyText = await response.text()
-  } catch {
-    return {
-      ok: false,
-      httpStatus: response.status,
-      raw: null,
-      networkCalled: true,
-      errorCode: 'ARAS_MALFORMED_RESPONSE',
-    }
-  }
-
+function finishArasSoapCall(
+  response: { ok: boolean; status: number },
+  bodyText: string,
+  knownResponseFields: readonly string[],
+): ArasTransportOutcome {
   if (!response.ok) {
     return {
       ok: false,
@@ -169,7 +184,7 @@ async function performArasSoapCall(
     }
   }
 
-  const raw = extractKnownXmlFields(bodyText, params.knownResponseFields)
+  const raw = extractKnownXmlFields(bodyText, knownResponseFields)
   return { ok: true, httpStatus: response.status, raw, networkCalled: true, errorCode: null }
 }
 

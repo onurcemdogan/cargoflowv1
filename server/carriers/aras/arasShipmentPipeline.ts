@@ -12,6 +12,7 @@ import {
   resolveArasReprintArtifact,
   type ArasLabelArtifact,
 } from './arasLabelArtifact.ts'
+import type { ArasLabelArtifactStore } from './arasLabelArtifactStore.ts'
 import { buildArasIntegrationCode, buildArasSetOrder, buildArasSetOrderEnvelope } from './arasSetOrder.ts'
 import {
   applyArasVerificationLookup,
@@ -26,6 +27,9 @@ export interface ArasPipelineParams {
   credentials: { userName: string; password: string }
   shipmentFields: Record<string, unknown>
   fetchImpl: ArasFetchLike
+  /** Etiket artefaktının KALICI depoya yazıldığı/okunduğu yer — bellek takma
+   *  adı DEĞİL, gerçek bir yazma + ayrı bir okuma çağrısı gerektirir. */
+  artifactStore: ArasLabelArtifactStore
   cod?: {
     isCod?: boolean
     codAmount?: unknown
@@ -120,11 +124,24 @@ export async function runArasInternalTestPipeline(
     )
     if (labelResolution.ok && labelResolution.preferred) {
       labelArtifact = labelResolution.preferred
+      // KALICI YAZIM: GetBarcode'dan gelen artefakt hemen depoya yazılır.
+      // Kayıt zaten varsa `persist` DOKUNMAZ (immutable, ilk yazım kazanır).
+      await params.artifactStore.persist(
+        params.organizationId,
+        integrationCode,
+        labelArtifact,
+      )
     }
   }
 
-  const store = labelArtifact
-  const reprint = resolveArasReprintArtifact(store)
+  // STORAGE-BACKED REPRINT: yukarıdaki `labelArtifact` DEĞİL, depodan TAZE bir
+  // okuma kullanılır. Böylece reprint gerçekten kalıcı kayda bağlıdır — aynı
+  // JS nesnesinin bellek takma adı DEĞİL.
+  const stored = await params.artifactStore.load(
+    params.organizationId,
+    integrationCode,
+  )
+  const reprint = resolveArasReprintArtifact(stored)
 
   return {
     ok: setOrder.ok && verification.registered && reprint.ok,
