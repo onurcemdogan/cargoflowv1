@@ -28,9 +28,13 @@
     {
       "id": "ARAS_VERIFICATION_LABEL_CONTRACT",
       "kind": "PUBLIC_PROVIDER_CONTRACT",
-      "summary": "Independently verify only the public SOAP 1.1 schema for GetOrderWithIntegrationCode and GetBarcode on the official Aras public TEST service at customerservicestest.araskargo.com.tr. Verify operation wrapper names, http://tempuri.org namespace, SOAPAction values, and exact case-sensitive request field names. This task asks only for public schema literals; do not obtain, request, infer, or use any Username/Password credential VALUES."
+      "summary": "Independently verify only the public SOAP 1.1 schema for GetOrderWithIntegrationCode and GetBarcode on the official Aras public TEST service at customerservicestest.araskargo.com.tr. Verify operation wrapper names, http://tempuri.org namespace, SOAPAction values, and exact case-sensitive request field names. This task asks only for public schema literals; do not obtain, request, infer, or use any Username/Password credential VALUES.",
+      "sourceUrls": [
+        "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode",
+        "https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode"
+      ]
     }
   ],
-  "nextAction": "Automatically verify the single remaining public Aras SOAP schema blocker with Codex using official TEST documentation, persist the evidence, then resume ARAS-EXPANSION. ARAS account identity is already defined for internal_test by the existing CargoFlow local integration/account key and is not a research blocker.",
+  "nextAction": "Automatically verify the remaining public Aras SOAP schema blocker. Use the pinned official TEST source URLs with deterministic read-only HTTPS source acquisition plus Codex research/verifier, then resume ARAS-EXPANSION.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md"
 }
