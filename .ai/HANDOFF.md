@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `1579a77` (committed, pending push)
+HEAD: `fc847b5` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-0fdca8055d6f0b83 (repaired, code change applied)
+
+Finding: `arasClient.ts` strips comments before validating tag syntax, so malformed XML such as `<Envelope><Result<!--x-->Code>0</ResultCode></Envelope>` becomes valid and yields `ResultCode='0'`. Reject constructs embedded inside tags before stripping, and add a regression test. Green CI does not resolve this demonstrated parsing defect.
+
+Root cause: `stripNonElementXmlConstructs` matched comments/PI/DOCTYPE with a whole-raw-body regex scan (`xml.matchAll(/<!--([\s\S]*?)-->/g)` and the sibling strip pass) that had no concept of whether a match's opening delimiter sat *inside* an already-open, not-yet-closed tag's markup. XML's grammar never permits a literal `<` there — `STag`/`ETag` Name and Attribute characters exclude it entirely, so a raw `<` can only legally begin a *new* construct at a tag boundary or in character data, never mid-tag. A body like `<Envelope><Result<!--x-->Code>0</ResultCode></Envelope>` therefore had its embedded `<!--x-->` silently stripped — the strip pass has no notion that it was sitting inside the still-open `<Result...` tag — splicing the two tag-name fragments `"Result"` and `"Code"` together into a fake, well-formed-looking `<ResultCode>` tag that never actually existed in the response. `extractKnownXmlFields` then read `ResultCode='0'` from that fabricated structure, and `classifyArasSetOrderResult` (`arasContract.ts`) treated `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `hasConstructSplicedIntoTagMarkup(xml)`, which scans the RAW, unstripped body char-by-char *before* `stripNonElementXmlConstructs` ever runs. It tracks, for each top-level `<`, whether it opens a comment/PI/DOCTYPE/CDATA construct (in which case it jumps straight to that construct's own terminator — `-->`, `?>`, the DOCTYPE's `>`, or `]]>` — treating the construct atomically, consistent with the file's existing CDATA-opacity handling) or a plain tag (in which case it scans forward to the tag's terminating *unquoted* `>`, respecting quoted attribute values, and returns `true` — reject — the moment it sees *another* `<` before that terminator). Wired into `parseWellFormedXmlStructure` immediately after the existing upfront `hasInvalidLiteralChar(trimmed)` check and before `stripNonElementXmlConstructs` is called, so the splice is caught while the raw body still shows the evidence — stripping first (the prior order) would have already destroyed it. No other well-formedness logic changed: the per-tag `nameMatch`/closing-tag regexes, attribute duplicate-name/entity/character-legality checks, CDATA handling, and gap-text checks are all unaffected.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3ai`: the exact body from the finding, `<Envelope><Result<!--x-->Code>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 84/84 (was 83/83; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `fc847b5` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `fc847b5`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-c34d38ac98e6a882 (repaired, code change applied)
 
