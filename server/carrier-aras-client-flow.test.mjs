@@ -527,6 +527,18 @@ test('ARC-3aj: kok eleman basladiktan sonra gomulu DOCTYPE (prolog disinda) basa
   assert.equal(outcome.raw, null)
 })
 
+test('ARC-3ak: kok eleman icerigine gomulu XML bildirimi (prolog disinda) basari SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultCode>0<?xml version="1.0"?></ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+  assert.equal(outcome.raw, null)
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

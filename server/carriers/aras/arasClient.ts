@@ -382,6 +382,78 @@ function hasDoctypeOutsideProlog(xml: string): boolean {
   return false
 }
 
+// The XML declaration (XMLDecl ::= '<?xml' VersionInfo EncodingDecl? SDDecl?
+// S? '?>') is not an ordinary processing instruction: XML reserves the PI
+// target name "xml" (matched case-insensitively) exclusively for this
+// declaration and requires it, if present at all, to be the very first
+// construct of the document (document ::= prolog element Misc*; prolog ::=
+// XMLDecl? Misc* (doctypedecl Misc*)?) — nothing, not even a comment or
+// whitespace, may precede it. `stripNonElementXmlConstructs` strips ANY
+// `<?...?>` unconditionally, including one whose target is "xml", with no
+// notion of document position, so a body like
+// `<Envelope><ResultCode>0<?xml version="1.0"?></ResultCode></Envelope>` had
+// its embedded declaration silently discarded as if it were an ordinary,
+// legal PI, leaving a clean-looking
+// `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed
+// well-formedness and let extractKnownXmlFields read ResultCode='0' out of
+// an otherwise malformed response. This scans the RAW, unstripped body and
+// rejects it the moment a `<?xml ... ?>`-shaped construct is found anywhere
+// other than at index 0, so stripping never gets a chance to hide the
+// violation.
+function hasMisplacedXmlDeclaration(xml: string): boolean {
+  let i = 0
+  while (i < xml.length) {
+    if (xml[i] !== '<') {
+      i++
+      continue
+    }
+    if (xml.startsWith('<!--', i)) {
+      const end = xml.indexOf('-->', i + 4)
+      if (end === -1) return false
+      i = end + 3
+      continue
+    }
+    if (xml.startsWith('<![CDATA[', i)) {
+      const end = xml.indexOf(']]>', i + 9)
+      if (end === -1) return false
+      i = end + 3
+      continue
+    }
+    if (xml.startsWith('<?', i)) {
+      const end = xml.indexOf('?>', i + 2)
+      if (end === -1) return false
+      const targetMatch = /^\s*([^\s?]*)/.exec(xml.slice(i + 2, end))
+      const target = targetMatch ? targetMatch[1] : ''
+      if (/^xml$/i.test(target) && i !== 0) return true
+      i = end + 2
+      continue
+    }
+    if (/^<!DOCTYPE/i.test(xml.slice(i, i + 9))) {
+      const end = xml.indexOf('>', i + 9)
+      if (end === -1) return false
+      i = end + 1
+      continue
+    }
+    // A plain opening/closing/self-closing tag: scan to its terminating
+    // unquoted '>', respecting quoted attribute values.
+    let j = i + 1
+    let quote: string | null = null
+    while (j < xml.length) {
+      const ch = xml[j]
+      if (quote) {
+        if (ch === quote) quote = null
+      } else if (ch === '"' || ch === "'") {
+        quote = ch
+      } else if (ch === '<' || ch === '>') {
+        break
+      }
+      j++
+    }
+    i = j < xml.length && xml[j] === '>' ? j + 1 : j
+  }
+  return false
+}
+
 // CDATA govdesi harfi harfine metindir — icindeki `<!--...-->` gibi diziler
 // GERCEK bir yorum DEGILDIR. Onceki surum yorum/PI/DOCTYPE'i CDATA
 // sinirlarindan HABERSIZ tek bir regex gecisiyle siliyordu; bu yuzden
@@ -488,6 +560,12 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   // that it was never legal there in the first place (see
   // hasDoctypeOutsideProlog above).
   if (hasDoctypeOutsideProlog(trimmed)) return null
+
+  // Must also run on the RAW body, before any stripping — stripping an XML
+  // declaration embedded inside the root's content would destroy the
+  // evidence that it was never legal there in the first place (see
+  // hasMisplacedXmlDeclaration above).
+  if (hasMisplacedXmlDeclaration(trimmed)) return null
 
   const cleaned = stripNonElementXmlConstructs(trimmed)
   if (cleaned === null) return null
