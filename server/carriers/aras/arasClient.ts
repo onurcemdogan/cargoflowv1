@@ -239,6 +239,21 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   const trimmed = xml.trim()
   if (!trimmed.startsWith('<')) return null
 
+  // Character legality (the Char production) is a document-wide XML
+  // constraint on every literal character in the RAW response — it does not
+  // stop applying just because that character sits inside a construct whose
+  // CONTENT is later discarded. `stripNonElementXmlConstructs` below deletes
+  // comments/PI/DOCTYPE outright (their text has no extraction value), which
+  // means an illegal literal character hidden inside one — e.g. the NUL in
+  // `<Envelope><!--\u0000--><ResultCode>0</ResultCode></Envelope>` — is
+  // erased along with the whole comment BEFORE the gap/attribute
+  // `hasInvalidLiteralChar` checks further below ever see it, so the
+  // stripped body wrongly validates as well-formed and `extractKnownXmlFields`
+  // reads ResultCode='0' out of an otherwise malformed response. Scanning the
+  // raw, unstripped body up front catches an illegal character regardless of
+  // which construct (comment, PI, DOCTYPE, CDATA, or plain text) hides it.
+  if (hasInvalidLiteralChar(trimmed)) return null
+
   const cleaned = stripNonElementXmlConstructs(trimmed)
   const cdataSpans = findCdataSpans(cleaned)
   const insideCdata = (index: number) =>
