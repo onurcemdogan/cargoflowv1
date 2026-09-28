@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `b6324e3` (committed, pending push)
+HEAD: `ee2215bcc85fec11c5b49346ae363a9a248cfe6e` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-12ebf594361555c1 (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><ResultCode>0<?xml version="1.0"?></ResultCode></Envelope>`. The scanner skips the misplaced XML declaration and `stripNonElementXmlConstructs` removes it, yielding `ResultCode='0'` and allowing false success classification. Reject misplaced XML declarations before stripping and add a regression test.
+
+Root cause: `stripNonElementXmlConstructs` removed any `<?...?>` processing instruction it found via a whole-body strip pattern, unconditionally — including one whose target is the reserved word `xml` — with no notion of document position. XML reserves the PI target name `xml` (matched case-insensitively) exclusively for the XML declaration (`XMLDecl ::= '<?xml' VersionInfo EncodingDecl? SDDecl? S? '?>'`), which is only legal as the very first construct of the document (`document ::= prolog element Misc*`; `prolog ::= XMLDecl? Misc* (doctypedecl Misc*)?`) — nothing, not even whitespace or a comment, may precede it. A body like `<Envelope><ResultCode>0<?xml version="1.0"?></ResultCode></Envelope>` therefore had its embedded declaration silently stripped, leaving a clean-looking `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed well-formedness. `extractKnownXmlFields` then read `ResultCode='0'`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence. The existing `hasDoctypeOutsideProlog` check (added for `CODEX-MERGE-838f748d5ec4cde4`) did not catch this, since it only inspects `<!DOCTYPE ...>` constructs, not processing instructions.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `hasMisplacedXmlDeclaration(xml)`, mirroring `hasDoctypeOutsideProlog`'s structural walk over the RAW, unstripped body — respecting comment/CDATA/DOCTYPE/plain-tag construct boundaries the same way — and rejecting the body outright the moment a `<?xml ...?>`-shaped construct (PI target matched case-insensitively against `/^xml$/i`) is found at any index other than `0`. Wired into `parseWellFormedXmlStructure` immediately after the existing `hasDoctypeOutsideProlog` check and before `stripNonElementXmlConstructs` runs, so the misplaced declaration is caught while the raw body still shows the evidence — stripping first (the prior order) would have already destroyed it. No other well-formedness logic changed.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3ak`: the exact body from the finding, `<Envelope><ResultCode>0<?xml version="1.0"?></ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 86/86 (was 85/85; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `ee2215bcc85fec11c5b49346ae363a9a248cfe6e` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `ee2215bcc85fec11c5b49346ae363a9a248cfe6e`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-838f748d5ec4cde4 (repaired, code change applied)
 
