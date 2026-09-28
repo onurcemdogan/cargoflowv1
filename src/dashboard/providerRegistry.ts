@@ -90,8 +90,8 @@ export const carrierProviderRegistry: Record<string, ProviderRegistryEntry> = {
   aras: {
     providerKey: 'aras',
     providerName: 'Aras Kargo',
-    aliases: ['aras'],
-    enabled: false,
+    aliases: ['aras', 'aras kargo'],
+    enabled: true,
   },
   hepsijet: {
     providerKey: 'hepsijet',

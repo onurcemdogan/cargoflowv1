@@ -26,6 +26,8 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+import { isArasCargoProviderName } from './arasProvider.ts'
+
 export interface TrendyolShipmentEligibility {
   readonly ok: boolean
   readonly canCallSurat: boolean
@@ -495,9 +497,12 @@ export function buildTrendyolShipmentEligibility(
     /shipped|kargoda|ta[sş][iı]mada|at.?collection/i.test(statusText)
   const hasCargoTrackingNumber = Boolean(cargoTrackingNumber)
   const normalizedCargoProviderName = normalizeSearchText(cargoProviderName)
+  const arasAssigned = cargoProviderName
+    ? isArasCargoProviderName(cargoProviderName)
+    : false
   const suratAssigned = cargoProviderName
-    ? isSuratCargoProviderName(cargoProviderName)
-    : null
+    ? isSuratCargoProviderName(cargoProviderName) && !arasAssigned
+    : false
   const existingShipmentDetected = Boolean(
     cargoTrackingLink &&
       (isShipped || isDelivered || /kargo.?takip|tracking/i.test(cargoTrackingLink)),
@@ -515,7 +520,11 @@ export function buildTrendyolShipmentEligibility(
   if (isDelivered) diagnostics.push('Trendyol paketi teslim edilmiş görünüyor.')
   if (isShipped) diagnostics.push('Trendyol paketi kargoda/teslim sürecinde görünüyor.')
   if (isReadyToShip === false) diagnostics.push('Trendyol isReadyToShip=false döndü.')
-  if (suratAssigned === false) diagnostics.push('Sipariş Sürat Kargo’ya atanmış görünmüyor.')
+  if (arasAssigned) diagnostics.push('Sipariş Aras Kargo’ya atanmış; Sürat create yolu kullanılamaz.')
+  if (!cargoProviderName) diagnostics.push('Taşıyıcı adı belirtilmedi; varsayılan taşıyıcı atanmaz.')
+  if (suratAssigned === false && !arasAssigned && cargoProviderName) {
+    diagnostics.push('Sipariş Sürat Kargo’ya atanmış görünmüyor.')
+  }
   if (existingShipmentDetected) diagnostics.push('Mevcut cargoTrackingLink/gönderi izi var.')
   // ═══ TEK YUKLEM LISTESI, IKI OKUMA ═══════════════════════════════════
   //
@@ -528,7 +537,8 @@ export function buildTrendyolShipmentEligibility(
       !isDelivered &&
       !isShipped &&
       isReadyToShip !== false &&
-      suratAssigned !== false,
+      suratAssigned === true &&
+      !arasAssigned,
   )
   const canCallGonderiyiKargoyaGonder = Boolean(
     canCallSuratAfterPickingUpdate && !requiresPickingUpdate,

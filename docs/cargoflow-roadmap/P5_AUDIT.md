@@ -171,3 +171,130 @@ demek" UYDURULMAZ. `0` dışı başarı VARSAYILMAZ ve ham kod/mesaj korunur.
 | `ARAS_PRODUCTION_ENDPOINT` | BLOCKED_EXTERNAL_ENVIRONMENT |
 | `ARAS_PRODUCTION_CREDENTIAL` | BLOCKED_EXTERNAL_ENVIRONMENT |
 | `ARAS_COD_VALUE_TABLE` | BLOCKED_EXTERNAL_CONTRACT (COD fail-closed kalır) |
+
+---
+
+# ARAS-EXPANSION — KİMLİK KAPISI + TAŞIMA KATMANI (2026-09-27)
+
+Dal: `agent/ARAS-EXPANSION`. Ticket: `.ai/tickets/ARAS-EXPANSION.md`.
+
+## 1. ARAS_ACCOUNT_IDENTITY — yerel hesap kaydı (supervisor 2026-09-27)
+
+`internal_test` için sağlayıcı-doğal müşteri kodu ZORUNLU DEĞİLDİR. Hesap
+kapsamı `marketplace_accounts.id` + `connector_credentials` (provider `aras`)
+ile ikas/WooCommerce deseninde tutulur; `providerAccountId` sütunu yerel
+`local-<uuid>` üretilir ve **UserName/Password ile ASLA özdeşleştirilmez**
+(`server/connectors/aras/arasIdentity.ts`, `ARE-1`).
+
+## 1 (eski). ARAS_ACCOUNT_IDENTITY = BLOCKED_HUMAN — SUPERSEDED
+
+Ticket, `TICIMAX-001`'in `UyeKodu` reddiyle aynı disiplinle, credential'dan
+BAĞIMSIZ, kararlı, sağlayıcı-doğal bir Aras hesap/müşteri kimliği ister.
+Mevcut sözleşme kanıtı (`arasContract.ts`, `arasSetOrder.ts`,
+`arasVerification.ts`, `arasLabelArtifact.ts`, bu dosyanın üstündeki
+bölümler) şunları kanıtlar ve başka HİÇBİR ADAY YOKTUR:
+
+- `UserName`/`Password`: `arasSetOrder.ts`'in kendi `SECRET_FIELDS`
+  kümesinde — TANIM GEREĞİ kimlik bilgisi (credential), `UyeKodu` için
+  reddedilen gerekçenin AYNISI burada da geçerli.
+- `OrgReceiverCustId`: `SetOrder` SONUCUNDA döner ve ALICI (gönderiyi
+  teslim alan müşteri) tarafını tanımlar — gönderiyi YOLLAYAN Aras
+  hesabının kimliği DEĞİLDİR; gönderiden gönderiye değişir, hesap başına
+  SABİT değildir.
+- `SenderAccountAddressId`: `ARAS_SET_ORDER_FIELDS` listesinde bir alan
+  ADI olarak GÖRÜNÜR ama semantiği hiçbir yerde (bu dosyalar, `STATE.json`)
+  açıklanmamıştır — kararlı mı, hesap başına tek mi, opsiyonel mi
+  bilinmiyor. Bir alan adının VARLIĞI, onun kimlik olarak KULLANILABİLİR
+  olduğunu KANITLAMAZ (`arasContract.ts`'in COD alanları için zaten
+  uyguladığı ayrım: varlık ≠ değer/anlam kanıtı).
+- Ticimax/WooCommerce'te kullanılan "mağaza origin URL'i = hesap kimliği"
+  deseni (`ticimaxIdentity.ts`) burada UYGULANAMAZ: o desen her müşterinin
+  KENDİ alan adında barındırdığı bir servise dayanır. Aras TEK, PAYLAŞILAN
+  bir TEST uç noktasıdır (`ARAS_TEST_ENDPOINT`, tüm hesaplar için aynı) —
+  URL hesaba göre DEĞİŞMEZ, dolayısıyla kimlik taşıyamaz.
+
+**Sonuç:** `.ai/KNOWN_NON_SOLUTIONS.md`'nin "provider secrets'ı store
+identity olarak kullanma" kuralı burada tam isabetle uygulanır. Kimlik
+kanıtlanamadığından ticket'ın kendi madde 3/acceptance-criteria-3/stop-
+condition-3'ü gereği kimlik/credential KALICILAŞTIRMA kodu YAZILMADI.
+İnsan girdisi gereken soru: Aras'ın kendi entegrasyon ekibi/dokümantasyonu
+`UserName` DIŞINDA, sabit bir "cari kod"/"müşteri kodu" alanı sağlıyor mu
+(WSDL'de görünmeyen ama panelde/entegrasyon sözleşmesinde var olabilecek)?
+Sağlamıyorsa, insan `UserName`'i BİLİNÇLİ bir istisna olarak kabul etmeli
+ve bunu `.ai/DECISIONS.md`'ye yazmalıdır — bu ajan bunu TEK BAŞINA karar
+VEREMEZ.
+
+## 2. GetOrderWithIntegrationCode / GetBarcode — istek zarfı DOĞRULANDI (2026-09-27)
+
+Bağımsız araştırma: `.ai/research/ARAS-EXPANSION/20260927T123508.*.json`.
+Resmî TEST `?op=` sayfaları:
+
+- `GetOrderWithIntegrationCode`: `userName`, `password`, `integrationCode`;
+  SOAPAction `http://tempuri.org/GetOrderWithIntegrationCode`.
+- `GetBarcode`: `Username`, `Password`, `integrationCode` (büyük/küçük harf
+  SetOrder'dan FARKLI); SOAPAction `http://tempuri.org/GetBarcode`.
+
+Kod: `buildArasGetOrderWithIntegrationCodeEnvelope`, `buildArasGetBarcodeEnvelope`,
+`callArasVerification`, `callArasGetBarcode` (`AR-24b/c`, `ARC-5/6b`).
+
+## 2 (eski). GetOrderWithIntegrationCode / GetBarcode — istek zarfı kanıtsız — SUPERSEDED
+
+`ARAS_VERIFICATION_OPERATION` (operasyon adı) ve `GetBarcode`'un yorum
+düzeyinde belirtilen girdi/çıktı alan adları (`arasLabelArtifact.ts`
+başlığı) kanıtlıdır, ama HİÇBİRİNİN SOAP istek zarfı (parametre
+sarmalayıcısı, tam alan büyük/küçük harfi) `carrier-aras-contract-flow.
+test.mjs` içinde KURULMAZ/SINANMAZ — yalnız `SetOrder`'ın zarfı böyle
+kanıtlıdır (`buildArasSetOrderEnvelope`, test-kilitli). Bu oturumda resmî
+WSDL'i (`customerservicestest.araskargo.com.tr/.../arascargoservice.asmx
+?wsdl`) tazeleyip alıntılamak için `WebFetch` aracı kullanılmaya
+çalışıldı; oturum bu araç için izin VERMEDİ (araç izin diyaloğu
+onaylanmadı). Bu yüzden zarf UYDURULMADI.
+
+`server/carriers/aras/arasClient.ts` bu iki operasyon için AĞA HİÇ
+ÇIKMADAN fail-closed döner (`ARAS_VERIFICATION_CONTRACT_UNPROVEN`,
+`ARAS_LABEL_CONTRACT_UNPROVEN`); `callArasGetBarcode` ayrıca
+`registered === true` ön koşulunu (ticket'ın istediği "kanıttan önce en
+kısıtlayıcı seçenek" kararı) zaten UYGULAR — yalnız zarf inşası insan/WSDL
+kanıtı geldiğinde TAMAMLANACAK.
+
+**Sonraki adım için insan girdisi gereken:** ya (a) `WebFetch` aracına bu
+oturumda/gelecek oturumda izin verilmesi ve resmî WSDL'in yeniden
+getirilip alıntılanması, ya da (b) Aras entegrasyon ekibinden gerçek bir
+`GetOrderWithIntegrationCode`/`GetBarcode` istek-yanıt zarfı örneği.
+
+## 3. ARAS-EXPANSION uygulama özeti (2026-09-27, cursor)
+
+- Taşıma: `arasClient.ts` SetOrder + doğrulama + GetBarcode (TEST endpoint).
+- Boru hattı: `arasShipmentPipeline.ts` (mock `fetchImpl`, reprint storage).
+- Kimlik: `connector_credentials` + `marketplace_accounts` (`arasConnectionService.ts`).
+- Taşıyıcı seçimi: boş `cargoProviderName` Surat varsaymaz; Aras ataması
+  Sürat create'i kapatır (`trendyolShipmentEligibility.ts`, `CN-3/6`).
+- Registry: `aras.enabled=true` (`internal_test`).
+- Sağlık: `ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS` içinde `aras`.
+- UI/API: `ArasSection.tsx`, `/api/integrations/aras/stores`.
+- Kapı: `npm run test:aras` (51 test).
+
+## 3 (eski). Bu oturumda TAMAMLANAN (kanıtla sınırlı, kimlikten BAĞIMSIZ)
+
+- `server/carriers/aras/arasClient.ts`: `SetOrder` için TAM kanıtlı taşıma
+  (yalnız `resolveArasEndpoint` URL'i, zarf byte-for-byte, SOAPAction
+  ASMX evrensel kuralından türer, HTTP/SOAP-fault/timeout/bozuk-XML asla
+  sentetik başarı olmaz, yanıt yalnız kanıtlı alan adlarıyla çıkarılır).
+- `server/carrier-aras-client-flow.test.mjs` (14 test, `REAL_CARRIER_
+  NETWORK=1` korumalı) + `npm run test:aras` kapısı (`package.json`,
+  `.ai/QUALITY_GATES.md`).
+- Kredi/hesap depolama yolu ARAŞTIRILDI (yazılmadı): Sürat carrier
+  credential'ı `getIntegrationCredentialRecord(db, organizationId,
+  'surat')` (`server/integrations/activeSuratIntegration.ts` →
+  `server/connectors/credentialService.ts`) ile AYNI `integration_
+  credentials` altyapısını kullanıyor — yani Aras "carrier-shaped" değil,
+  connector'larla AYNI tabloyu paylaşan bir sağlayıcı olacak. Migration
+  bu yüzden muhtemelen `integration_credentials_provider_check`'e `aras`
+  eklemek olacak — ama bu, kimlik kapısı geçmeden YAZILMADI.
+
+## Kapsam DIŞI kalan (kimlik + zarf kanıtı bekliyor)
+
+Credential/account persistence, carrier-selection seam, provider registry
+`enabled` bayrağı, Integration Health hesap kapsamı, UI, migration —
+HİÇBİRİ bu oturumda YAZILMADI (ticket madde 3'ün "stop before credential/
+account persistence" talimatı).

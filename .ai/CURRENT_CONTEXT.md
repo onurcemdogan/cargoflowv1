@@ -1,44 +1,42 @@
 # Generated shift context
 
-Generated: 2026-09-26T22:19:03.118704+00:00
+Generated: 2026-09-28T06:35:00.000000+00:00
 Project: cargoflow
-Ticket: TICIMAX-001
+Ticket: ARAS-EXPANSION
 Status: IN_PROGRESS
 Phase: REVIEW_FEEDBACK
-Branch: agent/TICIMAX-001
-Baseline: 8a91c6ec4e5e996956a432fe8f86953d82d4c2b3
-HEAD: 4233ab12dc11790e7f22534aff226b24bf834433
-Last implementation worker: cursor
+Branch: agent/ARAS-EXPANSION
+Baseline: 7754fcb109c4d8990d97065710e1189121fb58b7
+HEAD: e9da19d655c9b58d737e2e3d88acb03f4eb17f7f
+Last implementation worker: claude
 Reviewer: None
-Next action: Commit uncommitted normalizer + test files; run test:ticimax, npx tsc -b --force, npm run lint; push agent/TICIMAX-001; capture GitHub CI on that commit; set READY_FOR_REVIEW when CI green and findings verified.
+Next action: CODEX-MERGE-ea44b55bd1bac7b9 repaired (commit e9da19d655c9b58d737e2e3d88acb03f4eb17f7f, code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against e9da19d655c9b58d737e2e3d88acb03f4eb17f7f. Do not push/merge master/integration/roadmap.
 
 ## Git status
 ```
-M .ai/CURRENT_CONTEXT.md
- M .ai/CURRENT_TASK.json
+M .ai/CURRENT_TASK.json
+M .ai/HANDOFF.md
 ```
 
 ## Recent commits
 ```
-4233ab1 wip(TICIMAX-001): checkpoint claude
-ab9fdb2 wip(TICIMAX-001): checkpoint review-feedback-claude
-d212ad7 wip(TICIMAX-001): checkpoint normalize-premature-merged
-f7917b0 wip(TICIMAX-001): checkpoint review-exhausted-quality-passed
-964eacc wip(TICIMAX-001): checkpoint review-exhausted
-2f016b6 wip(TICIMAX-001): checkpoint cursor
-2e4d119 wip(TICIMAX-001): checkpoint quality-gates
-edbe107 wip(TICIMAX-001): checkpoint quality-gates
-fdef763 wip(TICIMAX-001): checkpoint quality-gate-pending
-f381957 wip(TICIMAX-001): checkpoint cursor
+e9da19d wip(ARAS-EXPANSION): reject processing instructions with invalid targets before stripping (CODEX-MERGE-ea44b55bd1bac7b9)
+f72adbd wip(ARAS-EXPANSION): checkpoint review-feedback-claude
+2cd0f71 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-d2ab3ac1667901e1 xml-declaration-syntax fix
+1715c11 wip(ARAS-EXPANSION): validate XML declaration syntax at index 0 before stripping (CODEX-MERGE-d2ab3ac1667901e1)
+a437229 wip(ARAS-EXPANSION): checkpoint review-feedback-claude
+1adad88 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-12ebf594361555c1 xml-declaration-outside-document fix
+ee2215b wip(ARAS-EXPANSION): reject XML declaration spliced into element content before stripping (CODEX-MERGE-12ebf594361555c1)
+c06976a wip(ARAS-EXPANSION): checkpoint review-feedback-claude
+2a8f025 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-838f748d5ec4cde4 doctype-outside-prolog fix
+b6324e3 wip(ARAS-EXPANSION): reject DOCTYPE spliced outside prolog before stripping (CODEX-MERGE-838f748d5ec4cde4)
 ```
 
 ## Diff stat
 ```
-warning: in the working copy of '.ai/CURRENT_CONTEXT.md', LF will be replaced by CRLF the next time Git touches it
-warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it
- .ai/CURRENT_CONTEXT.md | 20 +++++---------------
- .ai/CURRENT_TASK.json  |  4 ++--
- 2 files changed, 7 insertions(+), 17 deletions(-)
+server/carrier-aras-client-flow.test.mjs | 12 ++++++++++++
+server/carriers/aras/arasClient.ts       | 79 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+2 files changed, 91 insertions(+)
 ```
 
 ## Required reading
@@ -47,4 +45,4 @@ AGENTS.md
 .ai/ACCEPTED_FOUNDATION.md
 .ai/ROADMAP.md
 .ai/HANDOFF.md
-.ai/tickets/TICIMAX-001.md
+.ai/tickets/ARAS-EXPANSION.md

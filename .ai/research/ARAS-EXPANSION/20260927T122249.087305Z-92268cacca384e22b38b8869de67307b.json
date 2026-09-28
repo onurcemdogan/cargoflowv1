@@ -1,0 +1,67 @@
+{
+  "metadata": {
+    "createdAt": "2026-09-27T12:22:49.087037+00:00",
+    "resolverVersion": "1.0.0",
+    "ticket": "ARAS-EXPANSION",
+    "blockerIndexes": [
+      0
+    ],
+    "execution": {
+      "research": {
+        "completedWebSearches": 0,
+        "exitCode": 0
+      }
+    }
+  },
+  "research": {
+    "status": "INSUFFICIENT",
+    "question": "Blocker 0: Independently verify only the public SOAP 1.1 schema for GetOrderWithIntegrationCode and GetBarcode on the official Aras public TEST service at customerservicestest.araskargo.com.tr. Verify operation wrapper names, http://tempuri.org namespace, SOAPAction values, and exact case-sensitive request field names. This task asks only for public schema literals; do not obtain, request, infer, or use any Username/Password credential VALUES.",
+    "official_sources": [
+      {
+        "url": "https://www.araskargo.com.tr/",
+        "publisher": "Aras Kargo",
+        "observation": "Opened the company's public website, which identifies Aras Kargo and describes its shipping services. This establishes the corporate domain but does not independently verify the TEST service schema."
+      }
+    ],
+    "claims": [],
+    "unresolved": [
+      "GetBarcode documentation could not be opened: https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode repeatedly returned 502 Bad Gateway.",
+      "GetOrderWithIntegrationCode documentation could not be opened: https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode repeatedly timed out.",
+      "The formal service description at https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?WSDL could not be accessed; the web tool reported a timeout.",
+      "Consequently, neither operation's wrapper names, namespace, SOAPAction, nor exact case-sensitive request fields were verified from an opened live service document. Search results were available but were not accepted as proof.",
+      "Official publication of the specific TEST service documents could not be corroborated from opened documentation."
+    ],
+    "summary": "Live web research was attempted, but the required service documents were inaccessible. Public schema verification remains incomplete. No credential values were requested, obtained, inferred, or used; no operations were invoked."
+  },
+  "verifier": null,
+  "result": {
+    "status": "RESOLUTION_INSUFFICIENT",
+    "reason": "RESEARCH_NOT_RESOLVED",
+    "dryRun": false,
+    "researchEligible": true,
+    "evidencePath": null,
+    "proposedStateTransition": {
+      "apply": false,
+      "resumeEligible": false,
+      "from": "BLOCKED_EXTERNAL",
+      "to": "BLOCKED_EXTERNAL",
+      "ticket": "ARAS-EXPANSION",
+      "resolvedBlockerIndexes": [],
+      "inputHashes": {
+        "C:\\DevFactory\\projects\\cargoflow.toml": "283d54c69bc545572d70d3d51d56cc8459ff2310e420c00111b4d14c1d6b5a72",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_TASK.json": "5b84b8a938fd7418b55f85e9a4af9f2e9fca6e2d8eed88027ecf67e5770152cd",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\tickets\\ARAS-EXPANSION.md": "61690fa05a226e2519ea56ae1c59dadf50aa24616e25bed40b23fdeb9920e14e",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_CONTEXT.md": "ed23d85018174c4a52942b876c87d0e42df7c193a6c61939cda829e9e80dd34b",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\HANDOFF.md": "79eb1c6f5fc1ae564554b19d1d5cc753ac9b1ba459b82199fe448bcd39bfe8db"
+      }
+    },
+    "ticket": "ARAS-EXPANSION",
+    "eligibility": [
+      {
+        "blockerIndex": 0,
+        "eligible": true,
+        "reason": "SUPERVISOR_RESEARCHABLE_EXTERNAL"
+      }
+    ]
+  }
+}

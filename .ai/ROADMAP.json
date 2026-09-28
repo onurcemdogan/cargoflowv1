@@ -31,7 +31,7 @@
       "id": "LIVE-PROVIDER-VERIFICATION",
       "status": "BLOCKED_HUMAN",
       "dependsOn": [
-        "IKAS-001"
+        "ARAS-EXPANSION"
       ],
       "requires": [
         "real_provider_credentials"

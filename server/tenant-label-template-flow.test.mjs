@@ -177,14 +177,7 @@ test('TPL-NO-CODE: modul rasgele kod/alan yolu CALISTIRMAZ', () => {
   }
 })
 
-test('TPL-REG: yeni test dosyasi test:surat icinde KAYITLI', () => {
-  // Liste `package.json`'dan AYRI bir dosyada: 190 dosyada komut satiri
-  // Windows cmd.exe'nin 8191 karakter sinirini asiyordu ve paket
-  // CALISMADAN dusuyordu. Acik kayit KORUNUR, yalnizca yeri degisti.
-  const listed = new Set(
-    JSON.parse(readFileSync(new URL('./testing/suratSuiteFiles.json', here), 'utf8')),
-  )
-  const onDisk = readdirSync(here)
-    .filter((f) => f.endsWith('.test.mjs')).map((f) => `server/${f}`)
-  assert.deepEqual(onDisk.filter((f) => !listed.has(f)), [])
+test('TPL-REG: yeni test dosyasi test:surat icinde KAYITLI', async () => {
+  const { listOrphanSuratSuiteTests } = await import('./testing/suratSuiteRegistry.mjs')
+  assert.deepEqual(listOrphanSuratSuiteTests(), [])
 })

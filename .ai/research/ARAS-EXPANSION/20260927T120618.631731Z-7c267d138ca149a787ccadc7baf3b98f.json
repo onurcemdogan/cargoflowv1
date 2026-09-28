@@ -1,0 +1,96 @@
+{
+  "metadata": {
+    "createdAt": "2026-09-27T12:06:18.630696+00:00",
+    "resolverVersion": "1.0.0",
+    "ticket": "ARAS-EXPANSION",
+    "blockerIndexes": [
+      0,
+      1
+    ],
+    "execution": {
+      "research": {
+        "completedWebSearches": 0,
+        "exitCode": 0
+      }
+    }
+  },
+  "research": {
+    "status": "INSUFFICIENT",
+    "question": "Blocker 0: Current public contract evidence does not prove a provider-native Aras account identity. UserName/Password are credential fields and must not be used as canonical identity. Research official public Aras integration/onboarding material automatically; for internal_test, the implementation may use the existing CargoFlow local integration/account record as the non-secret account key.\nBlocker 1: GetOrderWithIntegrationCode and GetBarcode exact SOAP request envelope details are not yet pinned in-tree. Resolve from the official public TEST WSDL/documentation through automated research; do not require an interactive WebFetch permission dialog.",
+    "official_sources": [
+      {
+        "url": "https://www.araskargo.com.tr/iletisim",
+        "publisher": "Aras Kargo",
+        "observation": "Opened successfully. Identifies ARAS KARGO YURT İÇİ YURT DIŞI TAŞIMACILIK A.Ş. and www.araskargo.com.tr, establishing the corporate publisher beyond HTTPS alone."
+      },
+      {
+        "url": "https://www.araskargo.com.tr/kurumsal-cozumlerimiz/entegrasyon-hizmetlerimiz",
+        "publisher": "Aras Kargo",
+        "observation": "Opened successfully on the verified corporate website. Lists integration models and directs customers to sales or customer representatives for details."
+      },
+      {
+        "url": "https://www.araskargo.com.tr/kurumsal-cozumlerimiz/musteri-islem-sistemi",
+        "publisher": "Aras Kargo",
+        "observation": "Opened successfully on the verified corporate website. Describes customer shipment registration and barcode generation, and obtaining a username and password from a sales/customer representative."
+      }
+    ],
+    "claims": [
+      {
+        "claim": "The inspected official onboarding material describes login credentials but does not establish a stable provider-native canonical account identifier.",
+        "evidence": "https://www.araskargo.com.tr/kurumsal-cozumlerimiz/musteri-islem-sistemi describes obtaining a username and password from a representative; it provides no account-identifier schema, uniqueness guarantee, or lifecycle rules. https://www.araskargo.com.tr/kurumsal-cozumlerimiz/entegrasyon-hizmetlerimiz lists integration services but supplies no canonical account identity contract.",
+        "confidence": "HIGH"
+      },
+      {
+        "claim": "Public integration information does not establish automatic account provisioning or eliminate representative involvement.",
+        "evidence": "https://www.araskargo.com.tr/kurumsal-cozumlerimiz/entegrasyon-hizmetlerimiz directs customers to sales/customer representatives for details. https://www.araskargo.com.tr/kurumsal-cozumlerimiz/musteri-islem-sistemi explicitly describes requesting login credentials from those representatives.",
+        "confidence": "HIGH"
+      }
+    ],
+    "unresolved": [
+      "Blocker 0: A provider-native, non-secret canonical account identity remains unproven. UserName/Password must not be promoted to canonical identity.",
+      "The supplied internal_test fallback is a local implementation option, not an Aras-documented identity. Public sources cannot verify the existing CargoFlow integration/account record, its key, or its implementation.",
+      "Blocker 1: Opening https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetOrderWithIntegrationCode failed, including a timeout on retry.",
+      "Opening https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?op=GetBarcode failed, including HTTP 502 on retry.",
+      "Opening https://customerservicestest.araskargo.com.tr/arascargoservice/arascargoservice.asmx?WSDL failed; the lowercase ?wsdl variant was also inaccessible.",
+      "Search returned indexed SOAP samples, but these were not accepted as proof. Exact request envelopes, parameter capitalization/order/types, namespaces, SOAPAction headers, and bindings remain unverified against an opened TEST contract.",
+      "In-tree pinning cannot be verified or performed through public-web-only, read-only research."
+    ],
+    "summary": "Official onboarding pages were accessed, but they do not prove a canonical Aras account identity. TEST operation documentation and WSDL could not be opened, so the exact SOAP contracts remain unresolved. No credentials, service invocations, permission dialogs, or state changes were used."
+  },
+  "verifier": null,
+  "result": {
+    "status": "RESOLUTION_INSUFFICIENT",
+    "reason": "RESEARCH_NOT_RESOLVED",
+    "dryRun": false,
+    "researchEligible": true,
+    "evidencePath": null,
+    "proposedStateTransition": {
+      "apply": false,
+      "resumeEligible": false,
+      "from": "BLOCKED_EXTERNAL",
+      "to": "BLOCKED_EXTERNAL",
+      "ticket": "ARAS-EXPANSION",
+      "resolvedBlockerIndexes": [],
+      "inputHashes": {
+        "C:\\DevFactory\\projects\\cargoflow.toml": "283d54c69bc545572d70d3d51d56cc8459ff2310e420c00111b4d14c1d6b5a72",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_TASK.json": "c809c227309254ff7df962b122a23927795ed8b635eb06f514009dae01ed09f8",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\tickets\\ARAS-EXPANSION.md": "61690fa05a226e2519ea56ae1c59dadf50aa24616e25bed40b23fdeb9920e14e",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_CONTEXT.md": "ed23d85018174c4a52942b876c87d0e42df7c193a6c61939cda829e9e80dd34b",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\HANDOFF.md": "5da2ca23e4159a01a9cd8578c9bc515611d057945e9ea72a2b51e70a41481f59"
+      }
+    },
+    "ticket": "ARAS-EXPANSION",
+    "eligibility": [
+      {
+        "blockerIndex": 0,
+        "eligible": true,
+        "reason": "SUPERVISOR_RESEARCHABLE_EXTERNAL"
+      },
+      {
+        "blockerIndex": 1,
+        "eligible": true,
+        "reason": "SUPERVISOR_RESEARCHABLE_EXTERNAL"
+      }
+    ]
+  }
+}

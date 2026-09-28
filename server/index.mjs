@@ -2709,6 +2709,54 @@ app.post('/api/integrations/ikas/stores/orders-read-test', async (request, respo
   }
 })
 
+// ── ARAS KARGO (İÇ TEST, HESAP KAPSAMLI) ───────────────────────────────
+app.get('/api/integrations/aras/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/aras/arasHttpHandlers.ts')
+    const result = await handlers.handleArasListStores({
+      db: context.db,
+      organizationId: context.organizationId,
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Aras hesapları okunamadı.' })
+  }
+})
+
+app.post('/api/integrations/aras/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/aras/arasHttpHandlers.ts')
+    const result = await handlers.handleArasConnect({
+      db: context.db,
+      organizationId: context.organizationId,
+      body: request.body ?? {},
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Aras hesabı kaydedilemedi.' })
+  }
+})
+
+app.post('/api/integrations/aras/stores/disconnect', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/aras/arasHttpHandlers.ts')
+    const result = await handlers.handleArasDisconnect({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: String(request.body?.marketplaceAccountId ?? ''),
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Aras bağlantısı kaldırılamadı.' })
+  }
+})
+
 // GET /api/subscription/status — CARGOFLOW ABONELİK / HAK DURUMU.
 //
 // AD AYRIMI: bu uç CargoFlow'un KENDİ ABONELİĞİDİR. Depodaki `billingParty`

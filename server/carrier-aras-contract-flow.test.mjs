@@ -346,6 +346,28 @@ test('AR-24: dogrulama TEK korelasyon anahtari kullanir', () => {
   assert.equal(VER.ARAS_VERIFICATION_OPERATION, 'GetOrderWithIntegrationCode')
 })
 
+test('AR-24b: GetOrderWithIntegrationCode zarf alan sirasi kanitli', () => {
+  const built = VER.buildArasGetOrderWithIntegrationCodeEnvelope({
+    credentials: { userName: 'u', password: 'p' },
+    integrationCode: 'IC1',
+  })
+  assert.equal(built.ok, true)
+  const idxUser = built.envelope.indexOf('<userName>')
+  const idxPass = built.envelope.indexOf('<password>')
+  const idxCode = built.envelope.indexOf('<integrationCode>')
+  assert.ok(idxUser < idxPass && idxPass < idxCode)
+})
+
+test('AR-24c: GetBarcode zarf Username/Password buyuk harf', () => {
+  const built = LBL.buildArasGetBarcodeEnvelope({
+    credentials: { userName: 'u', password: 'p' },
+    integrationCode: 'IC1',
+  })
+  assert.equal(built.ok, true)
+  assert.match(built.envelope, /<Username>u<\/Username>/)
+  assert.match(built.envelope, /<Password>p<\/Password>/)
+})
+
 /* ═══ SAĞLAYICI İZOLASYONU ══════════════════════════════════════════ */
 
 test('AR-25: ARAS kaydi SURAT olarak okunamaz', async () => {
