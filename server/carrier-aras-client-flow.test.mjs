@@ -492,6 +492,17 @@ test('ARC-3ag: CDATA disindaki sayisal karakter referansi (&#233;) COZULUR', asy
   assert.equal(outcome.raw.ResultMessage, "Café Ko'")
 })
 
+test('ARC-3ah: oznitelik degerindeki escape edilmemis ">" gecerli govdeyi SAHTE BICIMSIZ SAYMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope note="a>b"><ResultCode>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultCode, '0')
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

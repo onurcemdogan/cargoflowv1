@@ -338,7 +338,18 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   const insideCdata = (index: number) =>
     cdataSpans.some((span) => index >= span.start && index < span.end)
 
-  const tagMatches = [...cleaned.matchAll(/<[^>]+>/g)].filter((m) => !insideCdata(m.index))
+  // XML permits a literal '>' inside a quoted attribute value (only '<' and
+  // the matching quote are forbidden there — AttValue ::= '"' ([^<&"] |
+  // Reference)* '"' | "'" ([^<&'] | Reference)* "'"). A naive `[^>]+` scan
+  // ends the tag at that embedded '>' instead of the real one, so
+  // `<Envelope note="a>b">` was split into a bogus `<Envelope note="a` tag
+  // that fails the anchored nameMatch regex below and rejects an otherwise
+  // valid response as ARAS_MALFORMED_RESPONSE. Treating a full quoted span as
+  // one atomic unit lets the scan skip any '>' (or '<') inside it and stop
+  // only at the real, unquoted tag-closing '>'.
+  const tagMatches = [...cleaned.matchAll(/<(?:"[^"]*"|'[^']*'|[^"'>])*>/g)].filter(
+    (m) => !insideCdata(m.index),
+  )
   if (tagMatches.length === 0) return null
 
   const stack: Array<{ name: string; contentStart: number }> = []
