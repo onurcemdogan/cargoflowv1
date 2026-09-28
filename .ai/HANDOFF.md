@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `28d637aab9fa3fc3611e630ba963dc279ded6e66` (committed, pending push)
+HEAD: `eee54cddda417c7cca4e711ac5882f16941b127a` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-d353a5496832d2c5 (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><Other>]]></Other><ResultCode>0</ResultCode></Envelope>`. The parser never rejects `]]>` in ordinary character data, allowing this invalid response to yield `ResultCode=0`. Fix XML validation and add regression coverage before merging.
+
+Root cause: `parseWellFormedXmlStructure` validated tag balance, raw character legality (`hasInvalidLiteralChar`), and entity-reference well-formedness (`hasInvalidEntityReference`) on every inter-tag gap, but never checked for the literal string `]]>` in character data outside CDATA. XML's `CharData` production (`CharData ::= [^<&]* - ([^<&]* ']]>' [^<&]*)`) forbids this sequence precisely so a bare CDATA-close delimiter appearing in ordinary text can never be confused with the end of a real CDATA section — but the existing checks treat `]`, `]`, `>` as three individually harmless characters, none of which trip character-legality or entity-reference validation. A body like `<Envelope><Other>]]></Other><ResultCode>0</ResultCode></Envelope>` therefore still passed as well-formed (tags balance, one root, legal characters, no invalid entities) despite the bare `]]>` being invalid XML outside CDATA, so `extractKnownXmlFields` read `ResultCode='0'` from the accepted structure and `classifyArasSetOrderResult` (`arasContract.ts`) treated `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `hasForbiddenCdataCloseDelimiter(textOutsideCdata)`, which checks for the literal `]]>` substring. Wired into the same CDATA-stripped gap text (`gapOutsideCdata`) that `hasInvalidEntityReference` already receives, immediately after that call — so a real CDATA section's own `]]>` delimiter (already removed from `gapOutsideCdata` by the existing CDATA-span carve-out) is unaffected, and only a bare `]]>` occurring as genuine character data is rejected. The check does not extend to attribute values, since XML's `AttValue` production does not forbid `]]>` there (only `CharData` does). No other well-formedness logic changed.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3ae`: the exact body from the finding, `<Envelope><Other>]]></Other><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 79/79 (was 78/78; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `eee54cddda417c7cca4e711ac5882f16941b127a` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `eee54cddda417c7cca4e711ac5882f16941b127a`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-691b9a2e44796cef (repaired, code change applied)
 

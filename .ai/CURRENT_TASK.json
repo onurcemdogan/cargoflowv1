@@ -2,13 +2,13 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "MERGE_READY",
-  "phase": "MERGE_READY",
+  "status": "IN_PROGRESS",
+  "phase": "REVIEW_FEEDBACK",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "28d637aab9fa3fc3611e630ba963dc279ded6e66",
-  "activeWorker": null,
+  "headCommit": "eee54cddda417c7cca4e711ac5882f16941b127a",
+  "activeWorker": "claude",
   "lastImplementationWorker": "claude",
   "reviewer": null,
   "contributors": [
@@ -47,11 +47,12 @@
     "CODEX-MERGE-eba1a34bb5502189: fixed. server/carriers/aras/arasClient.ts's entity-reference validation (hasInvalidEntityReference, hardened for code-point legality by CODEX-MERGE-94d9708343f9b1d6) only checked characters reached via `&`-prefixed entity/numeric-reference syntax — it never validated a raw, literal illegal character typed directly into the response body. XML character legality (the Char production) is a document-wide constraint on every literal character, not a property of entity syntax, and it applies even inside CDATA (CDATA only suppresses markup/entity recognition, not the underlying character-legality rule). A body like `<Envelope><Other>\\u0000</Other><ResultCode>0</ResultCode></Envelope>` (an actual NUL byte, not the entity `&#0;` already rejected) therefore still passed as well-formed — no `&` anywhere, so hasInvalidEntityReference saw nothing to reject — so extractKnownXmlFields read ResultCode='0' and classifyArasSetOrderResult (arasContract.ts) treated ResultCode==='0' as success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding scenario (literal U+0000 inside <Other>, followed by ResultCode=0), not stale evidence. Fix: added hasInvalidLiteralChar(text), which iterates every code point in the given text (via `for...of`, which iterates by Unicode code point so surrogate pairs and unpaired surrogates are both handled correctly) and applies the same isValidXmlCodePoint rule used for numeric character references. Wired into parseWellFormedXmlStructure at two call sites: (1) the full inter-tag gap (before any CDATA carve-out, so illegal literal characters are caught both inside and outside CDATA spans, unlike the CDATA-exempt entity-reference check), and (2) each attribute value (alongside the existing duplicate-name and entity-reference checks). No other well-formedness logic changed. Added regression tests ARC-3y (literal NUL in character data, exact finding scenario), ARC-3z (literal NUL in an attribute value), and ARC-3aa (literal NUL inside a CDATA span) to server/carrier-aras-client-flow.test.mjs, all asserting ARAS_MALFORMED_RESPONSE/raw:null. npm run test:aras 75/75 (was 72/72 + 3 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 4ec62213be61b9d4aa5787f5c58392eccd64d166 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against 4ec62213be61b9d4aa5787f5c58392eccd64d166.",
     "CODEX-MERGE-9b57a39bd4fbdcb2: fixed. server/carriers/aras/arasClient.ts's character-legality checks (hasInvalidLiteralChar, added for CODEX-MERGE-eba1a34bb5502189) only ran on the post-strip `cleaned` string (inter-tag gaps and attribute values), but stripNonElementXmlConstructs deletes comments/PI/DOCTYPE — and any illegal literal character hidden inside them — BEFORE that string exists. A body like `<Envelope><!--\\u0000--><ResultCode>0</ResultCode></Envelope>` has its NUL erased along with the whole comment during stripping, so the cleaned body (`<Envelope><ResultCode>0</ResultCode></Envelope>`) wrongly validates as well-formed and extractKnownXmlFields reads ResultCode='0' as a false success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. Root cause: character legality (the Char production) is a document-wide XML constraint independent of markup structure — it applies to every literal character in the RAW response regardless of which construct contains it (comment, PI, DOCTYPE, CDATA, or plain text) — but the check only ever saw text that survived stripping. Fix: added a single hasInvalidLiteralChar(trimmed) call in parseWellFormedXmlStructure, on the raw/unstripped body, immediately after the `startsWith('<')` check and before stripNonElementXmlConstructs runs; any illegal character anywhere in the raw response now rejects the body as ARAS_MALFORMED_RESPONSE before stripping can hide it. The pre-existing gap/attribute-value checks on the cleaned string are unchanged (now redundant for comment-hidden cases but still correct for cleaned-text cases). Added regression test ARC-3ab to server/carrier-aras-client-flow.test.mjs using the exact finding body (`<Envelope><!--\\u0000--><ResultCode>0</ResultCode></Envelope>`), asserting ARAS_MALFORMED_RESPONSE/raw:null. npm run test:aras 76/76 (was 75/75 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed bc787c427f28f242ad8d651b4e16a5c989a64c61 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against bc787c427f28f242ad8d651b4e16a5c989a64c61.",
     "CODEX-MERGE-1731df62de0cbe8e: fixed. server/carriers/aras/arasClient.ts's stripNonElementXmlConstructs matched comments with a single lazy regex (`<!--[\\s\\S]*?-->`) that stops at the FIRST `-->` it finds, but never validated the comment's interior against the XML rule that forbids the string \"--\" from occurring anywhere within comment content (Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->' — this exists precisely so the '-->' end delimiter is unambiguous). A body like `<Envelope><!--a--b--><ResultCode>0</ResultCode></Envelope>` therefore had its entire `<!--a--b-->` construct (interior \"a--b\", which contains the forbidden \"--\") matched and stripped as if it were one ordinary, legal comment, leaving a clean-looking `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed well-formedness and let extractKnownXmlFields read ResultCode='0' as a false create success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. Fix: stripNonElementXmlConstructs now first scans the raw body for `<!--([\\s\\S]*?)-->` matches (skipping any whose start index falls inside a CDATA span, since CDATA content is opaque literal text, not real comments) and returns null — surfacing as ARAS_MALFORMED_RESPONSE — if any comment's captured interior contains \"--\". This check runs before the existing strip pass, which is otherwise unchanged. parseWellFormedXmlStructure now checks stripNonElementXmlConstructs's return value for null (in addition to the existing null check after well-formedness scanning) and returns null immediately if so. Added regression test ARC-3ac to server/carrier-aras-client-flow.test.mjs using the exact finding body, asserting ARAS_MALFORMED_RESPONSE/raw:null. npm run test:aras 77/77 (was 76/76 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 3f2d51dcc53511396b39e404fd0328c2d1581e70 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against 3f2d51dcc53511396b39e404fd0328c2d1581e70.",
-    "CODEX-MERGE-691b9a2e44796cef: fixed. server/carriers/aras/arasClient.ts stripNonElementXmlConstructs's comment-content check (added for CODEX-MERGE-1731df62de0cbe8e) rejected a lazy-matched comment interior only if it contained the forbidden substring \"--\", but never checked whether that interior ENDS in a hyphen. XML's Comment production (Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->') requires that if the last repetition in the content is a hyphen, it must be followed by a (Char - '-') — but here it is immediately followed by the '-->' delimiter itself (which starts with '-'), so a content ending in a bare hyphen is itself forbidden, independent of whether \"--\" appears earlier. Because the strip regex is lazy (matches up to the FIRST '-->' it finds), the finding body `<Envelope><!--a---><ResultCode>0</ResultCode></Envelope>` resolves to interior \"a-\" (only a single trailing hyphen, no internal \"--\") — the existing includes('--') check saw nothing to reject, so the comment was stripped as ordinary and legal, leaving `<Envelope><ResultCode>0</ResultCode></Envelope>` to pass well-formedness and let extractKnownXmlFields read ResultCode='0' as a false create success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. Fix: added `|| match[1].endsWith('-')` alongside the existing `match[1].includes('--')` check in stripNonElementXmlConstructs's comment-interior scan; any comment whose lazy-matched interior ends in a hyphen is now rejected as ARAS_MALFORMED_RESPONSE before stripping, same as one containing an internal \"--\". No other well-formedness logic changed. Added regression test ARC-3ad to server/carrier-aras-client-flow.test.mjs using the exact finding body, asserting ARAS_MALFORMED_RESPONSE/raw:null. npm run test:aras 78/78 (was 77/77 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings, same set as prior rounds); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 28d637aab9fa3fc3611e630ba963dc279ded6e66 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against 28d637aab9fa3fc3611e630ba963dc279ded6e66."
+    "CODEX-MERGE-691b9a2e44796cef: fixed. server/carriers/aras/arasClient.ts stripNonElementXmlConstructs's comment-content check (added for CODEX-MERGE-1731df62de0cbe8e) rejected a lazy-matched comment interior only if it contained the forbidden substring \"--\", but never checked whether that interior ENDS in a hyphen. XML's Comment production (Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->') requires that if the last repetition in the content is a hyphen, it must be followed by a (Char - '-') — but here it is immediately followed by the '-->' delimiter itself (which starts with '-'), so a content ending in a bare hyphen is itself forbidden, independent of whether \"--\" appears earlier. Because the strip regex is lazy (matches up to the FIRST '-->' it finds), the finding body `<Envelope><!--a---><ResultCode>0</ResultCode></Envelope>` resolves to interior \"a-\" (only a single trailing hyphen, no internal \"--\") — the existing includes('--') check saw nothing to reject, so the comment was stripped as ordinary and legal, leaving `<Envelope><ResultCode>0</ResultCode></Envelope>` to pass well-formedness and let extractKnownXmlFields read ResultCode='0' as a false create success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. Fix: added `|| match[1].endsWith('-')` alongside the existing `match[1].includes('--')` check in stripNonElementXmlConstructs's comment-interior scan; any comment whose lazy-matched interior ends in a hyphen is now rejected as ARAS_MALFORMED_RESPONSE before stripping, same as one containing an internal \"--\". No other well-formedness logic changed. Added regression test ARC-3ad to server/carrier-aras-client-flow.test.mjs using the exact finding body, asserting ARAS_MALFORMED_RESPONSE/raw:null. npm run test:aras 78/78 (was 77/77 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings, same set as prior rounds); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 28d637aab9fa3fc3611e630ba963dc279ded6e66 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against 28d637aab9fa3fc3611e630ba963dc279ded6e66.",
+    "CODEX-MERGE-d353a5496832d2c5: fixed. server/carriers/aras/arasClient.ts parseWellFormedXmlStructure validated tag balance, raw character legality, and entity-reference well-formedness on every inter-tag gap, but never checked for the literal string \"]]>\" in character data outside CDATA. XML's CharData production (CharData ::= [^<&]* - ([^<&]* ']]>' [^<&]*)) forbids this sequence precisely so a bare CDATA-close delimiter in ordinary text can never be confused with the end of a real CDATA section; the prior checks treat ']', ']', '>' as three individually harmless characters, so a body like <Envelope><Other>]]></Other><ResultCode>0</ResultCode></Envelope> still passed as well-formed (tags balance, one root, legal characters, no invalid entities) despite the bare \"]]>\" being invalid XML outside CDATA, and extractKnownXmlFields read ResultCode='0' from the accepted structure while classifyArasSetOrderResult (arasContract.ts) treated ResultCode==='0' as success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. Fix: added hasForbiddenCdataCloseDelimiter(textOutsideCdata), checking for the literal \"]]>\" substring, wired into the same CDATA-stripped gap text (gapOutsideCdata) that hasInvalidEntityReference already receives, so a CDATA section's own \"]]>\" delimiter (already removed from that string by the existing CDATA-span carve-out) is unaffected — only a bare \"]]>\" occurring as genuine character data is rejected. No other well-formedness logic changed. Added regression test ARC-3ae to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 79/79 (was 78/78 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed eee54cddda417c7cca4e711ac5882f16941b127a (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against eee54cddda417c7cca4e711ac5882f16941b127a."
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "nextAction": "CODEX-MERGE-d353a5496832d2c5 repaired locally (commit eee54cddda417c7cca4e711ac5882f16941b127a, code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI (quality) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against eee54cddda417c7cca4e711ac5882f16941b127a. Do not push/merge master/integration/roadmap.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -91,7 +92,7 @@
   },
   "externalReview": {
     "prNumber": 8,
-    "prHeadSha": "561dfd805bc3e7d4366ec4f8c34936abc17a938b",
+    "prHeadSha": "1233c38dc28b7f6547c323cf84a92f28ce188d85",
     "ciStatus": "SUCCESS",
     "humanReviewStatus": "CLEAR",
     "externalReviewStatus": "UNAVAILABLE",
@@ -104,45 +105,16 @@
       "conclusion": "NEUTRAL"
     },
     "remainingFindings": [],
-    "evaluatedAt": "2026-09-28T03:35:27.045660+00:00"
+    "evaluatedAt": "2026-09-28T03:49:52.708849+00:00"
   },
   "reviewFeedback": {
-    "fingerprint": "CODEX-MERGE-691b9a2e44796cef",
+    "fingerprint": "CODEX-MERGE-d353a5496832d2c5",
     "headSha": "28d637aab9fa3fc3611e630ba963dc279ded6e66",
     "bugIds": [
-      "CODEX-MERGE-691b9a2e44796cef"
+      "CODEX-MERGE-d353a5496832d2c5"
     ],
-    "attemptedProviders": [
-      "claude"
-    ],
+    "attemptedProviders": [],
     "history": [
-      {
-        "provider": "claude",
-        "fingerprint": "CODEX-MERGE-ff386c6c9acf66cb",
-        "exitClass": "SUCCESS",
-        "touchedPaths": [
-          "server/carrier-aras-client-flow.test.mjs",
-          "server/carriers/aras/arasClient.ts",
-          "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
-        ],
-        "at": "2026-09-27T23:11:24.171275+00:00"
-      },
-      {
-        "provider": "claude",
-        "fingerprint": "CODEX-MERGE-fd3a21282f11cc5f",
-        "exitClass": "SUCCESS",
-        "touchedPaths": [
-          "server/carriers/aras/arasClient.ts",
-          "server/carrier-aras-client-flow.test.mjs"
-        ],
-        "at": "2026-09-28T00:00:00.000000+00:00",
-        "commands": [
-          "npm run test:aras",
-          "npx tsc -b --force",
-          "npm run lint",
-          "node --test server/carrier-aras-expansion-flow.test.mjs"
-        ]
-      },
       {
         "provider": "claude",
         "fingerprint": "CODEX-MERGE-fd3a21282f11cc5f",
@@ -276,19 +248,35 @@
           "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
         ],
         "at": "2026-09-28T03:40:24.788355+00:00"
+      },
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-d353a5496832d2c5",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [
+          "server/carrier-aras-client-flow.test.mjs",
+          "server/carriers/aras/arasClient.ts"
+        ],
+        "at": "2026-09-28T04:05:00.000000+00:00",
+        "commands": [
+          "npm run test:aras",
+          "npx tsc -b --force",
+          "npm run lint",
+          "node --test server/carrier-aras-expansion-flow.test.mjs"
+        ]
       }
     ],
     "status": "REPAIRED",
-    "updatedAt": "2026-09-28T03:40:24.788355+00:00",
+    "updatedAt": "2026-09-28T04:05:00.000000+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
-        "bugId": "CODEX-MERGE-691b9a2e44796cef",
+        "bugId": "CODEX-MERGE-d353a5496832d2c5",
         "title": "Codex merge authorization finding",
         "severity": "high",
         "path": null,
         "line": null,
-        "body": "arasClient.ts still accepts malformed XML: `<Envelope><!--a---><ResultCode>0</ResultCode></Envelope>` passes because the comment validator checks only internal `--`, allowing comment content ending in `-`. Stripping that invalid comment exposes ResultCode=0 as success. Reject trailing-hyphen comment content or use a strict XML parser, and add regression coverage before merging.",
+        "body": "arasClient.ts still accepts malformed XML: <Envelope><Other>]]></Other><ResultCode>0</ResultCode></Envelope>. The parser never rejects ]]> in ordinary character data, allowing this invalid response to yield ResultCode=0. Fix XML validation and add regression coverage before merging.",
         "threadId": null,
         "outdated": false,
         "source": "codex-merge-control"
