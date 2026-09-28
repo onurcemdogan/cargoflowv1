@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `3f2d51dcc53511396b39e404fd0328c2d1581e70` (committed, pending push)
+HEAD: `28d637aab9fa3fc3611e630ba963dc279ded6e66` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-691b9a2e44796cef (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><!--a---><ResultCode>0</ResultCode></Envelope>` passes because the comment validator checks only internal `--`, allowing comment content ending in `-`. Stripping that invalid comment exposes ResultCode=0 as success. Reject trailing-hyphen comment content or use a strict XML parser, and add regression coverage before merging.
+
+Root cause: `stripNonElementXmlConstructs`'s comment-content check (added for `CODEX-MERGE-1731df62de0cbe8e`) rejects a lazy-matched comment interior only if it contains the forbidden substring `--`, but never checks whether that interior *ends* in a hyphen. XML's `Comment` production (`Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'`) requires that if the last repetition of the content is a hyphen, it must be followed by a `(Char - '-')` — but here it is immediately followed by the `-->` delimiter itself (which starts with `-`), so content ending in a bare hyphen is forbidden independent of whether `--` appears earlier in the content. Because the strip regex is lazy (matches up to the *first* `-->` it finds), the finding body `<Envelope><!--a---><ResultCode>0</ResultCode></Envelope>` resolves to interior `"a-"` (a single trailing hyphen, no internal `--`) — the existing `includes('--')` check had nothing to reject, so the comment was stripped as an ordinary, legal comment, leaving `<Envelope><ResultCode>0</ResultCode></Envelope>` to pass well-formedness. `extractKnownXmlFields` then read `ResultCode='0'`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `|| match[1].endsWith('-')` alongside the existing `match[1].includes('--')` check in `stripNonElementXmlConstructs`'s comment-interior scan. Any comment whose lazy-matched interior ends in a hyphen is now rejected (`return null`, surfacing as `ARAS_MALFORMED_RESPONSE`) before stripping, exactly the same way one containing an internal `--` already was. No other well-formedness logic changed — the CDATA-span carve-out, the existing strip pass, and `parseWellFormedXmlStructure`'s null-check on `stripNonElementXmlConstructs`'s return value are all unchanged.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3ad`: the exact body from the finding, `<Envelope><!--a---><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 78/78 (was 77/77; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `28d637aab9fa3fc3611e630ba963dc279ded6e66` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `28d637aab9fa3fc3611e630ba963dc279ded6e66`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-1731df62de0cbe8e (repaired, code change applied)
 
