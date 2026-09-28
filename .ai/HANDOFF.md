@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `2a4b94c` (committed, pending push)
+HEAD: `1579a77` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-c34d38ac98e6a882 (repaired, code change applied)
+
+Finding: `arasClient.ts` tokenizes tags with `/<[^>]+>/g`, which incorrectly ends tags at `>` inside quoted attribute values. A valid response such as `<Envelope note="a>b"><ResultCode>0</ResultCode></Envelope>` is therefore rejected as `ARAS_MALFORMED_RESPONSE`. Fix quote-aware XML parsing and add a regression test before merging.
+
+Root cause: `parseWellFormedXmlStructure` tokenized tag boundaries with a coarse `cleaned.matchAll(/<[^>]+>/g)` scan *before* running the anchored per-tag `nameMatch` regexes (already quote/attribute-hardened by `CODEX-MERGE-67921c7e4afaad12` and several subsequent rounds). XML explicitly permits a literal `>` inside a quoted attribute value — `AttValue ::= '"' ([^<&"] | Reference)* '"' | "'" ([^<&'] | Reference)* "'"` forbids only `<` and the matching quote there, not `>` — but the coarse `[^>]+` scan has no concept of quoting and ends the tag at the *first* `>` it finds, wherever it sits. A body like `<Envelope note="a>b"><ResultCode>0</ResultCode></Envelope>` therefore had its opening tag truncated to the bogus substring `<Envelope note="a`, which fails the anchored `nameMatch` regex, so the entire well-formed response was wrongly rejected as `ARAS_MALFORMED_RESPONSE` — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence. This is a **false-rejection** defect (valid input wrongly rejected) — the inverse of every prior `CODEX-MERGE` round on this ticket, which were all false-acceptance defects (malformed input wrongly accepted as a successful create).
+
+Fix (`server/carriers/aras/arasClient.ts`): replaced the coarse tag-boundary regex with `/<(?:"[^"]*"|'[^']*'|[^"'>])*>/g`, which treats a full double- or single-quoted span as one atomic unit during the boundary scan, so any `>` (or `<`) embedded inside a quoted attribute value is skipped over and the scan stops only at the real, unquoted tag-closing `>`. No other well-formedness logic changed — the per-tag `nameMatch`/closing-tag regexes, attribute duplicate-name/entity/character-legality checks, CDATA handling, and gap-text checks all operate unchanged on whatever substring this boundary scan now correctly hands them.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3ah`: the exact body from the finding, `<Envelope note="a>b"><ResultCode>0</ResultCode></Envelope>` — asserts the response is **accepted** (`outcome.ok === true`, `raw.ResultCode === '0'`), the inverse assertion shape from prior `ARC-3*` tests since this finding is about a valid response being wrongly rejected rather than an invalid one being wrongly accepted.
+
+Verification this round:
+- `npm run test:aras`: 83/83 (was 82/82; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `1579a77` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `1579a77`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-1a785e718ca7c730 (repaired, code change applied)
 
