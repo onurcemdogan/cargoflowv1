@@ -3,9 +3,37 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `eee54cddda417c7cca4e711ac5882f16941b127a` (committed, pending push)
+HEAD: `2a4b94c` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-1a785e718ca7c730 (repaired, code change applied)
+
+Finding: `arasClient.ts` corrupts response data: `extractKnownXmlFields` unwraps CDATA before decoding entities, so literal `&amp;` inside a CDATA label becomes `&`. `decodeXmlEntities` also leaves valid numeric character references undecoded. Preserve CDATA literally, decode ordinary XML text correctly, and add label-content regression tests before merging.
+
+Root cause (two independent defects in `server/carriers/aras/arasClient.ts`):
+1. `extractKnownXmlFields` called `decodeXmlEntities(unwrapCdataText(raw))` — it stripped the `<![CDATA[`/`]]>` delimiters *before* decoding entities, so the CDATA payload's characters were fed into the entity decoder along with the rest of the string. Per XML, CDATA content is literal text — entity syntax is never recognized inside a CDATA section, by design (that's the entire point of CDATA). So a body like `<Envelope><ResultMessage><![CDATA[A&amp;B]]></ResultMessage><ResultCode>0</ResultCode></Envelope>` had its CDATA payload `A&amp;B` (six literal characters) incorrectly decoded to `A&B` (four characters) — the field value was silently corrupted, exactly matching the finding's "literal `&amp;` inside a CDATA label becomes `&`" scenario, applicable to any CDATA-wrapped field including `ZebraZpl` label content from `GetBarcode`.
+2. `decodeXmlEntities` only ever decoded the five predefined named entities (`lt`/`gt`/`quot`/`apos`/`amp`) via five chained `.replace()` calls. It never recognized numeric character references (`&#NNN;` decimal / `&#xHHHH;` hex), so a legitimate numeric reference in ordinary (non-CDATA) XML text — e.g. `Caf&#233;` — was left completely undecoded in the extracted field instead of resolving to `Café`.
+
+Both were confirmed live against the current `arasClient.ts`, not stale evidence — `unwrapCdataText` and `decodeXmlEntities` are used at exactly one call site (`extractKnownXmlFields`), so both defects reach every extracted field, including label content.
+
+Fix (`server/carriers/aras/arasClient.ts`):
+- `decodeXmlEntities` rewritten as a single combined-regex `.replace()` pass (`XML_ENTITY_REFERENCE = /&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|quot|apos|amp);/g`) so every entity reference in the *original* text is decoded exactly once. This also closes a latent double-decoding hazard the prior chained-`.replace()` design carried: `String.replace` with a global regex only ever matches the original input, so a single combined pass cannot re-scan a replacement another branch of the same pass just produced (e.g. numeric-decoding `&#38;` to `&` first, then a later `&lt;`-shaped pass mistaking the manufactured `&lt;` for a real entity and corrupting it to `<`).
+- Added `decodeElementText(raw)`, which locates CDATA spans in the raw field text (same `<!\[CDATA\[([\s\S]*?)\]\]>` shape used elsewhere in this file for CDATA-opacity handling), decodes entities *only* in the text outside those spans via `decodeXmlEntities`, and splices each CDATA span's payload back in completely unchanged (only its delimiters are removed) — matching the existing `ARC-3k`/`ARC-3l` "CDATA is opaque literal text" contract already proven for the well-formedness scanner.
+- `extractKnownXmlFields` now calls `decodeElementText(raw)` instead of `decodeXmlEntities(unwrapCdataText(raw))`. `unwrapCdataText` was removed (dead code, no other call sites).
+
+Regression tests added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3af`: a `SetOrder` `ResultMessage` field with CDATA-wrapped `A&amp;B` stays undecoded as literal `A&amp;B`.
+- `ARC-3ag`: the same field's non-CDATA text with a decimal (`&#233;`), hex (`&#x4B;`), and named (`&apos;`) reference decodes to `Café Ko'`.
+- `ARC-6c`: the `GetBarcode` label field `ZebraZpl` wrapped in CDATA containing a literal `&amp;` stays undecoded — the exact "CDATA label" scenario from the finding.
+
+Verification this round:
+- `npm run test:aras`: 82/82 (was 79/79; +3 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `2a4b94c` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `2a4b94c`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-d353a5496832d2c5 (repaired, code change applied)
 
