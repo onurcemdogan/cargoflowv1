@@ -575,6 +575,18 @@ test('ARC-3an: hedefi bos olan (gecersiz Name) PI basari SAYILMAZ', async () => 
   assert.equal(outcome.raw, null)
 })
 
+test('ARC-3ao: "<?" ile hedef arasinda bosluk olan PI basari SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<? foo?><Envelope><ResultCode>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+  assert.equal(outcome.raw, null)
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

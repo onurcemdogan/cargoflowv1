@@ -440,7 +440,7 @@ function hasMisplacedXmlDeclaration(xml: string): boolean {
       const end = xml.indexOf('?>', i + 2)
       if (end === -1) return false
       const content = xml.slice(i + 2, end)
-      const targetMatch = /^\s*([^\s?]*)/.exec(content)
+      const targetMatch = /^([^\s?]*)/.exec(content)
       const target = targetMatch ? targetMatch[1] : ''
       if (/^xml$/i.test(target)) {
         if (i !== 0) return true
@@ -493,7 +493,14 @@ function hasMisplacedXmlDeclaration(xml: string): boolean {
 // body — using the same comment/CDATA/DOCTYPE/plain-tag construct-boundary
 // walk as hasMisplacedXmlDeclaration — and rejects the body the moment any
 // `<?...?>` construct's target fails to match the same Name grammar used
-// elsewhere in this file for element/attribute names.
+// elsewhere in this file for element/attribute names. Per that same grammar,
+// PITarget must immediately follow `<?` with no intervening whitespace — S
+// only separates the target from what comes after it — so the target-capture
+// regex here (and in hasMisplacedXmlDeclaration) must NOT skip leading
+// whitespace before capturing: doing so let `<? foo?>` (target visually
+// "foo" after the skipped space) pass as a legal Name, when the actual
+// content immediately after `<?` is a space, which is not a valid Name
+// under any XML grammar.
 function hasInvalidProcessingInstructionTarget(xml: string): boolean {
   let i = 0
   while (i < xml.length) {
@@ -517,7 +524,7 @@ function hasInvalidProcessingInstructionTarget(xml: string): boolean {
       const end = xml.indexOf('?>', i + 2)
       if (end === -1) return false
       const content = xml.slice(i + 2, end)
-      const targetMatch = /^\s*([^\s?]*)/.exec(content)
+      const targetMatch = /^([^\s?]*)/.exec(content)
       const target = targetMatch ? targetMatch[1] : ''
       if (!/^[A-Za-z_][\w.:-]*$/.test(target)) return true
       i = end + 2
