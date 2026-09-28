@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `1715c11c9ecd250081d603a86bd7b75b2481df99` (committed, pending push)
+HEAD: `e9da19d655c9b58d737e2e3d88acb03f4eb17f7f` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-ea44b55bd1bac7b9 (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<??><Envelope><ResultCode>0</ResultCode></Envelope>`. Processing instructions are stripped without validating their target, allowing this invalid response to produce `ResultCode='0'`. Reject malformed constructs or use a conforming XML parser, add regression coverage, and revalidate the frozen head.
+
+Root cause: `arasClient.ts`'s two existing PI-handling paths — `stripNonElementXmlConstructs`'s strip pattern (`<\?[\s\S]*?\?>`) and `hasMisplacedXmlDeclaration`'s index-0 target check (added for `CODEX-MERGE-12ebf594361555c1`/`CODEX-MERGE-d2ab3ac1667901e1`) — both only ever inspect a processing instruction's *target* to decide whether it equals `"xml"` (case-insensitively). Neither ever validates that a PI target is a legal XML Name at all. Per the grammar, `PI ::= '<?' PITarget (S (Char* - (Char* '?>' Char*)))? '?>'` and `Name ::= NameStartChar (NameChar)*` requires at least one character — the empty string is not a valid `Name` under any XML production. A body like `<??><Envelope><ResultCode>0</ResultCode></Envelope>` has a PI whose target (the text between `<?` and `?>`) is the empty string: `hasMisplacedXmlDeclaration`'s target-match captures `''`, which fails `/^xml$/i`, so that check has nothing to reject; `stripNonElementXmlConstructs`'s target-blind strip pattern then matched and discarded the whole `<??>` construct as if it were an ordinary, legal PI, leaving a clean-looking `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed well-formedness. `extractKnownXmlFields` then read `ResultCode='0'`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `hasInvalidProcessingInstructionTarget(xml)`, mirroring `hasMisplacedXmlDeclaration`'s structural walk over the RAW, unstripped body (the same comment/CDATA/DOCTYPE/plain-tag construct-boundary skip logic). For every `<?...?>` construct it encounters, it extracts the target and rejects the body outright (`return true`) the moment that target fails to match the same Name grammar already used elsewhere in this file for element/attribute names (`/^[A-Za-z_][\w.:-]*$/`). This is a generic target-legality check, independent of and layered alongside the existing `xml`-specific position/syntax checks in `hasMisplacedXmlDeclaration` — a PI with a valid-Name target that isn't `"xml"` (e.g. a real `xml-stylesheet` PI) is unaffected. Wired into `parseWellFormedXmlStructure` immediately after the existing `hasMisplacedXmlDeclaration` check and before `stripNonElementXmlConstructs` runs, so the invalid target is caught while the raw body still shows the evidence — stripping first (the prior order) would have already destroyed it. No other well-formedness logic changed.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3an`: the exact body from the finding, `<??><Envelope><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 89/89 (was 88/88; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `e9da19d655c9b58d737e2e3d88acb03f4eb17f7f` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `e9da19d655c9b58d737e2e3d88acb03f4eb17f7f`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-d2ab3ac1667901e1 (repaired, code change applied)
 
