@@ -456,6 +456,18 @@ test('ARC-3ad: yorum icerigi tek tire ile biten govde basari SAYILMAZ', async ()
   assert.equal(outcome.raw, null)
 })
 
+test('ARC-3ae: eleman icerigindeki yasak "]]>" dizisi (CDATA disi) basari SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><Other>]]></Other><ResultCode>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+  assert.equal(outcome.raw, null)
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

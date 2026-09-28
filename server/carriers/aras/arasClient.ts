@@ -161,6 +161,23 @@ function hasInvalidEntityReference(textOutsideCdata: string): boolean {
   return textOutsideCdata.replace(VALID_ENTITY_REFERENCE, '').includes('&')
 }
 
+// XML forbids the literal string "]]>" from occurring in character data
+// outside a CDATA section: CharData ::= [^<&]* - ([^<&]* ']]>' [^<&]*). This
+// exists so a bare CDATA-close delimiter in ordinary text can never be
+// confused with the end of a real CDATA section. Nothing above checked for
+// this reserved sequence — character legality and entity-reference checks
+// both treat ']', ']', '>' as three individually harmless characters — so a
+// body like `<Envelope><Other>]]></Other><ResultCode>0</ResultCode></Envelope>`
+// still passed as well-formed (tags balance, one root, legal characters, no
+// invalid entities) even though the bare "]]>" is invalid XML outside CDATA,
+// letting extractKnownXmlFields read ResultCode='0' out of an otherwise
+// malformed body. CDATA content is exempt — its own "]]>" is a delimiter, not
+// character data — so this runs on the same CDATA-stripped text
+// `hasInvalidEntityReference` already receives.
+function hasForbiddenCdataCloseDelimiter(textOutsideCdata: string): boolean {
+  return textOutsideCdata.includes(']]>')
+}
+
 // Character legality (the Char production) is a document-wide XML
 // constraint, not a property of entity-reference syntax — it applies to
 // EVERY literal character, including inside CDATA (CDATA only suppresses
@@ -301,6 +318,7 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
     // CDATA, where '&' is ordinary literal text, not entity syntax.
     const gapOutsideCdata = gap.replace(/<!\[CDATA\[[\s\S]*?\]\]>/g, '')
     if (hasInvalidEntityReference(gapOutsideCdata)) return null
+    if (hasForbiddenCdataCloseDelimiter(gapOutsideCdata)) return null
     // Text seen while `stack` is empty is outside the root element (before
     // it opens, between top-level siblings, or after it closes). That is
     // only valid XML if it is pure whitespace — e.g.
