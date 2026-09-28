@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `fc847b5` (committed, pending push)
+HEAD: `b6324e3` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-838f748d5ec4cde4 (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<Envelope><ResultCode>0<!DOCTYPE x></ResultCode></Envelope>`. The precheck skips the embedded DOCTYPE, then `stripNonElementXmlConstructs` removes it, yielding `ResultCode='0'`. Reject DOCTYPE declarations inside elements before stripping and add a regression test; green CI does not resolve this defect.
+
+Root cause: `stripNonElementXmlConstructs` removed any `<!DOCTYPE ...>` construct it found via a whole-body strip pattern, unconditionally, with no notion of prolog-vs-content position. XML restricts `doctypedecl` to the prolog — it may appear at most once, and only *before* the document's root element starts (`document ::= prolog element Misc*`; `prolog ::= XMLDecl? Misc* (doctypedecl Misc*)?`). A `<!DOCTYPE ...>` appearing as apparent character data inside the root element's own content is never legal XML, but the strip pass treated it exactly the same as a legitimate prolog DOCTYPE and discarded it. A body like `<Envelope><ResultCode>0<!DOCTYPE x></ResultCode></Envelope>` therefore had its embedded `<!DOCTYPE x>` silently stripped, leaving a clean-looking `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed well-formedness. `extractKnownXmlFields` then read `ResultCode='0'`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence. Existing checks didn't catch this: `hasConstructSplicedIntoTagMarkup` (added for `CODEX-MERGE-0fdca8055d6f0b83`) only rejects a construct whose opening delimiter sits *inside* an already-open tag's markup — here the DOCTYPE sits in ordinary character data between a tag's own `>` and the next `<`, which that function correctly treats as a legal construct boundary, so it never flagged the placement violation the finding is about.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `hasDoctypeOutsideProlog(xml)`, which scans the RAW, unstripped body — tracking whether the root element's opening tag has started via the same comment/CDATA/PI/DOCTYPE/plain-tag construct-boundary walk used by `hasConstructSplicedIntoTagMarkup` — and rejects the body outright the moment a `<!DOCTYPE` construct is found after that point. Wired into `parseWellFormedXmlStructure` immediately after the existing `hasConstructSplicedIntoTagMarkup` check and before `stripNonElementXmlConstructs` runs, so the DOCTYPE's illegal placement is caught while the raw body still shows the evidence — stripping first (the prior order) would have already destroyed it. No other well-formedness logic changed.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3aj`: the exact body from the finding, `<Envelope><ResultCode>0<!DOCTYPE x></ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 85/85 (was 84/84; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `b6324e3` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `b6324e3`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-0fdca8055d6f0b83 (repaired, code change applied)
 
