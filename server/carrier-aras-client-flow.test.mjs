@@ -503,6 +503,18 @@ test('ARC-3ah: oznitelik degerindeki escape edilmemis ">" gecerli govdeyi SAHTE 
   assert.equal(outcome.raw.ResultCode, '0')
 })
 
+test('ARC-3ai: etiket adina gomulu yorum (<Result<!--x-->Code>) sahte etiket birlestirmez, basari SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><Result<!--x-->Code>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+  assert.equal(outcome.raw, null)
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

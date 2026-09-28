@@ -237,6 +237,78 @@ function hasInvalidLiteralChar(text: string): boolean {
   return false
 }
 
+// XML forbids a literal '<' from occurring inside a start/end tag's own
+// markup (Name and Attribute characters never include '<'; a raw '<' can
+// only legally begin a NEW construct at a tag boundary or in character
+// data). The previous strip pass matched comments/PI/DOCTYPE anywhere in the
+// raw body with no awareness of whether that match's opening '<!--'/'<?'
+// sat INSIDE an already-started, not-yet-closed tag — so a body like
+// `<Envelope><Result<!--x-->Code>0</ResultCode></Envelope>` had its embedded
+// `<!--x-->` silently stripped, splicing the two tag-name fragments
+// "Result" and "Code" together into a fake, well-formed-looking
+// `<ResultCode>` that never actually existed in the response, letting
+// `extractKnownXmlFields` read ResultCode='0' out of an otherwise malformed
+// body. This scans the RAW, unstripped body and rejects it outright (rather
+// than stripping) whenever any '<' — including one that starts a
+// comment/PI/DOCTYPE/CDATA construct — appears while a plain tag's markup is
+// still open (after its own leading '<', before its terminating unquoted
+// '>').
+function hasConstructSplicedIntoTagMarkup(xml: string): boolean {
+  let i = 0
+  while (i < xml.length) {
+    if (xml[i] !== '<') {
+      i++
+      continue
+    }
+    if (xml.startsWith('<!--', i)) {
+      const end = xml.indexOf('-->', i + 4)
+      if (end === -1) return true
+      i = end + 3
+      continue
+    }
+    if (xml.startsWith('<![CDATA[', i)) {
+      const end = xml.indexOf(']]>', i + 9)
+      if (end === -1) return true
+      i = end + 3
+      continue
+    }
+    if (xml.startsWith('<?', i)) {
+      const end = xml.indexOf('?>', i + 2)
+      if (end === -1) return true
+      i = end + 2
+      continue
+    }
+    if (/^<!DOCTYPE/i.test(xml.slice(i, i + 9))) {
+      const end = xml.indexOf('>', i + 9)
+      if (end === -1) return true
+      i = end + 1
+      continue
+    }
+    // A plain opening/closing tag: scan to its terminating unquoted '>',
+    // respecting quoted attribute values (where '<' is a separate,
+    // already-enforced well-formedness violation, not a construct boundary).
+    let j = i + 1
+    let quote: string | null = null
+    let terminated = false
+    for (; j < xml.length; j++) {
+      const ch = xml[j]
+      if (quote) {
+        if (ch === quote) quote = null
+      } else if (ch === '"' || ch === "'") {
+        quote = ch
+      } else if (ch === '<') {
+        return true
+      } else if (ch === '>') {
+        terminated = true
+        break
+      }
+    }
+    if (!terminated) return true
+    i = j + 1
+  }
+  return false
+}
+
 // CDATA govdesi harfi harfine metindir — icindeki `<!--...-->` gibi diziler
 // GERCEK bir yorum DEGILDIR. Onceki surum yorum/PI/DOCTYPE'i CDATA
 // sinirlarindan HABERSIZ tek bir regex gecisiyle siliyordu; bu yuzden
@@ -331,6 +403,12 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   // raw, unstripped body up front catches an illegal character regardless of
   // which construct (comment, PI, DOCTYPE, CDATA, or plain text) hides it.
   if (hasInvalidLiteralChar(trimmed)) return null
+
+  // Must run on the RAW body, before any stripping — stripping a
+  // comment/PI/DOCTYPE embedded inside a tag's markup would destroy the
+  // evidence that the tag was never actually well-formed in the first
+  // place (see hasConstructSplicedIntoTagMarkup above).
+  if (hasConstructSplicedIntoTagMarkup(trimmed)) return null
 
   const cleaned = stripNonElementXmlConstructs(trimmed)
   if (cleaned === null) return null
