@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "MERGE_READY",
-  "phase": "MERGE_READY",
+  "status": "IN_PROGRESS",
+  "phase": "REVIEW_FEEDBACK",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "ee2215bcc85fec11c5b49346ae363a9a248cfe6e",
+  "headCommit": "1715c11c9ecd250081d603a86bd7b75b2481df99",
   "activeWorker": null,
   "lastImplementationWorker": "claude",
   "reviewer": null,
@@ -53,11 +53,12 @@
     "CODEX-MERGE-c34d38ac98e6a882: fixed. server/carriers/aras/arasClient.ts parseWellFormedXmlStructure tokenized tag boundaries with a coarse `cleaned.matchAll(/<[^>]+>/g)` scan BEFORE running the anchored per-tag nameMatch regexes. XML explicitly permits a literal '>' inside a quoted attribute value (AttValue ::= '\"' ([^<&\"] | Reference)* '\"' | \"'\" ([^<&'] | Reference)* \"'\" — only '<' and the matching quote are forbidden there, not '>'), but the coarse `[^>]+` scan has no concept of quoting and ends the tag at the FIRST '>' it sees, wherever it sits. A valid response like `<Envelope note=\"a>b\"><ResultCode>0</ResultCode></Envelope>` therefore had its opening tag truncated to the bogus substring `<Envelope note=\"a` — which fails the anchored nameMatch regex (already quote/attribute-hardened by CODEX-MERGE-67921c7e4afaad12 and friends) — so the entire well-formed response was wrongly rejected as ARAS_MALFORMED_RESPONSE, exactly matching the finding. Confirmed live against the current arasClient.ts using the exact finding body, not stale evidence; this is a false-rejection defect (valid input wrongly rejected), the inverse of every prior CODEX-MERGE round in this ticket (which were all false-acceptance defects letting malformed input through). Fix: replaced the coarse tag-boundary regex with `/<(?:\"[^\"]*\"|'[^']*'|[^\"'>])*>/g`, which treats a full double- or single-quoted span as one atomic unit in the tag-boundary scan — so any '>' (or '<') embedded inside a quoted attribute value is skipped over, and the scan stops only at the real, unquoted tag-closing '>'. No other well-formedness logic changed; the per-tag nameMatch/closing-tag regexes, attribute duplicate-name/entity/char-legality checks, CDATA handling, and gap-text checks are all unaffected since they already operate on whatever substring this boundary scan hands them. Added regression test ARC-3ah to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting the response is ACCEPTED (outcome.ok=true, raw.ResultCode='0') — the inverse assertion shape from prior ARC-3* tests, since this finding is about a valid response being wrongly rejected rather than an invalid one being wrongly accepted. npm run test:aras 83/83 (was 82/82 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 1579a77 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against 1579a77.",
     "CODEX-MERGE-0fdca8055d6f0b83: fixed. server/carriers/aras/arasClient.ts stripped comments/PI/DOCTYPE via a whole-raw-body regex scan (stripNonElementXmlConstructs) with no awareness of whether a match's opening delimiter sat INSIDE an already-open, not-yet-closed tag's markup — XML's Name/Attribute grammar never permits a literal '<' there, so a construct like a comment cannot legally start mid-tag. A body like `<Envelope><Result<!--x-->Code>0</ResultCode></Envelope>` therefore had its embedded `<!--x-->` silently stripped, splicing the two tag-name fragments \"Result\" and \"Code\" together into a fake, well-formed-looking `<ResultCode>` tag that never actually existed in the response, so extractKnownXmlFields read ResultCode='0' out of an otherwise malformed body and classifyArasSetOrderResult (arasContract.ts) treated it as a successful create — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. Fix: added hasConstructSplicedIntoTagMarkup(xml), which scans the RAW, unstripped body (before stripNonElementXmlConstructs runs) and rejects it outright — instead of stripping — whenever a '<' (including one starting a comment/PI/DOCTYPE/CDATA construct) appears while a plain tag's markup is still open (after its own leading '<', before its terminating unquoted '>', respecting quoted attribute values so an embedded '<' there is left to the pre-existing attribute-value check). Wired into parseWellFormedXmlStructure immediately after the existing upfront hasInvalidLiteralChar(trimmed) check and before stripNonElementXmlConstructs is called, so the splice is caught before any stripping can destroy the evidence that the tag was never well-formed. No other well-formedness logic changed. Added regression test ARC-3ai to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 84/84 (was 83/83 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed fc847b5 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against fc847b5.",
     "CODEX-MERGE-12ebf594361555c1: fixed. server/carriers/aras/arasClient.ts stripNonElementXmlConstructs removed any <?...?> processing instruction it found via a whole-body strip pattern, unconditionally, including one whose target is the reserved word 'xml', with no notion of document position. XML reserves the PI target name 'xml' (case-insensitive) exclusively for the XML declaration (XMLDecl ::= '<?xml' VersionInfo EncodingDecl? SDDecl? S? '?>'), which is only legal as the very first construct of the document (document ::= prolog element Misc*; prolog ::= XMLDecl? Misc* (doctypedecl Misc*)?) — nothing may precede it. A body like <Envelope><ResultCode>0<?xml version=\"1.0\"?></ResultCode></Envelope> therefore had its embedded declaration silently stripped, leaving a clean-looking <Envelope><ResultCode>0</ResultCode></Envelope> that passed well-formedness, so extractKnownXmlFields read ResultCode='0' and classifyArasSetOrderResult (arasContract.ts) treated ResultCode==='0' as success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. The existing hasDoctypeOutsideProlog check (added for CODEX-MERGE-838f748d5ec4cde4) did not catch this since it only inspects DOCTYPE constructs, not PIs. Fix: added hasMisplacedXmlDeclaration(xml), mirroring hasDoctypeOutsideProlog's structural walk over the RAW, unstripped body (respecting comment/CDATA/DOCTYPE/plain-tag construct boundaries), which rejects the body outright the moment a <?xml ...?>-shaped construct (target matched case-insensitively against /^xml$/i) is found at any index other than 0. Wired into parseWellFormedXmlStructure immediately after the existing hasDoctypeOutsideProlog check and before stripNonElementXmlConstructs runs, so the misplaced declaration is caught while the raw body still shows the evidence. No other well-formedness logic changed. Added regression test ARC-3ak to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 86/86 (was 85/85 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed ee2215bcc85fec11c5b49346ae363a9a248cfe6e (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against ee2215bcc85fec11c5b49346ae363a9a248cfe6e.",
-    "CODEX-MERGE-838f748d5ec4cde4: fixed. server/carriers/aras/arasClient.ts stripNonElementXmlConstructs removed any <!DOCTYPE ...> construct it found via a whole-body strip pattern, unconditionally, with no notion of prolog-vs-content position. XML restricts doctypedecl to the prolog — it may appear at most once, and only before the document's root element starts (document ::= prolog element Misc*; prolog ::= XMLDecl? Misc* (doctypedecl Misc*)?) — so a DOCTYPE appearing as apparent character data inside the root element's own content is never legal XML, but the strip pass treated it exactly the same as a legitimate prolog DOCTYPE and discarded it. A body like `<Envelope><ResultCode>0<!DOCTYPE x></ResultCode></Envelope>` therefore had its embedded `<!DOCTYPE x>` silently stripped, leaving a clean-looking `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed well-formedness, so extractKnownXmlFields read ResultCode='0' and classifyArasSetOrderResult (arasContract.ts) treated ResultCode==='0' as success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. The existing hasConstructSplicedIntoTagMarkup check (added for CODEX-MERGE-0fdca8055d6f0b83) did not catch this, since it only rejects a construct whose opening delimiter sits inside an already-open tag's markup — here the DOCTYPE sits in ordinary character data between a tag's own '>' and the next '<', a boundary that function correctly treats as legal. Fix: added hasDoctypeOutsideProlog(xml), which scans the RAW, unstripped body — tracking whether the root element's opening tag has started via the same comment/CDATA/PI/DOCTYPE/plain-tag construct-boundary walk used by hasConstructSplicedIntoTagMarkup — and rejects the body outright the moment a DOCTYPE construct is found after that point. Wired into parseWellFormedXmlStructure immediately after the existing hasConstructSplicedIntoTagMarkup check and before stripNonElementXmlConstructs runs, so the DOCTYPE's illegal placement is caught while the raw body still shows the evidence. No other well-formedness logic changed. Added regression test ARC-3aj to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 85/85 (was 84/84 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed b6324e3 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against b6324e3."
+    "CODEX-MERGE-838f748d5ec4cde4: fixed. server/carriers/aras/arasClient.ts stripNonElementXmlConstructs removed any <!DOCTYPE ...> construct it found via a whole-body strip pattern, unconditionally, with no notion of prolog-vs-content position. XML restricts doctypedecl to the prolog — it may appear at most once, and only before the document's root element starts (document ::= prolog element Misc*; prolog ::= XMLDecl? Misc* (doctypedecl Misc*)?) — so a DOCTYPE appearing as apparent character data inside the root element's own content is never legal XML, but the strip pass treated it exactly the same as a legitimate prolog DOCTYPE and discarded it. A body like `<Envelope><ResultCode>0<!DOCTYPE x></ResultCode></Envelope>` therefore had its embedded `<!DOCTYPE x>` silently stripped, leaving a clean-looking `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed well-formedness, so extractKnownXmlFields read ResultCode='0' and classifyArasSetOrderResult (arasContract.ts) treated ResultCode==='0' as success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. The existing hasConstructSplicedIntoTagMarkup check (added for CODEX-MERGE-0fdca8055d6f0b83) did not catch this, since it only rejects a construct whose opening delimiter sits inside an already-open tag's markup — here the DOCTYPE sits in ordinary character data between a tag's own '>' and the next '<', a boundary that function correctly treats as legal. Fix: added hasDoctypeOutsideProlog(xml), which scans the RAW, unstripped body — tracking whether the root element's opening tag has started via the same comment/CDATA/PI/DOCTYPE/plain-tag construct-boundary walk used by hasConstructSplicedIntoTagMarkup — and rejects the body outright the moment a DOCTYPE construct is found after that point. Wired into parseWellFormedXmlStructure immediately after the existing hasConstructSplicedIntoTagMarkup check and before stripNonElementXmlConstructs runs, so the DOCTYPE's illegal placement is caught while the raw body still shows the evidence. No other well-formedness logic changed. Added regression test ARC-3aj to server/carrier-aras-client-flow.test.mjs using the exact body from the finding, asserting ARAS_MALFORMED_RESPONSE / raw:null. npm run test:aras 85/85 (was 84/84 + 1 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed b6324e3 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against b6324e3.",
+    "CODEX-MERGE-d2ab3ac1667901e1: fixed. server/carriers/aras/arasClient.ts's hasMisplacedXmlDeclaration (added for CODEX-MERGE-12ebf594361555c1) rejected a <?xml ...?>-shaped construct only by POSITION (index !== 0), never by validating the syntax of its content when it DID sit at index 0. XML reserves the PI target name 'xml' (case-insensitive) exclusively for the XML declaration, whose grammar (XMLDecl ::= '<?xml' VersionInfo EncodingDecl? SDDecl? S? '?>') makes VersionInfo mandatory — an arbitrary string like 'garbage' after the target does not conform to VersionInfo/EncodingDecl/SDDecl no matter where the construct sits. A body like <?xml garbage?><Envelope><ResultCode>0</ResultCode></Envelope> therefore still passed hasMisplacedXmlDeclaration (index 0, no syntax check), so stripNonElementXmlConstructs discarded it as if it were an ordinary, legal declaration, leaving a clean-looking <Envelope><ResultCode>0</ResultCode></Envelope> that passed well-formedness — extractKnownXmlFields then read ResultCode='0' and classifyArasSetOrderResult (arasContract.ts) treated ResultCode==='0' as success — confirmed as a live, reproducible bug against the current arasClient.ts using the exact finding body, not stale evidence. Fix: added XML_DECLARATION_BODY, a regex implementing VersionInfo (mandatory, VersionNum restricted to '1.' [0-9]+) followed by optional EncodingDecl and optional SDDecl in that order, then only trailing whitespace before '?>'. hasMisplacedXmlDeclaration now extracts the content following the matched 'xml' target and, when the construct sits at index 0, rejects the body (returns true) unless that content matches XML_DECLARATION_BODY — in addition to the pre-existing position check for declarations found elsewhere. No other well-formedness logic changed. Added regression tests ARC-3al (exact finding body, <?xml garbage?><Envelope>..., asserts ARAS_MALFORMED_RESPONSE/raw:null) and ARC-3am (a syntactically valid declaration at index 0 with version+encoding+standalone attributes, asserts outcome.ok=true, ResultCode='0' — confirms the fix does not regress legitimate XML declarations) to server/carrier-aras-client-flow.test.mjs. npm run test:aras 88/88 (was 86/86 + 2 new); npx tsc -b --force clean; npm run lint 0 errors (6 pre-existing unrelated warnings); node --test server/carrier-aras-expansion-flow.test.mjs 11/11. Committed 1715c11c9ecd250081d603a86bd7b75b2481df99 (code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against 1715c11c9ecd250081d603a86bd7b75b2481df99."
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "nextAction": "CODEX-MERGE-d2ab3ac1667901e1 repaired (commit 1715c11c9ecd250081d603a86bd7b75b2481df99, code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against 1715c11c9ecd250081d603a86bd7b75b2481df99. Do not push/merge master/integration/roadmap.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -97,7 +98,7 @@
   },
   "externalReview": {
     "prNumber": 8,
-    "prHeadSha": "c06976a3594e5f76b88c80ef122495099ac8d00a",
+    "prHeadSha": "a4372293434d99e2fd1daaadf5e0685ea7f858f2",
     "ciStatus": "SUCCESS",
     "humanReviewStatus": "CLEAR",
     "externalReviewStatus": "UNAVAILABLE",
@@ -110,50 +111,16 @@
       "conclusion": "NEUTRAL"
     },
     "remainingFindings": [],
-    "evaluatedAt": "2026-09-28T05:03:53.125627+00:00"
+    "evaluatedAt": "2026-09-28T06:03:29.220861+00:00"
   },
   "reviewFeedback": {
-    "fingerprint": "CODEX-MERGE-12ebf594361555c1",
+    "fingerprint": "CODEX-MERGE-d2ab3ac1667901e1",
     "headSha": "ee2215bcc85fec11c5b49346ae363a9a248cfe6e",
     "bugIds": [
-      "CODEX-MERGE-12ebf594361555c1"
+      "CODEX-MERGE-d2ab3ac1667901e1"
     ],
-    "attemptedProviders": [
-      "claude"
-    ],
+    "attemptedProviders": [],
     "history": [
-      {
-        "provider": "claude",
-        "fingerprint": "CODEX-MERGE-12ebf594361555c1",
-        "exitClass": "SUCCESS",
-        "touchedPaths": [
-          "server/carriers/aras/arasClient.ts",
-          "server/carrier-aras-client-flow.test.mjs"
-        ],
-        "at": "2026-09-28T05:07:30.271178Z",
-        "commands": [
-          "npm run test:aras",
-          "npx tsc -b --force",
-          "npm run lint",
-          "node --test server/carrier-aras-expansion-flow.test.mjs"
-        ]
-      },
-      {
-        "provider": "claude",
-        "fingerprint": "CODEX-MERGE-1731df62de0cbe8e",
-        "exitClass": "SUCCESS",
-        "touchedPaths": [
-          "server/carriers/aras/arasClient.ts",
-          "server/carrier-aras-client-flow.test.mjs"
-        ],
-        "at": "2026-09-28T00:30:00.000000+00:00",
-        "commands": [
-          "npm run test:aras",
-          "npx tsc -b --force",
-          "npm run lint",
-          "node --test server/carrier-aras-expansion-flow.test.mjs"
-        ]
-      },
       {
         "provider": "claude",
         "fingerprint": "CODEX-MERGE-1731df62de0cbe8e",
@@ -275,19 +242,35 @@
           "warning: in the working copy of '.ai/CURRENT_TASK.json', LF will be replaced by CRLF the next time Git touches it"
         ],
         "at": "2026-09-28T05:08:39.942196+00:00"
+      },
+      {
+        "provider": "claude",
+        "fingerprint": "CODEX-MERGE-d2ab3ac1667901e1",
+        "exitClass": "SUCCESS",
+        "touchedPaths": [
+          "server/carrier-aras-client-flow.test.mjs",
+          "server/carriers/aras/arasClient.ts"
+        ],
+        "at": "2026-09-28T06:10:51.000000+00:00",
+        "commands": [
+          "npm run test:aras",
+          "npx tsc -b --force",
+          "npm run lint",
+          "node --test server/carrier-aras-expansion-flow.test.mjs"
+        ]
       }
     ],
     "status": "REPAIRED",
-    "updatedAt": "2026-09-28T05:08:39.942196+00:00",
+    "updatedAt": "2026-09-28T06:10:51.000000+00:00",
     "source": "CODEX_MERGE_CONTROL",
     "findings": [
       {
-        "bugId": "CODEX-MERGE-12ebf594361555c1",
+        "bugId": "CODEX-MERGE-d2ab3ac1667901e1",
         "title": "Codex merge authorization finding",
         "severity": "high",
         "path": null,
         "line": null,
-        "body": "arasClient.ts still accepts malformed XML: <Envelope><ResultCode>0<?xml version=\"1.0\"?></ResultCode></Envelope>. The scanner skips the misplaced XML declaration and stripNonElementXmlConstructs removes it, yielding ResultCode='0' and allowing false success classification. Reject misplaced XML declarations before stripping and add a regression test.",
+        "body": "arasClient.ts still accepts malformed XML: <?xml garbage?><Envelope><ResultCode>0</ResultCode></Envelope>. hasMisplacedXmlDeclaration permits declarations at index 0 without validating their syntax, and stripNonElementXmlConstructs removes them, allowing success classification. Validate declaration syntax or use a conforming XML parser, add regression coverage, and revalidate the frozen head.",
         "threadId": null,
         "outdated": false,
         "source": "codex-merge-control"
@@ -296,7 +279,7 @@
   },
   "codexEvidenceGap": {
     "status": "CONTROL_PLANE_RETRY",
-    "reason": "Risk-sensitive evidence remains incomplete: drizzle/meta/0014_snapshot.json is explicitly truncated in the supplied frozen-head diff. Repository completeness claims do not resolve review-material truncation. Supply the complete migration snapshot evidence for automated Codex review; green CI and clean PR signals do not close this gap.",
-    "updatedAt": "2026-09-27T17:33:01.895844+00:00"
+    "reason": "Authoritative runtime evidence is incomplete: server/carriers/aras/arasClient.ts is truncated and riskEvidenceComplete is false. Supply its complete baseline-to-frozen-head diff for automated Codex review; green CI and repaired findings do not close this evidence gap. Review exhaustion alone does not require human intervention.",
+    "updatedAt": "2026-09-28T06:02:55.213977+00:00"
   }
 }

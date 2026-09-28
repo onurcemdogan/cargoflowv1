@@ -3,9 +3,29 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `ee2215bcc85fec11c5b49346ae363a9a248cfe6e` (committed, pending push)
+HEAD: `1715c11c9ecd250081d603a86bd7b75b2481df99` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-d2ab3ac1667901e1 (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `<?xml garbage?><Envelope><ResultCode>0</ResultCode></Envelope>`. `hasMisplacedXmlDeclaration` permits declarations at index 0 without validating their syntax, and `stripNonElementXmlConstructs` removes them, allowing success classification. Validate declaration syntax or use a conforming XML parser, add regression coverage, and revalidate the frozen head.
+
+Root cause: `hasMisplacedXmlDeclaration` (added for `CODEX-MERGE-12ebf594361555c1`, immediately below) rejected a `<?xml ...?>`-shaped construct only by *position* (`i !== 0`) — it never validated that the content following the `xml` target actually conforms to `XMLDecl` grammar when the construct legitimately sat at index 0. XML reserves the PI target name `xml` (case-insensitive) exclusively for the XML declaration, whose grammar (`XMLDecl ::= '<?xml' VersionInfo EncodingDecl? SDDecl? S? '?>'`) makes `VersionInfo` mandatory — an arbitrary string like `garbage` after the target never conforms to `VersionInfo`/`EncodingDecl`/`SDDecl`, regardless of where the construct sits in the document. A body like `<?xml garbage?><Envelope><ResultCode>0</ResultCode></Envelope>` therefore still passed `hasMisplacedXmlDeclaration` (index 0, and the position check has nothing else to reject), so `stripNonElementXmlConstructs` discarded it as if it were an ordinary, legal declaration, leaving a clean-looking `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed well-formedness. `extractKnownXmlFields` then read `ResultCode='0'`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): added `XML_DECLARATION_BODY`, a regex implementing the `VersionInfo EncodingDecl? SDDecl? S?` grammar exactly — `VersionInfo` mandatory with `VersionNum` restricted to `1.` followed by digits, `EncodingDecl` and `SDDecl` each optional and required to appear in that order if present, and only trailing whitespace permitted before `?>`. `hasMisplacedXmlDeclaration` now extracts the content immediately following a matched `xml` target and, when the construct sits at index 0, rejects the body (`return true`) unless that content matches `XML_DECLARATION_BODY` — layered on top of the pre-existing position check, which is unchanged for declarations found anywhere else in the document. No other well-formedness logic changed.
+
+Regression tests added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3al`: the exact body from the finding, `<?xml garbage?><Envelope><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+- `ARC-3am`: a syntactically valid declaration at index 0 with `version`, `encoding`, and `standalone` attributes (`<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Envelope>...`) — asserts `outcome.ok === true`, `outcome.raw.ResultCode === '0'`, confirming the fix does not regress legitimate XML declarations.
+
+Verification this round:
+- `npm run test:aras`: 88/88 (was 86/86; +2 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `1715c11c9ecd250081d603a86bd7b75b2481df99` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `1715c11c9ecd250081d603a86bd7b75b2481df99`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-12ebf594361555c1 (repaired, code change applied)
 
