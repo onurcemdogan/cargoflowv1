@@ -539,6 +539,30 @@ test('ARC-3ak: kok eleman icerigine gomulu XML bildirimi (prolog disinda) basari
   assert.equal(outcome.raw, null)
 })
 
+test('ARC-3al: govde basindaki (index 0) sozdizimi gecersiz XML bildirimi basari SAYILMAZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<?xml garbage?><Envelope><ResultCode>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, false)
+  assert.equal(outcome.errorCode, 'ARAS_MALFORMED_RESPONSE')
+  assert.equal(outcome.raw, null)
+})
+
+test('ARC-3am: govde basindaki (index 0) sozdizimi GECERLI XML bildirimi basariyi ETKILEMEZ', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      + '<Envelope><ResultCode>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultCode, '0')
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {

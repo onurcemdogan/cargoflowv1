@@ -400,6 +400,23 @@ function hasDoctypeOutsideProlog(xml: string): boolean {
 // rejects it the moment a `<?xml ... ?>`-shaped construct is found anywhere
 // other than at index 0, so stripping never gets a chance to hide the
 // violation.
+//
+// A construct whose target is "xml" at index 0 is not automatically a legal
+// XMLDecl either — reserving that target name for the declaration means
+// anything after "xml" there MUST conform to VersionInfo EncodingDecl?
+// SDDecl? S?, not just be well-formed-looking PI content. Without checking
+// that, `<?xml garbage?><Envelope><ResultCode>0</ResultCode></Envelope>` was
+// still accepted at index 0 (the position check alone has nothing to
+// reject), stripped as if it were an ordinary declaration, and left a
+// clean-looking well-formed body that let extractKnownXmlFields read
+// ResultCode='0'. XML_DECLARATION_BODY validates the syntax of whatever
+// follows the "xml" target when the construct sits at index 0: VersionInfo
+// is mandatory (S 'version' Eq ("'" '1.' [0-9]+ "'" | '"' '1.' [0-9]+ '"')),
+// EncodingDecl and SDDecl are each optional and must appear in that order,
+// and only trailing whitespace may follow before '?>'.
+const XML_DECLARATION_BODY =
+  /^\s+version\s*=\s*(?:"1\.[0-9]+"|'1\.[0-9]+')(?:\s+encoding\s*=\s*(?:"[A-Za-z][A-Za-z0-9._-]*"|'[A-Za-z][A-Za-z0-9._-]*'))?(?:\s+standalone\s*=\s*(?:"(?:yes|no)"|'(?:yes|no)'))?\s*$/
+
 function hasMisplacedXmlDeclaration(xml: string): boolean {
   let i = 0
   while (i < xml.length) {
@@ -422,9 +439,14 @@ function hasMisplacedXmlDeclaration(xml: string): boolean {
     if (xml.startsWith('<?', i)) {
       const end = xml.indexOf('?>', i + 2)
       if (end === -1) return false
-      const targetMatch = /^\s*([^\s?]*)/.exec(xml.slice(i + 2, end))
+      const content = xml.slice(i + 2, end)
+      const targetMatch = /^\s*([^\s?]*)/.exec(content)
       const target = targetMatch ? targetMatch[1] : ''
-      if (/^xml$/i.test(target) && i !== 0) return true
+      if (/^xml$/i.test(target)) {
+        if (i !== 0) return true
+        const declBody = content.slice(targetMatch ? targetMatch[0].length : 0)
+        if (!XML_DECLARATION_BODY.test(declBody)) return true
+      }
       i = end + 2
       continue
     }
