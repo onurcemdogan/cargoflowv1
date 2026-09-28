@@ -202,9 +202,16 @@ function stripNonElementXmlConstructs(xml: string): string | null {
   // its entirety without ever checking that interior for the forbidden
   // "--" — silently stripping it as "just a comment" instead of rejecting
   // the body as the malformed XML it actually is.
+  //
+  // The grammar also forbids the content from ENDING in a hyphen: the last
+  // repetition, if a hyphen, must be followed by a (Char - '-'), but here it
+  // is immediately followed by the '-->' delimiter (which starts with '-').
+  // A body like `<!--a---->` still resolves to a lazy first-'-->' interior
+  // of just "a-" (no internal "--"), so the "--" check alone let it through
+  // as if it were an ordinary legal comment.
   for (const match of xml.matchAll(/<!--([\s\S]*?)-->/g)) {
     if (insideCdata(match.index)) continue
-    if (match[1].includes('--')) return null
+    if (match[1].includes('--') || match[1].endsWith('-')) return null
   }
 
   const stripPattern = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!DOCTYPE[\s\S]*?>/gi
