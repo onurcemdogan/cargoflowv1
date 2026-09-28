@@ -468,6 +468,30 @@ test('ARC-3ae: eleman icerigindeki yasak "]]>" dizisi (CDATA disi) basari SAYILM
   assert.equal(outcome.raw, null)
 })
 
+test('ARC-3af: CDATA icindeki harfi harfine "&amp;" metni COZULMEZ, oldugu gibi kalir', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultMessage><![CDATA[A&amp;B]]></ResultMessage>'
+      + '<ResultCode>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultMessage, 'A&amp;B')
+})
+
+test('ARC-3ag: CDATA disindaki sayisal karakter referansi (&#233;) COZULUR', async () => {
+  const envelope = buildProvenEnvelope()
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ResultMessage>Caf&#233; &#x4B;o&apos;</ResultMessage>'
+      + '<ResultCode>0</ResultCode></Envelope>',
+  )
+  const outcome = await CLIENT.callArasSetOrder({ envelope, fetchImpl })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ResultMessage, "Café Ko'")
+})
+
 /* ═══ ARC-4: basarili yanit yalnız KANITLI alanlari cikarir ═════════════ */
 
 test('ARC-4: basarili SetOrder yaniti ResultCode/ResultMessage/InvoiceKey/OrgReceiverCustId cikarir', async () => {
@@ -581,6 +605,18 @@ test('ARC-6b: registered=true iken GetBarcode proven Username/Password zarfini g
   assert.match(sentBody, /<Password>aras-pass<\/Password>/)
   assert.equal(outcome.ok, true)
   assert.equal(outcome.raw.ZebraZpl, '^XA^XZ')
+})
+
+test('ARC-6c: CDATA sarmali etiket govdesindeki harfi harfine "&amp;" COZULMEZ', async () => {
+  const fetchImpl = xmlResponse(
+    200,
+    '<Envelope><ZebraZpl><![CDATA[^FDA&amp;B^FS]]></ZebraZpl></Envelope>',
+  )
+  const outcome = await CLIENT.callArasGetBarcode({
+    credentials, integrationCode: 'ARAS:org:1:CREATE', registered: true, fetchImpl,
+  })
+  assert.equal(outcome.ok, true)
+  assert.equal(outcome.raw.ZebraZpl, '^FDA&amp;B^FS')
 })
 
 /* ═══ ARC-7: reprint icin ag cagrisi yapan bir disa aktarim YOK ═════════ */

@@ -52,14 +52,40 @@ export interface ArasTransportOutcome {
   networkCalled: boolean
 }
 
+// A single combined regex/replace pass so each entity reference in the
+// ORIGINAL text is decoded exactly once. Chaining separate `.replace()` calls
+// (the prior implementation) re-scans text a later call's own replacement
+// text produced by an earlier call — e.g. numeric-decoding `&#38;lt;` to
+// `&lt;` first, then letting a later `&lt;` pass see that manufactured `&lt;`
+// and turn it into `<`, silently double-decoding a value that should stay
+// `&lt;`. `String.replace` with a global regex only ever matches the
+// original string, so a single pass has no such re-entrancy.
+const XML_ENTITY_REFERENCE = /&(#x[0-9a-fA-F]+|#[0-9]+|lt|gt|quot|apos|amp);/g
+
 function decodeXmlEntities(value: string): string {
-  return value
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&')
-    .trim()
+  return value.replace(XML_ENTITY_REFERENCE, (full, entity: string) => {
+    if (entity[0] === '#') {
+      const codePoint =
+        entity[1] === 'x' || entity[1] === 'X'
+          ? parseInt(entity.slice(2), 16)
+          : parseInt(entity.slice(1), 10)
+      return String.fromCodePoint(codePoint)
+    }
+    switch (entity) {
+      case 'lt':
+        return '<'
+      case 'gt':
+        return '>'
+      case 'quot':
+        return '"'
+      case 'apos':
+        return "'"
+      case 'amp':
+        return '&'
+      default:
+        return full
+    }
+  })
 }
 
 interface ArasXmlElement {
@@ -74,8 +100,23 @@ interface ArasXmlStructure {
   tagNames: string[]
 }
 
-function unwrapCdataText(value: string): string {
-  return value.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+// CDATA content is literal element character data — XML never processes
+// entity syntax inside a CDATA section, so a literal `&amp;` inside
+// `<![CDATA[...]]>` means the six characters `&amp;`, not the character `&`.
+// Unwrapping CDATA delimiters before decoding entities (the prior
+// implementation) decodes text that must stay literal. This decodes entities
+// only in the text OUTSIDE each CDATA span, then splices each CDATA span's
+// payload back in unchanged (only its delimiters are removed), matching
+// ARC-3k/ARC-3l's existing "CDATA is opaque, undecoded text" contract.
+function decodeElementText(raw: string): string {
+  let result = ''
+  let cursor = 0
+  for (const match of raw.matchAll(/<!\[CDATA\[([\s\S]*?)\]\]>/g)) {
+    result += decodeXmlEntities(raw.slice(cursor, match.index)) + match[1]
+    cursor = match.index + match[0].length
+  }
+  result += decodeXmlEntities(raw.slice(cursor))
+  return result.trim()
 }
 
 export function extractKnownXmlFields(
@@ -96,7 +137,7 @@ export function extractKnownXmlFields(
       .sort((a, b) => a.start - b.start)
     if (candidates.length === 0) continue
     const raw = structure.cleaned.slice(candidates[0].start, candidates[0].end)
-    result[field] = decodeXmlEntities(unwrapCdataText(raw))
+    result[field] = decodeElementText(raw)
   }
   return result
 }
