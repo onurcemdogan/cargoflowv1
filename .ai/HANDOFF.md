@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `bc787c427f28f242ad8d651b4e16a5c989a64c61` (committed, pending push)
+HEAD: `3f2d51dcc53511396b39e404fd0328c2d1581e70` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-1731df62de0cbe8e (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `stripNonElementXmlConstructs` removes `<!--a--b-->` without validating the forbidden internal `--`, so `<Envelope><!--a--b--><ResultCode>0</ResultCode></Envelope>` yields a successful ResultCode. Validate constructs before stripping or use a strict XML parser, and add regression coverage. Green CI does not resolve this defect.
+
+Root cause: `stripNonElementXmlConstructs`'s comment-stripping regex (`<!--[\s\S]*?-->`) is lazy, so it matches only up to the *first* `-->` it finds — but it never validated that a matched comment's interior is itself legal XML. XML's `Comment` production (`'<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'`) forbids the string `--` from occurring anywhere within comment content, precisely so the `-->` end delimiter can never be ambiguous. A body like `<Envelope><!--a--b--><ResultCode>0</ResultCode></Envelope>` has content `a--b` (which contains a forbidden `--`) between the opening `<!--` and the first `-->` — the lazy regex still matched and stripped the whole `<!--a--b-->` construct as if it were one ordinary, legal comment, leaving a clean-looking `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed well-formedness. `extractKnownXmlFields` then read `ResultCode='0'`, and `classifyArasSetOrderResult` (`arasContract.ts`) treats `ResultCode === '0'` as success — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): `stripNonElementXmlConstructs` now returns `string | null` instead of always `string`. Before running its existing strip pass, it first scans the raw body for every `<!--([\s\S]*?)-->` match (the same lazy comment shape, so it identifies exactly the same "comments" the strip pass would act on), skipping any match whose start index falls inside a CDATA span (CDATA content is opaque literal text — a comment-shaped substring inside one is not a real comment, consistent with the existing CDATA-opacity handling from `CODEX-MERGE-a14f3b696b9f30e7`/`CODEX-MERGE-8222e34b89e08fa9`). If any such comment's captured interior contains `--`, the function returns `null` instead of stripping anything. `parseWellFormedXmlStructure` now checks this return value for `null` immediately after calling it (in addition to the existing null return after the well-formedness tag scan) and returns `null` — surfacing as `ARAS_MALFORMED_RESPONSE` — if so. The existing strip pass itself, and all other well-formedness logic, are unchanged.
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3ac`: the exact body from the finding, `<Envelope><!--a--b--><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 77/77 (was 76/76; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `3f2d51dcc53511396b39e404fd0328c2d1581e70` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `3f2d51dcc53511396b39e404fd0328c2d1581e70`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-9b57a39bd4fbdcb2 (repaired, code change applied)
 
