@@ -189,10 +189,23 @@ function hasInvalidLiteralChar(text: string): boolean {
 // ISLEMINDEN ONCE, ham govde uzerinde bulunur; yalnizca bu sinirlarin
 // DISINDA baslayan yorum/PI/DOCTYPE eslesmeleri silinir — CDATA govdesi
 // (sinirlayicilariyla birlikte) bu gecisten tamamen etkilenmeden cikar.
-function stripNonElementXmlConstructs(xml: string): string {
+function stripNonElementXmlConstructs(xml: string): string | null {
   const cdataSpans = findCdataSpans(xml)
   const insideCdata = (index: number) =>
     cdataSpans.some((span) => index >= span.start && index < span.end)
+
+  // XML forbids the string "--" from occurring anywhere within a comment's
+  // content (Comment ::= '<!--' ((Char - '-') | ('-' (Char - '-')))* '-->'),
+  // precisely so the '-->' end delimiter can never be ambiguous. The strip
+  // regex below matches a comment lazily up to the FIRST '-->', so a body
+  // like `<!--a--b-->` is captured whole (interior "a--b") and discarded in
+  // its entirety without ever checking that interior for the forbidden
+  // "--" — silently stripping it as "just a comment" instead of rejecting
+  // the body as the malformed XML it actually is.
+  for (const match of xml.matchAll(/<!--([\s\S]*?)-->/g)) {
+    if (insideCdata(match.index)) continue
+    if (match[1].includes('--')) return null
+  }
 
   const stripPattern = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!DOCTYPE[\s\S]*?>/gi
   let result = ''
@@ -255,6 +268,7 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   if (hasInvalidLiteralChar(trimmed)) return null
 
   const cleaned = stripNonElementXmlConstructs(trimmed)
+  if (cleaned === null) return null
   const cdataSpans = findCdataSpans(cleaned)
   const insideCdata = (index: number) =>
     cdataSpans.some((span) => index >= span.start && index < span.end)
