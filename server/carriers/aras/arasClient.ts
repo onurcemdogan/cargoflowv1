@@ -309,6 +309,79 @@ function hasConstructSplicedIntoTagMarkup(xml: string): boolean {
   return false
 }
 
+// XML restricts doctypedecl to the prolog — it may appear at most once, and
+// only BEFORE the document's root element starts (document ::= prolog
+// element Misc*; prolog ::= XMLDecl? Misc* (doctypedecl Misc*)?). Comments
+// and PIs remain legal Misc both before and after the root element, but a
+// DOCTYPE is never legal once the root element has started — including one
+// embedded, as apparent character data, inside the root's own content. The
+// strip pass in `stripNonElementXmlConstructs` removes `<!DOCTYPE ...>`
+// unconditionally wherever it is found, with no notion of prolog-vs-content
+// position, so a body like
+// `<Envelope><ResultCode>0<!DOCTYPE x></ResultCode></Envelope>` had its
+// embedded DOCTYPE silently discarded as if it were ordinary, legal prolog
+// markup, leaving a clean-looking
+// `<Envelope><ResultCode>0</ResultCode></Envelope>` that passed
+// well-formedness and let extractKnownXmlFields read ResultCode='0' out of
+// an otherwise malformed response. This scans the RAW, unstripped body and
+// rejects it the moment a DOCTYPE construct is found after the root
+// element's opening tag has already started, so stripping never gets a
+// chance to hide the violation.
+function hasDoctypeOutsideProlog(xml: string): boolean {
+  let i = 0
+  let rootStarted = false
+  while (i < xml.length) {
+    if (xml[i] !== '<') {
+      i++
+      continue
+    }
+    if (xml.startsWith('<!--', i)) {
+      const end = xml.indexOf('-->', i + 4)
+      if (end === -1) return false
+      i = end + 3
+      continue
+    }
+    if (xml.startsWith('<![CDATA[', i)) {
+      const end = xml.indexOf(']]>', i + 9)
+      if (end === -1) return false
+      i = end + 3
+      continue
+    }
+    if (xml.startsWith('<?', i)) {
+      const end = xml.indexOf('?>', i + 2)
+      if (end === -1) return false
+      i = end + 2
+      continue
+    }
+    if (/^<!DOCTYPE/i.test(xml.slice(i, i + 9))) {
+      if (rootStarted) return true
+      const end = xml.indexOf('>', i + 9)
+      if (end === -1) return false
+      i = end + 1
+      continue
+    }
+    // A plain opening/closing/self-closing tag: either the root element
+    // starting (the first time this branch runs) or content inside it —
+    // either way, any DOCTYPE found from here on is outside the prolog.
+    rootStarted = true
+    let j = i + 1
+    let quote: string | null = null
+    while (j < xml.length) {
+      const ch = xml[j]
+      if (quote) {
+        if (ch === quote) quote = null
+      } else if (ch === '"' || ch === "'") {
+        quote = ch
+      } else if (ch === '<' || ch === '>') {
+        break
+      }
+      j++
+    }
+    i = j < xml.length && xml[j] === '>' ? j + 1 : j
+  }
+  return false
+}
+
 // CDATA govdesi harfi harfine metindir — icindeki `<!--...-->` gibi diziler
 // GERCEK bir yorum DEGILDIR. Onceki surum yorum/PI/DOCTYPE'i CDATA
 // sinirlarindan HABERSIZ tek bir regex gecisiyle siliyordu; bu yuzden
@@ -409,6 +482,12 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   // evidence that the tag was never actually well-formed in the first
   // place (see hasConstructSplicedIntoTagMarkup above).
   if (hasConstructSplicedIntoTagMarkup(trimmed)) return null
+
+  // Must also run on the RAW body, before any stripping — stripping a
+  // DOCTYPE embedded inside the root's content would destroy the evidence
+  // that it was never legal there in the first place (see
+  // hasDoctypeOutsideProlog above).
+  if (hasDoctypeOutsideProlog(trimmed)) return null
 
   const cleaned = stripNonElementXmlConstructs(trimmed)
   if (cleaned === null) return null
