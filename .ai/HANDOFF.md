@@ -3,9 +3,28 @@
 Ticket: ARAS-EXPANSION
 Branch: `agent/ARAS-EXPANSION`
 Status: `CI_PENDING`
-HEAD: `4ec62213be61b9d4aa5787f5c58392eccd64d166` (committed, pending push)
+HEAD: `bc787c427f28f242ad8d651b4e16a5c989a64c61` (committed, pending push)
 Spec: `.ai/tickets/ARAS-EXPANSION.md`
 PR: https://github.com/onurcemdogan/cargoflowv1/pull/8
+
+## Codex merge-control finding CODEX-MERGE-9b57a39bd4fbdcb2 (repaired, code change applied)
+
+Finding: `arasClient.ts` still accepts malformed XML: `stripNonElementXmlConstructs` removes comments before character validation, so `<Envelope><!--\u0000--><ResultCode>0</ResultCode></Envelope>` containing a literal NUL yields `ResultCode='0'`. Validate character legality on the original response before stripping constructs and add regression coverage. Green CI does not resolve this remaining defect.
+
+Root cause: the character-legality checks (`hasInvalidLiteralChar`, added for `CODEX-MERGE-eba1a34bb5502189`) only ever ran on the post-strip `cleaned` string — the inter-tag gaps and attribute values inspected during the tag-matching scan. But `stripNonElementXmlConstructs` deletes comments/PI/DOCTYPE (and whatever illegal characters happen to sit inside them) *before* that `cleaned` string exists, on the theory that their content has no extraction value. Character legality (the XML `Char` production) is a document-wide constraint that applies to every literal character in the RAW response regardless of which construct contains it — a comment's content still has to consist of legal XML characters even though the comment itself is discarded. A body like `<Envelope><!--\u0000--><ResultCode>0</ResultCode></Envelope>` therefore had its NUL erased along with the whole comment during stripping, so the resulting cleaned body (`<Envelope><ResultCode>0</ResultCode></Envelope>`) wrongly validated as well-formed, and `extractKnownXmlFields` read `ResultCode='0'` — confirmed as a live, reproducible bug against the current `arasClient.ts` using the exact finding body, not stale evidence.
+
+Fix (`server/carriers/aras/arasClient.ts`): added a single `hasInvalidLiteralChar(trimmed)` call in `parseWellFormedXmlStructure`, on the raw/unstripped body, immediately after the existing `startsWith('<')` check and *before* `stripNonElementXmlConstructs` runs. Any illegal literal character anywhere in the raw response — inside a comment, PI, DOCTYPE, CDATA span, or plain text — now rejects the body as `ARAS_MALFORMED_RESPONSE` before stripping has a chance to hide it. The pre-existing gap-text and attribute-value `hasInvalidLiteralChar` checks against the `cleaned` string are unchanged; they are now redundant for comment/PI/DOCTYPE-hidden cases (since the new upfront check already catches those) but remain correct and still needed for illegal characters that survive stripping (plain text gaps, attribute values, CDATA).
+
+Regression test added (`server/carrier-aras-client-flow.test.mjs`):
+- `ARC-3ab`: the exact body from the finding, `<Envelope><!--\u0000--><ResultCode>0</ResultCode></Envelope>` — asserts `ARAS_MALFORMED_RESPONSE`, `raw: null`.
+
+Verification this round:
+- `npm run test:aras`: 76/76 (was 75/75; +1 new).
+- `npx tsc -b --force`: clean.
+- `npm run lint`: 0 errors (6 pre-existing unrelated warnings, same set as prior rounds).
+- `node --test server/carrier-aras-expansion-flow.test.mjs`: 11/11.
+
+Committed `bc787c427f28f242ad8d651b4e16a5c989a64c61` (code + test only). **Not yet done:** push to `origin/agent/ARAS-EXPANSION`, wait for GitHub CI (`quality`) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against `bc787c427f28f242ad8d651b4e16a5c989a64c61`. Do not push/merge `master`/`integration/roadmap` — only the ticket branch push is in scope, and only after the user/supervisor confirms.
 
 ## Codex merge-control finding CODEX-MERGE-eba1a34bb5502189 (repaired, code change applied)
 

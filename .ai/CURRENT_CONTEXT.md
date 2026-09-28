@@ -1,16 +1,16 @@
 # Generated shift context
 
-Generated: 2026-09-28T00:00:00.000000+00:00
+Generated: 2026-09-28T00:15:00.000000+00:00
 Project: cargoflow
 Ticket: ARAS-EXPANSION
 Status: IN_PROGRESS
 Phase: REVIEW_FEEDBACK
 Branch: agent/ARAS-EXPANSION
 Baseline: 7754fcb109c4d8990d97065710e1189121fb58b7
-HEAD: 4ec62213be61b9d4aa5787f5c58392eccd64d166
+HEAD: bc787c427f28f242ad8d651b4e16a5c989a64c61
 Last implementation worker: claude
 Reviewer: None
-Next action: CODEX-MERGE-eba1a34bb5502189 repaired at 4ec62213be61b9d4aa5787f5c58392eccd64d166 (code + test only, local gates green). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI (quality) and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against 4ec62213be61b9d4aa5787f5c58392eccd64d166. Do not push/merge master/integration/roadmap; only the ticket branch push is in scope, and only after the user/supervisor confirms.
+Next action: CODEX-MERGE-9b57a39bd4fbdcb2 repaired at bc787c427f28f242ad8d651b4e16a5c989a64c61 (code + test only, local quality gates green: test:aras 76/76, tsc clean, lint 0 errors, carrier-aras-expansion-flow 11/11). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against bc787c427f28f242ad8d651b4e16a5c989a64c61. Do not push/merge master/integration/roadmap.
 
 ## Git status
 ```
@@ -21,6 +21,9 @@ M .ai/HANDOFF.md
 
 ## Recent commits
 ```
+bc787c4 wip(ARAS-EXPANSION): validate literal XML character legality before construct stripping (CODEX-MERGE-9b57a39bd4fbdcb2)
+84afcfb wip(ARAS-EXPANSION): checkpoint review-feedback-claude
+e560d01 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-eba1a34bb5502189 literal XML character fix
 4ec6221 wip(ARAS-EXPANSION): validate literal XML character legality (CODEX-MERGE-eba1a34bb5502189)
 aad49fd wip(ARAS-EXPANSION): checkpoint review-feedback-claude
 ce4ee9e docs(ARAS-EXPANSION): handoff for CODEX-MERGE-94d9708343f9b1d6 numeric character reference fix
@@ -28,16 +31,13 @@ ce4ee9e docs(ARAS-EXPANSION): handoff for CODEX-MERGE-94d9708343f9b1d6 numeric c
 d5e4f0a wip(ARAS-EXPANSION): checkpoint review-feedback-claude
 0b481d4 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-fd3a21282f11cc5f attribute entity-reference fix
 c7967df wip(ARAS-EXPANSION): reject undeclared entity references in XML attribute values (CODEX-MERGE-fd3a21282f11cc5f)
-3fe46bf wip(ARAS-EXPANSION): checkpoint review-feedback-claude
-3c0fc1a docs(ARAS-EXPANSION): handoff for CODEX-MERGE-ff386c6c9acf66cb entity-reference fix
-5ec22c2 wip(ARAS-EXPANSION): reject undeclared entity references in XML character data (CODEX-MERGE-ff386c6c9acf66cb)
 ```
 
 ## Diff stat
 ```
- server/carrier-aras-client-flow.test.mjs | 33 +++++++++++++++++++++++++++++++++
- server/carriers/aras/arasClient.ts       | 26 ++++++++++++++++++++++++++
- 2 files changed, 59 insertions(+)
+ server/carrier-aras-client-flow.test.mjs | 12 ++++++++++++
+ server/carriers/aras/arasClient.ts       | 15 +++++++++++++++
+ 2 files changed, 27 insertions(+)
 ```
 
 ## Required reading
