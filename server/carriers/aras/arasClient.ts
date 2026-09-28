@@ -476,6 +476,79 @@ function hasMisplacedXmlDeclaration(xml: string): boolean {
   return false
 }
 
+// A processing instruction's target must be an XML Name — PI ::= '<?'
+// PITarget (S (Char* - (Char* '?>' Char*)))? '?>', and Name ::= NameStartChar
+// (NameChar)* can never be empty (at least one character is required).
+// `stripNonElementXmlConstructs` strips ANY `<?...?>` construct
+// unconditionally via a target-blind regex, and `hasMisplacedXmlDeclaration`
+// above only inspects a PI's target when checking whether it equals "xml" —
+// neither ever rejects a PI whose target fails to be a legal Name at all. A
+// body like `<??><Envelope><ResultCode>0</ResultCode></Envelope>` has a PI
+// whose target is the empty string between `<?` and `?>` — not a valid Name
+// under any XML grammar — so the whole malformed `<??>` construct was
+// silently discarded as if it were an ordinary, legal PI, leaving a
+// clean-looking `<Envelope><ResultCode>0</ResultCode></Envelope>` that
+// passed well-formedness and let extractKnownXmlFields read ResultCode='0'
+// out of an otherwise malformed response. This scans the RAW, unstripped
+// body — using the same comment/CDATA/DOCTYPE/plain-tag construct-boundary
+// walk as hasMisplacedXmlDeclaration — and rejects the body the moment any
+// `<?...?>` construct's target fails to match the same Name grammar used
+// elsewhere in this file for element/attribute names.
+function hasInvalidProcessingInstructionTarget(xml: string): boolean {
+  let i = 0
+  while (i < xml.length) {
+    if (xml[i] !== '<') {
+      i++
+      continue
+    }
+    if (xml.startsWith('<!--', i)) {
+      const end = xml.indexOf('-->', i + 4)
+      if (end === -1) return false
+      i = end + 3
+      continue
+    }
+    if (xml.startsWith('<![CDATA[', i)) {
+      const end = xml.indexOf(']]>', i + 9)
+      if (end === -1) return false
+      i = end + 3
+      continue
+    }
+    if (xml.startsWith('<?', i)) {
+      const end = xml.indexOf('?>', i + 2)
+      if (end === -1) return false
+      const content = xml.slice(i + 2, end)
+      const targetMatch = /^\s*([^\s?]*)/.exec(content)
+      const target = targetMatch ? targetMatch[1] : ''
+      if (!/^[A-Za-z_][\w.:-]*$/.test(target)) return true
+      i = end + 2
+      continue
+    }
+    if (/^<!DOCTYPE/i.test(xml.slice(i, i + 9))) {
+      const end = xml.indexOf('>', i + 9)
+      if (end === -1) return false
+      i = end + 1
+      continue
+    }
+    // A plain opening/closing/self-closing tag: scan to its terminating
+    // unquoted '>', respecting quoted attribute values.
+    let j = i + 1
+    let quote: string | null = null
+    while (j < xml.length) {
+      const ch = xml[j]
+      if (quote) {
+        if (ch === quote) quote = null
+      } else if (ch === '"' || ch === "'") {
+        quote = ch
+      } else if (ch === '<' || ch === '>') {
+        break
+      }
+      j++
+    }
+    i = j < xml.length && xml[j] === '>' ? j + 1 : j
+  }
+  return false
+}
+
 // CDATA govdesi harfi harfine metindir — icindeki `<!--...-->` gibi diziler
 // GERCEK bir yorum DEGILDIR. Onceki surum yorum/PI/DOCTYPE'i CDATA
 // sinirlarindan HABERSIZ tek bir regex gecisiyle siliyordu; bu yuzden
@@ -588,6 +661,12 @@ function parseWellFormedXmlStructure(xml: string): ArasXmlStructure | null {
   // evidence that it was never legal there in the first place (see
   // hasMisplacedXmlDeclaration above).
   if (hasMisplacedXmlDeclaration(trimmed)) return null
+
+  // Must also run on the RAW body, before any stripping — stripping a `<?...?>`
+  // construct whose target is not even a legal XML Name would destroy the
+  // evidence that it was never legal XML in the first place (see
+  // hasInvalidProcessingInstructionTarget above).
+  if (hasInvalidProcessingInstructionTarget(trimmed)) return null
 
   const cleaned = stripNonElementXmlConstructs(trimmed)
   if (cleaned === null) return null
