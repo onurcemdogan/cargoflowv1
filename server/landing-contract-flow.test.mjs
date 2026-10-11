@@ -76,7 +76,7 @@ test('LAND-BUNDLE-1: `/` giriş parçası operasyon kodunu ve uygulama stilini Y
   const entry = readFileSync(join(dist, 'assets', entryName), 'utf8')
 
   // Tanıtım GİRİŞTE; uygulama/yönetici dalları AYRI (tembel) parçalarda.
-  assert.ok(entry.includes('Siparişten kargo etiketine tek operasyon akışı.'))
+  assert.ok(entry.includes('Siparişten etikete. Tek ve sakin bir akış.'))
   const organizationChunk = entry.match(/OrganizationApp-[A-Za-z0-9_-]+\.js/)?.[0]
   const adminChunk = entry.match(/AdminEntry-[A-Za-z0-9_-]+\.js/)?.[0]
   assert.ok(organizationChunk, 'OrganizationApp ayrı parça')
@@ -103,7 +103,9 @@ test('LAND-BUNDLE-1: `/` giriş parçası operasyon kodunu ve uygulama stilini Y
   const entryCss = readFileSync(join(dist, 'assets', entryCssName), 'utf8')
   assert.ok(entryCss.includes('.landing-root'))
   assert.equal(entryCss.includes('.app-shell'), false, 'uygulama stili girişte')
-  assert.ok(statSync(join(dist, 'assets', entryCssName)).size < 20_000)
+  // Bütçe: 40 KB (ham, derlenmiş). Ürün sahneli tasarım sistemi için 20 KB
+  // sınırı kaldırıldı; boyut her derlemede bu testle ölçülür.
+  assert.ok(statSync(join(dist, 'assets', entryCssName)).size < 40_000)
 
   // Uygulamanın ilk yükü (giriş + organizasyon dalı) PERF-1 bütçesini AŞMAZ.
   const appInitial =
