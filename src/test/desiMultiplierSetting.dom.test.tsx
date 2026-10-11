@@ -69,7 +69,11 @@ test('UI-1: anahtar Sürat ayar panelinin İÇİNDE DEĞİLDİR', async () => {
   const user = userEvent.setup()
   renderPage(makeConfig())
   await user.click(screen.getByRole('button', { name: /Kargo Firmaları/ }))
-  await user.click(screen.getByRole('button', { name: 'Ayarlar' }))
+  // İki taşıyıcı kartı da (Sürat + Aras) aynı "Ayarlar" etiketini taşıdığı
+  // için sorguyu Sürat kartıyla sınırlıyoruz.
+  const suratCard = screen.getByRole('heading', { name: 'Sürat Kargo' }).closest('section')
+  expect(suratCard).not.toBe(null)
+  await user.click(within(suratCard as HTMLElement).getByRole('button', { name: 'Ayarlar' }))
 
   const carrierPanel = screen.getByRole('region', {
     name: 'Sürat Kargo ayarları',

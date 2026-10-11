@@ -327,6 +327,33 @@ export const shipments = pgTable(
   ],
 )
 
+// ARAS etiket artefaktı — KALICI, DEĞİŞMEZ depo. `shipments` tablosu Aras
+// gönderisi için henüz bir satır (idempotency/durum makinesi) ÜRETMEDİĞİNDEN
+// (bkz. arasShipmentPipeline.ts), bu artefakt `integrationCode` (Aras'ın
+// zaten kanıtlı tek korelasyon anahtarı) ile kendi başına anahtarlanır.
+// İlk yazımdan SONRA üzerine YAZILMAZ; reprint yalnız bu tablodan okunur,
+// taşıyıcıya (GetBarcode) yeniden GİDİLMEZ.
+export const arasLabelArtifacts = pgTable(
+  'aras_label_artifacts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    integrationCode: text('integration_code').notNull(),
+    artifactEncrypted: text('artifact_encrypted').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('aras_label_artifacts_org_integration_code_unique').on(
+      table.organizationId,
+      table.integrationCode,
+    ),
+  ],
+)
+
 // Sürat create idempotency kayıtları (organization bazlı). Atomik create
 // koruması unique(organization_id, idempotency_key) üzerinden. Hassas response
 // payload (teknik ZPL, replay verisi) şifreli kolonda; tracking/sender sorgu

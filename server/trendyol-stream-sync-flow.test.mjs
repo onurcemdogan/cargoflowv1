@@ -252,16 +252,9 @@ test('TY-CONV-6: bolunmus ve iptal-yerine paketler AYRI kalir', () => {
   assert.equal(split.length, 3, 'paketler birbirine EZDIRILDI')
 })
 
-test('TY-SYNC-REG: yeni test dosyasi test:surat icinde KAYITLI', () => {
-  // Liste `package.json`'dan AYRI bir dosyada: 190 dosyada komut satiri
-  // Windows cmd.exe'nin 8191 karakter sinirini asiyordu ve paket
-  // CALISMADAN dusuyordu. Acik kayit KORUNUR, yalnizca yeri degisti.
-  const listed = new Set(
-    JSON.parse(readFileSync(new URL('./testing/suratSuiteFiles.json', here), 'utf8')),
-  )
-  const onDisk = readdirSync(here)
-    .filter((f) => f.endsWith('.test.mjs')).map((f) => `server/${f}`)
-  assert.deepEqual(onDisk.filter((f) => !listed.has(f)), [])
+test('TY-SYNC-REG: yeni test dosyasi test:surat icinde KAYITLI', async () => {
+  const { listOrphanSuratSuiteTests } = await import('./testing/suratSuiteRegistry.mjs')
+  assert.deepEqual(listOrphanSuratSuiteTests(), [])
 })
 
 /* ═══ OPERASYONEL ZAMANLAYICI + YENİDEN BAŞLATMA ═══════════════════ */

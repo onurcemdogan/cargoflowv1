@@ -356,7 +356,7 @@ test('IHB-13: uc nokta UYDURMAZ — gozlenemeyen saglayici UNKNOWN bildirir', ()
   // listesinde gecer ve varligi ASLA literal bir degerle yazilmaz.
   assert.match(
     service,
-    /ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS = \['woocommerce', 'ikas'\] as const/,
+    /ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS = \['woocommerce', 'ikas', 'aras'\] as const/,
   )
   assert.equal(service.split('ikas').length - 1, 1, 'ikas yalniz listede gecer')
   // Woo/ikas varligi LITERAL DEGIL, GERCEK SATIRLARDAN turetilir.

@@ -84,6 +84,30 @@ export const ARAS_SET_ORDER_RESULT_FIELDS = [
   'ResultCode', 'ResultMessage', 'InvoiceKey', 'OrgReceiverCustId',
 ] as const
 
+/**
+ * GetOrderWithIntegrationCode istek alanları — resmî TEST SOAP 1.1, 2026-09-27.
+ * Kaynak: customerservicestest…/arascargoservice.asmx?op=GetOrderWithIntegrationCode
+ */
+export const ARAS_VERIFICATION_REQUEST_FIELDS = [
+  'userName', 'password', 'integrationCode',
+] as const
+
+/**
+ * GetBarcode istek alanları — büyük/küçük harf SetOrder'dan FARKLIDIR (Username).
+ * Kaynak: customerservicestest…/arascargoservice.asmx?op=GetBarcode, 2026-09-27.
+ */
+export const ARAS_GET_BARCODE_REQUEST_FIELDS = [
+  'Username', 'Password', 'integrationCode',
+] as const
+
+/** Doğrulama yanıtında kayıt varlığı için aranan alan (Order içinde). */
+export const ARAS_VERIFICATION_RESPONSE_FIELDS = ['IntegrationCode'] as const
+
+/** GetBarcode yanıtı — `arasLabelArtifact.ts` ile hizalı kanıtlı alanlar. */
+export const ARAS_GET_BARCODE_RESPONSE_FIELDS = [
+  'ZebraZpl', 'ZebraEpl', 'Images',
+] as const
+
 // ═══ COD / ÖDEYEN — DEĞER TABLOSU DOĞRULANMADI ═══════════════════════════
 //
 // Sözleşme bu ALANLARIN VAR OLDUĞUNU kanıtlar. Alanın varlığı, alabileceği

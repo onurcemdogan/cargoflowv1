@@ -45,7 +45,6 @@
   "server/surat-render-auth-flow.test.mjs",
   "server/surat-canonical-provider-flow.test.mjs",
   "server/carrier-neutral-foundation-flow.test.mjs",
-  "server/carrier-aras-contract-flow.test.mjs",
   "server/surat-print-zpl-repair-flow.test.mjs",
   "server/surat-tight-footer-flow.test.mjs",
   "server/surat-footer-readability-flow.test.mjs",

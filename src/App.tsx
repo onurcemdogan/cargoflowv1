@@ -1226,9 +1226,12 @@ function App() {
     try {
       const outcome = await runSuratCreateAndPrint(snapshotOrders, orders, {
         preflight: {
-          isSuratOrder: (order) =>
-            !order.cargoProviderName ||
-            /surat|sürat/i.test(String(order.cargoProviderName)),
+          isSuratOrder: (order) => {
+            const name = String(order.cargoProviderName ?? '').trim()
+            if (!name) return false
+            if (/aras/i.test(name)) return false
+            return /surat|sürat/i.test(name)
+          },
           resolveDataBlock: (order) =>
             String(order.address ?? '').trim() && String(order.customerName ?? '').trim()
               ? null

@@ -65,6 +65,7 @@ const ACTIVATED_AT = '2026-08-28T00:00:00.000Z'
 const BEFORE = new Date('2026-08-20T00:00:00.000Z')
 const HISTORICAL = 120
 const OPEN_ELIGIBLE = 19
+const SURAT_CARGO = 'Sürat Kargo'
 
 const PARAMS = (organizationId, organizationName = 'TarzimTuba') => ({
   organizationId, organizationName, marketplace: 'Trendyol', carrier: 'Surat',
@@ -92,6 +93,7 @@ async function seedTenant(db, options = {}) {
         orderNumber: `ORD-OLD-${index}`,
         marketplaceStatus: closedStatuses[index % closedStatuses.length],
         cargoTrackingNumber: `7270000${index}`,
+        cargoProviderName: SURAT_CARGO,
         orderDate: BEFORE.toISOString(),
         totalAmount: '100.00',
         rawOrder: { whoPays: undefined, status: closedStatuses[index % 4] },
@@ -116,6 +118,7 @@ async function seedTenant(db, options = {}) {
         orderNumber: `ORD-OPEN-${index}`,
         marketplaceStatus: 'Picking',
         cargoTrackingNumber: `7279900${index}`,
+        cargoProviderName: SURAT_CARGO,
         orderDate: BEFORE.toISOString(),
         totalAmount: '250.00',
         // whoPays YOK → TRENDYOL_PAYS (pazaryeri öder) — üretim varsayılanı.
@@ -457,11 +460,7 @@ test('CATCHUP-11: politika sinir atlamasi YALNIZ yakalamaya ait', async () => {
   assert.match(catchupSource, /skipActivationBoundary: true/)
 })
 
-test('CATCHUP-REG: yeni test dosyasi test:surat icinde KAYITLI', () => {
-  const listed = new Set(
-    JSON.parse(readFileSync(join(here, 'testing', 'suratSuiteFiles.json'), 'utf8')),
-  )
-  const onDisk = readdirSync(here)
-    .filter((f) => f.endsWith('.test.mjs')).map((f) => `server/${f}`)
-  assert.deepEqual(onDisk.filter((f) => !listed.has(f)), [])
+test('CATCHUP-REG: yeni test dosyasi test:surat icinde KAYITLI', async () => {
+  const { listOrphanSuratSuiteTests } = await import('./testing/suratSuiteRegistry.mjs')
+  assert.deepEqual(listOrphanSuratSuiteTests(), [])
 })

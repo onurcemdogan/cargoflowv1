@@ -605,7 +605,9 @@ test('AUTO-BG-9: yakalama ve uretici AYNI kanonik yasam dongusu kuralini kullani
 
   // 4) `Created` sınıfı SİLİNMEDİ: hâlâ `NOT_YET`.
   const verdict = eligibility.classifyMarketplaceLifecycle({
-    marketplaceStatus: 'Created', cargoTrackingNumber: '7281000000',
+    marketplaceStatus: 'Created',
+    cargoTrackingNumber: '7281000000',
+    cargoProviderName: 'Sürat Kargo',
   })
   assert.equal(verdict.lifecycle, 'NOT_YET')
   assert.equal(verdict.requiresPickingUpdate, true)

@@ -508,6 +508,7 @@ test('TICIMAX-10/11: liveWriteGate bloklar; rollout ticimax=off; ACCOUNT_SCOPED 
   assert.deepEqual([...healthService.ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS], [
     'woocommerce',
     'ikas',
+    'aras',
   ])
   assert.equal(healthService.ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS.includes('ticimax'), false)
 
