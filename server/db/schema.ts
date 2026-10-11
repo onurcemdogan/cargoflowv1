@@ -31,15 +31,30 @@ export const organizations = pgTable('organizations', {
     .defaultNow(),
 })
 
-// Şimdilik organization başına TEK kullanıcı: unique(organization_id).
+// Kullanıcılar.
+//
+// SELF-SERVICE (PHASE2-A): kullanıcı e-posta ile kaydolur; workspace/firma ilk
+// girişten SONRA oluşturulur. Bu yüzden `organization_id` artık NULL olabilir
+// (workspace'i olmayan, doğrulanmış kullanıcı). Mevcut satırlar AYNEN kalır:
+// platform yöneticisinin açtığı kullanıcı adı + organizasyon bağlı hesaplar.
+//
+//   · `username`          — eski (yönetici açılışlı) hesaplar; e-posta ile
+//                           kaydolanlarda NULL.
+//   · `email`             — kullanıcının yazdığı biçim (gösterim için).
+//   · `email_normalized`  — trim + küçük harf; TEKİL (NULL'lar çakışmaz).
+//   · `email_verified_at` — NULL ise e-posta doğrulanmamıştır; bu durumda
+//                           giriş YAPILAMAZ (bkz. auth/routes.ts).
+//
+// `users_organization_id_unique` Commit B'de üyelik tablosuyla kaldırılır.
 export const users = pgTable(
   'users',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    organizationId: uuid('organization_id')
-      .notNull()
-      .references(() => organizations.id),
-    username: text('username').notNull(),
+    organizationId: uuid('organization_id').references(() => organizations.id),
+    username: text('username'),
+    email: text('email'),
+    emailNormalized: text('email_normalized'),
+    emailVerifiedAt: timestamp('email_verified_at', { withTimezone: true }),
     passwordHash: text('password_hash').notNull(),
     status: text('status').notNull().default('active'),
     lastLoginAt: timestamp('last_login_at', { withTimezone: true }),
@@ -53,15 +68,22 @@ export const users = pgTable(
   (table) => [
     uniqueIndex('users_username_unique').on(table.username),
     uniqueIndex('users_organization_id_unique').on(table.organizationId),
+    uniqueIndex('users_email_normalized_unique').on(table.emailNormalized),
+    // Her hesabın en az bir giriş kimliği vardır.
+    check(
+      'users_login_identity_check',
+      sql`${table.username} is not null or ${table.emailNormalized} is not null`,
+    ),
   ],
 )
 
 // Sunucu taraflı oturumlar; token asla düz saklanmaz (token_hash).
+// `organization_id` NULL ise oturum workspace'i olmayan bir kullanıcıya
+// aittir: yalnız workspace oluşturma ve /me çalışır, kiracı uçları
+// `WORKSPACE_REQUIRED` ile reddeder (auth/middleware.ts).
 export const sessions = pgTable('sessions', {
   id: uuid('id').primaryKey().defaultRandom(),
-  organizationId: uuid('organization_id')
-    .notNull()
-    .references(() => organizations.id),
+  organizationId: uuid('organization_id').references(() => organizations.id),
   userId: uuid('user_id')
     .notNull()
     .references(() => users.id),
@@ -73,6 +95,42 @@ export const sessions = pgTable('sessions', {
   lastSeenAt: timestamp('last_seen_at', { withTimezone: true }),
   revokedAt: timestamp('revoked_at', { withTimezone: true }),
 })
+
+// TEK KULLANIMLIK AUTH TOKEN'LARI — e-posta doğrulama ve şifre sıfırlama.
+//
+// Ham token YALNIZ e-postadaki bağlantıda bulunur; DB'de SHA-256 `token_hash`
+// saklanır. Token tek kullanımlıktır (`consumed_at`) ve süresi dolar
+// (`expires_at`). Aynı amaçla yeni token verilince önceki açık token'lar
+// geçersiz kılınır (`consumed_at` doldurulur). `created_at` yeniden gönderim
+// bekleme süresi ve e-posta başına hız sınırı için okunur.
+export const authTokens = pgTable(
+  'auth_tokens',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    purpose: text('purpose').notNull(),
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('auth_tokens_token_hash_unique').on(table.tokenHash),
+    index('auth_tokens_user_purpose_idx').on(
+      table.userId,
+      table.purpose,
+      table.createdAt,
+    ),
+    check(
+      'auth_tokens_purpose_check',
+      sql`${table.purpose} in ('email_verification', 'password_reset')`,
+    ),
+  ],
+)
 
 // Org başına provider'a tek kayıt; payload uygulama katmanında şifrelenir
 // (AES-GCM), DB düz credential görmez. provider yalnız trendyol | surat.

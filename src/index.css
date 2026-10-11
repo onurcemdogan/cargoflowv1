@@ -10540,6 +10540,77 @@ button.integration-board-item:hover {
   color: var(--text);
 }
 
+/* ── Self-service auth ekleri ─────────────────────────────────────────── */
+.auth-links {
+  color: var(--text-3);
+  font-size: 13px;
+  text-align: center;
+}
+
+.auth-links a,
+.auth-footnote a,
+.auth-inline-link,
+.auth-error a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.auth-links a:hover,
+.auth-footnote a:hover,
+.auth-inline-link:hover,
+.auth-error a:hover {
+  text-decoration: underline;
+}
+
+.auth-inline-link {
+  justify-self: center;
+  font-size: 13px;
+}
+
+.auth-info {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--blue-border);
+  border-radius: 10px;
+  background: var(--blue-soft);
+  color: var(--text-2);
+  font-size: 13px;
+}
+
+.auth-helper {
+  margin: -6px 0 0;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.auth-secondary {
+  min-height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.auth-secondary:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.auth-secondary:disabled {
+  opacity: 0.5;
+}
+
+.auth-link-button {
+  display: grid;
+  place-items: center;
+  text-decoration: none;
+}
+
+.auth-turnstile:empty {
+  display: none;
+}
+
 /* ── İlk kurulum (onboarding) ─────────────────────────────────────────── */
 .onboarding-screen {
   display: block;

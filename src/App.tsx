@@ -202,7 +202,7 @@ function App() {
   const authContext = useContext(AuthContext)
   const tourScope = useMemo(
     () =>
-      authContext && !authContext.devBypass && authContext.user
+      authContext && !authContext.devBypass && authContext.user?.organization
         ? {
             organizationId: authContext.user.organization.id,
             username: authContext.user.username,

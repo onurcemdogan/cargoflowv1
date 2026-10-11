@@ -12,7 +12,11 @@ import {
   PASSWORD_TOO_SHORT_MESSAGE,
 } from '../../src/auth/passwordPolicy.ts'
 import { hashPassword, verifyPassword } from './password.ts'
-import { requireAuth, type AuthedRequest } from './middleware.ts'
+import { type AuthedRequest } from './middleware.ts'
+import { normalizeEmail } from '../../src/auth/emailPolicy.ts'
+import { resolveEmailProvider } from '../email/emailProvider.ts'
+import { resolveTurnstileVerifier } from './turnstile.ts'
+import { registerSelfServiceRoutes, type SelfServiceOptions } from './selfService.ts'
 import { isAuthBypassEnabled, resolveBypassContext } from './devBypass.ts'
 import { isCookieSecure } from './cookieOptions.ts'
 import {
@@ -32,6 +36,28 @@ export interface AuthRouterOptions {
   // server/db/client.ts üzerinden gerçek Pool kullanılır.
   db?: AuthDb
   rateLimit?: { windowMs?: number; limit?: number }
+  /** Test enjeksiyonu; verilmeyen alanlar ortamdan çözülür. */
+  selfService?: Partial<SelfServiceOptions>
+}
+
+// Self-service yapılandırması ORTAMDAN gelir. Production'da signup yalnız
+// PUBLIC_SIGNUP_ENABLED=true + e-posta sağlayıcısı + Turnstile + APP_BASE_URL
+// birlikte tanımlıysa açılır; biri eksikse kapalı kalır (fail-closed).
+function resolveSelfServiceOptions(overrides: Partial<SelfServiceOptions> = {}): SelfServiceOptions {
+  const production = process.env.NODE_ENV === 'production'
+  const flag = String(process.env.PUBLIC_SIGNUP_ENABLED ?? '').trim().toLowerCase()
+  const appBaseUrl =
+    String(process.env.APP_BASE_URL ?? '').trim() || (production ? '' : 'http://localhost:5173')
+  return {
+    emailProvider: overrides.emailProvider ?? resolveEmailProvider(),
+    turnstile: overrides.turnstile ?? resolveTurnstileVerifier(),
+    appBaseUrl: overrides.appBaseUrl ?? appBaseUrl,
+    signupFlag: overrides.signupFlag ?? (production ? flag === 'true' : flag !== 'false'),
+    ...(overrides.rateLimit ? { rateLimit: overrides.rateLimit } : {}),
+    ...(overrides.resendCooldownMs !== undefined ? { resendCooldownMs: overrides.resendCooldownMs } : {}),
+    ...(overrides.perEmailHourlyLimit !== undefined ? { perEmailHourlyLimit: overrides.perEmailHourlyLimit } : {}),
+    ...(overrides.now ? { now: overrides.now } : {}),
+  }
 }
 
 type TransactionalDb = AuthDb & {
@@ -283,6 +309,9 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
       genericFail()
       return
     }
+    // Tek alan iki kimliği kabul eder: '@' içeriyorsa e-posta, değilse
+    // (yönetici açılışlı hesapların) kullanıcı adı.
+    const byEmail = username.includes('@')
     const rows = await (
       (
         db.select({
@@ -290,11 +319,18 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
           organizationId: users.organizationId,
           passwordHash: users.passwordHash,
           userStatus: users.status,
+          email: users.email,
+          emailVerifiedAt: users.emailVerifiedAt,
+          displayName: users.username,
         }) as unknown as SelectChain
       ).from(users).where as (condition: unknown) => {
         limit: (count: number) => Promise<Record<string, unknown>[]>
       }
-    )(and(eq(users.username, username)))
+    )(
+      byEmail
+        ? and(eq(users.emailNormalized, normalizeEmail(username)))
+        : and(eq(users.username, username)),
+    )
       .limit(1)
     const user = rows[0]
     if (!user || String(user.userStatus) !== 'active') {
@@ -311,18 +347,38 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
       genericFail()
       return
     }
+    // E-postayla kaydolmuş ama doğrulamamış hesap OTURUM AÇAMAZ; böylece
+    // entegrasyon bilgisi ekleyemez ve gönderi üretemez. (Yalnız doğru şifre
+    // sahibine söylenir.)
+    if (user.email != null && user.emailVerifiedAt == null) {
+      response.status(403).json({
+        ok: false,
+        code: 'EMAIL_NOT_VERIFIED',
+        message: 'E-posta adresiniz henüz doğrulanmadı. Gelen kutunuzdaki bağlantıyı açın.',
+      })
+      return
+    }
     const session = await createSession(
       db,
       String(user.userId),
-      String(user.organizationId),
+      user.organizationId == null ? null : String(user.organizationId),
     )
     await db
       .update(users)
       .set({ lastLoginAt: new Date() })
       .where(eq(users.id, String(user.userId)))
     setSessionCookie(response, session.token)
-    response.json({ ok: true, username })
+    response.json({
+      ok: true,
+      username: user.displayName == null ? String(user.email ?? username) : String(user.displayName),
+    })
   })
+
+  registerSelfServiceRoutes(
+    router,
+    (request) => dbOf(request as AuthedRequest),
+    resolveSelfServiceOptions(options.selfService),
+  )
 
   // POST /api/auth/logout — idempotent; cookie aynı özelliklerle temizlenir.
   router.post('/logout', async (request, response) => {
@@ -358,27 +414,33 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
       })
       return
     }
-    return requireAuth(db)(request as AuthedRequest, response, next)
+    next()
   })
+  // Workspace'i olmayan kullanıcı da kendini görebilir (`organization: null`,
+  // `needsWorkspace: true`); kiracı uçları bu oturumu yine REDDEDER.
   router.get('/me', async (request, response) => {
     const db = dbOf(request as AuthedRequest)
     const token = String(
-      (request as AuthedRequest).authSessionToken ?? '',
-    )
-    const context = await findActiveSession(db, token)
+      (request as AuthedRequest).cookies?.[sessionCookieName()] ?? '',
+    ).trim()
+    const context = token ? await findActiveSession(db, token).catch(() => null) : null
     if (!context) {
       response.status(401).json({ ok: false, message: 'Oturum gerekli.' })
       return
     }
     response.json({
       authenticated: true,
+      needsWorkspace: context.organizationId == null,
       user: {
         username: context.username,
-        organization: {
-          id: context.organizationId,
-          name: context.organizationName,
-          slug: context.organizationSlug,
-        },
+        email: context.email,
+        organization: context.organizationId
+          ? {
+              id: context.organizationId,
+              name: context.organizationName,
+              slug: context.organizationSlug,
+            }
+          : null,
       },
     })
   })

@@ -68,7 +68,7 @@ export function SettingsPage({
           <dl className="settings-facts">
             <div>
               <dt>Organizasyon</dt>
-              <dd>{user?.organization.name ?? 'Yerel çalışma modu'}</dd>
+              <dd>{user?.organization?.name ?? 'Yerel çalışma modu'}</dd>
             </div>
             <div>
               <dt>Kullanıcı</dt>

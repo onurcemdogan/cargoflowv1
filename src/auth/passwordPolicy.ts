@@ -7,3 +7,13 @@ export function isPasswordLongEnough(password: string): boolean {
 }
 
 export const PASSWORD_TOO_SHORT_MESSAGE = `Parola en az ${MIN_PASSWORD_LENGTH} karakter olmalıdır.`
+
+// Herkese açık kayıt ve şifre sıfırlama için daha güçlü alt sınır. Mevcut
+// (yönetici açılışlı) hesap akışı ve bootstrap yukarıdaki sınırı korur.
+export const SELF_SERVICE_MIN_PASSWORD_LENGTH = 10
+
+export function isSelfServicePasswordAcceptable(password: string): boolean {
+  return String(password ?? '').length >= SELF_SERVICE_MIN_PASSWORD_LENGTH
+}
+
+export const SELF_SERVICE_PASSWORD_MESSAGE = `Şifre en az ${SELF_SERVICE_MIN_PASSWORD_LENGTH} karakter olmalıdır.`

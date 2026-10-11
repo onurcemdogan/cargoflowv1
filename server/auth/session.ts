@@ -45,10 +45,11 @@ export interface CreatedSession {
   expiresAt: Date
 }
 
+// `organizationId` null: workspace'i henüz olmayan (doğrulanmış) kullanıcı.
 export async function createSession(
   db: AuthDb,
   userId: string,
-  organizationId: string,
+  organizationId: string | null,
 ): Promise<CreatedSession> {
   // En az 32 byte rastgele opak token; imza gerekmez (DB hash kontrolü var).
   const token = randomBytes(32).toString('base64url')
@@ -68,13 +69,18 @@ export async function createSession(
 export interface ActiveSessionContext {
   sessionId: string
   userId: string
-  organizationId: string
+  /** null → workspace yok; kiracı uçları bu oturumu REDDEDER. */
+  organizationId: string | null
+  /** Gösterim adı: kullanıcı adı, yoksa e-posta. */
   username: string
-  organizationName: string
-  organizationSlug: string
+  email: string | null
+  organizationName: string | null
+  organizationSlug: string | null
 }
 
-// Geçerli (expired/revoked olmayan) session + aktif user + aktif organization.
+// Geçerli (expired/revoked olmayan) session + aktif user + (varsa) aktif
+// organization. Organizasyonlu oturumun kuralları DEĞİŞMEDİ: organizasyon
+// pasifse oturum geçersizdir.
 export async function findActiveSession(
   db: AuthDb,
   token: string,
@@ -85,6 +91,7 @@ export async function findActiveSession(
     expiresAt: sessions.expiresAt,
     userId: users.id,
     username: users.username,
+    email: users.email,
     userStatus: users.status,
     organizationId: organizations.id,
     organizationName: organizations.name,
@@ -96,7 +103,7 @@ export async function findActiveSession(
         table: unknown,
         condition: unknown,
       ) => {
-        innerJoin: (
+        leftJoin: (
           table: unknown,
           condition: unknown,
         ) => {
@@ -110,7 +117,7 @@ export async function findActiveSession(
   const rows = await query
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
-    .innerJoin(organizations, eq(sessions.organizationId, organizations.id))
+    .leftJoin(organizations, eq(sessions.organizationId, organizations.id))
     .where(and(eq(sessions.tokenHash, tokenHash), isNull(sessions.revokedAt)))
     .limit(1)
   const row = rows[0]
@@ -118,14 +125,17 @@ export async function findActiveSession(
   const expiresAt = new Date(String(row.expiresAt))
   if (!(expiresAt.getTime() > Date.now())) return null
   if (String(row.userStatus) !== 'active') return null
-  if (String(row.organizationStatus) !== 'active') return null
+  const hasOrganization = row.organizationId != null
+  if (hasOrganization && String(row.organizationStatus) !== 'active') return null
+  const email = row.email == null ? null : String(row.email)
   return {
     sessionId: String(row.sessionId),
     userId: String(row.userId),
-    organizationId: String(row.organizationId),
-    username: String(row.username),
-    organizationName: String(row.organizationName),
-    organizationSlug: String(row.organizationSlug),
+    organizationId: hasOrganization ? String(row.organizationId) : null,
+    username: row.username == null ? (email ?? '') : String(row.username),
+    email,
+    organizationName: hasOrganization ? String(row.organizationName) : null,
+    organizationSlug: hasOrganization ? String(row.organizationSlug) : null,
   }
 }
 
@@ -142,6 +152,17 @@ export async function revokeSessionByToken(
         isNull(sessions.revokedAt),
       ),
     )
+}
+
+/** Kullanıcının TÜM açık oturumlarını kapatır (şifre sıfırlama sonrası). */
+export async function revokeAllUserSessions(
+  db: AuthDb,
+  userId: string,
+): Promise<void> {
+  await db
+    .update(sessions)
+    .set({ revokedAt: new Date() })
+    .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)))
 }
 
 export async function touchSession(

@@ -32,20 +32,28 @@ function authDebug(message: string): void {
   }
 }
 
+type ResolveOutcome = 'ok' | 'none' | 'workspace_required'
+
 async function resolveAuth(
   db: AuthDb,
   request: AuthedRequest,
-): Promise<boolean> {
+): Promise<ResolveOutcome> {
   const cookiePresent = Boolean(request.cookies)
   const token = readSessionToken(request)
   if (!token) {
     authDebug(`session yok: cookieParser=${cookiePresent} token=absent`)
-    return false
+    return 'none'
   }
   const context = await findActiveSession(db, token)
   if (!context) {
     authDebug('session lookup: not_found_or_inactive (expired/revoked/user-disabled/org-suspended)')
-    return false
+    return 'none'
+  }
+  // Workspace'i olmayan oturum kiracı verisine ERİŞEMEZ: `request.auth`
+  // hiç kurulmaz, böylece organizationId'ye dayanan HİÇBİR uç çalışmaz.
+  if (!context.organizationId) {
+    authDebug('session lookup: found_without_workspace')
+    return 'workspace_required'
   }
   authDebug('session lookup: found_active')
   request.auth = {
@@ -55,7 +63,7 @@ async function resolveAuth(
   }
   request.authSessionToken = token
   void touchSession(db, context.sessionId).catch(() => undefined)
-  return true
+  return 'ok'
 }
 
 export function requireAuth(db: AuthDb) {
@@ -73,8 +81,17 @@ export function requireAuth(db: AuthDb) {
         next()
         return
       }
-      if (await resolveAuth(db, request)) {
+      const outcome = await resolveAuth(db, request)
+      if (outcome === 'ok') {
         next()
+        return
+      }
+      if (outcome === 'workspace_required') {
+        response.status(403).json({
+          ok: false,
+          code: 'WORKSPACE_REQUIRED',
+          message: 'Devam etmek için önce çalışma alanınızı oluşturun.',
+        })
         return
       }
       response.status(401).json({ ok: false, message: 'Oturum gerekli.' })

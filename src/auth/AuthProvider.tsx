@@ -22,6 +22,8 @@ export type AuthStatus =
   | 'authenticated'
   | 'unauthenticated'
   | 'setup_required'
+  // Doğrulanmış kullanıcı, henüz çalışma alanı yok (ilk giriş).
+  | 'workspace_required'
 
 export interface AuthState {
   status: AuthStatus
@@ -72,6 +74,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (result: Awaited<ReturnType<typeof getCurrentUser>>): void => {
       if (result.kind === 'authenticated') {
         setState({ status: 'authenticated', user: result.user, devBypass })
+        return
+      }
+      if (result.kind === 'workspace_required') {
+        setState({ status: 'workspace_required', user: result.user, devBypass })
         return
       }
       if (result.kind === 'unavailable') {

@@ -110,7 +110,7 @@ export function AppShell({
           <img className="brand-mark" src="/favicon.png" alt="CargoFlow" />
           <div>
             <strong>CargoFlow</strong>
-            <span>{sessionUser?.organization.name ?? 'Operasyon Paneli'}</span>
+            <span>{sessionUser?.organization?.name ?? 'Operasyon Paneli'}</span>
           </div>
           <button
             type="button"
@@ -223,7 +223,7 @@ export function AppShell({
                   {sessionUser.username.charAt(0).toUpperCase()}
                 </span>
                 <div className="sidebar-session-identity">
-                  <strong>{sessionUser.organization.name}</strong>
+                  <strong>{sessionUser.organization?.name ?? ''}</strong>
                   <span>{sessionUser.username}</span>
                 </div>
                 <button
