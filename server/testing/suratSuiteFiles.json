@@ -251,5 +251,6 @@
   "server/print-platform-flow.test.mjs",
   "server/woocommerce-connector-flow.test.mjs",
   "server/woocommerce-runtime-closeout-flow.test.mjs",
-  "server/woocommerce-dns-rebinding-flow.test.mjs"
+  "server/woocommerce-dns-rebinding-flow.test.mjs",
+  "server/tenant-auth-coverage-flow.test.mjs"
 ]

@@ -372,6 +372,15 @@ const TENANT_AUTH_PATHS = [
   // ikas mağaza uçları org kapsamlıdır: AYNI auth kapısının ARKASINDA durur
   // (listede olmayan org-kapsamlı uç `request.auth` boş kalır ve 404 döner).
   '/api/integrations/ikas',
+  // AYNI KÖK NEDEN, ÜÇÜNCÜ KEZ: bu uçların hepsi `requireOnboardingContext`
+  // ile org kapsamı ister ama listede YOKTU; auth modda (üretim) geçerli
+  // oturuma rağmen `request.auth` boş kalıyor ve 404 dönüyorlardı. Kapsam
+  // artık `tenant-auth-coverage-flow.test.mjs` ile TÜM uçlar için kilitli.
+  '/api/integrations/health',
+  '/api/integrations/woocommerce',
+  '/api/integrations/aras',
+  '/api/shipping/payer',
+  '/api/subscription',
   '/api/analytics/orders',
   '/api/analytics/claims',
   '/api/orders',

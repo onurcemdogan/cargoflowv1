@@ -53,6 +53,9 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
   assert.deepEqual(
     tables.rows.map((row) => row.table_name),
     [
+      // ARAS ETİKET ARTEFAKTI (0014). Kalıcı, değişmez; reprint yalnız bu
+      // tablodan okunur, taşıyıcıya yeniden GİDİLMEZ.
+      'aras_label_artifacts',
       // HESAP KAPSAMLI BAĞLAYICI KİMLİKLERİ (0013). `integration_credentials`
       // org+provider TEKİLDİR ve bir org'un İKİ Woo mağazası için ayrı sır
       // TUTAMAZ; bu tablo hesap kapsamlıdır ve sağlayıcı-nötrdür.

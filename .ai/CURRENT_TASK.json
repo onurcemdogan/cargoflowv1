@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "project": "cargoflow",
   "ticket": "ARAS-EXPANSION",
-  "status": "MERGE_READY",
-  "phase": "MERGE_READY",
+  "status": "MERGED",
+  "phase": "MERGED",
   "integrationBranch": "integration/roadmap",
   "ticketBranch": "agent/ARAS-EXPANSION",
   "baselineCommit": "7754fcb109c4d8990d97065710e1189121fb58b7",
-  "headCommit": "e9da19d655c9b58d737e2e3d88acb03f4eb17f7f",
+  "headCommit": "8cd50475f95a72916fb798cc47e61ef96c523507",
   "activeWorker": null,
   "lastImplementationWorker": "claude",
   "reviewer": null,
@@ -59,7 +59,7 @@
   ],
   "failingTests": [],
   "blockers": [],
-  "nextAction": "REVIEW_FEEDBACK repair checkpointed. Final head is frozen. GitHub CI is the final gate; then external review evaluation; then Codex-only MERGE authorization via the existing merge control plane.",
+  "nextAction": "ARAS-EXPANSION merged into integration/roadmap (PR #8 head 8cd5047). No auto-selectable ticket remains: LIVE-PROVIDER-VERIFICATION is BLOCKED_HUMAN (needs real provider credentials); PILOT-HARDENING / PRODUCTION-READINESS wait on it; PRODUCTION-ROLLOUT is HUMAN_APPROVAL.",
   "specPath": ".ai/tickets/ARAS-EXPANSION.md",
   "researchResolution": {
     "status": "VERIFIED",
@@ -291,10 +291,5 @@
         "source": "codex-merge-control"
       }
     ]
-  },
-  "codexEvidenceGap": {
-    "status": "CONTROL_PLANE_RETRY",
-    "reason": "Authoritative runtime evidence is incomplete: server/carriers/aras/arasClient.ts is truncated and riskEvidenceComplete is false. Supply its complete baseline-to-frozen-head diff for automated Codex review; green CI and repaired findings do not close this evidence gap. Review exhaustion alone does not require human intervention.",
-    "updatedAt": "2026-09-28T06:02:55.213977+00:00"
   }
 }
