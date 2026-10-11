@@ -20,6 +20,14 @@ process.env.PRODUCT_DATA_ENCRYPTION_KEY = randomBytes(32).toString('hex')
 const service = await import('./onboarding/onboardingService.ts')
 const repo = await import('./onboarding/onboardingRepository.ts')
 const credentials = await import('./integrations/credentialService.ts')
+const carriers = await import('./carriers/carrierAccounts.ts')
+
+// PHASE2-C: kargo adımı KALICI doğrulama ister (kimlik kaydı → taşıyıcı hesabı
+// → başarılı bağlantı testi kaydı). Test bu gerçek akışı izler.
+async function verifySuratAccount(db, org) {
+  const account = await carriers.syncSuratCarrierAccount(db, org)
+  await carriers.recordCarrierVerification(db, { organizationId: org, carrierAccountId: account.id, status: 'verified' })
+}
 const products = await import('./products/productPersistenceService.ts')
 const orders = await import('./orders/orderPersistenceService.ts')
 
@@ -106,16 +114,16 @@ test('onboarding A-P: izolasyon, koşullar, sync metadata, Sürat create=0', asy
   const configured = await service.deriveOnboardingStatus(db, orgA)
   assert.equal(configured.marketplaces[0].configured, true)
   assert.equal(configured.carrier.configured, true)
-  // SUPERSEDED (ONBOARDING-001): eski çapa "Sürat configured = verified"
-  // kuralını SABİTLİYORDU — kimlik VARLIĞI doğrulama DEĞİLDİR. Kalıcı,
-  // gönderi oluşturmayan doğrulama kanıtı olmadığı AÇIKÇA söylenir.
-  assert.equal(configured.carrier.verification, 'VERIFICATION_NOT_PERSISTED')
+  // Kimlik VARLIĞI doğrulama DEĞİLDİR (PHASE2-C: kalıcı kayıt yoksa UNVERIFIED).
+  assert.equal(configured.carrier.verification, 'UNVERIFIED')
   assert.equal('suratConnectionVerified' in configured, false)
+  await verifySuratAccount(db, orgA)
+  assert.equal((await service.deriveOnboardingStatus(db, orgA)).carrier.verification, 'VERIFIED')
 
   // F) Trendyol/Sürat configured ama sync yok → complete 409 (ilk senkron).
   const noSync = await service.completeOnboarding(db, orgA)
   assert.equal(noSync.ok, false)
-  assert.deepEqual(noSync.blockers, ['FIRST_SYNC_REQUIRED'])
+  assert.deepEqual(noSync.blockers, ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'])
 
   // M) Partial sync (kayıt 0) completed saymaz: bootstrap hazır değil.
   await repo.recordSyncState(db, orgA, {
@@ -178,7 +186,8 @@ test('onboarding A-P: izolasyon, koşullar, sync metadata, Sürat create=0', asy
     provider: 'trendyol', resource: 'orders', status: 'success', fetchedCount: 1,
   })
   await credentials.saveIntegrationCredential(db, orgB, 'trendyol', { sellerId: '99' })
-  await credentials.saveIntegrationCredential(db, orgB, 'surat', { firmaId: '2' })
+  await credentials.saveIntegrationCredential(db, orgB, 'surat', { kullaniciAdi: 'cari-b', firmaId: '2' })
+  await verifySuratAccount(db, orgB)
   const bReady = await service.completeOnboarding(db, orgB)
   assert.equal(bReady.ok, true, 'sipariş sync + credential ile complete başarılı')
 
@@ -224,7 +233,20 @@ test('evaluateOnboarding idempotent + eksik adım raporu (L,M)', async () => {
   assert.deepEqual(first.blockers, ['CARRIER_NOT_CONFIGURED'])
   assert.equal(first.eligibleToComplete, false)
 
-  const ready = model.evaluateOnboarding({ ...base, carrierConfigured: true })
+  const savedOnly = model.evaluateOnboarding({ ...base, carrierConfigured: true })
+  assert.deepEqual(savedOnly.blockers, ['CARRIER_NOT_VERIFIED', 'OPERATIONS_UNRESOLVED'])
+  const ready = model.evaluateOnboarding({
+    ...base,
+    carrierConfigured: true,
+    carrierAccounts: [{
+      id: 'ca-1', provider: 'surat', displayName: 'Sürat Kargo', externalAccountRef: 'cari',
+      credentialRef: 'integration_credentials:surat', verificationStatus: 'verified',
+      lastVerifiedAt: '2026-10-12T09:00:00.000Z', lastVerificationAttemptAt: null, enabled: true,
+    }],
+  })
   assert.equal(ready.eligibleToComplete, true)
   assert.deepEqual(ready.blockers, [])
+  assert.equal(ready.operations.resolved, true)
+  assert.equal(ready.operations.accounts[0].carrier.source, 'ONLY_ACCOUNT_FOR_PROVIDER')
+  assert.equal(ready.operations.accounts[0].payer.source, 'ORDER_CONTRACT')
 })

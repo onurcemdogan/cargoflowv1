@@ -41,6 +41,7 @@ import { ShippingPayerSection } from '../integrations/ShippingPayerSection'
 import { WooCommerceSection } from '../integrations/WooCommerceSection'
 import { IkasSection } from '../integrations/IkasSection'
 import { ArasSection } from '../integrations/ArasSection'
+import { CarrierAccountsSection } from '../integrations/CarrierAccountsSection'
 import {
   IntegrationStatusBoard,
   type IntegrationBoardKey,
@@ -353,6 +354,8 @@ export function IntegrationsPage({
         Trendyol'da alan düzenlenemez: ödeyen sipariş sözleşmesinden okunur.
       */}
       <ShippingPayerSection />
+
+      <CarrierAccountsSection />
 
       </div>
     </div>

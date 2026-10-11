@@ -382,6 +382,8 @@ const TENANT_AUTH_PATHS = [
   '/api/shipping/payer',
   // Çalışma alanı / işletme profili (PHASE2-B) — org kapsamlı.
   '/api/organization',
+  // Taşıyıcı hesapları ve pazaryeri↔taşıyıcı eşlemesi (PHASE2-C).
+  '/api/carrier-accounts',
   '/api/subscription',
   '/api/analytics/orders',
   '/api/analytics/claims',
@@ -580,6 +582,9 @@ app.put('/api/local-config/integration', async (request, response) => {
       }
       if (incoming.surat && typeof incoming.surat === 'object') {
         await saveIntegrationCredential(db, organizationId, 'surat', normalized.surat)
+        // Taşıyıcı hesabı eşitlenir; kimlik değiştiyse doğrulama SIFIRLANIR.
+        const { syncSuratCarrierAccount } = await import('./carriers/carrierAccounts.ts')
+        await syncSuratCarrierAccount(db, organizationId)
       }
       // FAZ 0.3 — Aktif pazaryeri hesabını çöz. Trendyol'un KALICI, gizli olmayan
       // hesap kimliği (sellerId) üzerinden hesabı bul/oluştur ve AKTİF yap. Aynı
@@ -608,6 +613,13 @@ app.put('/api/local-config/integration', async (request, response) => {
           displayName: account.displayName,
           isActive: account.isActive,
         }
+        // Kimlik değiştiyse bu hesabın kalıcı doğrulaması SIFIRLANIR.
+        const { syncMarketplaceAccountFingerprint } = await import('./carriers/carrierAccounts.ts')
+        await syncMarketplaceAccountFingerprint(db, {
+          organizationId,
+          marketplaceAccountId: account.id,
+          payload: effective.trendyol,
+        })
       }
       // Gönderi varsayılanları (varsayılan birim desi) KALICI yazılır. Secret
       // DEĞİLDİR; organization_settings.settings_json altında org kapsamında
@@ -713,6 +725,60 @@ app.post('/api/integrations/trendyol/save', (request, response) => {
   })
 })
 
+// ═══ KALICI BAĞLANTI DOĞRULAMASI (PHASE2-C) ══════════════════════════════
+//
+// Bağlantı testi artık yalnız ekranda gösterilmez: auth modunda sonucu,
+// oturumun organizasyonundaki hesaba KALICI yazılır (onboarding ve durum
+// panosu bu kayda bakar). Test yan etkisizdir (sipariş okuma / cari sorgu);
+// gönderi OLUŞTURMAZ. Ham sağlayıcı metni kayda GİRMEZ, yalnız sınıfı.
+function classifyHttpVerification(ok, statusCode) {
+  if (ok) return 'verified'
+  if (statusCode === 401) return 'auth_failed'
+  if (statusCode === 403) return 'permission_denied'
+  if (statusCode === 429) return 'rate_limited'
+  return 'provider_unavailable'
+}
+
+async function persistTrendyolVerification(request, ok, statusCode) {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) return
+  try {
+    const [{ getDb }, carriers] = await Promise.all([
+      import('./db/client.ts'),
+      import('./carriers/carrierAccounts.ts'),
+    ])
+    const db = getDb()
+    const marketplaceAccountId = await resolveActiveMarketplaceAccountId(db, request.auth.organizationId)
+    if (!marketplaceAccountId) return
+    await carriers.recordMarketplaceVerification(db, {
+      organizationId: request.auth.organizationId,
+      marketplaceAccountId,
+      status: classifyHttpVerification(ok, statusCode),
+    })
+  } catch (error) {
+    console.warn('[verification] trendyol doğrulaması kaydedilemedi: ' + String(error?.code ?? error?.name ?? 'error'))
+  }
+}
+
+async function persistSuratVerification(request, verification) {
+  if (!isTenantAuthMode() || !request.auth?.organizationId) return
+  try {
+    const [{ getDb }, carriers] = await Promise.all([
+      import('./db/client.ts'),
+      import('./carriers/carrierAccounts.ts'),
+    ])
+    const db = getDb()
+    const account = await carriers.syncSuratCarrierAccount(db, request.auth.organizationId)
+    if (!account) return
+    await carriers.recordCarrierVerification(db, {
+      organizationId: request.auth.organizationId,
+      carrierAccountId: account.id,
+      status: carriers.classifySuratConnectionTest(verification),
+    })
+  } catch (error) {
+    console.warn('[verification] sürat doğrulaması kaydedilemedi: ' + String(error?.code ?? error?.name ?? 'error'))
+  }
+}
+
 app.post('/api/integrations/trendyol/test', async (request, response) => {
   const credentials = request.body?.credentials ?? {}
   const result = await callTrendyolOrders(credentials, {
@@ -720,6 +786,7 @@ app.post('/api/integrations/trendyol/test', async (request, response) => {
     size: 1,
     includeSortParams: false,
   })
+  await persistTrendyolVerification(request, result.ok === true, result.statusCode)
   response.json(toIntegrationTestResult('trendyol', result))
 })
 
@@ -2470,6 +2537,69 @@ app.put('/api/organization/profile', async (request, response) => {
   }
 })
 
+// TAŞIYICI HESAPLARI (PHASE2-C). Sır DÖNMEZ; yalnız hesap kimliği, doğrulama
+// durumu ve eşleme. Eşleme yazımı tenant sahipliğini doğrular.
+app.get('/api/carrier-accounts', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const carriers = await import('./carriers/carrierAccounts.ts')
+    const { listOrganizationMarketplaceAccounts } = await import('./onboarding/onboardingRepository.ts')
+    const [accounts, mappings, marketplaceRows] = await Promise.all([
+      carriers.listCarrierAccounts(context.db, context.organizationId),
+      carriers.listCarrierMappings(context.db, context.organizationId),
+      listOrganizationMarketplaceAccounts(context.db, context.organizationId),
+    ])
+    const marketplaceAccounts = marketplaceRows
+      .filter((row) => String(row.marketplace ?? '').toLowerCase() !== 'aras')
+      .map((row) => ({
+        id: String(row.id),
+        marketplace: String(row.marketplace ?? ''),
+        displayName: row.displayName ? String(row.displayName) : null,
+        isActive: row.isActive === true,
+        resolution: carriers.resolveCarrierAccountFromRecords(accounts, mappings, {
+          provider: 'surat',
+          marketplaceAccountId: String(row.id),
+        }),
+      }))
+    response.json({ ok: true, accounts, mappings, marketplaceAccounts })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Taşıyıcı hesapları okunamadı.' })
+  }
+})
+
+app.put('/api/carrier-accounts/mappings', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  const marketplaceAccountId = String(request.body?.marketplaceAccountId ?? '').trim()
+  const rawCarrier = request.body?.carrierAccountId
+  const carrierAccountId = rawCarrier == null || rawCarrier === '' ? null : String(rawCarrier).trim()
+  if (!marketplaceAccountId) {
+    response.status(400).json({ ok: false, message: 'Pazaryeri hesabı seçilmeli.' })
+    return
+  }
+  try {
+    const carriers = await import('./carriers/carrierAccounts.ts')
+    await carriers.setCarrierMapping(context.db, {
+      organizationId: context.organizationId,
+      marketplaceAccountId,
+      carrierAccountId,
+    })
+    response.json({ ok: true, marketplaceAccountId, carrierAccountId })
+  } catch (error) {
+    const code = error?.code
+    if (code === 'MARKETPLACE_ACCOUNT_NOT_FOUND' || code === 'CARRIER_ACCOUNT_NOT_FOUND') {
+      response.status(404).json({ ok: false, code, message: 'Hesap bulunamadı.' })
+      return
+    }
+    if (code === 'CARRIER_ACCOUNT_DISABLED') {
+      response.status(409).json({ ok: false, code, message: 'Kapalı bir kargo hesabı eşlenemez.' })
+      return
+    }
+    response.status(500).json({ ok: false, message: 'Eşleme kaydedilemedi.' })
+  }
+})
+
 // GET /api/onboarding/status — org-scoped kurulum durumu (DB'den türetilir).
 app.get('/api/onboarding/status', async (request, response) => {
   const context = await requireOnboardingContext(request, response)
@@ -3378,6 +3508,13 @@ app.post('/api/integrations/surat/test', async (request, response) => {
   )
   const message = extractTag(soap.text, 'Mesaj')
   const authError = isSuratAuthError(message)
+  // Yalnız cari kodu + sorgulama şifresi doğrulanır (CariKoduveSifre);
+  // gönderi oluşturma şifresi bu testle KANITLANMAZ.
+  await persistSuratVerification(request, {
+    ok: soap.ok && !authError,
+    authError,
+    transportOk: soap.ok,
+  })
 
   response.json({
     provider: 'surat-kargo',

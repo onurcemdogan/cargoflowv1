@@ -6,13 +6,21 @@
 // pazaryerinin kurulabileceği, hangi adımın eksik olduğu ve kurulumun nereden
 // sürdürüleceği SUNUCUDA hesaplanır; istemci yalnız gösterir.
 
-export type OnboardingStepKey = 'WELCOME' | 'BUSINESS' | 'MARKETPLACE' | 'CARRIER' | 'FIRST_SYNC' | 'READY'
+export type OnboardingStepKey =
+  | 'WELCOME'
+  | 'BUSINESS'
+  | 'MARKETPLACE'
+  | 'CARRIER'
+  | 'OPERATIONS'
+  | 'FIRST_SYNC'
+  | 'READY'
 
 export const ONBOARDING_STEP_ORDER: readonly OnboardingStepKey[] = [
   'WELCOME',
   'BUSINESS',
   'MARKETPLACE',
   'CARRIER',
+  'OPERATIONS',
   'FIRST_SYNC',
   'READY',
 ]
@@ -34,6 +42,8 @@ export interface OnboardingAccountView {
   credentialsRejected: boolean
   sync: OnboardingResourceSync[]
   bootstrapReady: boolean
+  /** Kalıcı doğrulama kaydı veya başarılı senkron. */
+  verified?: boolean
 }
 
 export interface OnboardingMarketplaceView {
@@ -44,7 +54,21 @@ export interface OnboardingMarketplaceView {
   configured: boolean
   credentialsRejected: boolean
   bootstrapReady: boolean
+  /** Kimlik bilgisi gerçek bir kontrolle doğrulandı mı (sunucu). */
+  verified: boolean
   accounts: OnboardingAccountView[]
+}
+
+export type OnboardingCarrierVerification = 'NOT_CONFIGURED' | 'UNVERIFIED' | 'VERIFIED' | 'FAILED'
+
+export interface OnboardingOperationsAccount {
+  marketplaceAccountId: string | null
+  providerKey: string
+  displayName: string
+  carrier:
+    | { ok: true; carrierAccountId: string; carrierName: string; source: string }
+    | { ok: false; code: string }
+  payer: { ok: boolean; source: 'ORDER_CONTRACT' | 'ACCOUNT_CONFIG' | null }
 }
 
 export interface OnboardingStepView {
@@ -65,11 +89,20 @@ export interface OnboardingStatus {
     providerKey: string
     displayName: string
     configured: boolean
-    /** `VERIFIED` yoktur: kalıcı doğrulama kanıtı saklanmaz. */
-    verification: 'NOT_CONFIGURED' | 'VERIFICATION_NOT_PERSISTED'
+    /** Taşıyıcı hesabındaki KALICI doğrulama kaydından (sunucu). */
+    verification: OnboardingCarrierVerification
+    lastVerifiedAt: string | null
   }
+  operations: { resolved: boolean; accounts: OnboardingOperationsAccount[] }
   counts: { products: number; orders: number }
 }
+
+const CARRIER_VERIFICATIONS: readonly OnboardingCarrierVerification[] = [
+  'NOT_CONFIGURED',
+  'UNVERIFIED',
+  'VERIFIED',
+  'FAILED',
+]
 
 export interface OnboardingCompleteResult {
   ok: boolean
@@ -115,17 +148,32 @@ export function normalizeOnboardingStatus(payload: unknown): OnboardingStatus {
       ? (raw.steps as OnboardingStepView[]).filter((step) => isStepKey(step?.key))
       : [],
     marketplaces: Array.isArray(raw.marketplaces)
-      ? (raw.marketplaces as OnboardingMarketplaceView[])
+      ? (raw.marketplaces as OnboardingMarketplaceView[]).map((marketplace) => ({
+          ...marketplace,
+          // Bilinmeyen durum "doğrulandı" ÜRETMEZ.
+          verified: marketplace?.verified === true,
+        }))
       : [],
     carrier: {
       providerKey: String(carrier.providerKey ?? 'surat'),
       displayName: String(carrier.displayName ?? 'Sürat Kargo'),
       configured: carrier.configured === true,
-      verification:
-        carrier.verification === 'VERIFICATION_NOT_PERSISTED'
-          ? 'VERIFICATION_NOT_PERSISTED'
+      verification: CARRIER_VERIFICATIONS.includes(carrier.verification as OnboardingCarrierVerification)
+        ? (carrier.verification as OnboardingCarrierVerification)
+        : carrier.configured === true
+          ? 'UNVERIFIED'
           : 'NOT_CONFIGURED',
+      lastVerifiedAt: typeof carrier.lastVerifiedAt === 'string' ? carrier.lastVerifiedAt : null,
     },
+    operations: (() => {
+      const operations = (raw.operations && typeof raw.operations === 'object' ? raw.operations : {}) as Record<string, unknown>
+      return {
+        resolved: operations.resolved === true,
+        accounts: Array.isArray(operations.accounts)
+          ? (operations.accounts as OnboardingOperationsAccount[])
+          : [],
+      }
+    })(),
     counts: {
       products: Number(counts.products) || 0,
       orders: Number(counts.orders) || 0,

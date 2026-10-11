@@ -34,6 +34,8 @@ import {
 } from './onboardingRepository.ts'
 import { getShipmentDefaults } from './shipmentDefaultsRepository.ts'
 import { getOrganizationProfile, isOrganizationProfileComplete } from '../auth/workspaces.ts'
+import { listCarrierAccounts, listCarrierMappings } from '../carriers/carrierAccounts.ts'
+import { loadAccountPayerConfigs } from '../shipments/marketplacePayerConfig.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -69,9 +71,23 @@ export async function loadOnboardingSnapshot(
   ] as BootstrapResource[]
 
   const settings = await ensureSettings(db, scopedOrganizationId)
-  const [profile, masked, accounts, defaults, productCount, orderCount, ...healthLists] =
+  const [
+    profile,
+    carrierAccounts,
+    carrierMappings,
+    payerConfigs,
+    masked,
+    accounts,
+    defaults,
+    productCount,
+    orderCount,
+    ...healthLists
+  ] =
     await Promise.all([
       getOrganizationProfile(db, scopedOrganizationId),
+      listCarrierAccounts(db, scopedOrganizationId),
+      listCarrierMappings(db, scopedOrganizationId),
+      loadAccountPayerConfigs(db, scopedOrganizationId),
       getMaskedIntegrationStatus(db, scopedOrganizationId),
       listOrganizationMarketplaceAccounts(db, scopedOrganizationId),
       getShipmentDefaults(db, scopedOrganizationId),
@@ -101,12 +117,16 @@ export async function loadOnboardingSnapshot(
       marketplace: String(account.marketplace ?? ''),
       displayName: account.displayName ? String(account.displayName) : null,
       isActive: account.isActive === true,
+      verificationStatus: account.verificationStatus == null ? null : String(account.verificationStatus),
     })),
     accountScopedCredentialProviders: ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS,
     carrierConfigured: Boolean(masked?.surat?.configured),
     defaultUnitDesiConfigured: defaults?.defaultUnitDesi != null,
     counts: { products: Number(productCount) || 0, orders: Number(orderCount) || 0 },
     businessProfileComplete: isOrganizationProfileComplete(profile),
+    carrierAccounts,
+    carrierMappings,
+    payerConfiguredAccountIds: Object.keys(payerConfigs ?? {}),
   }
 }
 

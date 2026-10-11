@@ -27,12 +27,16 @@ import {
 import { useAuth } from '../auth/useAuth'
 import { ProgressBar, SetupItem } from '../ui/primitives'
 import { BusinessProfileStep } from '../onboarding/BusinessProfileStep'
+import { OperationsStep } from '../onboarding/OperationsStep'
 
 const BLOCKER_LABELS: Record<string, string> = {
   BUSINESS_PROFILE_INCOMPLETE: 'İşletme bilgileri tamamlanmalı',
   NO_ELIGIBLE_MARKETPLACE: 'Şu anda kurulabilir bir pazaryeri bağlantısı yok',
   MARKETPLACE_NOT_CONFIGURED: 'Pazaryeri bağlantısı kaydedilmeli',
   MARKETPLACE_NOT_VERIFIED: 'Pazaryeri kimlik bilgileri reddedildi; bilgileri kontrol edin',
+  MARKETPLACE_VERIFICATION_REQUIRED: 'Pazaryeri bağlantısı test edilmeli ya da ilk senkron yapılmalı',
+  CARRIER_NOT_VERIFIED: 'Kargo bağlantısı test edilip doğrulanmalı',
+  OPERATIONS_UNRESOLVED: 'Satış hesabı ↔ kargo hesabı ve ödeyen kuralı netleşmeli',
   FIRST_SYNC_REQUIRED: 'En az bir başarılı ilk senkron gerekli',
   CARRIER_NOT_CONFIGURED: 'Kargo bağlantısı kaydedilmeli',
 }
@@ -68,6 +72,8 @@ function stepLabel(key: OnboardingStepKey, status: OnboardingStatus): string {
         : 'Pazaryeri Bağlantısı'
     case 'CARRIER':
       return `${status.carrier.displayName} Bağlantısı`
+    case 'OPERATIONS':
+      return 'Operasyon Ayarları'
     case 'FIRST_SYNC':
       return 'İlk Senkronizasyon'
     case 'READY':
@@ -167,6 +173,8 @@ export function OnboardingPage({
       const result = await workflowService.testSuratConnection(config)
       if (!mounted.current) return
       setCarrierTest(result)
+      // Sonuç sunucuda KALICI doğrulama olarak yazıldı; durum yeniden okunur.
+      await refreshStatus()
     })
 
   const runSync = (providerKey: string, resource: OnboardingBootstrapResource) => {
@@ -202,7 +210,9 @@ export function OnboardingPage({
   const goTo = (key: OnboardingStepKey) => setStepIndex(ONBOARDING_STEP_ORDER.indexOf(key))
   const primaryMarketplace = status.marketplaces.length === 1 ? status.marketplaces[0] : null
   const marketplaceName = primaryMarketplace?.displayName ?? 'Pazaryeri'
-  const anyBootstrapReady = status.marketplaces.some((marketplace) => marketplace.bootstrapReady)
+  const anyMarketplaceVerified = status.marketplaces.some(
+    (marketplace) => marketplace.verified || marketplace.bootstrapReady,
+  )
   const anyRejected = status.marketplaces.some((marketplace) => marketplace.credentialsRejected)
   const organizationName = auth.user?.organization?.name
   const percent = requiredSteps.length > 0 ? Math.round((requiredDone / requiredSteps.length) * 100) : 0
@@ -211,13 +221,22 @@ export function OnboardingPage({
   // firmasındaki firma kaydından gelir (ayrı bir kayıt YOKTUR); etiket
   // şablonunun "kontrol edildi" diye kalıcı bir kaydı YOKTUR — bu satır
   // isteğe bağlıdır ve tamamlanmış GÖSTERİLMEZ.
-  const marketplaceDescription = anyBootstrapReady
-    ? 'Senkronla doğrulandı'
+  const marketplaceConfigured = status.marketplaces.some((marketplace) => marketplace.configured)
+  const marketplaceDescription = anyMarketplaceVerified
+    ? 'Bağlantı doğrulandı'
     : anyRejected
       ? 'Bilgiler reddedildi; satıcı bilgilerini kontrol edin'
-      : stepDone('MARKETPLACE')
-        ? 'Bilgiler kaydedildi · ilk senkronla doğrulanır'
+      : marketplaceConfigured
+        ? 'Bilgiler kaydedildi · bağlantıyı test edin'
         : 'Satıcı ID ve API bilgilerinizi girin'
+  const carrierDescription =
+    status.carrier.verification === 'VERIFIED'
+      ? 'Bağlantı doğrulandı'
+      : status.carrier.verification === 'FAILED'
+        ? 'Doğrulama başarısız; bilgileri kontrol edin'
+        : status.carrier.configured
+          ? 'Bilgiler kaydedildi · bağlantıyı test edin'
+          : 'Kullanıcı adı, şifre ve firma bilgilerinizi girin'
 
   return (
     <div className="onboarding-screen">
@@ -275,15 +294,22 @@ export function OnboardingPage({
                 onClick={() => goTo('MARKETPLACE')}
               />
               <SetupItem
-                done={status.carrier.configured}
+                done={stepDone('CARRIER')}
                 active={stepKey === 'CARRIER'}
-                title={`${status.carrier.displayName} bağlantısını kurun`}
-                description={
-                  status.carrier.configured
-                    ? 'Bilgiler kaydedildi'
-                    : 'Kullanıcı adı, şifre ve firma bilgilerinizi girin'
-                }
+                title={`${status.carrier.displayName} hesabınızı bağlayın`}
+                description={carrierDescription}
                 onClick={() => goTo('CARRIER')}
+              />
+              <SetupItem
+                done={stepDone('OPERATIONS')}
+                active={stepKey === 'OPERATIONS'}
+                title="Operasyon ayarlarını doğrulayın"
+                description={
+                  stepDone('OPERATIONS')
+                    ? 'Kargo hesabı ve ödeyen kuralı belirli'
+                    : 'Satış hesabı ↔ kargo hesabı ve ödeyen kuralı'
+                }
+                onClick={() => goTo('OPERATIONS')}
               />
               <SetupItem
                 done={stepDone('FIRST_SYNC')}
@@ -407,9 +433,13 @@ export function OnboardingPage({
                 <Chip on={status.carrier.configured}>
                   {status.carrier.configured ? 'Kayıtlı' : 'Kayıt yok'}
                 </Chip>
-                {status.carrier.configured && (
-                  <Chip on={false}>Kalıcı doğrulama kaydı yok</Chip>
-                )}
+                {status.carrier.verification === 'VERIFIED' ? (
+                  <Chip on>Bağlantı doğrulandı</Chip>
+                ) : status.carrier.verification === 'FAILED' ? (
+                  <Chip on={false} warn>Doğrulama başarısız</Chip>
+                ) : status.carrier.configured ? (
+                  <Chip on={false}>Henüz doğrulanmadı</Chip>
+                ) : null}
               </div>
               <label>
                 Kullanıcı Adı
@@ -471,10 +501,15 @@ export function OnboardingPage({
               </div>
               <SessionTestResult result={carrierTest} />
               <p className="onboarding-note">
-                Bağlantı testi gönderi oluşturmaz. Sonucu yalnız bu oturumda
-                gösterilir; kalıcı doğrulama olarak saklanmaz.
+                Bağlantı testi gönderi oluşturmaz; cari kodu ve sorgulama (web)
+                şifresini doğrular. Başarılı sonuç çalışma alanınıza kaydedilir;
+                kimlik bilgileri değişirse yeniden test etmeniz gerekir.
               </p>
             </div>
+          )}
+
+          {stepKey === 'OPERATIONS' && (
+            <OperationsStep resolved={status.operations.resolved} accounts={status.operations.accounts} />
           )}
 
           {stepKey === 'FIRST_SYNC' && (
@@ -596,7 +631,7 @@ export function OnboardingPage({
                   <dd>
                     <i
                       className={
-                        marketplace.bootstrapReady
+                        marketplace.verified || marketplace.bootstrapReady
                           ? 'onboarding-dot is-ok'
                           : marketplace.credentialsRejected
                             ? 'onboarding-dot is-bad'
@@ -606,8 +641,8 @@ export function OnboardingPage({
                       }
                       aria-hidden="true"
                     />
-                    {marketplace.bootstrapReady
-                      ? 'Senkronla doğrulandı'
+                    {marketplace.verified || marketplace.bootstrapReady
+                      ? 'Bağlantı doğrulandı'
                       : marketplace.credentialsRejected
                         ? 'Bilgiler reddedildi'
                         : marketplace.configured
@@ -620,10 +655,24 @@ export function OnboardingPage({
                 <dt>{status.carrier.displayName}</dt>
                 <dd>
                   <i
-                    className={status.carrier.configured ? 'onboarding-dot is-warn' : 'onboarding-dot'}
+                    className={
+                      status.carrier.verification === 'VERIFIED'
+                        ? 'onboarding-dot is-ok'
+                        : status.carrier.verification === 'FAILED'
+                          ? 'onboarding-dot is-bad'
+                          : status.carrier.configured
+                            ? 'onboarding-dot is-warn'
+                            : 'onboarding-dot'
+                    }
                     aria-hidden="true"
                   />
-                  {status.carrier.configured ? 'Bilgiler kaydedildi' : 'Bağlanmadı'}
+                  {status.carrier.verification === 'VERIFIED'
+                    ? 'Bağlantı doğrulandı'
+                    : status.carrier.verification === 'FAILED'
+                      ? 'Doğrulama başarısız'
+                      : status.carrier.configured
+                        ? 'Bilgiler kaydedildi'
+                        : 'Bağlanmadı'}
                 </dd>
               </div>
               <div>
@@ -660,7 +709,7 @@ function MarketplaceChips({ marketplace }: { marketplace: OnboardingMarketplaceV
   return (
     <div className="onboarding-chips">
       <Chip on={marketplace.configured}>{marketplace.configured ? 'Kayıtlı' : 'Kayıt yok'}</Chip>
-      {marketplace.bootstrapReady ? (
+      {marketplace.verified || marketplace.bootstrapReady ? (
         <Chip on>Bağlantı doğrulandı</Chip>
       ) : marketplace.credentialsRejected ? (
         <Chip on={false} warn>Kimlik bilgileri reddedildi</Chip>

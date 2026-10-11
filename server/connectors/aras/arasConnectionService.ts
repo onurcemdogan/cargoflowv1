@@ -1,8 +1,10 @@
 // ARAS bağlantı — hesap kapsamlı şifreli kimlik; internal_test (canlı SOAP probe YOK).
 
 import { and, eq } from 'drizzle-orm'
-import { marketplaceAccounts } from '../../db/schema.ts'
+import { carrierAccounts, marketplaceAccounts } from '../../db/schema.ts'
 import { ensureAccount } from '../../integrations/marketplaceAccountRepository.ts'
+import { credentialFingerprint } from '../../integrations/credentialService.ts'
+import { arasCredentialRef, upsertCarrierAccount } from '../../carriers/carrierAccounts.ts'
 import {
   deleteConnectorCredential,
   getConnectorCredential,
@@ -82,11 +84,22 @@ export async function connectArasCarrierAccount(
     }
   }
 
+  const credentialPayload = { userName, password, environment: 'TEST' }
   await saveConnectorCredential(db, {
     organizationId,
     marketplaceAccountId: accountId,
     providerKey: ARAS_PROVIDER_KEY,
-    payload: { userName, password, environment: 'TEST' },
+    payload: credentialPayload,
+  })
+  // Taşıyıcı hesap modeli (PHASE2-C): canlı probe YOK → doğrulanmamış kalır.
+  await upsertCarrierAccount(db, {
+    organizationId,
+    provider: ARAS_PROVIDER_KEY,
+    credentialRef: arasCredentialRef(accountId),
+    displayName: String(input.displayName ?? '').trim() || 'Aras Kargo',
+    externalAccountRef: null,
+    fingerprint: credentialFingerprint(credentialPayload),
+    enabled: true,
   })
 
   await db
@@ -122,6 +135,16 @@ export async function disconnectArasCarrierAccount(
         eq(marketplaceAccounts.organizationId, organizationId),
         eq(marketplaceAccounts.id, marketplaceAccountId),
         eq(marketplaceAccounts.marketplace, ARAS_PROVIDER_KEY),
+      ),
+    )
+  await db
+    .update(carrierAccounts)
+    .set({ enabled: false, updatedAt: new Date() })
+    .where(
+      and(
+        eq(carrierAccounts.organizationId, organizationId),
+        eq(carrierAccounts.provider, ARAS_PROVIDER_KEY),
+        eq(carrierAccounts.credentialRef, arasCredentialRef(marketplaceAccountId)),
       ),
     )
   return { ok: true }

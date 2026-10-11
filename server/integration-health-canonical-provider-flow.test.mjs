@@ -22,6 +22,7 @@ import { randomBytes } from 'node:crypto'
 import test from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
+import { eq } from 'drizzle-orm'
 
 const here = dirname(fileURLToPath(import.meta.url))
 process.env.CREDENTIAL_ENCRYPTION_KEY = randomBytes(32).toString('hex')
@@ -35,6 +36,7 @@ const credentials = await import('./integrations/credentialService.ts')
 const connectorStore = await import('./connectors/connectorCredentialStore.ts')
 const syncRepo = await import('./onboarding/onboardingRepository.ts')
 const onboarding = await import('./onboarding/onboardingService.ts')
+const carriers = await import('./carriers/carrierAccounts.ts')
 
 const NOW = Date.parse('2026-09-24T12:00:00.000Z')
 
@@ -230,12 +232,19 @@ test('ONB-CANON-1/2: onboarding sonucu DEĞİŞMEZ, alttaki kayıt GERÇEK hesab
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
   const org = await makeOrg(db)
+  // PHASE2-B/C: işletme bilgileri tam; kargo hesabı KALICI olarak doğrulanmış.
+  await db
+    .update(schema.organizations)
+    .set({ contactPhone: '0212 555 00 00', addressLine: 'Cad. 1', city: 'İstanbul', district: 'Kadıköy' })
+    .where(eq(schema.organizations.id, org))
   await credentials.saveIntegrationCredential(db, org, 'surat', { kullaniciAdi: 'u', sifre: 'p' })
+  const carrier = await carriers.syncSuratCarrierAccount(db, org)
+  await carriers.recordCarrierVerification(db, { organizationId: org, carrierAccountId: carrier.id, status: 'verified' })
   const account = await connectTrendyol(db, org)
 
   const status = await onboarding.deriveOnboardingStatus(db, org, { nowMs: NOW })
   assert.equal(status.marketplaces[0].configured, true)
-  assert.deepEqual(status.blockers, ['FIRST_SYNC_REQUIRED'])
+  assert.deepEqual(status.blockers, ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'])
   const snapshot = await onboarding.loadOnboardingSnapshot(db, org, { nowMs: NOW })
   const underlying = snapshot.healthByResource.orders.filter((entry) => entry.providerKey === 'trendyol')
   assert.deepEqual(underlying.map((entry) => entry.marketplaceAccountId), [account.id])

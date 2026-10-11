@@ -231,6 +231,13 @@ export const marketplaceAccounts = pgTable(
       withTimezone: true,
     }),
     lastSyncStatus: text('last_sync_status'),
+    // KALICI KİMLİK DOĞRULAMASI (PHASE2-C). Yalnız sağlayıcıya yapılan gerçek,
+    // yan etkisiz bir kimlik kontrolünün sonucudur; kimlik bilgisi değişince
+    // (`credential_fingerprint` farklılaşınca) `unverified`a döner.
+    verificationStatus: text('verification_status').notNull().default('unverified'),
+    lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true }),
+    lastVerificationAttemptAt: timestamp('last_verification_attempt_at', { withTimezone: true }),
+    credentialFingerprint: text('credential_fingerprint'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -263,6 +270,98 @@ export const marketplaceAccounts = pgTable(
       table.organizationId,
       table.marketplace,
       table.isActive,
+    ),
+    check(
+      'marketplace_accounts_verification_status_check',
+      sql`${table.verificationStatus} in ('unverified', 'verified', 'auth_failed', 'permission_denied', 'provider_unavailable', 'rate_limited')`,
+    ),
+  ],
+)
+
+/**
+ * TAŞIYICI HESAPLARI (PHASE2-C) — kullanıcının KENDİ kargo hesapları.
+ *
+ * Önceden Sürat kimliği organizasyon başına tek `integration_credentials`
+ * satırında, Aras ise `marketplace_accounts` içinde (`marketplace='aras'`)
+ * duruyordu; ortak bir taşıyıcı hesap kavramı yoktu. Bu tablo o domain
+ * modelidir. SIR BURADA TUTULMAZ: `credential_ref` sırrın şifreli durduğu
+ * yeri gösterir (`integration_credentials:surat` veya
+ * `connector_credentials:<hesap>`); sırlar yerinden TAŞINMADI.
+ *
+ * `verification_status` yalnız taşıyıcıya yapılan gerçek, gönderi
+ * OLUŞTURMAYAN bir kimlik kontrolünden gelir; kimlik değişince
+ * (`credential_fingerprint`, anahtarlı HMAC) `unverified`a döner.
+ */
+export const carrierAccounts = pgTable(
+  'carrier_accounts',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    displayName: text('display_name').notNull(),
+    /** Taşıyıcıdaki müşteri/cari kodu — GİZLİ DEĞİL; yoksa NULL. */
+    externalAccountRef: text('external_account_ref'),
+    credentialRef: text('credential_ref').notNull(),
+    credentialFingerprint: text('credential_fingerprint'),
+    verificationStatus: text('verification_status').notNull().default('unverified'),
+    lastVerifiedAt: timestamp('last_verified_at', { withTimezone: true }),
+    lastVerificationAttemptAt: timestamp('last_verification_attempt_at', { withTimezone: true }),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('carrier_accounts_org_provider_credential_unique').on(
+      table.organizationId,
+      table.provider,
+      table.credentialRef,
+    ),
+    index('carrier_accounts_org_provider_idx').on(table.organizationId, table.provider),
+    check(
+      'carrier_accounts_verification_status_check',
+      sql`${table.verificationStatus} in ('unverified', 'verified', 'auth_failed', 'permission_denied', 'provider_unavailable', 'rate_limited')`,
+    ),
+  ],
+)
+
+/**
+ * PAZARYERİ HESABI → TAŞIYICI HESABI EŞLEMESİ (PHASE2-C).
+ *
+ * Hangi satış hesabının siparişi hangi kargo hesabıyla gönderilir — AÇIK
+ * kayıt. Pazaryeri hesabı başına TEK eşleme. Eşleme yoksa ve organizasyonda
+ * istenen taşıyıcının TEK hesabı varsa o kullanılır; birden çok aday varsa
+ * gönderi OLUŞTURULMAZ (bkz. carriers/carrierAccounts.ts).
+ */
+export const marketplaceCarrierMappings = pgTable(
+  'marketplace_carrier_mappings',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    marketplaceAccountId: uuid('marketplace_account_id')
+      .notNull()
+      .references(() => marketplaceAccounts.id, { onDelete: 'cascade' }),
+    carrierAccountId: uuid('carrier_account_id')
+      .notNull()
+      .references(() => carrierAccounts.id, { onDelete: 'cascade' }),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('marketplace_carrier_mappings_account_unique').on(
+      table.organizationId,
+      table.marketplaceAccountId,
     ),
   ],
 )

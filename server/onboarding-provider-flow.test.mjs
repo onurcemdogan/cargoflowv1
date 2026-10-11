@@ -25,6 +25,7 @@ const model = await import('./onboarding/onboardingModel.ts')
 const repo = await import('./onboarding/onboardingRepository.ts')
 const credentials = await import('./integrations/credentialService.ts')
 const accounts = await import('./integrations/marketplaceAccountRepository.ts')
+const carriers = await import('./carriers/carrierAccounts.ts')
 const orders = await import('./orders/orderPersistenceService.ts')
 const connectorStore = await import('./connectors/connectorCredentialStore.ts')
 const kernel = await import('./connectors/connectorKernel.ts')
@@ -78,11 +79,18 @@ async function connectTrendyol(db, org, sellerId = '111') {
   })
   return accounts.resolveOrCreateActiveAccount(db, org, 'Trendyol', sellerId)
 }
-async function connectSurat(db, org) {
+// PHASE2-C: kargo adımı KALICI doğrulama ister. Varsayılan yardımcı gerçek
+// akışı izler: kimlik kaydı → taşıyıcı hesabı → başarılı bağlantı testi kaydı.
+async function connectSurat(db, org, { verified = true } = {}) {
   await credentials.saveIntegrationCredential(db, org, 'surat', {
     kullaniciAdi: 'cari-1',
     sifre: SURAT_SECRET,
   })
+  const account = await carriers.syncSuratCarrierAccount(db, org)
+  if (verified) {
+    await carriers.recordCarrierVerification(db, { organizationId: org, carrierAccountId: account.id, status: 'verified' })
+  }
+  return account
 }
 const sync = (db, org, entry) =>
   repo.recordSyncState(db, org, { provider: 'trendyol', fetchedCount: 0, ...entry })
@@ -141,10 +149,11 @@ test('ONB-3: Trendyol kayıtlı, başarılı bootstrap senkronu yok → tamamlan
   await connectTrendyol(db, org)
   await connectSurat(db, org)
   const status = await service.deriveOnboardingStatus(db, org)
-  assert.deepEqual(status.blockers, ['FIRST_SYNC_REQUIRED'])
+  assert.deepEqual(status.blockers, ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'])
   assert.equal(status.marketplaces[0].configured, true)
   assert.equal(status.marketplaces[0].bootstrapReady, false)
-  assert.equal(status.resumeStep, 'FIRST_SYNC')
+  // PHASE2-C: kayıtlı kimlik doğrulama DEĞİLDİR → pazaryeri adımı sürer.
+  assert.equal(status.resumeStep, 'MARKETPLACE')
   assert.equal((await service.handleOnboardingCompleteRequest({ db, organizationId: org })).httpStatus, 409)
 })
 
@@ -194,12 +203,12 @@ test('ONB-7: başarısız/kısmi senkron bootstrap SAĞLAMAZ; kilit başarıyı 
   const scope = { marketplaceAccountId: account.id }
 
   await sync(db, org, { resource: 'orders', status: 'failed', errorCode: 'HTTP_500', ...scope })
-  assert.deepEqual(await blockersOf(db, org), ['FIRST_SYNC_REQUIRED'], 'failed sayılmaz')
+  assert.deepEqual(await blockersOf(db, org), ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'], 'failed sayılmaz')
   await sync(db, org, { resource: 'products', status: 'partial', fetchedCount: 12, ...scope })
-  assert.deepEqual(await blockersOf(db, org), ['FIRST_SYNC_REQUIRED'], 'partial sayılmaz')
+  assert.deepEqual(await blockersOf(db, org), ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'], 'partial sayılmaz')
   // Açık 'running' kilidi de başarı DEĞİLDİR.
   await repo.acquireSyncLock(db, org, 'orders', scope)
-  assert.deepEqual(await blockersOf(db, org), ['FIRST_SYNC_REQUIRED'], 'running sayılmaz')
+  assert.deepEqual(await blockersOf(db, org), ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'], 'running sayılmaz')
 
   // R3 yeniden üretimi: başarıdan SONRA alınan kilit adımı geri ÇEVİRMEZ.
   await sync(db, org, { resource: 'orders', status: 'success', ...scope })
@@ -226,7 +235,7 @@ test('ONB-8/20: başka kiracının senkronu/hesabı/tamamlanması SIZMAZ', async
   await sync(db, orgB, { resource: 'orders', status: 'success', marketplaceAccountId: accountB.id })
   // B'nin başarısı A'yı SAĞLAMAZ.
   const statusA = await service.deriveOnboardingStatus(db, orgA)
-  assert.deepEqual(statusA.blockers, ['FIRST_SYNC_REQUIRED'])
+  assert.deepEqual(statusA.blockers, ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'])
   // A'nın yanıtı B'nin hesabını GÖRMEZ.
   assert.equal(JSON.stringify(statusA).includes(accountB.id), false)
   assert.equal(statusA.marketplaces[0].accounts.length, 1)
@@ -267,7 +276,7 @@ test('ONB-9: kardeş hesabın başarısı diğer hesabı DOĞRULAMAZ', async (t)
   assert.equal(views[old.id].bootstrapReady, false)
   // R4 yeniden üretimi: kardeşin sipariş SATIRI kanıt DEĞİLDİR.
   assert.equal(status.counts.orders, 1)
-  assert.deepEqual(status.blockers, ['FIRST_SYNC_REQUIRED'])
+  assert.deepEqual(status.blockers, ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'])
 
   // Hesap kapsamlı kimlikli sağlayıcıda (çok mağaza) izolasyon — saf model.
   const health = (accountId, success) => ({
@@ -327,7 +336,7 @@ test('ONB-10: eski (hesapsız) Trendyol satırı AÇIK ve SINIRLI uyumluluk', as
   assert.equal(trendyol.legacyConnection.reason, 'ACCOUNT_STATE_AUTHORITATIVE')
   assert.equal(trendyol.accounts[0].marketplaceAccountId, account.id)
   assert.equal(trendyol.accounts[0].bootstrapReady, false, 'eski satır hesabı doğrulamaz')
-  assert.deepEqual(status.blockers, ['FIRST_SYNC_REQUIRED'])
+  assert.deepEqual(status.blockers, ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'])
 
   // (c) Kimlik SİLİNMİŞSE eski başarı dirilmez.
   await credentials.deleteIntegrationCredential(db, legacyOrg, 'trendyol')
@@ -439,22 +448,42 @@ test('ONB-13: uygun liste KATALOG + CANLI yetenekten gelir (sabit liste yok)', (
   assert.equal(/providerKey\s*===\s*['"]trendyol['"]/.test(source), false)
 })
 
-test('ONB-14: Sürat kayıtlı ≠ doğrulanmış (kalıcı kanıt yok)', async (t) => {
+test('ONB-14: Sürat kayıtlı ≠ doğrulanmış; doğrulama KALICI ve kimlik değişince sıfırlanır', async (t) => {
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
   const org = await makeOrg(db)
   const none = await service.deriveOnboardingStatus(db, org)
   assert.equal(none.carrier.verification, 'NOT_CONFIGURED')
-  await connectSurat(db, org)
-  const status = await service.deriveOnboardingStatus(db, org)
-  assert.equal(status.carrier.configured, true)
-  assert.equal(status.carrier.verification, 'VERIFICATION_NOT_PERSISTED')
-  assert.equal(JSON.stringify(status.carrier).includes('VERIFIED"'), false)
+
+  // Yalnız kayıt: adım TAMAMLANMAZ (VERIFICATION_NOT_PERSISTED kusuru kapandı).
+  const account = await connectSurat(db, org, { verified: false })
+  const saved = await service.deriveOnboardingStatus(db, org)
+  assert.equal(saved.carrier.configured, true)
+  assert.equal(saved.carrier.verification, 'UNVERIFIED')
+  assert.equal(saved.steps.find((step) => step.key === 'CARRIER').done, false)
+  assert.ok(saved.blockers.includes('CARRIER_NOT_VERIFIED'))
   // Eski yalan alan GERİ GELEMEZ.
-  assert.equal('suratConnectionVerified' in status, false)
-  assert.equal(JSON.stringify(status).includes('suratConnectionVerified'), false)
-  // Taşıyıcı kayıtlıyken engel kalkar — doğrulama ŞART KOŞULMAZ.
-  assert.equal(status.blockers.includes('CARRIER_NOT_CONFIGURED'), false)
+  assert.equal('suratConnectionVerified' in saved, false)
+
+  // Başarısız test kalıcı yazılır ve "doğrulandı" sayılmaz.
+  await carriers.recordCarrierVerification(db, { organizationId: org, carrierAccountId: account.id, status: 'auth_failed' })
+  assert.equal((await service.deriveOnboardingStatus(db, org)).carrier.verification, 'FAILED')
+
+  // Başarılı test → adım tamam.
+  await carriers.recordCarrierVerification(db, { organizationId: org, carrierAccountId: account.id, status: 'verified' })
+  const verified = await service.deriveOnboardingStatus(db, org)
+  assert.equal(verified.carrier.verification, 'VERIFIED')
+  assert.ok(verified.carrier.lastVerifiedAt)
+  assert.equal(verified.steps.find((step) => step.key === 'CARRIER').done, true)
+
+  // Kimlik DEĞİŞİRSE eski doğrulama yeni kimliği kanıtlamaz.
+  await credentials.saveIntegrationCredential(db, org, 'surat', { kullaniciAdi: 'cari-1', sifre: 'YENI-SIFRE-9' })
+  await carriers.syncSuratCarrierAccount(db, org)
+  assert.equal((await service.deriveOnboardingStatus(db, org)).carrier.verification, 'UNVERIFIED')
+  // Aynı kimlik yeniden kaydedilirse doğrulama KORUNUR.
+  await carriers.recordCarrierVerification(db, { organizationId: org, carrierAccountId: account.id, status: 'verified' })
+  await carriers.syncSuratCarrierAccount(db, org)
+  assert.equal((await service.deriveOnboardingStatus(db, org)).carrier.verification, 'VERIFIED')
 })
 
 test('ONB-15/16: durum ve tamamlama SIFIR ağ çağrısı, SIFIR gönderi', async (t) => {
@@ -501,12 +530,15 @@ test('ONB-17: yeniden açılış İLK EKSİK ZORUNLU adımdan sürer', async (t)
   await fillBusinessProfile(db, org)
   assert.equal(await resume(), 'MARKETPLACE', 'taşıyıcı önce girildiyse pazaryerine döner')
   const account = await connectTrendyol(db, org)
+  assert.equal(await resume(), 'MARKETPLACE', 'kayıtlı kimlik doğrulanana kadar pazaryeri adımı sürer')
+  await carriers.recordMarketplaceVerification(db, { organizationId: org, marketplaceAccountId: account.id, status: 'verified' })
   assert.equal(await resume(), 'FIRST_SYNC')
   await sync(db, org, { resource: 'orders', status: 'success', marketplaceAccountId: account.id })
   assert.equal(await resume(), 'READY', 'hepsi tamam ama completed=false → Hazır')
 
   const other = await makeOrg(db)
-  await connectTrendyol(db, other, '444')
+  const otherAccount = await connectTrendyol(db, other, '444')
+  await carriers.recordMarketplaceVerification(db, { organizationId: other, marketplaceAccountId: otherAccount.id, status: 'verified' })
   assert.equal((await service.deriveOnboardingStatus(db, other)).resumeStep, 'CARRIER')
 })
 

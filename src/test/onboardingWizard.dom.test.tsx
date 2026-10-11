@@ -39,28 +39,42 @@ const TRENDYOL = {
 }
 
 function statusOf(overrides: {
-  marketplace?: Partial<typeof TRENDYOL>
+  marketplace?: Partial<typeof TRENDYOL> & { verified?: boolean }
   carrierConfigured?: boolean
+  /** Kargo bağlantısı kalıcı olarak doğrulandı mı (varsayılan: kayıtlıysa evet). */
+  carrierVerified?: boolean
   completed?: boolean
   businessDone?: boolean
 }): OnboardingStatus {
-  const marketplace = { ...TRENDYOL, ...(overrides.marketplace ?? {}) }
+  const base = { ...TRENDYOL, ...(overrides.marketplace ?? {}) }
+  // Fikstür kolaylığı: "kayıtlı" pazaryeri aksi belirtilmedikçe doğrulanmış sayılır;
+  // kayıtlı ≠ doğrulandı ayrımını sınayan testler `verified: false` verir.
+  const marketplace = {
+    ...base,
+    verified: base.configured && (overrides.marketplace?.verified ?? true) && !base.credentialsRejected,
+  }
   const carrierConfigured = overrides.carrierConfigured ?? false
+  const carrierVerified = carrierConfigured && (overrides.carrierVerified ?? true)
+  const operationsResolved = marketplace.verified && carrierVerified
   const steps = [
     { key: 'WELCOME', required: false, done: true },
     { key: 'BUSINESS', required: true, done: overrides.businessDone ?? true },
-    { key: 'MARKETPLACE', required: true, done: marketplace.configured },
-    { key: 'CARRIER', required: true, done: carrierConfigured },
+    { key: 'MARKETPLACE', required: true, done: marketplace.verified },
+    { key: 'CARRIER', required: true, done: carrierVerified },
+    { key: 'OPERATIONS', required: true, done: operationsResolved },
     { key: 'FIRST_SYNC', required: true, done: marketplace.bootstrapReady },
     { key: 'READY', required: false, done: Boolean(overrides.completed) },
   ]
   const blockers: string[] = []
   if (overrides.businessDone === false) blockers.push('BUSINESS_PROFILE_INCOMPLETE')
   if (!marketplace.configured) blockers.push('MARKETPLACE_NOT_CONFIGURED')
-  else if (!marketplace.bootstrapReady) {
-    blockers.push(marketplace.credentialsRejected ? 'MARKETPLACE_NOT_VERIFIED' : 'FIRST_SYNC_REQUIRED')
+  else if (!marketplace.verified) {
+    blockers.push(marketplace.credentialsRejected ? 'MARKETPLACE_NOT_VERIFIED' : 'MARKETPLACE_VERIFICATION_REQUIRED')
   }
   if (!carrierConfigured) blockers.push('CARRIER_NOT_CONFIGURED')
+  else if (!carrierVerified) blockers.push('CARRIER_NOT_VERIFIED')
+  if (marketplace.configured && carrierConfigured && !operationsResolved) blockers.push('OPERATIONS_UNRESOLVED')
+  if (marketplace.configured && !marketplace.bootstrapReady) blockers.push('FIRST_SYNC_REQUIRED')
   const required = steps.filter((step) => step.required)
   const first = required.find((step) => !step.done)
   return normalizeOnboardingStatus({
@@ -75,7 +89,20 @@ function statusOf(overrides: {
       providerKey: 'surat',
       displayName: 'Sürat Kargo',
       configured: carrierConfigured,
-      verification: carrierConfigured ? 'VERIFICATION_NOT_PERSISTED' : 'NOT_CONFIGURED',
+      verification: !carrierConfigured ? 'NOT_CONFIGURED' : carrierVerified ? 'VERIFIED' : 'UNVERIFIED',
+      lastVerifiedAt: carrierVerified ? '2026-10-12T09:00:00.000Z' : null,
+    },
+    operations: {
+      resolved: operationsResolved,
+      accounts: marketplace.configured && carrierConfigured
+        ? [{
+            marketplaceAccountId: 'm1',
+            providerKey: 'trendyol',
+            displayName: 'Trendyol',
+            carrier: { ok: true, carrierAccountId: 'c1', carrierName: 'Sürat Kargo', source: 'ONLY_ACCOUNT_FOR_PROVIDER' },
+            payer: { ok: true, source: 'ORDER_CONTRACT' },
+          }]
+        : [],
     },
     counts: { products: 0, orders: 0 },
   })
@@ -152,10 +179,8 @@ test('ONB-UI-NAV: ileri/geri gezinme', () => {
 
 test('ONB-UI-TRUTH: kayıtlı ≠ doğrulandı (pazaryeri ve taşıyıcı)', () => {
   responder = () => ({ status: 200, body: {} })
-  renderPage(statusOf({ marketplace: { configured: true }, carrierConfigured: true }))
-  // FIRST_SYNC'e sürdü; pazaryeri adımına geri dön.
-  fireEvent.click(button(/Geri/))
-  fireEvent.click(button(/Geri/))
+  renderPage(statusOf({ marketplace: { configured: true, verified: false }, carrierConfigured: true, carrierVerified: false }))
+  // Kayıtlı ama doğrulanmamış pazaryeri: kurulum PAZARYERİ adımından sürer.
   expect(heading()).toBe('Trendyol Bağlantısı')
   expect(screen.getByText('Kayıtlı')).toBeTruthy()
   expect(screen.getByText('Henüz doğrulanmadı')).toBeTruthy()
@@ -163,8 +188,10 @@ test('ONB-UI-TRUTH: kayıtlı ≠ doğrulandı (pazaryeri ve taşıyıcı)', () 
 
   fireEvent.click(button(/İleri/))
   expect(heading()).toBe('Sürat Kargo Bağlantısı')
-  expect(screen.getByText('Kalıcı doğrulama kaydı yok')).toBeTruthy()
-  expect(document.body.textContent).not.toMatch(/Doğrulandı|Bağlantı doğrulandı/)
+  // PHASE2-C: doğrulama KALICIDIR; kayıt yalnızsa "Henüz doğrulanmadı".
+  expect(screen.getByText('Kayıtlı')).toBeTruthy()
+  expect(screen.getByText('Henüz doğrulanmadı')).toBeTruthy()
+  expect(document.body.textContent).not.toMatch(/Bağlantı doğrulandı/)
 })
 
 test('ONB-UI-VERIFIED: gerçek başarılı senkron kaydı varsa "Bağlantı doğrulandı"', () => {
@@ -172,7 +199,7 @@ test('ONB-UI-VERIFIED: gerçek başarılı senkron kaydı varsa "Bağlantı doğ
   renderPage(statusOf({ marketplace: { configured: true, bootstrapReady: true } }))
   fireEvent.click(button(/Geri/)) // CARRIER'den MARKETPLACE'e
   expect(heading()).toBe('Trendyol Bağlantısı')
-  expect(screen.getByText('Bağlantı doğrulandı')).toBeTruthy()
+  expect(document.querySelector('.onboarding-chip.is-on:last-child')?.textContent).toBe('Bağlantı doğrulandı')
 })
 
 test('ONB-UI-TEST: başarısız / başarılı oturum testi kopyası', async () => {
@@ -259,8 +286,8 @@ test('ONB-UI-READY: tamamlama butonu yalnız sunucu uygun derse açılır', () =
   expect(screen.getByText('En az bir başarılı ilk senkron gerekli')).toBeTruthy()
   const checklist = screen.getByRole('list', { name: 'Kurulum kontrol listesi' })
   const items = [...checklist.querySelectorAll('li')].map((li) => li.getAttribute('data-done'))
-  // İşletme · pazaryeri · taşıyıcı tamam; ilk senkron eksik.
-  expect(items).toEqual(['true', 'true', 'true', 'false'])
+  // İşletme · pazaryeri · taşıyıcı · operasyon tamam; ilk senkron eksik.
+  expect(items).toEqual(['true', 'true', 'true', 'true', 'false'])
 })
 
 test('ONB-UI-HANDOFF: tamamla → uygulamaya geçiş (Gate) ve gövdesiz istek', async () => {

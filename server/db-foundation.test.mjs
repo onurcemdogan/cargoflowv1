@@ -59,6 +59,9 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
       // TEK KULLANIMLIK AUTH TOKEN'LARI (0015). E-posta doğrulama ve şifre
       // sıfırlama; DB'de yalnız SHA-256 hash, tek kullanım + süre sonu.
       'auth_tokens',
+      // TAŞIYICI HESAPLARI (0017). Kullanıcının kendi kargo hesapları; sır
+      // burada DURMAZ (credential_ref). Kalıcı doğrulama durumu taşır.
+      'carrier_accounts',
       // HESAP KAPSAMLI BAĞLAYICI KİMLİKLERİ (0013). `integration_credentials`
       // org+provider TEKİLDİR ve bir org'un İKİ Woo mağazası için ayrı sır
       // TUTAMAZ; bu tablo hesap kapsamlıdır ve sağlayıcı-nötrdür.
@@ -73,6 +76,8 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
       // ayni paket icin ikinci mantiksal is OLUSAMAZ.
       'label_jobs',
       'marketplace_accounts',
+      // PAZARYERİ ↔ TAŞIYICI HESABI EŞLEMESİ (0017). Hesap başına TEK eşleme.
+      'marketplace_carrier_mappings',
       'order_lines',
       'orders',
       // ÇALIŞMA ALANI ÜYELİĞİ (0016). Erişim yetkisinin kaynağı.

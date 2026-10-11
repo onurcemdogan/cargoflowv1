@@ -38,6 +38,19 @@ import {
   type ProviderKind,
 } from '../connectors/connectorKernel.ts'
 import type { IntegrationHealth } from '../connectors/integrationHealth.ts'
+import {
+  resolveCarrierAccountFromRecords,
+  type CarrierAccountRecord,
+  type CarrierMappingRecord,
+  type CarrierResolutionSource,
+} from '../carriers/carrierResolution.ts'
+
+/**
+ * Siparişinde doğrulanmış ödeyen sinyali taşıyan pazaryerleri. KAYNAK:
+ * `shipments/shippingBillingParty.MARKETPLACES_WITH_VERIFIED_ORDER_SIGNAL`
+ * (aynı liste; burada saflık için kopyalanmaz, test eşitliği kilitler).
+ */
+export const PAYER_SIGNAL_MARKETPLACES: readonly string[] = ['trendyol']
 
 /**
  * İlk senkron (bootstrap) kaynakları ve onları CANLI kılan yetenekler.
@@ -82,6 +95,8 @@ export const ONBOARDING_STEP_KEYS = [
   'BUSINESS',
   'MARKETPLACE',
   'CARRIER',
+  // Satış hesabı ↔ kargo hesabı eşlemesi + ödeyen politikası çözülebilir mi.
+  'OPERATIONS',
   'FIRST_SYNC',
   'READY',
 ] as const
@@ -93,8 +108,11 @@ export const ONBOARDING_BLOCKERS = {
   NO_ELIGIBLE_MARKETPLACE: 'NO_ELIGIBLE_MARKETPLACE',
   MARKETPLACE_NOT_CONFIGURED: 'MARKETPLACE_NOT_CONFIGURED',
   MARKETPLACE_NOT_VERIFIED: 'MARKETPLACE_NOT_VERIFIED',
+  MARKETPLACE_VERIFICATION_REQUIRED: 'MARKETPLACE_VERIFICATION_REQUIRED',
   FIRST_SYNC_REQUIRED: 'FIRST_SYNC_REQUIRED',
   CARRIER_NOT_CONFIGURED: 'CARRIER_NOT_CONFIGURED',
+  CARRIER_NOT_VERIFIED: 'CARRIER_NOT_VERIFIED',
+  OPERATIONS_UNRESOLVED: 'OPERATIONS_UNRESOLVED',
 } as const
 export type OnboardingBlocker = (typeof ONBOARDING_BLOCKERS)[keyof typeof ONBOARDING_BLOCKERS]
 
@@ -164,6 +182,8 @@ export interface OnboardingAccountRecord {
   marketplace: string
   displayName: string | null
   isActive: boolean
+  /** Kalıcı kimlik doğrulaması (`marketplace_accounts.verification_status`). */
+  verificationStatus?: string | null
 }
 
 export interface OnboardingSnapshot {
@@ -183,6 +203,11 @@ export interface OnboardingSnapshot {
    * (eski çağıran) tamamlanmamış sayılır — sessizce "tamam" varsayılmaz.
    */
   businessProfileComplete?: boolean
+  /** Taşıyıcı hesapları (sır YOK) ve açık eşlemeler. */
+  carrierAccounts?: readonly CarrierAccountRecord[]
+  carrierMappings?: readonly CarrierMappingRecord[]
+  /** Hesap düzeyinde ödeyen ayarı yapılmış pazaryeri hesapları. */
+  payerConfiguredAccountIds?: readonly string[]
 }
 
 /* ─── GÜVENLİ PROJEKSİYON ────────────────────────────────────────────── */
@@ -206,6 +231,10 @@ export interface OnboardingAccountView {
   credentialsRejected: boolean
   sync: OnboardingResourceSync[]
   bootstrapReady: boolean
+  /** Kalıcı doğrulama kaydı (`verified`, `auth_failed`, …). */
+  verificationStatus: string
+  /** Kimliği gerçek bir kontrolle doğrulandı mı (kalıcı kayıt VEYA başarılı senkron). */
+  verified: boolean
 }
 
 export interface OnboardingLegacyConnectionView {
@@ -226,11 +255,23 @@ export interface OnboardingMarketplaceView {
   credentialsRejected: boolean
   /** Kimlik doğrulanmış GERÇEK bir okuma başarılı oldu mu? */
   bootstrapReady: boolean
+  /** Kimlik bilgisi gerçek bir kontrolle doğrulandı mı? */
+  verified: boolean
   accounts: OnboardingAccountView[]
   legacyConnection: OnboardingLegacyConnectionView | null
 }
 
-export type CarrierVerificationState = 'NOT_CONFIGURED' | 'VERIFICATION_NOT_PERSISTED'
+export type CarrierVerificationState = 'NOT_CONFIGURED' | 'UNVERIFIED' | 'VERIFIED' | 'FAILED'
+
+export interface OnboardingOperationsAccountView {
+  marketplaceAccountId: string | null
+  providerKey: string
+  displayName: string
+  carrier:
+    | { ok: true; carrierAccountId: string; carrierName: string; source: CarrierResolutionSource }
+    | { ok: false; code: string }
+  payer: { ok: boolean; source: 'ORDER_CONTRACT' | 'ACCOUNT_CONFIG' | null }
+}
 
 export interface OnboardingStepView {
   key: OnboardingStepKey
@@ -254,10 +295,16 @@ export interface OnboardingStatus {
     displayName: string
     configured: boolean
     /**
-     * `VERIFIED` DEĞERİ YOKTUR: gönderi oluşturmayan KALICI doğrulama kanıtı
-     * saklanmaz. Kimlik varlığı doğrulama DEĞİLDİR.
+     * Taşıyıcı hesabındaki KALICI doğrulama kaydından (gönderi oluşturmayan
+     * gerçek kimlik kontrolü). Kimlik VARLIĞI doğrulama DEĞİLDİR.
      */
     verification: CarrierVerificationState
+    lastVerifiedAt: string | null
+  }
+  /** Satış hesabı ↔ kargo hesabı + ödeyen politikası çözümü. */
+  operations: {
+    resolved: boolean
+    accounts: OnboardingOperationsAccountView[]
   }
   shipmentDefaults: {
     /** Kanıtlanmış çalışma zamanı gereği ZORUNLU DEĞİL (ONB-23). */
@@ -346,6 +393,11 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
           : credentialsRejected
             ? 'DISCONNECTED'
             : 'CONNECTED'
+        const bootstrapReady =
+          credentials === 'PRESENT' &&
+          !credentialsRejected &&
+          sync.some((entry) => entry.lastSuccessfulSyncAt !== null)
+        const verificationStatus = String(account.verificationStatus ?? 'unverified')
         return {
           marketplaceAccountId: account.id,
           displayName: account.displayName || provider.displayName,
@@ -354,10 +406,12 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
           connection,
           credentialsRejected,
           sync,
-          bootstrapReady:
+          bootstrapReady,
+          verificationStatus,
+          verified:
             credentials === 'PRESENT' &&
             !credentialsRejected &&
-            sync.some((entry) => entry.lastSuccessfulSyncAt !== null),
+            (bootstrapReady || verificationStatus === 'verified'),
         }
       })
 
@@ -396,6 +450,8 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
     const bootstrapReady =
       accounts.some((account) => account.bootstrapReady) ||
       Boolean(legacyConnection?.bootstrapReady)
+    const verified =
+      accounts.some((account) => account.verified) || Boolean(legacyConnection?.bootstrapReady)
 
     return {
       providerKey: key,
@@ -406,14 +462,77 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
       configured,
       credentialsRejected,
       bootstrapReady,
+      verified,
       accounts,
       legacyConnection,
     }
   })
 
   const marketplaceConfigured = marketplaces.some((entry) => entry.configured)
+  const marketplaceVerified = marketplaces.some((entry) => entry.verified)
   const bootstrapReady = marketplaces.some((entry) => entry.bootstrapReady)
-  const carrierConfigured = Boolean(snapshot.carrierConfigured)
+  const anyRejected = marketplaces.some((entry) => entry.credentialsRejected)
+
+  // ── Taşıyıcı: KALICI doğrulama kaydı ────────────────────────────────
+  const carrierAccounts = snapshot.carrierAccounts ?? []
+  const carrierMappings = snapshot.carrierMappings ?? []
+  const onboardingCarrierAccounts = carrierAccounts.filter(
+    (account) => account.enabled && account.provider.toLowerCase() === ONBOARDING_CARRIER.providerKey,
+  )
+  const carrierConfigured = Boolean(snapshot.carrierConfigured) || onboardingCarrierAccounts.length > 0
+  const verifiedCarrier = onboardingCarrierAccounts.find((account) => account.verificationStatus === 'verified')
+  const failedCarrier = onboardingCarrierAccounts.find(
+    (account) => account.verificationStatus !== 'verified' && account.verificationStatus !== 'unverified',
+  )
+  const carrierVerification: CarrierVerificationState = !carrierConfigured
+    ? 'NOT_CONFIGURED'
+    : verifiedCarrier
+      ? 'VERIFIED'
+      : failedCarrier
+        ? 'FAILED'
+        : 'UNVERIFIED'
+  const carrierVerified = carrierVerification === 'VERIFIED'
+
+  // ── Operasyon: her etkin satış hesabı için kargo hesabı + ödeyen ────
+  const payerConfigured = new Set(snapshot.payerConfiguredAccountIds ?? [])
+  const operationsAccounts: OnboardingOperationsAccountView[] = []
+  for (const marketplace of marketplaces) {
+    const live = marketplace.accounts.filter((account) => account.credentials === 'PRESENT' && account.isActive)
+    const targets: Array<{ id: string | null; displayName: string }> = live.map((account) => ({
+      id: account.marketplaceAccountId,
+      displayName: account.displayName,
+    }))
+    if (targets.length === 0 && marketplace.legacyConnection?.counted && marketplace.configured) {
+      targets.push({ id: null, displayName: marketplace.displayName })
+    }
+    for (const target of targets) {
+      const resolution = resolveCarrierAccountFromRecords(carrierAccounts, carrierMappings, {
+        provider: ONBOARDING_CARRIER.providerKey,
+        marketplaceAccountId: target.id,
+      })
+      const signal = PAYER_SIGNAL_MARKETPLACES.includes(marketplace.providerKey)
+      const accountConfig = target.id != null && payerConfigured.has(target.id)
+      operationsAccounts.push({
+        marketplaceAccountId: target.id,
+        providerKey: marketplace.providerKey,
+        displayName: target.displayName,
+        carrier: resolution.ok
+          ? {
+              ok: true,
+              carrierAccountId: resolution.account.id,
+              carrierName: resolution.account.displayName,
+              source: resolution.source,
+            }
+          : { ok: false, code: resolution.code },
+        payer: {
+          ok: signal || accountConfig,
+          source: signal ? 'ORDER_CONTRACT' : accountConfig ? 'ACCOUNT_CONFIG' : null,
+        },
+      })
+    }
+  }
+  const operationsResolved =
+    operationsAccounts.length > 0 && operationsAccounts.every((entry) => entry.carrier.ok && entry.payer.ok)
 
   const businessProfileComplete = snapshot.businessProfileComplete === true
 
@@ -423,20 +542,35 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
     blockers.push(ONBOARDING_BLOCKERS.NO_ELIGIBLE_MARKETPLACE)
   } else if (!marketplaceConfigured) {
     blockers.push(ONBOARDING_BLOCKERS.MARKETPLACE_NOT_CONFIGURED)
-  } else if (!bootstrapReady) {
+  } else if (!marketplaceVerified) {
     blockers.push(
-      marketplaces.some((entry) => entry.credentialsRejected)
+      anyRejected
         ? ONBOARDING_BLOCKERS.MARKETPLACE_NOT_VERIFIED
-        : ONBOARDING_BLOCKERS.FIRST_SYNC_REQUIRED,
+        : ONBOARDING_BLOCKERS.MARKETPLACE_VERIFICATION_REQUIRED,
     )
   }
   if (!carrierConfigured) blockers.push(ONBOARDING_BLOCKERS.CARRIER_NOT_CONFIGURED)
+  else if (!carrierVerified) blockers.push(ONBOARDING_BLOCKERS.CARRIER_NOT_VERIFIED)
+  // Değerlendirilecek satış hesabı henüz yoksa (kimlik kaydı bir hesaba
+  // bağlanmadan) pazaryeri engelleri zaten konuşur; gürültü ÜRETİLMEZ.
+  if (
+    marketplaceConfigured &&
+    carrierConfigured &&
+    !operationsResolved &&
+    (operationsAccounts.length > 0 || marketplaceVerified)
+  ) {
+    blockers.push(ONBOARDING_BLOCKERS.OPERATIONS_UNRESOLVED)
+  }
+  if (marketplaceConfigured && !bootstrapReady && !(anyRejected && !marketplaceVerified)) {
+    blockers.push(ONBOARDING_BLOCKERS.FIRST_SYNC_REQUIRED)
+  }
 
   const steps: OnboardingStepView[] = [
     { key: 'WELCOME', required: false, done: true },
     { key: 'BUSINESS', required: true, done: businessProfileComplete },
-    { key: 'MARKETPLACE', required: true, done: marketplaceConfigured },
-    { key: 'CARRIER', required: true, done: carrierConfigured },
+    { key: 'MARKETPLACE', required: true, done: marketplaceVerified },
+    { key: 'CARRIER', required: true, done: carrierVerified },
+    { key: 'OPERATIONS', required: true, done: operationsResolved },
     { key: 'FIRST_SYNC', required: true, done: bootstrapReady },
     { key: 'READY', required: false, done: snapshot.completed },
   ]
@@ -453,7 +587,8 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
   return {
     completed: Boolean(snapshot.completed),
     completedAt: snapshot.completedAt,
-    eligibleToComplete: blockers.length === 0,
+    // İKİ KAT GÜVENCE: engel yok VE her zorunlu adım gerçekten tamam.
+    eligibleToComplete: blockers.length === 0 && required.every((step) => step.done),
     blockers,
     resumeStep,
     steps,
@@ -462,8 +597,10 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
       providerKey: ONBOARDING_CARRIER.providerKey,
       displayName: ONBOARDING_CARRIER.displayName,
       configured: carrierConfigured,
-      verification: carrierConfigured ? 'VERIFICATION_NOT_PERSISTED' : 'NOT_CONFIGURED',
+      verification: carrierVerification,
+      lastVerifiedAt: verifiedCarrier?.lastVerifiedAt ?? null,
     },
+    operations: { resolved: operationsResolved, accounts: operationsAccounts },
     shipmentDefaults: {
       required: false,
       defaultUnitDesiConfigured: Boolean(snapshot.defaultUnitDesiConfigured),

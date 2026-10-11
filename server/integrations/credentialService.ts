@@ -2,7 +2,7 @@
 // Payload DB'de ASLA düz metin tutulmaz: AES-256-GCM, kayıt başına random IV,
 // auth tag + keyVersion saklanır. Secret değerler loglanmaz. db örneği
 // dependency-injection ile gelir (hermetik testlerde pglite).
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
+import { createCipheriv, createDecipheriv, createHmac, randomBytes } from 'node:crypto'
 import { and, eq } from 'drizzle-orm'
 import { integrationCredentials } from '../db/schema.ts'
 
@@ -88,6 +88,36 @@ export function encryptCredentialPayload(payload: Record<string, unknown>): {
   return {
     encryptedPayload: JSON.stringify(envelope),
     keyVersion: CURRENT_KEY_VERSION,
+  }
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  if (value && typeof value === 'object') {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .filter(([, item]) => item !== undefined)
+      .sort(([left], [right]) => left.localeCompare(right))
+    return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
+  }
+  return JSON.stringify(value ?? null)
+}
+
+/**
+ * KİMLİK PARMAK İZİ — kimlik bilgisi DEĞİŞTİ mi?
+ *
+ * Doğrulama kaydı yalnız doğrulandığı kimlik için geçerlidir. Sırrın düz
+ * hash'i zayıf şifrelerde kırılabilir; bu yüzden şifreleme anahtarıyla
+ * ANAHTARLI HMAC kullanılır (anahtar olmadan tersine çevrilemez, kıyas
+ * yapılamaz). Anahtar yoksa null döner (doğrulama da yapılamaz).
+ */
+export function credentialFingerprint(payload: Record<string, unknown>): string | null {
+  try {
+    const key = getEncryptionKey()
+    return createHmac('sha256', key)
+      .update(`cargoflow-credential-fingerprint-v1:${stableStringify(payload ?? {})}`)
+      .digest('hex')
+  } catch {
+    return null
   }
 }
 
