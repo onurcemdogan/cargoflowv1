@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import indexHtml from '../../index.html?raw'
 import organizationAppSource from '../entries/OrganizationApp.tsx?raw'
@@ -6,7 +6,11 @@ import appSource from '../App.tsx?raw'
 import { EntryRoot } from '../EntryRoot'
 import { APP_ENTRY_PATH, APP_TITLE, LANDING_TITLE, resolveEntryRoute } from '../entryRoute'
 import { LandingPage } from '../landing/LandingPage'
-import { LANDING_CAPABILITIES, LANDING_INTEGRATIONS } from '../landing/landingContent'
+import {
+  INTEGRATION_STATUS_LABEL,
+  LANDING_CAPABILITIES,
+  LANDING_INTEGRATIONS,
+} from '../landing/landingContent'
 import { integrationConfigService } from '../services/appServices'
 
 // ═══ LANDING-001 — GERÇEK DOM KABULÜ ═════════════════════════════════════
@@ -158,13 +162,21 @@ test('LAND-ADMIN-1/2: /admin ve alt yolları yönetici kabuğu; organizasyon kim
 
 /* ─── İÇERİK DOĞRULUĞU ───────────────────────────────────────────────── */
 
-test('LAND-TRUTH-1..8: yalnız canlı entegrasyonlar; kayıt/fiyat/uydurma metrik/sertifika YOK', () => {
+test('LAND-TRUTH-1..8: canlı olmayan entegrasyon yalnız durumuyla anılır; kayıt/fiyat/uydurma metrik/sertifika YOK', () => {
   render(<LandingPage />)
   const text = visibleText()
   const all = `${text}\n${indexHtml}`
   expect(text).toContain('Trendyol')
   expect(text).toContain('Sürat Kargo')
-  expect(all).not.toMatch(/WooCommerce|\bikas\b|Ticimax|\bAras\b/i)
+  // Canlı OLMAYAN entegrasyonlar YALNIZ durum etiketli entegrasyon bölümünde
+  // geçer: sayfanın geri kalanında ve belge meta verisinde "mevcut" gibi anılmaz.
+  const integrations = screen.getByTestId('landing-integrations')
+  const outside = text.replace(integrations.textContent ?? '', '')
+  const notLive = /WooCommerce|\bikas\b|Ticimax|\bAras\b|Hepsiburada|\bn11\b/i
+  expect(outside).not.toMatch(notLive)
+  expect(indexHtml).not.toMatch(notLive)
+  // Resmî iş ortaklığı / partnerlik iddiası YOK.
+  expect(all).not.toMatch(/iş ortağı|ortaklığı|partner|yetkili (bayi|entegratör)|resm[iî] entegrasyon/i)
   expect(all).not.toMatch(/kayıt ol|ücretsiz başla|hesap oluştur|deneme|free trial|sign ?up/i)
   expect(all).not.toMatch(/₺|\bTL\b|fiyat|pricing|aylık|yıllık/i)
   expect(all).not.toMatch(/müşterimiz|referans|%\s?\d|\d+\s?%|\d{1,3}(\.\d{3})+\s?(müşteri|sipariş|kullanıcı)|yıldız|puan/i)
@@ -175,13 +187,31 @@ test('LAND-TRUTH-1..8: yalnız canlı entegrasyonlar; kayıt/fiyat/uydurma metri
   for (const href of hrefs) expect(href).toMatch(/^(\/app|\/|#[a-z-]+)$/)
 })
 
-test('LAND-UI-5: entegrasyon bölümü YALNIZ kabul edilmiş kamu entegrasyonları', () => {
+test('LAND-UI-5: entegrasyon kapsamı gerçek durumuyla; YALNIZ Trendyol ve Sürat Kargo "Canlı"', () => {
   render(<LandingPage />)
-  const items = [...screen.getByTestId('landing-integrations').querySelectorAll('li strong')].map(
-    (node) => node.textContent,
+  const rows = [...screen.getByTestId('landing-integrations').querySelectorAll('li[data-integration]')]
+  const shown = rows.map((row) => ({
+    name: row.querySelector('strong')?.textContent,
+    status: row.querySelector('.landing-status')?.textContent,
+  }))
+  expect(shown).toEqual([
+    { name: 'Trendyol', status: 'Canlı' },
+    { name: 'WooCommerce', status: 'İç test' },
+    { name: 'ikas', status: 'İç test' },
+    { name: 'Hepsiburada', status: 'Geliştiriliyor' },
+    { name: 'n11', status: 'Geliştiriliyor' },
+    { name: 'Ticimax', status: 'Geliştiriliyor' },
+    { name: 'Sürat Kargo', status: 'Canlı' },
+    { name: 'Aras Kargo', status: 'İç test' },
+  ])
+  // "Canlı" etiketi YALNIZ üretimde kullanılan iki entegrasyonda.
+  const live = LANDING_INTEGRATIONS.filter((item) => item.status === 'live').map((item) => item.name)
+  expect(live).toEqual(['Trendyol', 'Sürat Kargo'])
+  expect(INTEGRATION_STATUS_LABEL.live).toBe('Canlı')
+  const liveBadges = [...document.querySelectorAll('[data-integration] .landing-status')].filter(
+    (node) => node.textContent === 'Canlı',
   )
-  expect(items).toEqual(['Trendyol', 'Sürat Kargo'])
-  expect(LANDING_INTEGRATIONS.map((item) => item.name)).toEqual(['Trendyol', 'Sürat Kargo'])
+  expect(liveBadges).toHaveLength(2)
 })
 
 /* ─── ERİŞİLEBİLİRLİK / YAPI ─────────────────────────────────────────── */
@@ -190,7 +220,8 @@ test('LAND-UI-1/3/4: tek h1; "Nasıl çalışır?" çapası akışa ulaşır; ye
   render(<LandingPage />)
   expect(document.querySelectorAll('h1')).toHaveLength(1)
   expect(document.querySelectorAll('header, nav, main, footer').length).toBeGreaterThanOrEqual(4)
-  const how = screen.getByRole('link', { name: 'Nasıl çalışır?' })
+  const how = document.querySelector('[data-cta="secondary"]') as HTMLAnchorElement
+  expect(how.textContent).toBe('Nasıl Çalışır?')
   const target = document.querySelector(how.getAttribute('href') ?? '')
   expect(target?.tagName).toBe('SECTION')
   expect(target?.querySelector('h2')?.textContent).toBe('Nasıl çalışır?')
@@ -199,7 +230,7 @@ test('LAND-UI-1/3/4: tek h1; "Nasıl çalışır?" çapası akışa ulaşır; ye
     node.getAttribute('data-capability'),
   )
   expect(capabilities).toEqual(LANDING_CAPABILITIES.map((capability) => capability.title))
-  for (const section of ['nasil-calisir', 'ozellikler', 'entegrasyonlar']) {
+  for (const section of ['entegrasyonlar', 'faydalar', 'nasil-calisir', 'urun', 'guvenilirlik']) {
     const element = document.getElementById(section)
     expect(element?.getAttribute('aria-labelledby')).toBeTruthy()
   }
@@ -214,7 +245,7 @@ test('LAND-UI-6: mobil menü kullanılabilir (aria-expanded, bağlantı seçince
   expect(screen.getByRole('button', { name: 'Menüyü kapat' }).getAttribute('aria-expanded')).toBe('true')
   const nav = document.getElementById('landing-nav')
   expect(nav?.className).toContain('is-open')
-  fireEvent.click(screen.getByRole('link', { name: 'Özellikler' }))
+  fireEvent.click(within(nav as HTMLElement).getByRole('link', { name: 'Ürün' }))
   expect(nav?.className).not.toContain('is-open')
 })
 
@@ -226,6 +257,14 @@ test('LAND-UI-8: temsili ürün sahnesi süs olarak işaretli ve kişisel veri �
   const scene = document.querySelector('.landing-scene')?.textContent ?? ''
   expect(scene).not.toMatch(/\d{5,}|@|\+90|\bMah\.|\bSok\.|\bCad\.|\bTel\b/)
   expect(scene).toMatch(/Örnek sipariş A/)
+  // Ürün hissi: pazaryeri ve kargo rozeti, etiket/gönderi durumu, bağlantı sağlığı.
+  expect(document.querySelector('.landing-scene .landing-badge-market')?.textContent).toBe('Trendyol')
+  expect(document.querySelector('.landing-scene .landing-badge-carrier')?.textContent).toBe('Sürat Kargo')
+  expect(scene).toMatch(/Etiket/)
+  expect(scene).toMatch(/Gönderi/)
+  expect(scene).toMatch(/Bağlantı sağlığı/)
+  // Sahne yalnız CANLI entegrasyonları kullanır.
+  expect(scene).not.toMatch(/WooCommerce|\bikas\b|Ticimax|\bAras\b|Hepsiburada|\bn11\b/i)
 })
 
 // LAND-UI-7 / LAND-UI-9 (CSS sözleşmeleri) Node testindedir:
