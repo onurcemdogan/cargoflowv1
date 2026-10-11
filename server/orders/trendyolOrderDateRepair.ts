@@ -48,6 +48,8 @@ export type OrderDateRepairAction =
   | 'SKIP_ALREADY_CORRECT'
   | 'SKIP_RAW_UNAVAILABLE'
   | 'SKIP_RAW_UNPARSEABLE'
+  /** Kusur imzası KANITLANAMADI — belirsiz satıra ASLA dokunulmaz. */
+  | 'SKIP_AMBIGUOUS'
   | 'SKIP_UNEXPECTED'
 
 /**
@@ -81,6 +83,8 @@ export function actionForVerdict(
       return 'SKIP_RAW_UNAVAILABLE'
     case 'RAW_UNPARSEABLE':
       return 'SKIP_RAW_UNPARSEABLE'
+    case 'AMBIGUOUS':
+      return 'SKIP_AMBIGUOUS'
     case 'DRIFTED_BY_OFFSET':
       // İKİNCİ, BAĞIMSIZ DOĞRULAMA — sınıf etiketine tek başına güvenilmez.
       if (
@@ -164,6 +168,7 @@ export interface OrderDateTally {
   alreadyCorrect: number
   rawUnavailable: number
   rawUnparseable: number
+  ambiguous: number
   unexpected: number
 }
 
@@ -174,6 +179,7 @@ function emptyTally(): OrderDateTally {
     alreadyCorrect: 0,
     rawUnavailable: 0,
     rawUnparseable: 0,
+    ambiguous: 0,
     unexpected: 0,
   }
 }
@@ -184,6 +190,7 @@ function countAction(tally: OrderDateTally, action: OrderDateRepairAction): void
   else if (action === 'SKIP_ALREADY_CORRECT') tally.alreadyCorrect += 1
   else if (action === 'SKIP_RAW_UNAVAILABLE') tally.rawUnavailable += 1
   else if (action === 'SKIP_RAW_UNPARSEABLE') tally.rawUnparseable += 1
+  else if (action === 'SKIP_AMBIGUOUS') tally.ambiguous += 1
   else tally.unexpected += 1
 }
 
@@ -306,6 +313,25 @@ export interface OrderDateRepairApplyOptions {
   completedAt?: string
 }
 
+/**
+ * TEK SATIR ONARIM KANITI. Denetlenebilirlik için ESKİ ve YENİ değer birlikte
+ * saklanır: onarım bu ikisinden geriye çevrilebilir olmalıdır.
+ *
+ * PII YOK: müşteri adı/adres/telefon/tutar TAŞINMAZ; kimlik olarak yalnız
+ * dahili uuid + `packageId`/`orderNumber` (operasyonel tanımlayıcılar).
+ */
+export interface OrderDateRepairEvidence {
+  orderId: string
+  packageId: string | null
+  orderNumber: string | null
+  oldOrderDate: string | null
+  newOrderDate: string | null
+  driftMinutes: number | null
+  classification: OrderDateDriftClassification
+  reason: 'TRENDYOL_ORDERDATE_GMT3_DOUBLE_CONVERSION'
+  repairedAt: string
+}
+
 export interface OrderDateRepairAuditSummary {
   batchId: string
   organizationId: string
@@ -319,9 +345,12 @@ export interface OrderDateRepairAuditSummary {
   conflicts: number
   rawUnavailable: number
   rawUnparseable: number
+  ambiguous: number
   unexpected: number
   failed: number
   lastId: string | null
+  /** GERÇEKTEN yazılan her satırın eski/yeni değer kanıtı. */
+  evidence: OrderDateRepairEvidence[]
 }
 
 export class OrderDateRepairRefusedError extends Error {}
@@ -362,6 +391,8 @@ export async function applyTrendyolOrderDateRepair(
   const organizationId = options.organizationId
   const batchSize = Math.max(1, options.batchSize ?? DEFAULT_BATCH_SIZE)
   const startedAt = options.startedAt ?? new Date().toISOString()
+  const repairedAt = startedAt
+  const evidence: OrderDateRepairEvidence[] = []
   const tally = emptyTally()
   let updated = 0
   let conflicts = 0
@@ -401,8 +432,20 @@ export async function applyTrendyolOrderDateRepair(
                 )
                 .returning({ id: orders.id }),
             )
-            if (Array.isArray(changed) && changed.length > 0) updated += 1
-            else conflicts += 1
+            if (Array.isArray(changed) && changed.length > 0) {
+              updated += 1
+              evidence.push({
+                orderId: plan.orderId,
+                packageId: plan.packageId,
+                orderNumber: plan.orderNumber,
+                oldOrderDate: plan.currentOrderDate,
+                newOrderDate: plan.correctedOrderDate,
+                driftMinutes: plan.driftMinutes,
+                classification: plan.classification,
+                reason: 'TRENDYOL_ORDERDATE_GMT3_DOUBLE_CONVERSION',
+                repairedAt,
+              })
+            } else conflicts += 1
           } catch {
             // SESSİZ GEÇİLMEZ: hesaba katılır ve özet raporda görünür.
             failed += 1
@@ -427,8 +470,10 @@ export async function applyTrendyolOrderDateRepair(
     conflicts,
     rawUnavailable: tally.rawUnavailable,
     rawUnparseable: tally.rawUnparseable,
+    ambiguous: tally.ambiguous,
     unexpected: tally.unexpected,
     failed,
     lastId: afterId,
+    evidence,
   }
 }

@@ -37,6 +37,13 @@ import {
   TRENDYOL_V2_MAX_RANGE_MS,
 } from './marketplaces/trendyolOrdersEndpoint.ts'
 import { normalizeTrendyolOrderDate } from './marketplaces/trendyolOrderDate.ts'
+// SÖZLEŞME KANITI YALNIZ BURADA DOĞAR: canlı Trendyol yanıtının döndüğü
+// noktada. Genel `(yük, 'LIVE_PROVIDER_RESPONSE')` fabrikası KALDIRILDI —
+// çağıranın yazdığı bir dizge artık güven üretmez.
+import {
+  ingestTrendyolLiveOrderResponse,
+  mergeOrderContractEvidence,
+} from './shipments/trendyolLiveOrderIngestion.ts'
 import { buildTrendyolShipmentEligibility } from './shipments/trendyolShipmentEligibility.ts'
 import { resolveOutboundRecipientPhone } from '../src/utils/labelData.ts'
 import {
@@ -207,6 +214,16 @@ if (trustProxySetting !== null) {
 }
 
 app.use(cors())
+// ═══ WEBHOOK HAM GÖVDESİ — `express.json`DAN ÖNCE ═══════════════════════
+//
+// WooCommerce imzası HAM İSTEK GÖVDESİ BAYTLARI üzerinden HMAC-SHA256'dır.
+// `express.json()` gövdeyi tüketip nesneye çevirir; nesneyi tekrar
+// serileştirmek AYNI BAYTLARI ÜRETMEZ (anahtar sırası, boşluk, unicode
+// kaçışları, sayı biçimi) ve imza TUTMAZ.
+//
+// Bu yüzden webhook yolu JSON ayrıştırıcıdan ÖNCE `raw` ile bağlanır:
+// `request.body` bir `Buffer`dır. Sıra DEĞİŞTİRİLEMEZ.
+app.use('/api/webhooks/woocommerce', express.raw({ type: '*/*', limit: '5mb' }))
 app.use(express.json({ limit: '10mb' }))
 // KRİTİK: tenantAuth (requireAuth) ve onboarding/orders/products endpoint'leri
 // ana app üzerinde çalışır ve session token'ını request.cookies'ten okur.
@@ -352,6 +369,18 @@ const TENANT_AUTH_PATHS = [
   '/api/trendyol',
   '/api/integrations/trendyol',
   '/api/integrations/surat',
+  // ikas mağaza uçları org kapsamlıdır: AYNI auth kapısının ARKASINDA durur
+  // (listede olmayan org-kapsamlı uç `request.auth` boş kalır ve 404 döner).
+  '/api/integrations/ikas',
+  // AYNI KÖK NEDEN, ÜÇÜNCÜ KEZ: bu uçların hepsi `requireOnboardingContext`
+  // ile org kapsamı ister ama listede YOKTU; auth modda (üretim) geçerli
+  // oturuma rağmen `request.auth` boş kalıyor ve 404 dönüyorlardı. Kapsam
+  // artık `tenant-auth-coverage-flow.test.mjs` ile TÜM uçlar için kilitli.
+  '/api/integrations/health',
+  '/api/integrations/woocommerce',
+  '/api/integrations/aras',
+  '/api/shipping/payer',
+  '/api/subscription',
   '/api/analytics/orders',
   '/api/analytics/claims',
   '/api/orders',
@@ -375,7 +404,10 @@ const TENANT_AUTH_PATHS = [
   // yalnız auth modda kullanılabilir." dönüyordu. Guard DEĞİŞMEDİ; yalnız
   // uç, diğer org-kapsamlı uçlarla AYNI auth kapısının arkasına alındı.
   '/api/labels/render',
-  '/api/printing/zebra',
+  // ÖN EK GENİŞLETİLDİ: '/api/printing/zebra' yazılıydı ve Express ÖN EK
+  // eşleşmesi yaptığı için '/api/printing/jobs' bu kapıya HİÇ girmezdi —
+  // bu dosyada iki kez yaşanan kusurun aynısı (bkz. yukarıdaki notlar).
+  '/api/printing',
   // AYNI KÖK NEDEN, İKİNCİ KEZ: Trace V2 okuma ucu bu listede YOKTU, bu yüzden
   // `tenantAuth` hiç çalışmıyor, `request.auth` boş kalıyor ve uç 404 dönüyordu
   // — üretimde `surat_trace_attempts` İKİ satır taşırken Canlı Debug "kayıt
@@ -2197,36 +2229,17 @@ app.get('/api/products', async (request, response) => {
   const context = await requireProductPersistenceContext(request, response)
   if (!context) return
   try {
-    const query = request.query ?? {}
-    const archivedParam = strOrUndef(query.archived)
-    const result = await context.service.listProducts(
-      context.db,
-      context.organizationId,
-      {
-        search: strOrUndef(query.search),
-        barcode: strOrUndef(query.barcode),
-        merchantSku: strOrUndef(query.merchantSku),
-        archived:
-          archivedParam === undefined
-            ? undefined
-            : archivedParam === 'true' || archivedParam === '1',
-        page: query.page,
-        pageSize: query.pageSize,
-        sort:
-          query.sort === 'titleDesc' || query.sort === 'recent'
-            ? query.sort
-            : 'titleAsc',
-      },
-      // Yalnız aktif pazaryeri hesabının ürünleri.
-      context.marketplaceAccountId,
-    )
-    response.json({
-      ok: true,
-      products: result.products,
-      total: result.total,
-      page: result.page,
-      pageSize: result.pageSize,
+    // Ucun TAM davranışı `productCatalogQuery.ts` içindedir (test edilir).
+    // Kapsam YALNIZ burada çözülen kiracı + AKTİF hesaptır; sorgudaki
+    // kapsam alanları YOK SAYILIR.
+    const catalog = await import('./products/productCatalogQuery.ts')
+    const result = await catalog.handleProductListRequest({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: context.marketplaceAccountId,
+      query: request.query ?? {},
     })
+    response.status(result.httpStatus).json(result.body)
   } catch {
     response.status(500).json({ ok: false, message: 'Ürünler yüklenemedi.' })
   }
@@ -2415,36 +2428,380 @@ app.get('/api/onboarding/status', async (request, response) => {
   const context = await requireOnboardingContext(request, response)
   if (!context) return
   try {
-    const status = await context.service.deriveOnboardingStatus(
-      context.db,
-      context.organizationId,
-    )
-    response.json({ ok: true, ...status })
+    // Ucun TAM davranışı serviste; burada yalnız kiracı kapsamı çözülür.
+    // Durum okuması YEREL DB'dir — sağlayıcıya/taşıyıcıya çağrı YOKTUR.
+    const result = await context.service.handleOnboardingStatusRequest({
+      db: context.db,
+      organizationId: context.organizationId,
+    })
+    response.status(result.httpStatus).json(result.body)
   } catch {
     response.status(500).json({ ok: false, message: 'Onboarding durumu okunamadı.' })
   }
 })
 
-// POST /api/onboarding/complete — koşullar sağlanmıyorsa 409 + eksik adımlar;
-// sağlanıyorsa onboardingCompleted=true. Sürat create çağrısı YAPILMAZ.
+// GET /api/integrations/health — KANONİK ENTEGRASYON SAĞLIĞI (SALT OKUNUR).
+//
+// SAĞLAYICIYA HİÇBİR ÇAĞRI YAPILMAZ: sağlık YALNIZ SAKLANMIŞ durumdan
+// türetilir — senkron geçmişi (`integration_sync_state`), yapılandırılmış
+// hesaplar (`marketplace_accounts`) ve kimlik VARLIĞI (`connector_credentials`,
+// sır ÇÖZÜLMEDEN). Normal gezinme sağlayıcıyı YOKLAMAZ.
+// Kiracı kapsamı `requireOnboardingContext` ile gelir; yanıt yalnız kararlı
+// sebep KODLARI taşır — ham sağlayıcı hatası/uç noktası/kimlik bilgisi ASLA.
+app.get('/api/integrations/health', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    // KİMLİK VARLIĞI HARİTASI BURADA KURULMAZ.
+    //
+    // ÖLÇÜLEN KUSUR: bu uç yalnız SAĞLAYICI GENELİ Trendyol varlığını
+    // besliyordu. Woo hesapları için varlık hiç türetilmediğinden kimliği
+    // DURAN mağaza "kurulmadı", kimliği SİLİNEN mağaza (geçmiş senkron
+    // kanıtıyla) "bağlı" görünüyordu — tam TERSİ.
+    //
+    // Varlık artık `connector_credentials` satırlarından HESAP BAZINDA
+    // türetilir ve bu servis TEK GERÇEKTİR; uç ikinci bir harita KURMAZ.
+    const health = await import('./connectors/integrationHealthService.ts')
+    const result = await health.handleIntegrationHealthRequest({
+      db: context.db,
+      organizationId: context.organizationId,
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Entegrasyon sağlığı okunamadı.' })
+  }
+})
+
+// ── KARGO ÜCRETİ ÖDEYENİ (HESAP KAPSAMLI) ────────────────────────────────
+//
+// DİKKAT: bu uçlar GÖNDERİ ÜCRETİNİ kimin ödediğiyle ilgilidir; CargoFlow
+// ABONELİĞİYLE (`/api/subscription/status`) İLGİSİ YOKTUR.
+//
+// Kiracı kapsamı context'ten gelir; `marketplaceAccountId` SAHİPLİĞİ yazma
+// yolunda DOĞRULANIR. Sağlayıcıya çağrı YAPILMAZ, sır DÖNDÜRÜLMEZ.
+app.get('/api/shipping/payer', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const config = await import('./shipments/marketplacePayerConfig.ts')
+    const accounts = await config.loadAccountPayerView(
+      context.db,
+      context.organizationId,
+    )
+    response.json({ ok: true, accounts })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Ödeyen ayarları okunamadı.' })
+  }
+})
+
+app.post('/api/shipping/payer', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  // KİRACI GÖVDEDEN ALINMAZ: yalnız hesap kimliği ve değer okunur.
+  const marketplaceAccountId = String(request.body?.marketplaceAccountId ?? '').trim()
+  const payer = String(request.body?.payer ?? '').trim().toUpperCase()
+  try {
+    const config = await import('./shipments/marketplacePayerConfig.ts')
+    await config.setAccountPayerConfig(
+      context.db,
+      context.organizationId,
+      marketplaceAccountId,
+      payer,
+    )
+    response.json({ ok: true, marketplaceAccountId, payer })
+  } catch (error) {
+    const name = error instanceof Error ? error.constructor.name : ''
+    if (name === 'AccountNotInTenantError') {
+      response.status(404).json({ ok: false, message: 'Hesap bulunamadı.' })
+      return
+    }
+    if (name === 'InvalidPayerValueError') {
+      response.status(400).json({ ok: false, message: 'Geçersiz ödeyen değeri.' })
+      return
+    }
+    if (name === 'PayerNotConfigurableError') {
+      response.status(409).json({
+        ok: false,
+        message: 'Bu pazaryerinde ödeyen sipariş verisinden okunur; elle ayarlanamaz.',
+      })
+      return
+    }
+    response.status(500).json({ ok: false, message: 'Ödeyen ayarı kaydedilemedi.' })
+  }
+})
+
+// ── WOOCOMMERCE MAĞAZALARI (ÇOK MAĞAZA, HESAP KAPSAMLI) ──────────────────
+//
+// Kiracı kapsamı CONTEXT'ten gelir; gövdeden ASLA. Sır (`consumer_secret`,
+// webhook secret) HİÇBİR yanıtta DÖNMEZ — yalnız VARLIĞI bildirilir.
+//
+// Mağaza adresi SSRF sınırıdır: doğrulama `storeUrlPolicy` içindedir ve
+// kaydetmeden ÖNCE gerçek kimlik doğrulamalı OKUMA yapılır.
+app.get('/api/integrations/woocommerce/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const service = await import('./connectors/woocommerce/wooConnectionService.ts')
+    const stores = await service.listWooStores(context.db, context.organizationId)
+    response.json({ ok: true, stores })
+  } catch {
+    response.status(500).json({ ok: false, message: 'WooCommerce mağazaları okunamadı.' })
+  }
+})
+
+app.post('/api/integrations/woocommerce/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const service = await import('./connectors/woocommerce/wooConnectionService.ts')
+    const client = await import('./connectors/woocommerce/wooClient.ts')
+    const result = await service.connectWooStore(
+      context.db,
+      {
+        organizationId: context.organizationId,
+        storeUrl: String(request.body?.storeUrl ?? ''),
+        consumerKey: String(request.body?.consumerKey ?? ''),
+        consumerSecret: String(request.body?.consumerSecret ?? ''),
+        webhookSecret: String(request.body?.webhookSecret ?? '') || undefined,
+        displayName: String(request.body?.displayName ?? '') || undefined,
+      },
+      { transport: client.fetchWooTransport },
+    )
+    if (result.outcome !== 'CONNECTED') {
+      // Ham WordPress/PHP metni TAŞINMAZ; yalnız kararlı sınıf + güvenli metin.
+      response.status(result.outcome === 'STORE_URL_REJECTED' ? 400 : 422).json({
+        ok: false,
+        outcome: result.outcome,
+        errorClass: result.errorClass,
+        message: result.message,
+      })
+      return
+    }
+    response.json({
+      ok: true,
+      outcome: result.outcome,
+      marketplaceAccountId: result.account?.id ?? null,
+      providerAccountId: result.providerAccountId,
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'WooCommerce mağazası kaydedilemedi.' })
+  }
+})
+
+// ── WOOCOMMERCE WEBHOOK ALIMI ────────────────────────────────────────────
+//
+// KİMLİK DOĞRULAMA İMZADIR, oturum DEĞİL: WooCommerce çerez göndermez. Bu uç
+// bilerek tenant auth kapısının DIŞINDADIR; yetki `X-WC-Webhook-Signature`
+// ile HESABIN KENDİ secret'ı üzerinden kanıtlanır. URL'i tahmin eden biri
+// imzayı üretemez.
+//
+// SIRA: doğrula → KALICI YAZ → 2xx → işle. Sözleşme ardışık 5 başarısız
+// teslimden sonra webhook'u DISABLED yapar; bu yüzden uzun işleme 2xx'i
+// BEKLETEMEZ.
+app.post(
+  '/api/webhooks/woocommerce/:organizationId/:marketplaceAccountId',
+  async (request, response) => {
+    const organizationId = String(request.params.organizationId ?? '').trim()
+    const marketplaceAccountId = String(request.params.marketplaceAccountId ?? '').trim()
+    try {
+      const { getDb } = await import('./db/client.ts')
+      const db = getDb()
+      if (!db) {
+        response.status(503).json({ ok: false })
+        return
+      }
+      const handlers = await import('./connectors/woocommerce/wooHttpHandlers.ts')
+      const result = await handlers.handleWooWebhookDelivery({
+        db,
+        organizationId,
+        marketplaceAccountId,
+        // `express.raw` sayesinde BUFFER; yeniden serileştirme YOK.
+        rawBody: Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0),
+        headers: request.headers,
+      })
+      response.status(result.httpStatus).json(result.body)
+    } catch {
+      // BAŞARI İDDİA EDİLMEZ: sağlayıcının tekrar denemesi DOĞRUDUR.
+      response.status(503).json({ ok: false, outcome: 'NOT_DURABLE' })
+    }
+  },
+)
+
+app.post('/api/integrations/woocommerce/stores/disconnect', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  const marketplaceAccountId = String(request.body?.marketplaceAccountId ?? '').trim()
+  try {
+    // SAĞLAYICI KAPSAMI SERVİSTE FAIL-CLOSED KANITLANIR: aynı organizasyonun
+    // TRENDYOL hesap id'si buraya verilse bile HİÇBİR mutasyon olmaz (404).
+    const handlers = await import('./connectors/woocommerce/wooHttpHandlers.ts')
+    const result = await handlers.handleWooDisconnect({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId,
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Bağlantı kaldırılamadı.' })
+  }
+})
+
+// ── IKAS MAĞAZALARI (İÇ TEST, ÇOK MAĞAZA, HESAP KAPSAMLI) ───────────────
+//
+// Uç davranışı `connectors/ikas/ikasHttpHandlers.ts` içindedir; burada
+// YALNIZ kiracı kapsamı çözülür. Kiracı gövdeden ALINMAZ. Sır/belirteç
+// HİÇBİR yanıtta dönmez. WEBHOOK UCU YOKTUR (imza sözleşmesi belgelenmedi).
+app.get('/api/integrations/ikas/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/ikas/ikasHttpHandlers.ts')
+    const result = await handlers.handleIkasListStores({
+      db: context.db,
+      organizationId: context.organizationId,
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'ikas mağazaları okunamadı.' })
+  }
+})
+
+app.post('/api/integrations/ikas/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/ikas/ikasHttpHandlers.ts')
+    const client = await import('./connectors/ikas/ikasClient.ts')
+    const result = await handlers.handleIkasConnect({
+      db: context.db,
+      organizationId: context.organizationId,
+      body: request.body ?? {},
+      options: { transport: client.fetchIkasTransport },
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'ikas mağazası kaydedilemedi.' })
+  }
+})
+
+app.post('/api/integrations/ikas/stores/disconnect', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/ikas/ikasHttpHandlers.ts')
+    const result = await handlers.handleIkasDisconnect({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: String(request.body?.marketplaceAccountId ?? ''),
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Bağlantı kaldırılamadı.' })
+  }
+})
+
+app.post('/api/integrations/ikas/stores/orders-read-test', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/ikas/ikasHttpHandlers.ts')
+    const client = await import('./connectors/ikas/ikasClient.ts')
+    const result = await handlers.handleIkasOrdersReadTest({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: String(request.body?.marketplaceAccountId ?? ''),
+      options: { transport: client.fetchIkasTransport },
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Sipariş okuma testi tamamlanamadı.' })
+  }
+})
+
+// ── ARAS KARGO (İÇ TEST, HESAP KAPSAMLI) ───────────────────────────────
+app.get('/api/integrations/aras/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/aras/arasHttpHandlers.ts')
+    const result = await handlers.handleArasListStores({
+      db: context.db,
+      organizationId: context.organizationId,
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Aras hesapları okunamadı.' })
+  }
+})
+
+app.post('/api/integrations/aras/stores', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/aras/arasHttpHandlers.ts')
+    const result = await handlers.handleArasConnect({
+      db: context.db,
+      organizationId: context.organizationId,
+      body: request.body ?? {},
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Aras hesabı kaydedilemedi.' })
+  }
+})
+
+app.post('/api/integrations/aras/stores/disconnect', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const handlers = await import('./connectors/aras/arasHttpHandlers.ts')
+    const result = await handlers.handleArasDisconnect({
+      db: context.db,
+      organizationId: context.organizationId,
+      marketplaceAccountId: String(request.body?.marketplaceAccountId ?? ''),
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Aras bağlantısı kaldırılamadı.' })
+  }
+})
+
+// GET /api/subscription/status — CARGOFLOW ABONELİK / HAK DURUMU.
+//
+// AD AYRIMI: bu uç CargoFlow'un KENDİ ABONELİĞİDİR. Depodaki `billingParty`
+// (gönderi ücretini kim öder: SELLER / TRENDYOL) TAMAMEN FARKLI bir kavramdır
+// ve bu uçla İLGİSİ YOKTUR. Karışmasın diye yol da `subscription`tır.
+//
+// Kiracı kapsamı `requireOnboardingContext`ten gelir; istek gövdesiyle
+// organizasyon DEĞİŞTİRİLEMEZ. Ödeme sağlayıcısı YOKTUR; yanıt kimlik
+// bilgisi, token ya da ödeme verisi TAŞIMAZ.
+app.get('/api/subscription/status', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const { loadSubscriptionStatus } = await import('./subscription/subscriptionStatusService.ts')
+    const status = await loadSubscriptionStatus(context.db, context.organizationId, {
+      nowMs: Date.now(),
+    })
+    response.json({ ok: true, ...status })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Plan durumu okunamadı.' })
+  }
+})
+
+// POST /api/onboarding/complete — koşullar sağlanmıyorsa 409 + kararlı engel
+// kodları; sağlanıyorsa onboardingCompleted=true. Sürat create çağrısı YAPILMAZ.
+// İSTEK GÖVDESİ OKUNMAZ: istemci `completed`/adım bayrağı gönderemez; sunucu
+// tüm durumu YENİDEN hesaplar (kaynak taramasıyla kilitli).
 app.post('/api/onboarding/complete', async (request, response) => {
   const context = await requireOnboardingContext(request, response)
   if (!context) return
   try {
-    const result = await context.service.completeOnboarding(
-      context.db,
-      context.organizationId,
-    )
-    if (!result.ok) {
-      response.status(409).json({
-        ok: false,
-        message: 'Onboarding tamamlanamadı; eksik adımlar var.',
-        missing: result.missing,
-        ...result.status,
-      })
-      return
-    }
-    response.json({ ok: true, ...result.status })
+    const result = await context.service.handleOnboardingCompleteRequest({
+      db: context.db,
+      organizationId: context.organizationId,
+    })
+    response.status(result.httpStatus).json(result.body)
   } catch {
     response.status(500).json({ ok: false, message: 'Onboarding tamamlanamadı.' })
   }
@@ -3146,76 +3503,148 @@ app.post('/api/labels/zpl/bulk-generate', (request, response) => {
   })
 })
 
-app.post('/api/printing/zebra/raw', async (request, response) => {
-  const printerName = String(request.body?.printerName ?? '').trim()
-  const labels = Array.isArray(request.body?.labels) ? request.body.labels : []
-
-  if (!printerName || labels.length === 0) {
-    response.status(400).json({
-      ok: false,
-      provider: 'windows-raw-printer',
-      message: 'printerName ve en az bir ZPL etiketi gereklidir.',
+// ═══ BASKI YETENEĞİ — SAKLANMIŞ YAZICI ADI YETENEK DEĞİLDİR ══════════════
+//
+// `printerName !== ''` olması sürecin o yazıcıya ham veri gönderebileceğini
+// KANITLAMAZ: ham yol Windows yazdırma API'sine bağlıdır ve süreç Linux
+// konteynerde çalışıyorsa bu yol YOKTUR. "Bağlı" demek yalan olurdu.
+app.get('/api/printing/capabilities', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const transport = await import('./printing/printTransport.ts')
+    const printerName = String(request.query?.printerName ?? '')
+    response.json({
+      ok: true,
+      runtime: { platform: process.platform },
+      capabilities: [
+        transport.describeServerRawCapability({
+          platform: process.platform,
+          printerName,
+        }),
+        // Tarayıcı/indirme taşımaları İSTEMCİDE yaşar; sunucu onları
+        // yürütemez ve bunu açıkça söyler.
+        transport.describeClientTransport('BROWSER_PRINT', 'server'),
+        transport.describeClientTransport('DOWNLOAD', 'server'),
+      ],
     })
+  } catch {
+    response.status(503).json({ ok: false, message: 'Baskı yetenekleri okunamadı.' })
+  }
+})
+
+// ═══ KANONİK BASKI İŞİ — SUNUCU YETKİLİ ══════════════════════════════════
+//
+// ÖLÇÜLEN GÜVEN SINIRI KUSURU (yamadan önce yeniden üretildi): eski ham uç
+// `labels[].zpl` alanını İSTEMCİDEN alıp doğrudan sunucu tarafı yazıcı
+// komutuna veriyordu. Kimlik doğrulanmış bir tarayıcı, KENDİ uydurduğu ZPL'i
+// "taşıyıcı etiketi" diye bastırabiliyordu; kiracı kapsamı hiç okunmuyordu.
+//
+// Bu uç YALNIZ KİMLİK alır. Baytları SUNUCU çözer: kiracı kapsamı → kalıcı
+// artefakt → hash zinciri → değişmez sayfa sırası → taşıma. Ham ZPL
+// tarayıcıya geri DÖNMEZ ve tarayıcıdan KABUL EDİLMEZ.
+app.post('/api/printing/jobs', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  const body = request.body ?? {}
+  // İstemci RAW ZPL GÖNDEREMEZ (render ucuyla AYNI sözleşme).
+  for (const forbidden of ['zpl', 'printZpl', 'technicalZpl', 'barcodeRaw', 'labels', 'content']) {
+    if (body[forbidden] !== undefined) {
+      response.status(400).json({
+        ok: false,
+        code: 'raw_zpl_not_accepted',
+        message: 'Bu uç ham ZPL kabul etmez; yalnız sipariş kimliği gönderin.',
+      })
+      return
+    }
+  }
+  const items = Array.isArray(body.items) ? body.items : []
+  if (items.length === 0) {
+    response.status(400).json({ ok: false, code: 'items_required' })
     return
   }
-
-  const jobs = []
-  for (const label of labels) {
-    const orderNumber = String(label?.orderNumber ?? '').trim()
-    const zpl = normalizeSuratRawZpl(label?.zpl)
-    if (!zpl) {
-      jobs.push({
-        orderNumber,
+  try {
+    const [service, rawTransport, transport, { getOrder }] = await Promise.all([
+      import('./printing/printJobService.ts'),
+      import('./printing/windowsRawTransport.ts'),
+      import('./printing/printTransport.ts'),
+      import('./orders/orderPersistenceService.ts'),
+    ])
+    const printerName = String(body.printerName ?? '')
+    const capability = transport.describeServerRawCapability({
+      platform: process.platform,
+      printerName,
+    })
+    // YETENEK YOKSA İŞ KURULMAZ: sahte "gönderildi" üretilmez.
+    if (!capability.available) {
+      response.status(409).json({
         ok: false,
-        errorMessage: 'Geçerli ^XA...^XZ BarcodeRaw ZPL bulunamadı.',
+        code: 'transport_unavailable',
+        capability,
       })
-      continue
+      return
     }
-
-    try {
-      const documentId = randomUUID()
-      const result = await execFileAsync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-ExecutionPolicy',
-          'Bypass',
-          '-File',
-          join(serverDirectory, 'print-raw-zpl.ps1'),
-          '-PrinterName',
-          printerName,
-          '-ZplBase64',
-          Buffer.from(zpl, 'utf8').toString('base64'),
-          '-DocumentName',
-          `CargoFlow-${orderNumber || documentId}`,
-        ],
-        { windowsHide: true, timeout: 30000, maxBuffer: 1024 * 1024 },
-      )
-      const printJobId = String(result.stdout ?? '').trim() || documentId
-      jobs.push({ orderNumber, ok: true, printJobId })
-    } catch (error) {
-      jobs.push({
-        orderNumber,
-        ok: false,
-        errorMessage:
-          error instanceof Error ? error.message : 'Windows yazıcı hatası',
-      })
-    }
+    const result = await service.submitPrintJob(context.db, {
+      // KİRACI YALNIZ AUTH BAĞLAMINDAN; gövde bunu EZEMEZ.
+      organizationId: context.organizationId,
+      marketplaceAccountId: context.marketplaceAccountId,
+      transport: 'SERVER_WINDOWS_RAW',
+      printerName,
+      items: items.map((item) => ({
+        orderId: String(item?.orderId ?? ''),
+        orderNumber: String(item?.orderNumber ?? ''),
+      })),
+      getOrder,
+      execute: rawTransport.createWindowsRawExecutor({
+        scriptPath: join(serverDirectory, 'print-raw-zpl.ps1'),
+      }),
+    })
+    // Mevcut kabul edilmiş sipariş-bazlı semantik KORUNUR: her kalem kendi
+    // sonucunu taşır; kısmi başarı SESSİZ DÜŞME DEĞİLDİR.
+    response.status(result.status === 'FAILED' ? 502 : 200).json({
+      ok: result.status === 'SUBMITTED' || result.status === 'PARTIAL',
+      provider: 'server-windows-raw',
+      printerName,
+      jobId: result.jobId,
+      status: result.status,
+      jobs: result.items.map((item) => ({
+        orderNumber: item.orderNumber,
+        orderId: item.orderId,
+        ok: item.status === 'SUBMITTED',
+        printJobId: item.printJobId ?? undefined,
+        pageCount: item.pageCount,
+        errorMessage: item.failure ?? undefined,
+      })),
+      printedOrderIds: service.resolvePrintedOrderIds(result),
+    })
+  } catch {
+    response.status(503).json({ ok: false, code: 'print_job_failed' })
   }
+})
 
-  const failedJobs = jobs.filter((job) => !job.ok)
-  response.status(failedJobs.length === 0 ? 200 : 500).json({
-    ok: failedJobs.length === 0,
-    provider: 'windows-raw-printer',
-    printerName,
-    printJobId:
-      jobs.length === 1 ? jobs[0]?.printJobId : randomUUID(),
-    jobs,
+// ═══ ESKİ HAM UÇ — KISITLI UYUMLULUK ═════════════════════════════════════
+//
+// SİLİNMEDİ: kabul edilmiş testler bu yolun VARLIĞINI ve "resmî şablonda
+// ÇAĞRILMAZ" davranışını kilitliyor. Ama İSTEMCİ BAYTLARINA ARTIK GÜVENMEZ:
+// sunucu yetkili taşıyıcı baskısı `/api/printing/jobs` üzerinden yapılır.
+//
+// Aynı taşıyıcı akışı için YENİ platform ve ESKİ güvensiz yol AYNI ANDA
+// ETKİN BIRAKILMAZ — bu uç artık hiçbir şey basmaz.
+app.post('/api/printing/zebra/raw', (request, response) => {
+  void normalizeSuratRawZpl
+  response.status(400).json({
+    ok: false,
+    code: 'raw_zpl_not_accepted',
+    provider: 'server-windows-raw',
     message:
-      failedJobs.length === 0
-        ? `${jobs.length} ZPL etiketi Windows yazıcı kuyruğuna gönderildi.`
-        : `${failedJobs.length} etiket Zebra yazıcıya gönderilemedi.`,
+      'Bu uç ham ZPL kabul etmez; sipariş kimliğiyle /api/printing/jobs kullanın.',
+    jobs: (Array.isArray(request.body?.labels) ? request.body.labels : []).map(
+      (label) => ({
+        orderNumber: String(label?.orderNumber ?? ''),
+        ok: false,
+        errorMessage: 'raw_zpl_not_accepted',
+      }),
+    ),
   })
 })
 
@@ -4159,6 +4588,37 @@ async function startTrendyolStreamSyncOnBoot() {
   }
 }
 
+// ═══ WOOCOMMERCE GELEN KUTUSU TÜKETİCİSİ ═════════════════════════════════
+//
+// ÖLÇÜLEN EKSİK: webhook teslimi doğrulanıp KALICI yazılıyor ve 2xx
+// dönülüyordu ama onu İŞLEYEN hiçbir çalışma zamanı YOKTU — kayıtlar
+// `RECEIVED` olarak sonsuza kadar duruyordu.
+//
+// Tüketici SAĞLAYICIYA BAĞLI DEĞİLDİR: 2xx verildikten sonra WooCommerce o
+// teslimi bir daha göndermez, bu yüzden kurtarma TAMAMEN İÇERİDEDİR ve
+// gerçeğin kaynağı KUTUDAKİ ŞİFRELİ YÜKTÜR (istek gövdesi DEĞİL).
+//
+// VARSAYILAN KAPALI: `WOO_WEBHOOK_WORKER_ENABLED` açıkça açılmadıkça
+// zamanlayıcı kurulmaz. Açık olsa bile `internal_test` aşamasında kanonik
+// sipariş yazımı `liveWriteGate` ile KAPALIDIR ve kanonik yazıcı ENJEKTE
+// EDİLMEZ (etiket/taşıyıcı/baskı yan etkisi YOK).
+async function startWooInboxWorkerOnBoot() {
+  if (!isTenantAuthMode()) return
+  try {
+    const [{ getDb }, worker] = await Promise.all([
+      import('./db/client.ts'),
+      import('./connectors/woocommerce/wooWebhookWorker.ts'),
+    ])
+    const started = worker.startWooInboxScheduler({
+      runCycle: () => worker.runWooInboxCycle(getDb()),
+    })
+    if (started) console.log('[woo-inbox] webhook gelen kutusu tüketicisi etkin')
+  } catch {
+    // BEST-EFFORT: kurulamazsa uygulama normal çalışır; teslimler kutuda
+    // DURMAYA devam eder ve bir sonraki açılışta yeniden bulunur.
+  }
+}
+
 // ═══ İÇE AKTARILABİLİRLİK — DİNLEYİCİ VARSAYILAN OLARAK AÇILIR ═══════════
 //
 // Kontrollü kanarya (`auto-label:job:run-once`) worker'ın kullandığı AYNI
@@ -4181,12 +4641,20 @@ if (!listenSuppressed) app.listen(port, host, () => {
   // İkisi de VARSAYILAN KAPALI; bayrak açıkça açılmadıkça kurulmazlar.
   void startLabelJobWorkerOnBoot()
   void startTrendyolStreamSyncOnBoot()
+  void startWooInboxWorkerOnBoot()
 })
 
 // KANARYA İÇİN PAYLAŞILAN ÇALIŞTIRMA YOLU — İKİNCİ CREATE UYGULAMASI YOK.
 // Tek iş çalıştırıcısı bu fonksiyonu ENJEKTE alır; böylece worker ile
 // kanarya YAPISAL OLARAK ayrışamaz.
 export { runLabelJobViaCreateHandler }
+
+// PROV-3 REGRESYONU İÇİN: sözleşme kanıtı GERÇEK çekim yolunda mı doğuyor?
+// Bu soru ancak ÜRETİMDEKİ fonksiyonun KENDİSİ çalıştırılarak yanıtlanır —
+// kaynak metnine bakmak ya da kopya bir harness yazmak kanıt DEĞİLDİR.
+// Taşıma katmanı `globalThis.fetch` üzerinden taklit edilir; fonksiyonun
+// içindeki HİÇBİR ŞEY değiştirilmez.
+export { callTrendyolOrders, callTrendyolOrdersAllPages }
 
 // Kapanışta yeni tur başlatılmaz (mevcut zamanlayıcı temizlenir).
 for (const signal of ['SIGTERM', 'SIGINT']) {
@@ -4225,6 +4693,17 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
       .catch(() => undefined)
     void import('./marketplaces/trendyolStreamScheduler.ts')
       .then((scheduler) => scheduler.stopTrendyolStreamScheduler())
+      .catch(() => undefined)
+    // Gelen kutusu tüketicisi de ZARİFÇE boşaltılır. Süre dolsa bile VERİ
+    // KAYBI YOKTUR: işlenmemiş kayıt kutuda durur ve sonraki açılışta aynı
+    // uygunluk sorgusuyla YENİDEN bulunur.
+    void import('./connectors/woocommerce/wooWebhookWorker.ts')
+      .then(async (worker) => {
+        await worker.drainWooInboxScheduler(
+          Number(process.env.WOO_WEBHOOK_WORKER_DRAIN_MS ?? 15_000),
+        )
+        worker.stopWooInboxScheduler()
+      })
       .catch(() => undefined)
   })
 }
@@ -12680,6 +13159,9 @@ async function fetchTrendyolOrderSlicePages(credentials, query = {}) {
     },
   ]
   const combinedContent = [...firstContent]
+  // Kanıt sayfa sayfa TOPLANIR. Birleştirme YENİ nesne üretmez; canlı
+  // sınırda basılan nesnelerin KENDİLERİ taşınır, marka bu yüzden korunur.
+  const collectedEvidence = [firstResult.orderContractEvidence]
 
   for (let page = firstPage + 1; page < maxPages; page += 1) {
     const pageResult = await callTrendyolOrders(credentials, {
@@ -12704,6 +13186,7 @@ async function fetchTrendyolOrderSlicePages(credentials, query = {}) {
       return {
         ...pageResult,
         ok: false,
+        orderContractEvidence: mergeOrderContractEvidence(...collectedEvidence),
         message: `Trendyol sayfalı sipariş çekimi eksik kaldı. ${page}. sayfa alınamadı: ${pageResult.message}`,
         partialContent: combinedContent,
         failedPage: page,
@@ -12717,6 +13200,7 @@ async function fetchTrendyolOrderSlicePages(credentials, query = {}) {
     }
 
     combinedContent.push(...pageContent)
+    collectedEvidence.push(pageResult.orderContractEvidence)
   }
 
   // Önceki denemeden devralınan sayfalar (varsa) BAŞA eklenir; tekrar eden
@@ -12727,6 +13211,7 @@ async function fetchTrendyolOrderSlicePages(credentials, query = {}) {
 
   return {
     ...firstResult,
+    orderContractEvidence: mergeOrderContractEvidence(...collectedEvidence),
     message:
       totalPages > 1
         ? `Trendyol siparişleri ${maxPages} sayfadan alındı.`
@@ -12836,6 +13321,7 @@ async function resolveTrendyolCappedSlice(credentials, query, cappedResult) {
 async function runTrendyolOrderSlices(credentials, query, slices, sliceReason) {
   const sliceResults = []
   const collected = []
+  const collectedEvidence = []
   let exhausted = false
   for (const slice of slices) {
     // Dilim içinde sayfa devamlılığı YOKTUR: devralınan içerik farklı bir
@@ -12855,6 +13341,7 @@ async function runTrendyolOrderSlices(credentials, query, slices, sliceReason) {
     if (!result.ok) {
       return {
         ...result,
+        orderContractEvidence: mergeOrderContractEvidence(...collectedEvidence),
         message: `Trendyol dilimli sipariş çekimi eksik kaldı: ${result.message}`,
         partialContent: mergeTrendyolPackageCollections(...collected),
         debug: {
@@ -12866,6 +13353,7 @@ async function runTrendyolOrderSlices(credentials, query, slices, sliceReason) {
     }
     if (result.queryWindowExhausted) exhausted = true
     collected.push(getTrendyolOrderPackagesArray(result.data))
+    collectedEvidence.push(result.orderContractEvidence)
   }
 
   const content = mergeTrendyolPackageCollections(...collected)
@@ -12878,6 +13366,7 @@ async function runTrendyolOrderSlices(credentials, query, slices, sliceReason) {
   }
   return {
     ...firstResult,
+    orderContractEvidence: mergeOrderContractEvidence(...collectedEvidence),
     queryWindowExhausted: exhausted,
     message: `Trendyol siparişleri ${slices.length} tarih diliminden alındı.`,
     data: {
@@ -13049,8 +13538,24 @@ async function callTrendyolOrders(credentials, query) {
     )
     await new Promise((resolve) => setTimeout(resolve, delayMs))
   }
+  // ═══ SÖZLEŞME KANITININ DOĞUM NOKTASI ══════════════════════════════════
+  //
+  // Yanıt GERÇEKTEN Trendyol'dan başarıyla döndüğü AN burasıdır. Kanıt
+  // burada basılır; sınır modülü gövde METNİNİ kendisi ayrıştırır ve zarfı
+  // (başarı + 2xx + v2 sipariş ucu + JSON) KENDİ ölçer. Çözümlenmiş bir
+  // nesne geçirmek MÜMKÜN DEĞİLDİR, bu yüzden üst katmanlardan hiçbiri
+  // "bu yük canlı yanıttan geldi" diye BEYANDA BULUNAMAZ.
+  const orderContractEvidence = ingestTrendyolLiveOrderResponse({
+    ok: result?.ok,
+    statusCode: result?.statusCode,
+    requestUrl: url,
+    contentType: result?.debug?.contentType,
+    rawResponseText: result?.rawResponse,
+  }).evidenceByPackageId
+
   return {
     ...result,
+    orderContractEvidence,
     debug: {
       ...(result?.debug ?? {}),
       rateLimitRetries,

@@ -1,0 +1,2 @@
+# scratch — safe to delete
+# TICIMAX-001 write-probe leftover (delete tool rejected)

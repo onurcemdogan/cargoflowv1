@@ -1,0 +1,107 @@
+{
+  "metadata": {
+    "createdAt": "2026-09-26T00:10:19.081563+00:00",
+    "resolverVersion": "1.0.0",
+    "ticket": "TICIMAX-001",
+    "blockerIndexes": [
+      0
+    ],
+    "execution": {
+      "research": {
+        "completedWebSearches": 0,
+        "exitCode": 0
+      }
+    }
+  },
+  "research": {
+    "status": "INSUFFICIENT",
+    "question": "Blocker 0: WebSiparisFiltre / WebSiparisSayfalama member names, SelectSiparis SOAP body element names, and XML namespaces are not proven. Pack fieldLevelVerified=false. Official PDFs not on disk; network/shell denied so extraction cannot run.",
+    "official_sources": [
+      {
+        "url": "https://www.ticimax.com/web-servis-api/",
+        "publisher": "Ticimax Bilişim Teknolojileri A.Ş.",
+        "observation": "Official corporate API page identifies Ticimax in its copyright notice and links destekalani.com as its support system."
+      },
+      {
+        "url": "https://www.destekalani.com/Icerik/ws-yetki-kodu-yonetimi-web-servis-modulu-649",
+        "publisher": "Ticimax",
+        "observation": "Opened official support article links Ticimax-hosted service documentation and publishes SOAP examples for other operations."
+      },
+      {
+        "url": "https://static.ticimax.com/dokumanlar/SiparisServis.pdf",
+        "publisher": "Ticimax",
+        "observation": "Opened 42-page PDF titled TİCİMAX SİPARİŞ SERVİS DÖKÜMANTASYONU on Ticimax's document host. Pages 10–11 contain member tables; pages 17–18 contain C# examples."
+      },
+      {
+        "url": "https://static.ticimax.com/dokumanlar/webservis.pdf",
+        "publisher": "Ticimax",
+        "observation": "Opened Ticimax-branded service documentation v1.4, 15 pages. Pages 9–10 document SelectSiparis and its C# usage."
+      }
+    ],
+    "claims": [
+      {
+        "claim": "Public PDF evidence is accessible through live browsing without local extraction.",
+        "evidence": "https://static.ticimax.com/dokumanlar/SiparisServis.pdf opened successfully with readable text across 42 pages; https://static.ticimax.com/dokumanlar/webservis.pdf opened with 15 pages.",
+        "confidence": "HIGH"
+      },
+      {
+        "claim": "The documented WebSiparisFiltre members are EntegrasyonAktarildi, EntegrasyonParams, IptalEdilmisUrunler, FaturaNo, OdemeDurumu, OdemeTipi, SiparisDurumu, SiparisID, SiparisKaynagi, SiparisKodu, SiparisTarihiBas, SiparisTarihiSon, StrSiparisDurumu, TedarikciID, UyeID, SiparisNo and UyeTelefon.",
+        "evidence": "https://static.ticimax.com/dokumanlar/SiparisServis.pdf pages 10–11 list these fields; the WebSiparisFiltre initializer on pages 17–18 corroborates their spellings.",
+        "confidence": "HIGH"
+      },
+      {
+        "claim": "C# examples identify WebSiparisSayfalama members as BaslangicIndex, KayitSayisi, SiralamaDegeri and SiralamaYonu; the table contains spelling discrepancies.",
+        "evidence": "https://static.ticimax.com/dokumanlar/SiparisServis.pdf page 18 uses these four names, whereas page 11 prints BaşlangicIndex and SiralamaDeger. https://static.ticimax.com/dokumanlar/webservis.pdf page 10 corroborates the example spellings.",
+        "confidence": "HIGH"
+      },
+      {
+        "claim": "The documented method signature does not by itself prove SOAP wire element names.",
+        "evidence": "https://static.ticimax.com/dokumanlar/webservis.pdf page 9 gives SelectSiparis(string UyeKodu, WebSiparisFiltre f, WebSiparisSayfalama s). https://static.ticimax.com/dokumanlar/SiparisServis.pdf page 10 instead labels parameters using the class names. These are signature/table descriptions, not a SelectSiparis SOAP envelope or XSD.",
+        "confidence": "HIGH"
+      },
+      {
+        "claim": "Official examples establish namespace usage for other operations, but do not establish SelectSiparis namespaces.",
+        "evidence": "https://www.destekalani.com/Icerik/ws-yetki-kodu-yonetimi-web-servis-modulu-649 shows SelectUyeler and SelectUrun examples using http://schemas.xmlsoap.org/soap/envelope/, http://tempuri.org/ and http://schemas.datacontract.org/2004/07/. No SelectSiparis-specific envelope was found in the inspected article.",
+        "confidence": "HIGH"
+      }
+    ],
+    "unresolved": [
+      "No inspected official SelectSiparis SOAP envelope or WSDL/XSD proves its request wrapper and parameter element names.",
+      "SelectSiparis-specific namespace qualification for the operation, parameters and nested members remains unverified.",
+      "Documentation spelling discrepancies prevent treating the member tables alone as a definitive serialized contract.",
+      "Local PDF availability and the existing pack's contents were not inspected; no state was changed."
+    ],
+    "summary": "Member names are supported by official C# examples, and live PDF access succeeded. SOAP element names and SelectSiparis-specific namespaces remain unproven. Retain fieldLevelVerified=false."
+  },
+  "verifier": null,
+  "result": {
+    "status": "RESOLUTION_INSUFFICIENT",
+    "reason": "RESEARCH_NOT_RESOLVED",
+    "dryRun": false,
+    "researchEligible": true,
+    "evidencePath": null,
+    "proposedStateTransition": {
+      "apply": false,
+      "resumeEligible": false,
+      "from": "BLOCKED_HUMAN",
+      "to": "BLOCKED_HUMAN",
+      "ticket": "TICIMAX-001",
+      "resolvedBlockerIndexes": [],
+      "inputHashes": {
+        "C:\\DevFactory\\projects\\cargoflow.toml": "611a5d56551717ffbb20518c2548becc29b464de03cfcb8c99714d61dcd559a8",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_TASK.json": "7249e7bfef8f08e4c3a3b2e8eee09e56246492602a8b1634dd5d5d062c02802c",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\tickets\\TICIMAX-001.md": "d1625a908f9dc6fe90565c19ba97f53d70494654ea054a2d2c099c6336e4cc4a",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\CURRENT_CONTEXT.md": "cfb603a5a26d776d86dd74fc3c2b0a58c069b0ce99b619d0f394ea9ebcb9e964",
+        "C:\\DevFactory\\workspaces\\CargoFlow\\.ai\\HANDOFF.md": "f661349a2b6d0458c4dc2652d40f1b29f064161393aaefecd4b772a954e380ff"
+      }
+    },
+    "ticket": "TICIMAX-001",
+    "eligibility": [
+      {
+        "blockerIndex": 0,
+        "eligible": true,
+        "reason": "PUBLIC_DOCUMENTATION_QUESTION"
+      }
+    ]
+  }
+}

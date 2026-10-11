@@ -78,7 +78,27 @@ public static class CargoFlowRawPrinter {
 }
 "@
 
-Add-Type -TypeDefinition $source -Language CSharp
-$bytes = [Convert]::FromBase64String($ZplBase64)
-$jobId = [CargoFlowRawPrinter]::Send($PrinterName, $DocumentName, $bytes)
-Write-Output $jobId
+# === SESSIZ BASARI YOK ===============================================
+#
+# OLCULDU: yazici adi gecersizken .NET istisnasi stderr'e yaziliyor ama
+# betik yine de EXIT 0 donuyordu. Sunucu bunu BASARI sayiyor, uydurma bir
+# UUID'yi printJobId olarak donduruyor ve siparis "Etiket Basildi"
+# isaretleniyordu - hicbir sey yaziciya gitmemisken.
+#
+# Artik hata SONLANDIRICIDIR ve cikis kodu SIFIR DEGILDIR. Tek gecerli
+# basari kaniti spooler'in dondurdugu SAYISAL is kimligidir.
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -TypeDefinition $source -Language CSharp
+  $bytes = [Convert]::FromBase64String($ZplBase64)
+  $jobId = [CargoFlowRawPrinter]::Send($PrinterName, $DocumentName, $bytes)
+  if (-not $jobId -or $jobId -le 0) {
+    [Console]::Error.WriteLine('RAW_PRINT_NO_JOB_ID')
+    exit 3
+  }
+  Write-Output $jobId
+  exit 0
+} catch {
+  [Console]::Error.WriteLine($_.Exception.Message)
+  exit 2
+}

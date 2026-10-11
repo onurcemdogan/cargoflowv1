@@ -297,18 +297,32 @@ test('TR-PROV-1: kaynak kokeni ayirt edilir', () => {
   assert.equal(billing.detectRawPayloadProvenance(null), 'UNKNOWN')
 })
 
-test('TR-EVID-1: canli saglayici yanitinda kanit seviyesi YUKSELIR', () => {
+// TEST DUZELTILDI (PROVENANCE-FINAL): bu test KUSURLU DAVRANISI KILITLIYORDU.
+//
+// Eskiden `{ origin: 'LIVE_PROVIDER_RESPONSE' }` seviyeyi CONFIRMED'e
+// cikariyordu ve test bunu DOGRU sayiyordu. Ama bu fonksiyon SAKLANMIS /
+// RASTGELE yukleri inceler; yukun canli yanittan gelip gelmedigini BILEMEZ.
+// O bayrak bir OLGU degil, CAGIRANIN YAZDIGI bir dizgeydi: herhangi bir ic
+// cagiran sahte bir paket uydurup "dogrulanmis sozlesme" uretebiliyordu.
+//
+// Kaldirildi. Bu modulden cikabilecek EN YUKSEK seviye artik
+// UNVERIFIED_HISTORICAL_RAW'dir; CONFIRMED yalniz gercek HTTP yanit
+// sinirinda dogar (bkz. PROV-2, PROV-3).
+test('TR-EVID-1: genel inceleme kanit seviyesini YUKSELTEMEZ', () => {
   const persisted = billing.inspectTrendyolBillingSource({
     rawOrder: providerPackage(),
   })
   assert.equal(persisted.evidence, 'UNVERIFIED_HISTORICAL_RAW')
+  assert.equal(persisted.billingParty, 'TRENDYOL')
 
-  const live = billing.inspectTrendyolBillingSource(
+  // Emekliye ayrilan bayrak: gecirilse bile HICBIR ETKISI YOK.
+  const claimedLive = billing.inspectTrendyolBillingSource(
     { rawOrder: providerPackage() },
     { origin: 'LIVE_PROVIDER_RESPONSE' },
   )
-  assert.equal(live.evidence, 'CONFIRMED_PROVIDER_CONTRACT')
-  assert.equal(live.billingParty, 'TRENDYOL')
+  assert.equal(claimedLive.evidence, 'UNVERIFIED_HISTORICAL_RAW')
+  assert.equal(claimedLive.billingParty, 'TRENDYOL')
+  assert.deepEqual(claimedLive, persisted, 'bayrak sonucu DEGISTIRDI')
 })
 
 /* ═══ TARAYICI: HAM ≠ SEMANTİK ═════════════════════════════════════════ */

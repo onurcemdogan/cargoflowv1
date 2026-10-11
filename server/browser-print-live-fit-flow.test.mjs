@@ -247,7 +247,7 @@ test('LIVE-21/22: native/Zebra yoluna HTML fit SIZMAZ, resmî ZPL değişmez', (
   const provider = readFileSync(
     join(here, '..', 'src/providers/printing/BrowserDownloadPrintProvider.ts'),
     'utf8')
-  const zebra = provider.slice(provider.indexOf("'/api/printing/zebra/raw'"))
+  const zebra = provider.slice(provider.indexOf("'/api/printing/jobs'"))
   for (const leak of [
     'buildCleanLabelDocument', 'printCleanLabelDocument', 'resolveProductFit',
     'resolveLabelLayout', 'resolveRouteFit',

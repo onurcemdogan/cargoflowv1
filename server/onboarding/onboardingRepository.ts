@@ -2,7 +2,11 @@
 // organizationId ZORUNLU ilk parametredir. onboarding_completed kaynak-of-truth
 // PostgreSQL'dedir; frontend'te SAKLANMAZ. Secret/credential DÖNMEZ.
 import { and, eq, isNull, lt, ne, or } from 'drizzle-orm'
-import { integrationSyncState, organizationSettings } from '../db/schema.ts'
+import {
+  integrationSyncState,
+  marketplaceAccounts,
+  organizationSettings,
+} from '../db/schema.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -56,6 +60,24 @@ export async function getSettings(
     .where(eq(organizationSettings.organizationId, organizationId))
     .limit(1)
   return rows[0] ?? null
+}
+
+// Organizasyonun TÜM pazaryeri hesapları (onboarding projeksiyonu için).
+// Yalnız GÜVENLİ kolonlar okunur: kimlik bilgisi/sır bu tabloda YOKTUR ve
+// sorgu kiracı sınırını HER ZAMAN taşır.
+export async function listOrganizationMarketplaceAccounts(
+  db: Db,
+  organizationId: string,
+): Promise<Record<string, unknown>[]> {
+  return db
+    .select({
+      id: marketplaceAccounts.id,
+      marketplace: marketplaceAccounts.marketplace,
+      displayName: marketplaceAccounts.displayName,
+      isActive: marketplaceAccounts.isActive,
+    })
+    .from(marketplaceAccounts)
+    .where(eq(marketplaceAccounts.organizationId, organizationId))
 }
 
 export async function setOnboardingCompleted(

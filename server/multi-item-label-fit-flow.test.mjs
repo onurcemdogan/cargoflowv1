@@ -76,7 +76,7 @@ test('MIF-2/3: product-fit YALNIZ browser-print modunda uygulanır', () => {
 
 test('MIF-4: sağlayıcı seçimi TEK yerde ve moda göredir', () => {
   assert.match(provider, /if \(input\.printerSettings\.mode === 'browser-print'\)/)
-  const zebra = provider.slice(provider.indexOf("'/api/printing/zebra/raw'"))
+  const zebra = provider.slice(provider.indexOf("'/api/printing/jobs'"))
   // Zebra dalı HTML render veya product-fit ÇAĞIRMAZ.
   for (const leak of [
     'buildCleanLabelDocument', 'printCleanLabelDocument', 'resolveProductFit',

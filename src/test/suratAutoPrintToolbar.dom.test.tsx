@@ -223,8 +223,9 @@ test('AUTO-13: Zebra/native yolu browser-print değişikliğinden ETKİLENMEZ', 
     src.indexOf("if (input.printerSettings.mode === 'download')"),
   )
   expect(browserBranch).toContain('resolveBrowserPrintJobs')
-  // Zebra dalı endpoint jobs[] sonucunu OLDUĞU GİBİ taşır.
-  const zebraBranch = src.slice(src.indexOf("'/api/printing/zebra/raw'"))
+  // Zebra/native dalı endpoint jobs[] sonucunu OLDUĞU GİBİ taşır.
+  // ÇAPA TAŞINDI: ham bayt ucu yerine sunucu yetkili iş ucu (aynı iddia).
+  const zebraBranch = src.slice(src.indexOf("'/api/printing/jobs'"))
   expect(zebraBranch).toContain('jobs: data.jobs')
   expect(zebraBranch).not.toContain('resolveBrowserPrintJobs')
 })

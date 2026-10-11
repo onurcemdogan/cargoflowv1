@@ -8,6 +8,12 @@ import { LabelHtmlPreview } from './LabelHtmlPreview'
 interface ProductDetailDrawerProps {
   product: CargoProduct
   relatedOrder?: CargoOrder
+  /**
+   * İlgili sipariş YALNIZ yüklü siparişler arasında arandıysa `true`.
+   * Sunucu modunda sipariş havuzu yalnız görüntülenen sayfalarla dolar; bu
+   * durumda "eşleşen sipariş yok" demek YANLIŞ bir iddia olurdu.
+   */
+  relatedOrderBestEffort?: boolean
   onClose: () => void
 }
 
@@ -16,6 +22,7 @@ type ProductTab = 'details' | 'label'
 export function ProductDetailDrawer({
   product,
   relatedOrder,
+  relatedOrderBestEffort = false,
   onClose,
 }: ProductDetailDrawerProps) {
   const images = useMemo(() => {
@@ -140,7 +147,15 @@ export function ProductDetailDrawer({
           <div className="drawer-content">
             <section className="detail-section">
               <h3>Etiket Önizleme</h3>
-              <LabelHtmlPreview order={relatedOrder} productName={product.productName} />
+              {!relatedOrder && relatedOrderBestEffort ? (
+                <div className="label-preview-empty" data-testid="related-order-best-effort">
+                  Şu an yüklü siparişler arasında bu ürünü içeren bir sipariş yok.
+                  Bu tam bir sipariş araması değildir; etiket önizlemesi için
+                  ilgili siparişi Siparişler ekranında açın.
+                </div>
+              ) : (
+                <LabelHtmlPreview order={relatedOrder} productName={product.productName} />
+              )}
             </section>
           </div>
         )}

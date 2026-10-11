@@ -1,91 +1,52 @@
-# CargoFlow çalışma notları
+# Multi-Agent Engineering Contract
 
-## Proje amacı
+This file is authoritative for Claude, Cursor, Codex, and future workers.
 
-CargoFlow, Türk e-ticaret satıcıları için siparişleri, kargo barkodlarını, etiketleri ve yazdırma akışını tek panelden yönetmeyi hedefleyen bir kargo operasyon uygulamasıdır. İlk canlı entegrasyon odağı Trendyol siparişleri ve Sürat Kargo ortak barkod akışıdır.
+## Prime directive
+DO NOT ASSUME. PROVE IT FIRST.
 
-## Mevcut repo durumu
+## Startup
+Read, in order:
+1. AGENTS.md
+2. .ai/PROJECT_SPEC.md
+3. .ai/ACCEPTED_FOUNDATION.md
+4. .ai/ROADMAP.md
+5. .ai/CURRENT_TASK.json
+6. .ai/CURRENT_CONTEXT.md
+7. .ai/HANDOFF.md
+8. the active ticket
 
-Bu çalışma alanı bir MVP/local geliştirme reposudur:
+Then inspect git root, remote, branch, status, recent log and diff before editing.
 
-- Frontend: React + TypeScript + Vite
-- Backend/proxy: Node.js + Express (`server/index.mjs`)
-- Yerel ayarlar: entegrasyon anahtarları Windows kullanıcı klasöründe şifreli saklanır
-- Etiket: HTML önizleme, ZPL indirme ve Chrome üzerinden temiz yazdırma akışı
-- Testler: Node test runner ile server/akış testleri
+## Shared memory
+- Chat history is disposable; repository state is authoritative.
+- Exactly one worker per worktree.
+- Claude/Cursor/Codex continue the SAME ticket branch.
+- Do not start the next roadmap ticket unless the supervisor selects it.
+- Before normal exit, update CURRENT_TASK.json and HANDOFF.md.
+- After abnormal exit, next worker reconstructs from git + logs + recovery snapshot.
 
-Not: Ürün vizyonunda PostgreSQL, Row-Level Security ve Google Cloud Run var; ancak bu repoda görünen mevcut kod local MVP ağırlıklıdır. Bu altyapılar için dosya/konfigürasyon görmeden varsayım yapma.
+## Git
+- Protected: master, main, production.
+- No direct protected-branch push. No force push. No production deploy.
+- Ticket branches: agent/<TICKET-ID>.
+- Merge target: integration/roadmap.
+- Builder cannot self-approve; review uses a different model.
+- Never reset/clean/delete unfamiliar changes.
 
-## Klasör yapısı
+## Engineering loop
+Baseline → forensic inspection → reproduction → root cause → minimal patch → targeted regression → mutation proof when required → gates → handoff/state → checkpoint/push → different-agent review → CI → integration merge.
 
-- `src/App.tsx`: ana uygulama state’i ve sayfa yönlendirme mantığı
-- `src/pages/`: Dashboard, Siparişler, Kargo İşlemleri, Entegrasyonlar, Debug ve yazıcı ekranları
-- `src/components/`: tablo, drawer, modal, etiket önizleme ve barkod/QR bileşenleri
-- `src/services/`: sipariş iş akışı, entegrasyon ayarları, debug ve audit servisleri
-- `src/providers/marketplace/TrendyolProvider.ts`: Trendyol sipariş/ürün sağlayıcısı
-- `src/providers/shipping/SuratKargoProvider.ts`: frontend’in Sürat gönderi/takip provider’ı
-- `src/providers/labels/ZebraZplLabelProvider.ts`: ZPL etiket üretimi
-- `src/providers/printing/`: yazdırma/indirme provider’ları
-- `src/utils/`: etiket verisi, Sürat doğrulama, ZPL analizi, desi, tarih/format yardımcıları
-- `server/index.mjs`: Express API proxy; Trendyol ve Sürat’e gerçek istek atan ana backend dosyası
-- `server/*-flow.test.mjs`: Sürat, label, print, dashboard, persistence ve local config akış testleri
+## Test rules
+Never weaken tests for green. No hidden skip/todo. Long test waits are process-level, not LLM polling. Diagnose stalls via PID/CPU/log timestamp/current batch/tail; never kill unrelated processes.
 
-## Komutlar
+## Security
+Never log/commit secrets, tokens, PII, raw auth headers or decrypted provider payloads. Never invent provider contracts, bypass rollout/tenant gates, disable TLS validation or deploy production.
 
-- Kurulum: `npm install`
-- Local frontend + backend: `npm run dev`
-- Aynı Wi-Fi’den erişilebilir mod: `npm run dev:host`
-- Sadece backend: `npm run dev:api`
-- Sadece frontend: `npm run dev:web`
-- Build: `npm run build`
-- Lint: `npm run lint`
-- Kritik akış testleri: `npm run test:surat`
-
-Local adresler:
-
-- Frontend: `http://127.0.0.1:5173/`
-- Backend health: `http://127.0.0.1:8787/api/health`
-- Vite proxy: `/api` isteklerini `http://127.0.0.1:8787` adresine yönlendirir
-
-## Sürat Kargo entegrasyonu
-
-Canlı Sürat API’ye gerçek istek atan ana dosya `server/index.mjs` dosyasıdır.
-
-Önemli fonksiyonlar:
-
-- `createSuratShipment`: Sürat gönderi oluşturma endpoint’inin giriş noktası
-- `createSuratRegisteredCommonBarcode`: önce Sürat ön kayıt, sonra ortak barkod ve operasyonel barkod doğrulama akışı
-- `createSuratLegacyRestJson`: `GonderiyiKargoyaGonder` REST çağrısı
-- `createSuratCommonBarcodeSoap`: `OrtakBarkodOlustur` SOAP çağrısı
-- `resolveSuratOperationalBarcode`: teknik ZPL geldiyse gerçek T.No/numeric barkodu bulmak için ek sorgu
-- `callSuratKargoBarkodu`: `KargoBarkodu` SOAP çağrısı
-- `trackShipmentSoap` / `trackShipmentRest`: Sürat takip sorguları
-
-Frontend tarafında:
-
-- `src/providers/shipping/SuratKargoProvider.ts`: backend’den dönen Sürat sonucunu sipariş shipment objesine taşır
-- `src/utils/suratVerification.ts`: T.No, numeric ana barkod, Web barkod ve yazdırılabilirlik kontrolünü yapar
-- `src/utils/suratZplAnalysis.ts`: ZPL içinden Web barkod/numeric barkod/T.No analizi yapar
-- `src/providers/labels/ZebraZplLabelProvider.ts`: yalnız doğrulanmış Sürat verisiyle ZPL üretmelidir
-- `src/utils/printableLabel.ts` ve `src/utils/browserLabelPrint.ts`: Chrome yazdırma için temiz HTML etiket üretir
-
-## Barkod güvenlik kuralları
-
-- `Web...` ile başlayan barkod final operasyonel Sürat barkodu değildir.
-- Trendyol `cargoTrackingNumber` final Sürat barkodu değildir.
-- Etiket basılabilir sayılması için Sürat’ten doğrulanmış T.No/KargoTakipNo ve numeric ana barkod birlikte gelmelidir.
-- Sürat API başarılı ve doğrulanmış veri dönmeden mock/sahte barkod üretme veya yazdırma akışı açma.
-- API hata dönerse kullanıcıya net hata göster; sessiz fallback kullanma.
-- Canlı Sürat API’ye gerçek gönderi oluşturma isteği atmadan önce kullanıcıdan açık onay al.
-
-## Test beklentisi
-
-Sürat/barkod/etiket/yazdırma alanında değişiklik yaptıktan sonra en az şu komutları çalıştır:
-
-```bash
-npm run lint
-npm run build
-npm run test:surat
-```
-
-Canlı API testi gerekiyorsa önce kullanıcıdan izin iste. İzin yoksa mock/sandbox testleriyle sınırlı kal.
+## Source hierarchy
+1. active ticket
+2. accepted foundation/ADRs
+3. current code/tests
+4. verified provider contracts
+5. handoff/context
+6. chat memory

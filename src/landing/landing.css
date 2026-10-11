@@ -1,0 +1,678 @@
+/* ═══ CARGOFLOW TANITIM SAYFASI — KAPSAMLI STİL ═══════════════════════════
+   Bu dosya giriş parçasıyla birlikte yüklenir; bu yüzden YALNIZ `landing-*`
+   sınıflarını hedefler (uygulama sayfalarına sızmaz). Harici yazı tipi, CDN
+   veya uzak görsel YOKTUR. Renkler uygulamanın kimliğinden türetilir:
+   kenar çubuğu laciverti (#182026) ve birincil camgöbeği (#0f766e). */
+
+.landing-body {
+  margin: 0;
+  background: #0b1418;
+}
+
+.landing-root {
+  --landing-ink: #0f1b21;
+  --landing-navy: #0b1418;
+  --landing-navy-2: #12232a;
+  --landing-teal: #0f766e;
+  --landing-teal-bright: #2dd4bf;
+  --landing-muted: #5b6b75;
+  --landing-line: #dbe3e7;
+  --landing-surface: #ffffff;
+  --landing-soft: #f3f6f7;
+  --landing-radius: 14px;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  color: var(--landing-ink);
+  background: var(--landing-surface);
+  line-height: 1.5;
+  overflow-x: clip;
+  -webkit-font-smoothing: antialiased;
+}
+
+.landing-root *,
+.landing-root *::before,
+.landing-root *::after {
+  box-sizing: border-box;
+}
+
+.landing-root img {
+  max-width: 100%;
+}
+
+.landing-container {
+  width: 100%;
+  max-width: 1160px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* ── Başlık ───────────────────────────────────────────────────────────── */
+.landing-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: rgba(11, 20, 24, 0.88);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.landing-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 64px;
+}
+
+.landing-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: #f8fafc;
+  font-weight: 700;
+  font-size: 18px;
+  text-decoration: none;
+}
+
+.landing-brand img {
+  border-radius: 8px;
+}
+
+.landing-nav {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+}
+
+.landing-nav a {
+  color: #c9d5da;
+  font-size: 14px;
+  text-decoration: none;
+}
+
+.landing-nav a:hover,
+.landing-nav a:focus-visible {
+  color: #ffffff;
+}
+
+.landing-menu-toggle {
+  display: none;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background: transparent;
+  color: #f8fafc;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+/* ── Çağrılar ─────────────────────────────────────────────────────────── */
+.landing-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 0 22px;
+  border-radius: 10px;
+  background: var(--landing-teal);
+  color: #ffffff !important;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: 0 10px 24px rgba(15, 118, 110, 0.32);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.landing-cta:hover {
+  background: #115e59;
+  transform: translateY(-1px);
+}
+
+.landing-cta-small {
+  min-height: 38px;
+  padding: 0 16px;
+  font-size: 14px;
+  box-shadow: none;
+}
+
+.landing-cta-secondary {
+  display: inline-flex;
+  align-items: center;
+  min-height: 46px;
+  padding: 0 18px;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 10px;
+  color: #e6eef1;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.landing-cta-secondary:hover {
+  border-color: rgba(255, 255, 255, 0.55);
+}
+
+.landing-root a:focus-visible,
+.landing-root button:focus-visible {
+  outline: 3px solid var(--landing-teal-bright);
+  outline-offset: 3px;
+}
+
+/* ── Kahraman bölümü ──────────────────────────────────────────────────── */
+.landing-hero {
+  background:
+    radial-gradient(900px 420px at 85% 10%, rgba(45, 212, 191, 0.14), transparent 60%),
+    linear-gradient(180deg, var(--landing-navy) 0%, var(--landing-navy-2) 100%);
+  color: #f8fafc;
+  padding: 72px 0 88px;
+}
+
+.landing-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: 48px;
+  align-items: center;
+}
+
+.landing-eyebrow,
+.landing-kicker {
+  margin: 0 0 12px;
+  color: var(--landing-teal-bright);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.landing-kicker {
+  color: var(--landing-teal);
+}
+
+.landing-hero h1 {
+  margin: 0 0 18px;
+  font-size: clamp(32px, 4.6vw, 54px);
+  line-height: 1.08;
+  letter-spacing: -0.02em;
+}
+
+.landing-lead {
+  margin: 0 0 28px;
+  max-width: 540px;
+  color: #c3d0d6;
+  font-size: 18px;
+}
+
+.landing-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.landing-hero-note {
+  margin: 18px 0 0;
+  color: #8fa3ac;
+  font-size: 13px;
+}
+
+/* ── Temsili ürün sahnesi ─────────────────────────────────────────────── */
+.landing-scene {
+  margin: 0;
+  animation: landing-rise 0.6s ease-out both;
+}
+
+.landing-scene figcaption {
+  margin-top: 10px;
+  color: #8fa3ac;
+  font-size: 12px;
+  text-align: right;
+}
+
+.landing-scene-window {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--landing-radius);
+  background: #f6f8f9;
+  color: var(--landing-ink);
+  box-shadow: 0 30px 70px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.landing-scene-chrome {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  background: #182026;
+}
+
+.landing-scene-chrome span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.landing-scene-chrome b {
+  margin-left: 8px;
+  color: #c9d5da;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.landing-scene-body {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 150px;
+  gap: 14px;
+  padding: 14px;
+}
+
+.landing-scene-nav {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 8px;
+  border-radius: 10px;
+  background: #182026;
+}
+
+.landing-scene-nav i {
+  display: block;
+  height: 18px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.landing-scene-nav i.is-active {
+  background: var(--landing-teal-bright);
+}
+
+.landing-scene-main {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.landing-scene-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.landing-scene-kpis div {
+  padding: 10px;
+  border: 1px solid var(--landing-line);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.landing-scene-kpis small {
+  display: block;
+  color: var(--landing-muted);
+  font-size: 11px;
+}
+
+.landing-scene-kpis strong {
+  font-size: 18px;
+  color: #9aa9b1;
+}
+
+.landing-scene-rows {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.landing-scene-rows li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid var(--landing-line);
+  border-radius: 9px;
+  background: #ffffff;
+  font-size: 12px;
+}
+
+.landing-scene-check {
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid #aebdc5;
+  border-radius: 3px;
+}
+
+.landing-scene-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.landing-scene-chip {
+  flex: 0 0 auto;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.landing-scene-chip.tone-ok {
+  color: #16794c;
+  background: #ddf7e9;
+}
+
+.landing-scene-chip.tone-info {
+  color: #2563eb;
+  background: #e0ecff;
+}
+
+.landing-scene-chip.tone-warn {
+  color: #b7791f;
+  background: #fff3d2;
+}
+
+.landing-scene-chip.tone-muted {
+  color: #5b6b75;
+  background: #eef2f4;
+}
+
+.landing-scene-label {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px dashed #aebdc5;
+  border-radius: 10px;
+  background: #ffffff;
+  font-size: 11px;
+  color: var(--landing-muted);
+}
+
+.landing-scene-label small {
+  font-weight: 700;
+  color: var(--landing-ink);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.landing-scene-barcode {
+  height: 54px;
+  background: repeating-linear-gradient(
+    90deg,
+    #0f1b21 0 2px,
+    transparent 2px 4px,
+    #0f1b21 4px 5px,
+    transparent 5px 8px
+  );
+  border-radius: 2px;
+}
+
+/* ── Bölümler ─────────────────────────────────────────────────────────── */
+.landing-section {
+  padding: 88px 0;
+  scroll-margin-top: 72px;
+}
+
+.landing-section h2,
+.landing-final h2 {
+  margin: 0 0 32px;
+  font-size: clamp(26px, 3vw, 36px);
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+
+.landing-section-muted {
+  background: var(--landing-soft);
+}
+
+.landing-section-dark {
+  background: var(--landing-navy);
+  color: #f1f5f7;
+}
+
+.landing-section-dark .landing-kicker {
+  color: var(--landing-teal-bright);
+}
+
+.landing-workflow,
+.landing-capabilities,
+.landing-control,
+.landing-integrations {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.landing-workflow {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 20px;
+}
+
+.landing-workflow li,
+.landing-capabilities li {
+  padding: 22px;
+  border: 1px solid var(--landing-line);
+  border-radius: var(--landing-radius);
+  background: var(--landing-surface);
+}
+
+.landing-workflow h3,
+.landing-capabilities h3,
+.landing-control h3 {
+  margin: 0 0 8px;
+  font-size: 17px;
+}
+
+.landing-workflow p,
+.landing-capabilities p,
+.landing-control p {
+  margin: 0;
+  color: var(--landing-muted);
+  font-size: 15px;
+}
+
+.landing-step-index {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  margin-bottom: 14px;
+  border-radius: 9px;
+  background: rgba(15, 118, 110, 0.1);
+  color: var(--landing-teal);
+  font-weight: 700;
+}
+
+.landing-capabilities {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+
+.landing-capabilities li {
+  border-top: 3px solid var(--landing-teal);
+}
+
+.landing-integrations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.landing-integrations li {
+  display: grid;
+  gap: 2px;
+  min-width: 220px;
+  padding: 20px 24px;
+  border: 1px solid var(--landing-line);
+  border-radius: var(--landing-radius);
+}
+
+.landing-integrations strong {
+  font-size: 20px;
+}
+
+.landing-integrations span {
+  color: var(--landing-muted);
+  font-size: 14px;
+}
+
+.landing-control {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 28px;
+}
+
+.landing-control p {
+  color: #a9bac2;
+}
+
+.landing-final {
+  padding: 80px 0;
+  background:
+    radial-gradient(700px 300px at 50% 0%, rgba(45, 212, 191, 0.12), transparent 70%),
+    var(--landing-soft);
+  text-align: center;
+}
+
+.landing-final-inner p {
+  margin: -16px 0 26px;
+  color: var(--landing-muted);
+}
+
+.landing-footer {
+  padding: 24px 0;
+  background: var(--landing-navy);
+  color: #8fa3ac;
+  font-size: 14px;
+}
+
+.landing-footer-inner {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.landing-footer a {
+  color: #c9d5da;
+}
+
+@keyframes landing-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Duyarlı düzen ────────────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  .landing-hero-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 40px;
+  }
+
+  .landing-workflow {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .landing-capabilities,
+  .landing-control {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 768px) {
+  .landing-menu-toggle {
+    display: inline-flex;
+  }
+
+  .landing-nav {
+    display: none;
+    position: absolute;
+    top: 64px;
+    left: 0;
+    right: 0;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 4px;
+    padding: 12px 24px 20px;
+    background: var(--landing-navy);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .landing-nav.is-open {
+    display: flex;
+  }
+
+  .landing-nav a {
+    padding: 10px 0;
+    font-size: 16px;
+  }
+
+  .landing-nav .landing-cta-small {
+    margin-top: 8px;
+    min-height: 44px;
+  }
+
+  .landing-hero {
+    padding: 48px 0 64px;
+  }
+
+  .landing-section {
+    padding: 64px 0;
+  }
+
+  .landing-scene-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .landing-scene-nav,
+  .landing-scene-label {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .landing-container {
+    padding: 0 16px;
+  }
+
+  .landing-workflow,
+  .landing-capabilities,
+  .landing-control {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .landing-integrations li {
+    min-width: 0;
+    flex: 1 1 100%;
+  }
+
+  .landing-lead {
+    font-size: 16px;
+  }
+
+  .landing-hero-actions a {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+}
+
+/* ── Hareket azaltma: süs animasyonları KAPALI ────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .landing-root *,
+  .landing-root *::before,
+  .landing-root *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

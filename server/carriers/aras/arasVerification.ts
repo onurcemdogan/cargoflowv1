@@ -16,6 +16,9 @@
 // sözleşmesine özeldir. Buradaki makine ONA BENZER ama ondan TÜRETİLMEZ:
 // paylaşılan tek şey ilkedir — "bilinmiyor" ≠ "oldu".
 
+import { ARAS_VERIFICATION_REQUEST_FIELDS } from './arasContract.ts'
+import { buildArasSoap11Envelope, escapeArasXml } from './arasSoapXml.ts'
+
 export const ARAS_VERIFICATION_STATES = [
   'CREATE_SUBMITTED',
   'CREATE_REJECTED',
@@ -123,4 +126,70 @@ export function applyArasVerificationLookup(params: {
     ...next, state: 'VERIFICATION_UNKNOWN', registered: false,
     reason: 'Yanıt kayıt varlığını bildirmedi.',
   }
+}
+
+export interface ArasVerificationEnvelopeBuildResult {
+  ok: boolean
+  envelope: string
+  errorCode: 'ARAS_CREDENTIALS_INCOMPLETE' | 'ARAS_INTEGRATION_CODE_REQUIRED' | null
+  reason: string | null
+}
+
+/**
+ * GetOrderWithIntegrationCode SOAP 1.1 zarfı — resmî TEST şeması (2026-09-27).
+ * Alan sırası ve büyük/küçük harf DEĞİŞTİRİLMEZ.
+ */
+export function buildArasGetOrderWithIntegrationCodeEnvelope(params: {
+  credentials?: { userName?: string | null; password?: string | null }
+  integrationCode?: string | null
+}): ArasVerificationEnvelopeBuildResult {
+  const userName = str(params.credentials?.userName)
+  const password = str(params.credentials?.password)
+  const integrationCode = str(params.integrationCode)
+  if (!userName || !password) {
+    return {
+      ok: false, envelope: '',
+      errorCode: 'ARAS_CREDENTIALS_INCOMPLETE',
+      reason: 'Aras kullanıcı adı/parolası eksik.',
+    }
+  }
+  if (!integrationCode) {
+    return {
+      ok: false, envelope: '',
+      errorCode: 'ARAS_INTEGRATION_CODE_REQUIRED',
+      reason: 'IntegrationCode olmadan doğrulama yapılamaz.',
+    }
+  }
+  const values: Record<string, string> = {
+    userName,
+    password,
+    integrationCode,
+  }
+  const inner = ARAS_VERIFICATION_REQUEST_FIELDS.map(
+    (field) => `      <${field}>${escapeArasXml(values[field])}</${field}>`,
+  )
+  return {
+    ok: true,
+    envelope: buildArasSoap11Envelope('GetOrderWithIntegrationCode', inner),
+    errorCode: null,
+    reason: null,
+  }
+}
+
+/**
+ * Taşıma katmanı yanıtından kayıt bulundu mu — yalnız kanıtlı IntegrationCode.
+ */
+export function resolveArasVerificationTransport(params: {
+  transportOk: boolean
+  requestedIntegrationCode: string
+  raw: Record<string, unknown> | null
+}): { lookupOk: boolean; found: boolean | null } {
+  if (params.transportOk !== true) {
+    return { lookupOk: false, found: null }
+  }
+  const requested = str(params.requestedIntegrationCode)
+  const seen = str(params.raw?.IntegrationCode)
+  if (!requested) return { lookupOk: true, found: false }
+  if (!seen) return { lookupOk: true, found: false }
+  return { lookupOk: true, found: seen === requested }
 }

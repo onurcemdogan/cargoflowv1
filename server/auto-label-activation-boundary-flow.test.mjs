@@ -66,6 +66,7 @@ async function makeDb() {
 const ACTIVATED_AT = '2026-08-28T00:00:00.000Z'
 const BACKLOG = 120
 const FRESH = 3
+const SURAT_CARGO = 'Sürat Kargo'
 
 /** Sınırdan ÖNCE 120 paket (geçmiş yığın), SONRA 3 paket (yeni). */
 async function seedTenant(db) {
@@ -83,6 +84,7 @@ async function seedTenant(db) {
       orderNumber: `ORD-OLD-${index}`,
       orderDate: new Date('2026-08-20T00:00:00.000Z'),
       cargoTrackingNumber: `72700${index}`,
+      cargoProviderName: SURAT_CARGO,
       operationStatus: 'NEW',
       firstSeenAt: new Date('2026-08-20T00:00:00.000Z'),
     })
@@ -95,6 +97,7 @@ async function seedTenant(db) {
       orderNumber: `ORD-NEW-${index}`,
       orderDate: new Date('2026-08-28T06:00:00.000Z'),
       cargoTrackingNumber: `72799${index}`,
+      cargoProviderName: SURAT_CARGO,
       operationStatus: 'NEW',
       firstSeenAt: new Date('2026-08-28T06:00:00.000Z'),
     })

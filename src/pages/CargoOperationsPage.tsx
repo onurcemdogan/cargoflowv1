@@ -54,6 +54,7 @@ export function CargoOperationsPage({
   return (
     <>
       <PageHeader
+        tourId="cargo-operations"
         title="Kargo İşlemleri"
         description="Sürat gönderisi, trackingNumber, shipmentCode ve rawResponse bilgisini bu ekrandan kontrol et."
         actions={

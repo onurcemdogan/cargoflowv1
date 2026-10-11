@@ -37,6 +37,10 @@ import {
   resolveSuratConfigured,
   resolveTrendyolConfigured,
 } from '../utils/integrationConfigured'
+import { ShippingPayerSection } from '../integrations/ShippingPayerSection'
+import { WooCommerceSection } from '../integrations/WooCommerceSection'
+import { IkasSection } from '../integrations/IkasSection'
+import { ArasSection } from '../integrations/ArasSection'
 import {
   integrationCategoryTabs,
   suratDetailTabs,
@@ -114,7 +118,7 @@ export function IntegrationsPage({
   const [activeCategory, setActiveCategory] =
     useState<IntegrationCategory>('marketplaces')
   const [activeIntegration, setActiveIntegration] = useState<
-    'trendyol' | 'surat' | null
+    'trendyol' | 'surat' | 'aras' | null
   >(null)
   const [activeTrendyolTab, setActiveTrendyolTab] =
     useState<TrendyolDetailTab>('general')
@@ -135,6 +139,7 @@ export function IntegrationsPage({
   return (
     <div className="integrations-workspace">
       <PageHeader
+        tourId="integrations-settings"
         title="Entegrasyonlar / Ayarlar"
         description="Pazaryeri ve kargo bağlantılarını tek ekrandan yönetin."
       />
@@ -149,6 +154,14 @@ export function IntegrationsPage({
         olursa olsun görünür ve sağlayıcı hesabı tanımlı olmasa da erişilebilir.
       */}
       <ShipmentDefaultsSection form={form} setForm={setForm} busy={busy} onSave={onSave} />
+
+      {/*
+        KARGO ÜCRETİ ÖDEYENİ — hesap bazlı, kendi verisini çeker.
+        Bu bölüm CargoFlow ABONELİĞİ DEĞİL, gönderi ücretinin ödeyenidir.
+        Trendyol'da alan düzenlenemez: ödeyen sipariş sözleşmesinden okunur.
+      */}
+      <WooCommerceSection />
+      <ShippingPayerSection />
 
       <nav className="integration-category-tabs" aria-label="Entegrasyon kategorileri">
         {integrationCategoryTabs.map((tab) => (
@@ -201,33 +214,50 @@ export function IntegrationsPage({
         ) : null}
 
         {activeCategory === 'carriers' ? (
-          <IntegrationCard
-            type="carrier"
-            title="Sürat Kargo"
-            description="Gönderi, ortak barkod ve takip entegrasyonu"
-            configured={suratConfigured}
-            test={suratTest}
-            facts={[
-              ['Müşteri Kodu', form.surat.kullaniciAdi || '-'],
-              ['Ortam', form.surat.ortam === 'live' ? 'Canlı' : 'Test'],
-              ['Anlaşmalı', suratConfigured ? 'Evet' : 'Kurulum gerekli'],
-              ['Son bağlantı', formatTestDate(suratTest)],
-            ]}
-            busy={busy}
-            primaryAction={{
-              label: 'Test Et',
-              icon: <TestTube2 size={16} />,
-              onClick: () => onTestSurat(form),
-            }}
-            onSettings={() => {
-              setActiveIntegration('surat')
-              setActiveSuratTab('general')
-            }}
-          />
+          <>
+            <IntegrationCard
+              type="carrier"
+              title="Sürat Kargo"
+              description="Gönderi, ortak barkod ve takip entegrasyonu"
+              configured={suratConfigured}
+              test={suratTest}
+              facts={[
+                ['Müşteri Kodu', form.surat.kullaniciAdi || '-'],
+                ['Ortam', form.surat.ortam === 'live' ? 'Canlı' : 'Test'],
+                ['Anlaşmalı', suratConfigured ? 'Evet' : 'Kurulum gerekli'],
+                ['Son bağlantı', formatTestDate(suratTest)],
+              ]}
+              busy={busy}
+              primaryAction={{
+                label: 'Test Et',
+                icon: <TestTube2 size={16} />,
+                onClick: () => onTestSurat(form),
+              }}
+              onSettings={() => {
+                setActiveIntegration('surat')
+                setActiveSuratTab('general')
+              }}
+            />
+            <IntegrationCard
+              type="carrier"
+              title="Aras Kargo"
+              description="INTERNAL TEST — resmî test SOAP uç noktası"
+              configured={false}
+              facts={[['Yayın', 'internal_test'], ['Canlı gönderi', 'Kapalı']]}
+              busy={busy}
+              primaryAction={{
+                label: 'Hesap Bağla',
+                icon: <TestTube2 size={16} />,
+                onClick: () => setActiveIntegration('aras'),
+              }}
+              onSettings={() => setActiveIntegration('aras')}
+            />
+          </>
         ) : null}
 
         {activeCategory !== 'marketplaces' &&
-        activeCategory !== 'carriers' ? (
+        activeCategory !== 'carriers' &&
+        activeCategory !== 'commerceSites' ? (
           <EmptyIntegrationCategory
             {...emptyCategoryMessages[activeCategory]}
           />
@@ -265,7 +295,18 @@ export function IntegrationsPage({
             onTest={onTestSurat}
           />
         ) : null}
+
+        {activeCategory === 'carriers' && activeIntegration === 'aras' ? (
+          <ArasSection />
+        ) : null}
       </form>
+
+      {/*
+        E-TİCARET SİTELERİ — ikas (İÇ TEST). Formun DIŞINDA durur: bölümün
+        kendi düğmeleri vardır ve ikas alanında Enter, sayfanın ayar formunu
+        GÖNDEREMEZ.
+      */}
+      {activeCategory === 'commerceSites' ? <IkasSection /> : null}
     </div>
   )
 }

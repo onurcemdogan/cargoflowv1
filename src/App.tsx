@@ -2,12 +2,17 @@ import {
   Suspense,
   lazy,
   useCallback,
+  useContext,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from 'react'
 import { AppShell } from './components/AppShell'
+import { AuthContext } from './auth/AuthProvider'
+import { ProductTour } from './tour/ProductTour'
+import { PRODUCT_TOUR_V1 } from './tour/productTourDefinition'
+import { useProductTourController } from './tour/useProductTourController'
 import { RouteSkeleton } from './components/RouteSkeleton'
 import type { PrintPreviewMode } from './components/PrintPreviewModal'
 
@@ -56,6 +61,11 @@ const ProductsPage = lazy(async () => ({
   default: (await import('./pages/ProductsPage')).ProductsPage,
 }))
 import { apiDebugService } from './services/apiDebugService'
+import {
+  fetchPrintCapabilities,
+  findRawCapability,
+  type PrintTransportCapability,
+} from './services/printCapabilityService'
 import {
   auditLogService,
   integrationConfigService,
@@ -127,6 +137,10 @@ import type {
 } from './types/cargoflow'
 import { downloadTextFile } from './utils/download'
 import { resolveLastSuccessfulSyncAt } from './utils/orderSyncStatus'
+import {
+  createLocalCatalogSource,
+  serverCatalogSource,
+} from './services/productCatalogService'
 import { loadLabelPreviewDrafts } from './utils/labelPreviewDrafts'
 import { migrateAlternateLoopbackStorage } from './utils/localStorageMigration'
 import { type QuickTab } from './utils/ordersTabs'
@@ -174,6 +188,28 @@ function App() {
   // gelsin görseller doğru zenginleşsin diye en güncel katalog burada tutulur.
   const catalogProductsRef = useRef<CargoProduct[]>([])
   const [activePage, setActivePage] = useState<PageKey>('dashboard')
+
+  // ═══ ÜRÜN TURU (ONBOARDING DEĞİL) ══════════════════════════════════════
+  // Bu bileşen yalnız `OnboardingGate` kurulumu tamamlanmış gördüğünde
+  // bağlanır; tur onboarding'i TEKRAR sorgulamaz. Tercih organizasyon +
+  // kullanıcı kapsamlıdır; kimliği doğrulanmış kapsam yoksa (geliştirme
+  // atlatması / legacy) tur OTOMATİK AÇILMAZ.
+  const authContext = useContext(AuthContext)
+  const tourScope = useMemo(
+    () =>
+      authContext && !authContext.devBypass && authContext.user
+        ? {
+            organizationId: authContext.user.organization.id,
+            username: authContext.user.username,
+          }
+        : null,
+    [authContext],
+  )
+  const productTour = useProductTourController({
+    scope: tourScope,
+    currentPage: activePage,
+    navigate: (page) => handleNavigate(page),
+  })
   const [integrationConfig, setIntegrationConfig] = useState<IntegrationConfig>(
     () => integrationConfigService.loadIntegrationConfig(),
   )
@@ -192,6 +228,25 @@ function App() {
   const [printerSettings] = useState<PrinterSettings>(() =>
     integrationConfigService.loadPrinterSettings(),
   )
+  // ═══ BASKI YETENEĞİ — SUNUCU GERÇEĞİ ═══════════════════════════════════
+  //
+  // ÖLÇÜLEN KUSUR: sunucu `/api/printing/capabilities` ile dürüst çalışma
+  // zamanı yeteneğini yayınlıyordu ama ARAYÜZ TÜKETMİYORDU; kayıtlı bir
+  // yazıcı adı Linux çalışma zamanında bile "bağlı" gösterebiliyordu.
+  //
+  // Yetenek burada BİR KEZ okunur ve baskı yüzeylerine taşınır. Okunamazsa
+  // `null` kalır — "bilmiyorum" ASLA "bağlı" sayılmaz.
+  const [rawPrintCapability, setRawPrintCapability] =
+    useState<PrintTransportCapability | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    void fetchPrintCapabilities(printerSettings.printerName).then((snapshot) => {
+      if (!cancelled) setRawPrintCapability(findRawCapability(snapshot))
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [printerSettings.printerName])
   const [labelTemplate, setLabelTemplate] = useState<LabelTemplate>(() =>
     integrationConfigService.loadLabelTemplate(),
   )
@@ -288,6 +343,23 @@ function App() {
     [orders, ordersState.lastSyncedAt],
   )
   const products = productsState.products
+
+  // ═══ ÜRÜN KATALOĞU TARAYICISI ≠ OPERASYONEL KATALOG ════════════════════
+  //
+  // Ürünler ekranı YALNIZ görünen sayfayı ister (auth: `GET /api/products`).
+  // `products` (tam operasyonel katalog: etiket meta verisi, görsel eşleşmesi,
+  // pano zenginleştirme) AYRI yüklenmeye DEVAM EDER ve ekrana VERİLMEZ.
+  // Legacy (veritabanısız) modda sunucu kataloğu olmadığından yerel kaynak
+  // kullanılır.
+  const catalogAuthMode = integrationConfigService.isAuthMode()
+  const catalogSource = useMemo(
+    () => (catalogAuthMode ? serverCatalogSource : createLocalCatalogSource(products)),
+    [catalogAuthMode, products],
+  )
+  // Aktif hesap nesli: değişince tarayıcı eski hesabın satırlarını göstermez.
+  const [catalogScopeKey, setCatalogScopeKey] = useState(() =>
+    workflowService.getMarketplaceAccountGeneration(),
+  )
 
   // ═══ SUNUCU TARAFI SİPARİŞ ÇALIŞMA ALANI ═══════════════════════════════
   //
@@ -796,6 +868,7 @@ function App() {
       const generation = workflowService.getMarketplaceAccountGeneration()
       const isFresh = () =>
         generation === workflowService.getMarketplaceAccountGeneration()
+      setCatalogScopeKey(generation)
       setSelectedIds([])
       catalogProductsRef.current = []
       // Eski liste anında temizlenir; yeni hesabın local verisi paralel yüklenir.
@@ -1153,9 +1226,12 @@ function App() {
     try {
       const outcome = await runSuratCreateAndPrint(snapshotOrders, orders, {
         preflight: {
-          isSuratOrder: (order) =>
-            !order.cargoProviderName ||
-            /surat|sürat/i.test(String(order.cargoProviderName)),
+          isSuratOrder: (order) => {
+            const name = String(order.cargoProviderName ?? '').trim()
+            if (!name) return false
+            if (/aras/i.test(name)) return false
+            return /surat|sürat/i.test(name)
+          },
           resolveDataBlock: (order) =>
             String(order.address ?? '').trim() && String(order.customerName ?? '').trim()
               ? null
@@ -1722,7 +1798,14 @@ function App() {
   }
 
   return (
-    <AppShell activePage={effectivePage} onNavigate={handleNavigate}>
+    <>
+    <AppShell
+      activePage={effectivePage}
+      onNavigate={handleNavigate}
+      onStartTour={() => void productTour.start()}
+      tourNotice={productTour.notice}
+      interactionLocked={productTour.active}
+    >
       {effectivePage === 'dashboard' ? (
         <DashboardPage
           orders={orders}
@@ -1817,13 +1900,14 @@ function App() {
       {activePage === 'products' ? (
         <Suspense fallback={<RouteSkeleton />}>
         <ProductsPage
-          products={products}
+          catalogSource={catalogSource}
+          scopeKey={catalogScopeKey}
           orders={orders}
           result={productsState.productsMessage}
           debug={productsState.productsDebug}
           metadata={productsState.metadata}
-          busy={productsState.productsLoading}
-          onFetchProducts={() => handleFetchProducts()}
+          syncBusy={productsState.productsLoading}
+          onSyncProducts={() => handleFetchProducts()}
         />
         </Suspense>
       ) : null}
@@ -1910,6 +1994,7 @@ function App() {
           mappingConfig={labelMappingConfig}
           previewDrafts={labelPreviewDrafts}
           printerSettings={printerSettings}
+          rawPrintCapability={rawPrintCapability}
           busy={ordersState.ordersLoading}
           products={productsState.products}
           labelPrintTemplate={organizationLabelPrintTemplate}
@@ -1925,6 +2010,19 @@ function App() {
         </Suspense>
       ) : null}
     </AppShell>
+    {/* AppShell'in KARDEŞİ: portal olayları React ağacında kabarcıklanır; tur
+        kabuğun içinde olsaydı arka plan kilidi turun KENDİ düğmelerini de
+        yutardı. */}
+    {productTour.active ? (
+      <ProductTour
+        key={productTour.runId}
+        steps={PRODUCT_TOUR_V1}
+        onNavigate={handleNavigate}
+        onComplete={productTour.complete}
+        onDismiss={productTour.dismiss}
+      />
+    ) : null}
+    </>
   )
 }
 

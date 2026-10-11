@@ -363,11 +363,7 @@ test('DESI-RUNTIME-9/10: basari basina TEK SOAP, SECOND_CREATE = NO', async (t) 
   assert.match(transport, /webservices\.suratkargo\.com\.tr\/services\.asmx/)
 })
 
-test('DESI-RUNTIME-REG: yeni test dosyasi test:surat icinde KAYITLI', () => {
-  const listed = new Set(
-    JSON.parse(readFileSync(join(here, 'testing', 'suratSuiteFiles.json'), 'utf8')),
-  )
-  const onDisk = readdirSync(here)
-    .filter((f) => f.endsWith('.test.mjs')).map((f) => `server/${f}`)
-  assert.deepEqual(onDisk.filter((f) => !listed.has(f)), [])
+test('DESI-RUNTIME-REG: yeni test dosyasi test:surat icinde KAYITLI', async () => {
+  const { listOrphanSuratSuiteTests } = await import('./testing/suratSuiteRegistry.mjs')
+  assert.deepEqual(listOrphanSuratSuiteTests(), [])
 })

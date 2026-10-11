@@ -2379,6 +2379,8 @@ function buildOrder() {
     // Finansal kapı pazaryeri bağlamı KANITLANMADAN create'e izin vermez;
     // bu fikstür kapı öncesinden kaldığı için pazaryeri alanı eksikti.
     marketplace: 'Trendyol',
+    cargoProviderName: 'Sürat Kargo Marketplace',
+    marketplaceStatus: 'Picking',
     orderNumber: 'ORDER123',
     packageId: 'PKG123',
     cargoTrackingNumber: '7270033563324593',

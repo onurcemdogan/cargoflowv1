@@ -529,10 +529,18 @@ export function LabelTemplateEditorPage({
   }
 
   const dirty = slot ? isDirty(slot.state) : false
+  // Herhangi bir şablonda kaydedilmemiş değişiklik var mı? Ürün turu sayfa
+  // değiştirir; bu işaret varken tur BAŞLATILMAZ (düzenleme sessizce kaybolmaz).
+  const anyUnsaved = Object.values(slots).some((entry) => isDirty(entry.state))
 
   return (
-    <div className="label-editor-page" data-testid="label-editor-page">
+    <div
+      className="label-editor-page"
+      data-testid="label-editor-page"
+      data-unsaved-changes={anyUnsaved ? 'true' : undefined}
+    >
       <PageHeader
+        tourId="label-templates"
         title="Etiket Şablonu"
         description="10×10 cm etiket yerleşimini gerçek sipariş verisiyle düzenleyin. Kaydetmek yayınlamaz."
       />

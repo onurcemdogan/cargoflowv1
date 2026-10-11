@@ -17,6 +17,11 @@ import {
   resolveSuratPrintEligibility,
 } from '../utils/suratPrintEligibility.ts'
 import { verifySuratShipment } from '../utils/suratVerification.ts'
+// YAZICI SAĞLIĞI TEK KARARDAN GELİR (ikinci bir kural KURULMAZ).
+import {
+  resolvePrinterHealth,
+  type PrintTransportCapability,
+} from '../services/printCapabilityService.ts'
 import {
   carrierProviderRegistry,
   marketplaceProviderRegistry,
@@ -140,6 +145,17 @@ interface BuildDashboardSummaryInput {
   printerSettings: PrinterSettings
   subscription?: { status?: string; planName?: string }
   selectedPeriod?: DashboardPeriod
+  /**
+   * SUNUCUNUN BİLDİRDİĞİ ham baskı yeteneği.
+   *
+   * ÖLÇÜLEN KUSUR: pano yazıcı sağlığını `mode !== 'download' &&
+   * printerName` ifadesinden türetiyordu. Linux bir API çalışma zamanında
+   * kayıtlı bir yazıcı adı, SERVER_WINDOWS_RAW GERÇEKTEN kullanılamazken
+   * "bağlı / Windows RAW baskı" gösteriyordu.
+   *
+   * Verilmezse "bağlı" DENMEZ: bilgi yokluğu bağlantı KANITI değildir.
+   */
+  rawPrintCapability?: PrintTransportCapability | null
 }
 
 export function buildDashboardSummary({
@@ -150,6 +166,7 @@ export function buildDashboardSummary({
   printerSettings,
   subscription,
   selectedPeriod = 'today',
+  rawPrintCapability = null,
 }: BuildDashboardSummaryInput): DashboardSummary {
   const now = new Date()
   // Sayaçlar paket seviyesinde tekildir: aynı Trendyol paketi birden fazla
@@ -304,19 +321,10 @@ export function buildDashboardSummary({
     carrierHealth: carrierIntegrations.filter(
       (provider) => provider.status !== 'not_configured' || provider.providerKey === 'surat',
     ),
-    printerHealth: {
-      status:
-        printerSettings.mode !== 'download' && printerSettings.printerName
-          ? 'connected'
-          : 'not_configured',
-      name: printerSettings.printerName || 'Zebra Yazıcı',
-      detail:
-        printerSettings.mode === 'local-agent'
-          ? 'Windows RAW baskı'
-          : printerSettings.mode === 'browser-print'
-            ? 'Chrome temiz etiket önizlemesi · 100×150 mm'
-            : 'ZPL indirme modu',
-    },
+    // TEK KARAR NOKTASI: yazıcı sağlığı `resolvePrinterHealth` içindedir.
+    // Pano KENDİ kuralını kurmaz — ikinci bir gerçek üretmek, düzeltilen
+    // kusurun ta kendisiydi.
+    printerHealth: resolvePrinterHealth(printerSettings, rawPrintCapability),
     subscriptionSummary: {
       available: Boolean(subscription?.status || subscription?.planName),
       label:

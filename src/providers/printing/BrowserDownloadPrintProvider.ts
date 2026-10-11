@@ -24,7 +24,6 @@ import type { BrowserLabelPrintError as BrowserLabelPrintErrorType } from '../..
 
 const loadLabelRenderer = () => import('../../utils/browserLabelPrint')
 const loadOfficialRunner = () => import('../../services/officialSuratPrintRunner')
-import { buildBatchPrintableJob } from '../../utils/printableLabelJob'
 import { NOT_IN_PRINT_DOCUMENT_MESSAGE } from '../../utils/suratPrintFailureReasons'
 
 // Browser-print başarısı TEKNİK koşullara bağlıdır; kullanıcıdan ayrıca baskı
@@ -241,58 +240,44 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
       }
     }
 
-    // ── HAM ZPL (Zebra local-agent) ──────────────────────────────────────
+    // ── SUNUCU YETKİLİ HAM BASKI (SERVER_WINDOWS_RAW) ───────────────────
     //
-    // KÖK NEDEN (4B'de kapatıldı): resmî Sürat modunda `label.zplContent`
-    // BİLEREK boş bırakılıyor (baskı içeriği sunucudan gelir). Bu yol ise
-    // körlemesine `zplContent` gönderdiği için yazıcıya BOŞ ZPL gidiyordu.
+    // ═══ ÖLÇÜLEN GÜVEN SINIRI KUSURU — KAPATILDI ══════════════════════
     //
-    // Artık sunucu yetkili kalıcı baskı paketi kullanılır: taşıyıcı + ürün
-    // detay sayfaları TEK ham ZPL işinde, TEK canonical kurucudan (sıra
-    // orada doğrulanır) ve TEK çağrıda. İstemci `technicalZpl` seçimine
-    // GERİ DÖNMEZ.
-    const labels = printableOrders.map((order) => {
-      const bundle = order.shipment?.printBundle
-      const pages = Array.isArray(bundle?.pages) ? bundle.pages : []
-      if (pages.length > 0) {
-        const job = buildBatchPrintableJob([
-          {
-            carrierZpl: pages[0]?.zpl ?? '',
-            supplementalLabels: pages.slice(1).map((page, index) => ({
-              kind: 'product_detail',
-              page: index + 1,
-              totalPages: pages.length - 1,
-              zpl: page?.zpl ?? '',
-            })),
-          },
-        ])
-        // Paket tutarsızsa KISMİ baskı YOK: boş içerik gönderilir ve
-        // yerel ajan bunu başarısız iş olarak raporlar.
-        if (job.printReady) {
-          return { orderNumber: order.orderNumber, zpl: job.combinedZpl }
-        }
-      }
-      return { orderNumber: order.orderNumber, zpl: order.label?.zplContent }
-    })
+    // Bu dal ESKİDEN etiket BAYTLARINI istemcide kurup sunucuya
+    // gönderiyordu (`labels[].zpl`). Sunucu o baytları doğrudan yazıcı
+    // komutuna veriyordu; yani kimlik doğrulanmış bir tarayıcı KENDİ
+    // uydurduğu ZPL'i "taşıyıcı etiketi" diye bastırabiliyordu. Taşıyıcı
+    // artefaktı SUNUCU YETKİLİDİR ve istemci onu YERİNE KOYAMAZ.
+    //
+    // Artık YALNIZ KİMLİK gönderilir. Baytları sunucu çözer: kiracı
+    // kapsamı → kalıcı artefakt → hash zinciri → değişmez sayfa sırası.
+    // İstemci `technicalZpl`e GERİ DÖNMEZ ve ham ZPL'i HİÇ görmez.
+    const items = printableOrders.map((order) => ({
+      orderId: String(order.id ?? ''),
+      orderNumber: order.orderNumber,
+    }))
     try {
-      const response = await fetch('/api/printing/zebra/raw', {
+      const response = await fetch('/api/printing/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           printerName: input.printerSettings.printerName,
-          labels,
+          items,
         }),
       })
       const data = await response.json()
       return {
         fileName,
         content,
+        // "gönderildi" ≠ "kâğıt çıktı": durum işletim sistemi/yazıcı
+        // kuyruğunun KABULÜNÜ ifade eder.
         status: data.ok ? 'printed' : 'failed',
         ok: Boolean(response.ok && data.ok),
-        provider: data.provider ?? 'zebra-local-agent',
+        provider: data.provider ?? 'server-windows-raw',
         printerName: input.printerSettings.printerName,
-        printJobId: data.printJobId,
-        errorMessage: data.ok ? undefined : data.message,
+        printJobId: data.jobId,
+        errorMessage: data.ok ? undefined : data.message ?? data.code,
         jobs: data.jobs,
       }
     } catch (error) {
@@ -301,12 +286,12 @@ export class BrowserDownloadPrintProvider implements PrintProvider {
         content,
         status: 'failed',
         ok: false,
-        provider: 'zebra-local-agent',
+        provider: 'server-windows-raw',
         printerName: input.printerSettings.printerName,
         errorMessage:
           error instanceof Error
             ? error.message
-            : 'Zebra yazdırma servisine erişilemedi.',
+            : 'Yazdırma servisine erişilemedi.',
       }
     }
   }

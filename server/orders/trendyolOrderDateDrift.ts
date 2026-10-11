@@ -19,8 +19,53 @@ export type OrderDateDriftClassification =
   | 'ALREADY_CORRECT'
   /** Ham yük yok/okunamıyor — TAHMİN YAPILMAZ. */
   | 'RAW_UNAVAILABLE'
-  /** Ham değer çözülemedi ya da fark beklenen imzaya uymuyor. */
+  /** Ham değer ÇÖZÜLEMEDİ (normalize boş döndü). */
   | 'RAW_UNPARSEABLE'
+  /**
+   * Ham değer çözüldü ama KUSUR İMZASI KANITLANAMIYOR — ONARILMAZ.
+   *
+   * İki kaynak:
+   *  1) Sapma ne 0 ne de tam ofset → bilinen kusurla AÇIKLANAMAZ.
+   *  2) Ham değer OFSETSİZ (naive) dizgi → eski alım yolu onu SUNUCUNUN
+   *     YEREL saatinde çözerdi; kaydın hangi saat diliminde yazıldığı
+   *     GERİYE DÖNÜK BİLİNEMEZ. Resmî sözleşme yalnız SAYISAL epoch'u
+   *     belgeler; belgelenmemiş bir biçim üzerinde otomatik yazma YAPILMAZ.
+   */
+  | 'AMBIGUOUS'
+
+/**
+ * Ham `orderDate` değerinin BİÇİMİ. Kusur analizinin ekseni budur: eski alım
+ * yolu (`new Date(value).toISOString()`) biçime göre FARKLI davranırdı —
+ * sayısal epoch +3 saat kayardı, açık ofsetli dizgi ise KAYMAZDI. Bu yüzden
+ * "kaymış" ve "zaten doğru" satırların ayrımı TARİHTEN DEĞİL BİÇİMDEN
+ * doğmuş olabilir; denetim aracı bunu bu alanla görünür kılar.
+ */
+export type TrendyolRawOrderDateShape =
+  | 'EPOCH_MS'
+  | 'OFFSET_STRING'
+  | 'NAIVE_STRING'
+  | 'UNPARSEABLE'
+  | 'MISSING'
+
+const EXPLICIT_OFFSET = /(?:Z|[+-]\d{2}:?\d{2})$/i
+
+export function classifyRawOrderDateShape(value: unknown): TrendyolRawOrderDateShape {
+  if (value == null || value === '') return 'MISSING'
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? 'EPOCH_MS' : 'UNPARSEABLE'
+  }
+  const text = String(value).trim()
+  if (text === '') return 'MISSING'
+  if (/^-?\d+$/.test(text)) {
+    return Number.isFinite(Number(text)) ? 'EPOCH_MS' : 'UNPARSEABLE'
+  }
+  if (EXPLICIT_OFFSET.test(text)) {
+    return Number.isFinite(Date.parse(text)) ? 'OFFSET_STRING' : 'UNPARSEABLE'
+  }
+  return Number.isFinite(Date.parse(`${text.replace(' ', 'T')}Z`))
+    ? 'NAIVE_STRING'
+    : 'UNPARSEABLE'
+}
 
 export interface OrderDateDriftVerdict {
   correctedOrderDate: string | null
@@ -60,6 +105,13 @@ export function classifyOrderDateDrift(input: {
     }
   }
   const driftMinutes = Math.round((storedMs - Date.parse(corrected)) / 60_000)
+  // OFSETSİZ ham dizgi: eski alım yolu onu SUNUCU YERELİNDE çözerdi; kaydın
+  // hangi saat diliminde yazıldığı geriye dönük KANITLANAMAZ. Sapma tam
+  // ofset çıksa bile bu bir TESADÜF olabilir → otomatik onarım DIŞI.
+  const shape = classifyRawOrderDateShape(input.rawOrderDate)
+  if (shape === 'NAIVE_STRING') {
+    return { correctedOrderDate: corrected, driftMinutes, classification: 'AMBIGUOUS' }
+  }
   return {
     correctedOrderDate: corrected,
     driftMinutes,
@@ -68,6 +120,7 @@ export function classifyOrderDateDrift(input: {
         ? 'DRIFTED_BY_OFFSET'
         : driftMinutes === 0
           ? 'ALREADY_CORRECT'
-          : 'RAW_UNPARSEABLE',
+          : // Çözüldü ama bilinen kusurla AÇIKLANAMIYOR: "okunamadı" DEĞİL.
+            'AMBIGUOUS',
   }
 }

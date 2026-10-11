@@ -43,6 +43,11 @@ export type BillingPartySource = (typeof BILLING_PARTY_SOURCES)[number]
  * Saklanmış ham yükün, sağlayıcıdan gelen yükle ALAN VARLIĞI bakımından birebir
  * aynı olduğu geçmiş kayıtlar için KANITLANAMAZ. Bu yüzden geçmiş veriden
  * türeyen sonuç `UNVERIFIED_HISTORICAL_RAW`'dır; sözleşme kanıtı DEĞİLDİR.
+ *
+ * `CONFIRMED_PROVIDER_CONTRACT` BU MODÜLDE ÜRETİLMEZ. O seviye yalnız gerçek
+ * Trendyol HTTP yanıt sınırında (`trendyolLiveOrderIngestion.ts`) doğar; bu
+ * modül saklanmış/rastgele yükleri inceler ve yükün canlı yanıttan gelip
+ * gelmediğini BİLEMEZ.
  */
 export const BILLING_EVIDENCE_LEVELS = [
   'CONFIRMED_PROVIDER_CONTRACT',
@@ -281,8 +286,6 @@ export function inspectTrendyolBillingSource(
   order: Record<string, unknown> = {},
   options: {
     rawPayloadAvailability?: RawPayloadAvailability
-    /** Yük doğrudan sağlayıcı yanıtından mı geliyor (ingestion sınırı)? */
-    origin?: 'LIVE_PROVIDER_RESPONSE' | 'PERSISTED'
   } = {},
 ): TrendyolBillingSourceInspection {
   const resolved = resolveRawPayload(order)
@@ -311,12 +314,20 @@ export function inspectTrendyolBillingSource(
   }
 
   const contract = classifyTrendyolWhoPays(raw)
+  // ═══ KANIT SEVİYESİ BURADA YÜKSELTİLEMEZ ══════════════════════════════
+  //
+  // ÖNCEDEN: `options.origin === 'LIVE_PROVIDER_RESPONSE'` seviyeyi doğrudan
+  // `CONFIRMED_PROVIDER_CONTRACT`e çıkarıyordu. Bu bir GÜVEN BAYRAĞIYDI ve
+  // çağıran onu KENDİ YAZIYORDU: elindeki herhangi bir sağlayıcı-şekilli
+  // nesneye o dizgiyi ekleyen her çağıran "doğrulanmış sözleşme" üretiyordu.
+  //
+  // Bu fonksiyon SAKLANMIŞ/RASTGELE yükleri inceler; yükün canlı yanıttan
+  // gelip gelmediğini BİLEMEZ. Bu yüzden seviye YALNIZ yükün kendisinden
+  // türetilir ve buradan çıkan en yüksek seviye `UNVERIFIED_HISTORICAL_RAW`
+  // olur. `CONFIRMED_PROVIDER_CONTRACT` YALNIZ gerçek HTTP yanıt sınırında
+  // (`trendyolLiveOrderIngestion.ts`) doğar.
   const evidence: BillingEvidenceLevel =
-    options.origin === 'LIVE_PROVIDER_RESPONSE'
-      ? 'CONFIRMED_PROVIDER_CONTRACT'
-      : provenance === 'PROVIDER_RAW'
-        ? 'UNVERIFIED_HISTORICAL_RAW'
-        : 'UNKNOWN'
+    provenance === 'PROVIDER_RAW' ? 'UNVERIFIED_HISTORICAL_RAW' : 'UNKNOWN'
 
   // Alan YOK + yük sağlayıcı ham paketi DEĞİL → çıkarım geçersiz.
   if (!contract.rawFieldPresent && provenance !== 'PROVIDER_RAW') {
@@ -376,7 +387,6 @@ export function deriveExpectedBillingParty(
   order: Record<string, unknown> = {},
   options: {
     rawPayloadAvailability?: RawPayloadAvailability
-    origin?: 'LIVE_PROVIDER_RESPONSE' | 'PERSISTED'
   } = {},
 ): {
   billingParty: BillingParty
@@ -441,11 +451,9 @@ export function buildBillingObservation(params: {
   suratWhoPays?: unknown
   senderCode?: unknown
   rawPayloadAvailability?: RawPayloadAvailability
-  origin?: 'LIVE_PROVIDER_RESPONSE' | 'PERSISTED'
 }): BillingObservation {
   const expected = deriveExpectedBillingParty(params.order ?? {}, {
     rawPayloadAvailability: params.rawPayloadAvailability,
-    origin: params.origin,
   })
   const hasActual = text(params.suratWhoPays) !== ''
   const actualBillingParty = hasActual
