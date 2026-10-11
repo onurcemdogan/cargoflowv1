@@ -1,7 +1,7 @@
 name: DevFactory CI
 on:
   pull_request:
-    branches: [integration/roadmap]
+    branches: [integration/roadmap, master]
   workflow_dispatch:
 permissions:
   contents: read
