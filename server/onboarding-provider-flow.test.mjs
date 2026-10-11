@@ -6,6 +6,7 @@ import { randomBytes } from 'node:crypto'
 import test from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
 import { drizzle } from 'drizzle-orm/pglite'
+import { eq } from 'drizzle-orm'
 
 // ═══ ONBOARDING-001 — SAĞLAYICI FARKINDA, HESAP KAPSAMLI, DÜRÜST KURULUM ══
 //
@@ -48,11 +49,18 @@ async function makeDb() {
   return { pglite, db: drizzle(pglite, { schema }) }
 }
 let slugSeq = 0
-async function makeOrg(db, name = 'Org') {
+const BUSINESS_PROFILE = { contactPhone: '0212 555 00 00', addressLine: 'Örnek Cad. No:1', city: 'İstanbul', district: 'Kadıköy' }
+
+async function fillBusinessProfile(db, organizationId) {
+  await db.update(schema.organizations).set(BUSINESS_PROFILE).where(eq(schema.organizations.id, organizationId))
+}
+
+async function makeOrg(db, name = 'Org', { profile = true } = {}) {
   slugSeq += 1
   const [org] = await db
     .insert(schema.organizations)
-    .values({ name, slug: `onb-${slugSeq}-${randomBytes(3).toString('hex')}` })
+    // PHASE2-B: işletme bilgileri tam (BUSINESS adımı); ayrı test eksik profili kapsar.
+    .values({ name, slug: `onb-${slugSeq}-${randomBytes(3).toString('hex')}`, ...(profile ? BUSINESS_PROFILE : {}) })
     .returning()
   return org.id
 }
@@ -86,12 +94,13 @@ const blockersOf = async (db, org) => (await service.deriveOnboardingStatus(db, 
 test('ONB-1: yeni organizasyon → tamamlanmamış, onboarding gösterilir', async (t) => {
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
-  const org = await makeOrg(db)
+  const org = await makeOrg(db, 'Org', { profile: false })
   const status = await service.deriveOnboardingStatus(db, org)
   assert.equal(status.completed, false)
   assert.equal(status.eligibleToComplete, false)
-  assert.deepEqual(status.blockers, ['MARKETPLACE_NOT_CONFIGURED', 'CARRIER_NOT_CONFIGURED'])
+  assert.deepEqual(status.blockers, ['BUSINESS_PROFILE_INCOMPLETE', 'MARKETPLACE_NOT_CONFIGURED', 'CARRIER_NOT_CONFIGURED'])
   assert.equal(status.resumeStep, 'WELCOME')
+  assert.equal(status.steps.find((step) => step.key === 'BUSINESS').done, false)
   const done = await service.handleOnboardingCompleteRequest({ db, organizationId: org })
   assert.equal(done.httpStatus, 409)
   assert.equal((await repo.getSettings(db, org)).onboardingCompleted, false)
@@ -281,6 +290,7 @@ test('ONB-9: kardeş hesabın başarısı diğer hesabı DOĞRULAMAZ', async (t)
       { id: 'X', marketplace: 'acme', displayName: 'X', isActive: false },
       { id: 'Y', marketplace: 'acme', displayName: 'Y', isActive: false },
     ],
+    businessProfileComplete: true,
     accountScopedCredentialProviders: ['acme'],
     carrierConfigured: true,
     defaultUnitDesiConfigured: false,
@@ -410,6 +420,7 @@ test('ONB-13: uygun liste KATALOG + CANLI yetenekten gelir (sabit liste yok)', (
       }],
     },
     accounts: [],
+    businessProfileComplete: true,
     accountScopedCredentialProviders: [],
     carrierConfigured: true,
     defaultUnitDesiConfigured: false,
@@ -482,10 +493,12 @@ test('ONB-15/16: durum ve tamamlama SIFIR ağ çağrısı, SIFIR gönderi', asyn
 test('ONB-17: yeniden açılış İLK EKSİK ZORUNLU adımdan sürer', async (t) => {
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
-  const org = await makeOrg(db)
+  const org = await makeOrg(db, 'Org', { profile: false })
   const resume = async () => (await service.deriveOnboardingStatus(db, org)).resumeStep
   assert.equal(await resume(), 'WELCOME')
   await connectSurat(db, org)
+  assert.equal(await resume(), 'BUSINESS', 'işletme bilgileri eksikse önce o adım')
+  await fillBusinessProfile(db, org)
   assert.equal(await resume(), 'MARKETPLACE', 'taşıyıcı önce girildiyse pazaryerine döner')
   const account = await connectTrendyol(db, org)
   assert.equal(await resume(), 'FIRST_SYNC')

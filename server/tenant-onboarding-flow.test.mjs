@@ -42,7 +42,11 @@ async function makeDb() {
   return { pglite, db: drizzle(pglite, { schema }) }
 }
 async function makeOrg(db, name, slug) {
-  const [org] = await db.insert(schema.organizations).values({ name, slug }).returning()
+  // PHASE2-B: işletme bilgileri tam (BUSINESS adımı).
+  const [org] = await db
+    .insert(schema.organizations)
+    .values({ name, slug, contactPhone: '0212 555 00 00', addressLine: 'Örnek Cad. No:1', city: 'İstanbul', district: 'Kadıköy' })
+    .returning()
   return org.id
 }
 function makeProduct(barcode) {
@@ -208,6 +212,7 @@ test('evaluateOnboarding idempotent + eksik adım raporu (L,M)', async () => {
       }],
     },
     accounts: [],
+    businessProfileComplete: true,
     accountScopedCredentialProviders: [],
     carrierConfigured: false,
     defaultUnitDesiConfigured: false,

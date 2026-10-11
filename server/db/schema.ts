@@ -17,12 +17,19 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 
-// Her şirket = 1 organization. Yeni organization tamamen boş başlar.
+// Her şirket = 1 organization (çalışma alanı). Yeni organization boş başlar.
+//
+// İşletme bilgileri (PHASE2-B): onboarding'in "İşletmenizi oluşturun" adımı
+// bu alanların DOLU olmasından hesaplanır (ön yüz onay kutusu TUTMAZ).
 export const organizations = pgTable('organizations', {
   id: uuid('id').primaryKey().defaultRandom(),
   name: text('name').notNull(),
   slug: text('slug').notNull().unique(),
   status: text('status').notNull().default('active'),
+  contactPhone: text('contact_phone'),
+  addressLine: text('address_line'),
+  city: text('city'),
+  district: text('district'),
   createdAt: timestamp('created_at', { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -45,7 +52,10 @@ export const organizations = pgTable('organizations', {
 //   · `email_verified_at` — NULL ise e-posta doğrulanmamıştır; bu durumda
 //                           giriş YAPILAMAZ (bkz. auth/routes.ts).
 //
-// `users_organization_id_unique` Commit B'de üyelik tablosuyla kaldırılır.
+// `organization_id` artık kullanıcının BİRİNCİL çalışma alanıdır (oturum
+// açılınca seçilen). ERİŞİM yetkisi `organization_members`'tan gelir; bir
+// firmada birden çok kullanıcı olabilir (org başına tek kullanıcı kısıtı
+// PHASE2-B ile kaldırıldı).
 export const users = pgTable(
   'users',
   {
@@ -67,12 +77,47 @@ export const users = pgTable(
   },
   (table) => [
     uniqueIndex('users_username_unique').on(table.username),
-    uniqueIndex('users_organization_id_unique').on(table.organizationId),
+    index('users_organization_id_idx').on(table.organizationId),
     uniqueIndex('users_email_normalized_unique').on(table.emailNormalized),
     // Her hesabın en az bir giriş kimliği vardır.
     check(
       'users_login_identity_check',
       sql`${table.username} is not null or ${table.emailNormalized} is not null`,
+    ),
+  ],
+)
+
+// ÇALIŞMA ALANI ÜYELİĞİ — kim hangi firmaya hangi rolle erişir.
+//
+//   · owner  : çalışma alanını oluşturan (self-service ilk kullanıcı)
+//   · admin / member : ileride ekip daveti için ayrıldı (UI henüz YOK)
+//
+// Mevcut her kullanıcı, `users.organization_id` firmasına `owner` olarak
+// eklenir (migration backfill, idempotent).
+export const organizationMembers = pgTable(
+  'organization_members',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    role: text('role').notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('organization_members_org_user_unique').on(
+      table.organizationId,
+      table.userId,
+    ),
+    index('organization_members_user_idx').on(table.userId),
+    check(
+      'organization_members_role_check',
+      sql`${table.role} in ('owner', 'admin', 'member')`,
     ),
   ],
 )

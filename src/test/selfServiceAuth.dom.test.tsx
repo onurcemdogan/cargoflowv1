@@ -118,3 +118,32 @@ test('SSUI-6: herkese açık auth yolları', () => {
   expect(resolvePublicAuthRoute('/app')).toBeNull()
   expect(resolvePublicAuthRoute('/app/signupx')).toBeNull()
 })
+
+test('SSUI-7: ilk giriş çalışma alanı formu firma adını gönderir ve oturumu yeniler', async () => {
+  const { WorkspaceSetupPage } = await import('../pages/WorkspaceSetupPage')
+  const { AuthContext } = await import('../auth/AuthProvider')
+  const refreshSession = vi.fn(async () => undefined)
+  responder = () => ({ status: 201, body: { ok: true, organization: { id: 'org-1', name: 'Ada Moda', slug: 'ada-moda' } } })
+  const value = {
+    status: 'workspace_required',
+    user: { username: 'ada@ornek.com', email: 'ada@ornek.com', organization: null },
+    devBypass: false,
+    signIn: vi.fn(),
+    signOut: vi.fn(),
+    initializeOrganization: vi.fn(),
+    refreshSession,
+    requestSetup: vi.fn(),
+    cancelSetup: vi.fn(),
+  } as unknown as import('../auth/AuthProvider').AuthContextValue
+  render(
+    <AuthContext.Provider value={value}>
+      <WorkspaceSetupPage />
+    </AuthContext.Provider>,
+  )
+  fireEvent.change(screen.getByLabelText('Firma adı'), { target: { value: 'Ada Moda' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Çalışma alanını oluştur' }))
+  await waitFor(() => expect(refreshSession).toHaveBeenCalledTimes(1))
+  const post = calls.find((call) => call.url === '/api/auth/workspace')
+  expect(JSON.parse(String(post?.body))).toEqual({ name: 'Ada Moda' })
+  expect(String(post?.body)).not.toMatch(/organizationId/)
+})

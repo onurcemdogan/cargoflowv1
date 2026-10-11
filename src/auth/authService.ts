@@ -186,3 +186,8 @@ export function forgotPassword(email: string, turnstileToken: string): Promise<s
 export function resetPassword(linkToken: string, password: string): Promise<string> {
   return postAuth('/api/auth/reset-password', { token: linkToken, password })
 }
+
+/** İlk giriş: doğrulanmış kullanıcının çalışma alanını (firma) oluşturur. */
+export function createWorkspace(name: string): Promise<string> {
+  return postAuth('/api/auth/workspace', { name: String(name ?? '').trim() })
+}

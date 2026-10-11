@@ -6,10 +6,11 @@
 // pazaryerinin kurulabileceği, hangi adımın eksik olduğu ve kurulumun nereden
 // sürdürüleceği SUNUCUDA hesaplanır; istemci yalnız gösterir.
 
-export type OnboardingStepKey = 'WELCOME' | 'MARKETPLACE' | 'CARRIER' | 'FIRST_SYNC' | 'READY'
+export type OnboardingStepKey = 'WELCOME' | 'BUSINESS' | 'MARKETPLACE' | 'CARRIER' | 'FIRST_SYNC' | 'READY'
 
 export const ONBOARDING_STEP_ORDER: readonly OnboardingStepKey[] = [
   'WELCOME',
+  'BUSINESS',
   'MARKETPLACE',
   'CARRIER',
   'FIRST_SYNC',

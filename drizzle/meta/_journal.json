@@ -113,6 +113,13 @@
       "when": 1791753220697,
       "tag": "0015_self_service_auth",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1791754225730,
+      "tag": "0016_workspace_membership",
+      "breakpoints": true
     }
   ]
 }

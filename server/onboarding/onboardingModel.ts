@@ -78,6 +78,8 @@ export const ONBOARDING_CARRIER = {
 
 export const ONBOARDING_STEP_KEYS = [
   'WELCOME',
+  // İşletme bilgileri (firma adı, telefon, adres) — `organizations` satırından.
+  'BUSINESS',
   'MARKETPLACE',
   'CARRIER',
   'FIRST_SYNC',
@@ -87,6 +89,7 @@ export type OnboardingStepKey = (typeof ONBOARDING_STEP_KEYS)[number]
 
 /** Kararlı engel kodları — ham sağlayıcı metni TAŞIMAZ. */
 export const ONBOARDING_BLOCKERS = {
+  BUSINESS_PROFILE_INCOMPLETE: 'BUSINESS_PROFILE_INCOMPLETE',
   NO_ELIGIBLE_MARKETPLACE: 'NO_ELIGIBLE_MARKETPLACE',
   MARKETPLACE_NOT_CONFIGURED: 'MARKETPLACE_NOT_CONFIGURED',
   MARKETPLACE_NOT_VERIFIED: 'MARKETPLACE_NOT_VERIFIED',
@@ -175,6 +178,11 @@ export interface OnboardingSnapshot {
   carrierConfigured: boolean
   defaultUnitDesiConfigured: boolean
   counts: { products: number; orders: number }
+  /**
+   * İşletme bilgileri tam mı (`isOrganizationProfileComplete`)? Alan YOKSA
+   * (eski çağıran) tamamlanmamış sayılır — sessizce "tamam" varsayılmaz.
+   */
+  businessProfileComplete?: boolean
 }
 
 /* ─── GÜVENLİ PROJEKSİYON ────────────────────────────────────────────── */
@@ -407,7 +415,10 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
   const bootstrapReady = marketplaces.some((entry) => entry.bootstrapReady)
   const carrierConfigured = Boolean(snapshot.carrierConfigured)
 
+  const businessProfileComplete = snapshot.businessProfileComplete === true
+
   const blockers: OnboardingBlocker[] = []
+  if (!businessProfileComplete) blockers.push(ONBOARDING_BLOCKERS.BUSINESS_PROFILE_INCOMPLETE)
   if (marketplaces.length === 0) {
     blockers.push(ONBOARDING_BLOCKERS.NO_ELIGIBLE_MARKETPLACE)
   } else if (!marketplaceConfigured) {
@@ -423,6 +434,7 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
 
   const steps: OnboardingStepView[] = [
     { key: 'WELCOME', required: false, done: true },
+    { key: 'BUSINESS', required: true, done: businessProfileComplete },
     { key: 'MARKETPLACE', required: true, done: marketplaceConfigured },
     { key: 'CARRIER', required: true, done: carrierConfigured },
     { key: 'FIRST_SYNC', required: true, done: bootstrapReady },

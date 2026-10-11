@@ -17,6 +17,11 @@ import { normalizeEmail } from '../../src/auth/emailPolicy.ts'
 import { resolveEmailProvider } from '../email/emailProvider.ts'
 import { resolveTurnstileVerifier } from './turnstile.ts'
 import { registerSelfServiceRoutes, type SelfServiceOptions } from './selfService.ts'
+import {
+  addOrganizationMember,
+  createWorkspaceForUser,
+  resolveSessionOrganization,
+} from './workspaces.ts'
 import { isAuthBypassEnabled, resolveBypassContext } from './devBypass.ts'
 import { isCookieSecure } from './cookieOptions.ts'
 import {
@@ -261,6 +266,7 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
             passwordHash,
           })
           .returning()
+        await addOrganizationMember(tx, String(organization.id), String(user.id), 'owner')
         created = {
           organizationId: String(organization.id),
           userId: String(user.id),
@@ -358,11 +364,13 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
       })
       return
     }
-    const session = await createSession(
+    // Çalışma alanı ÜYELİKTEN çözülür (birincil firma üyelikle doğrulanır).
+    const sessionOrganizationId = await resolveSessionOrganization(
       db,
       String(user.userId),
       user.organizationId == null ? null : String(user.organizationId),
     )
+    const session = await createSession(db, String(user.userId), sessionOrganizationId)
     await db
       .update(users)
       .set({ lastLoginAt: new Date() })
@@ -371,6 +379,43 @@ export function createAuthRouter(options: AuthRouterOptions = {}): Router {
     response.json({
       ok: true,
       username: user.displayName == null ? String(user.email ?? username) : String(user.displayName),
+    })
+  })
+
+  // POST /api/auth/workspace — doğrulanmış, henüz çalışma alanı olmayan
+  // kullanıcı firmasını oluşturur ve owner olur. Kiracı uçlarına giden yol
+  // budur; organizationId istemciden ALINMAZ.
+  router.post('/workspace', limiter, async (request, response) => {
+    const db = dbOf(request as AuthedRequest)
+    const token = String((request as AuthedRequest).cookies?.[sessionCookieName()] ?? '').trim()
+    const context = token ? await findActiveSession(db, token).catch(() => null) : null
+    if (!context) {
+      response.status(401).json({ ok: false, message: 'Oturum gerekli.' })
+      return
+    }
+    if (context.organizationId) {
+      response.status(409).json({ ok: false, code: 'WORKSPACE_EXISTS', message: 'Çalışma alanınız zaten var.' })
+      return
+    }
+    const result = await createWorkspaceForUser(db, {
+      userId: context.userId,
+      sessionToken: token,
+      name: (request.body as Record<string, unknown> | undefined)?.name,
+    })
+    if (!result.ok) {
+      response.status(result.code === 'INVALID_NAME' ? 400 : 409).json({
+        ok: false,
+        code: result.code,
+        message:
+          result.code === 'INVALID_NAME'
+            ? 'Firma adı 2–120 karakter olmalıdır.'
+            : 'Çalışma alanınız zaten var.',
+      })
+      return
+    }
+    response.status(201).json({
+      ok: true,
+      organization: { id: result.organizationId, name: result.name, slug: result.slug },
     })
   })
 

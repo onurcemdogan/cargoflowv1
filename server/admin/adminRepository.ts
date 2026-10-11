@@ -5,6 +5,7 @@ import { and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm'
 import {
   integrationCredentials,
   orders,
+  organizationMembers,
   organizations,
   organizationSettings,
   productVariants,
@@ -221,6 +222,10 @@ export async function createOrganizationWithUser(
         status: 'active',
       })
       .returning()
+    await tx
+      .insert(organizationMembers)
+      .values({ organizationId: String(organization.id), userId: String(user.id), role: 'owner' })
+      .onConflictDoNothing({ target: [organizationMembers.organizationId, organizationMembers.userId] })
     await tx
       .insert(organizationSettings)
       .values({ organizationId: String(organization.id), onboardingCompleted: false })

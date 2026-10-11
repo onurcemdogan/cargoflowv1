@@ -75,6 +75,8 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
       'marketplace_accounts',
       'order_lines',
       'orders',
+      // ÇALIŞMA ALANI ÜYELİĞİ (0016). Erişim yetkisinin kaynağı.
+      'organization_members',
       'organization_settings',
       'organizations',
       'platform_admin_audit_logs',
@@ -128,15 +130,34 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
     /users_username_unique|duplicate key/i,
     'aynı username ikinci kez eklenememeli',
   )
-  // Aynı organization'a ikinci user eklenemez.
-  await rejects(
-    db.query(
+  // PHASE2-B: bir firmada BİRDEN ÇOK kullanıcı olabilir (üyelik modeli).
+  const userA2 = (
+    await db.query(
       `INSERT INTO users (organization_id, username, password_hash)
-       VALUES ($1, 'kullanici-a2', 'hash-y')`,
+       VALUES ($1, 'kullanici-a2', 'hash-y') RETURNING id`,
       [orgA],
-    ),
-    /users_organization_id_unique|duplicate key/i,
-    'aynı organization ikinci kullanıcı alamamalı',
+    )
+  ).rows[0].id
+  await db.query(
+    `INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, 'owner'), ($1, $3, 'member')`,
+    [orgA, userA, userA2],
+  )
+  // Aynı kullanıcı aynı firmaya iki kez üye OLAMAZ; rol sözlüğü kapalıdır.
+  await rejects(
+    db.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, 'admin')`, [orgA, userA]),
+    /organization_members_org_user_unique|duplicate key/i,
+    'aynı üyelik ikinci kez eklenememeli',
+  )
+  await rejects(
+    db.query(`INSERT INTO organization_members (organization_id, user_id, role) VALUES ($1, $2, 'superuser')`, [orgB, userA]),
+    /organization_members_role_check/i,
+    'tanımsız rol reddedilmeli',
+  )
+  // Giriş kimliği olmayan kullanıcı OLAMAZ.
+  await rejects(
+    db.query(`INSERT INTO users (password_hash) VALUES ('hash-yok')`),
+    /users_login_identity_check/i,
+    'kullanıcı adı veya e-postası olmayan hesap reddedilmeli',
   )
   // FK: olmayan organization ile user eklenemez.
   await rejects(

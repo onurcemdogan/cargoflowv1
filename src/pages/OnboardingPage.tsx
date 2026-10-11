@@ -26,8 +26,10 @@ import {
 } from '../services/onboardingService'
 import { useAuth } from '../auth/useAuth'
 import { ProgressBar, SetupItem } from '../ui/primitives'
+import { BusinessProfileStep } from '../onboarding/BusinessProfileStep'
 
 const BLOCKER_LABELS: Record<string, string> = {
+  BUSINESS_PROFILE_INCOMPLETE: 'İşletme bilgileri tamamlanmalı',
   NO_ELIGIBLE_MARKETPLACE: 'Şu anda kurulabilir bir pazaryeri bağlantısı yok',
   MARKETPLACE_NOT_CONFIGURED: 'Pazaryeri bağlantısı kaydedilmeli',
   MARKETPLACE_NOT_VERIFIED: 'Pazaryeri kimlik bilgileri reddedildi; bilgileri kontrol edin',
@@ -58,6 +60,8 @@ function stepLabel(key: OnboardingStepKey, status: OnboardingStatus): string {
   switch (key) {
     case 'WELCOME':
       return 'Hoş Geldiniz'
+    case 'BUSINESS':
+      return 'İşletme Bilgileri'
     case 'MARKETPLACE':
       return status.marketplaces.length === 1
         ? `${status.marketplaces[0].displayName} Bağlantısı`
@@ -253,6 +257,17 @@ export function OnboardingPage({
                 <ProgressBar value={requiredDone} max={requiredSteps.length} label="Kurulum ilerlemesi" />
               </div>
               <SetupItem
+                done={stepDone('BUSINESS')}
+                active={stepKey === 'BUSINESS'}
+                title="İşletmenizi oluşturun"
+                description={
+                  stepDone('BUSINESS')
+                    ? 'Firma adı, telefon ve adres kayıtlı'
+                    : 'Firma adı, iletişim telefonu ve adres'
+                }
+                onClick={() => goTo('BUSINESS')}
+              />
+              <SetupItem
                 done={stepDone('MARKETPLACE')}
                 active={stepKey === 'MARKETPLACE'}
                 title={`${marketplaceName} hesabınızı bağlayın`}
@@ -269,22 +284,6 @@ export function OnboardingPage({
                     : 'Kullanıcı adı, şifre ve firma bilgilerinizi girin'
                 }
                 onClick={() => goTo('CARRIER')}
-              />
-              <SetupItem
-                done={status.carrier.configured}
-                title="Gönderici bilgilerinizi tamamlayın"
-                description={
-                  status.carrier.configured
-                    ? 'Kargo firmasındaki firma kaydınızdan alınır'
-                    : 'Kargo bağlantısıyla birlikte tamamlanır'
-                }
-              />
-              <SetupItem
-                done={false}
-                optional
-                title="Etiket şablonunuzu kontrol edin"
-                description="İsteğe bağlı · kurulumdan sonra Etiket Şablonları ekranında"
-                meta={<span className="onboarding-optional">İsteğe bağlı</span>}
               />
               <SetupItem
                 done={stepDone('FIRST_SYNC')}
@@ -328,6 +327,14 @@ export function OnboardingPage({
                 geçersiniz. Bilgileriniz yalnız bu organizasyona aittir.
               </p>
             </div>
+          )}
+
+          {stepKey === 'BUSINESS' && (
+            <BusinessProfileStep
+              done={stepDone('BUSINESS')}
+              fallbackName={organizationName ?? ''}
+              onSaved={refreshStatus}
+            />
           )}
 
           {stepKey === 'MARKETPLACE' && (

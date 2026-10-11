@@ -33,6 +33,7 @@ import {
   setOnboardingCompleted,
 } from './onboardingRepository.ts'
 import { getShipmentDefaults } from './shipmentDefaultsRepository.ts'
+import { getOrganizationProfile, isOrganizationProfileComplete } from '../auth/workspaces.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -68,8 +69,9 @@ export async function loadOnboardingSnapshot(
   ] as BootstrapResource[]
 
   const settings = await ensureSettings(db, scopedOrganizationId)
-  const [masked, accounts, defaults, productCount, orderCount, ...healthLists] =
+  const [profile, masked, accounts, defaults, productCount, orderCount, ...healthLists] =
     await Promise.all([
+      getOrganizationProfile(db, scopedOrganizationId),
       getMaskedIntegrationStatus(db, scopedOrganizationId),
       listOrganizationMarketplaceAccounts(db, scopedOrganizationId),
       getShipmentDefaults(db, scopedOrganizationId),
@@ -104,6 +106,7 @@ export async function loadOnboardingSnapshot(
     carrierConfigured: Boolean(masked?.surat?.configured),
     defaultUnitDesiConfigured: defaults?.defaultUnitDesi != null,
     counts: { products: Number(productCount) || 0, orders: Number(orderCount) || 0 },
+    businessProfileComplete: isOrganizationProfileComplete(profile),
   }
 }
 

@@ -42,17 +42,20 @@ function statusOf(overrides: {
   marketplace?: Partial<typeof TRENDYOL>
   carrierConfigured?: boolean
   completed?: boolean
+  businessDone?: boolean
 }): OnboardingStatus {
   const marketplace = { ...TRENDYOL, ...(overrides.marketplace ?? {}) }
   const carrierConfigured = overrides.carrierConfigured ?? false
   const steps = [
     { key: 'WELCOME', required: false, done: true },
+    { key: 'BUSINESS', required: true, done: overrides.businessDone ?? true },
     { key: 'MARKETPLACE', required: true, done: marketplace.configured },
     { key: 'CARRIER', required: true, done: carrierConfigured },
     { key: 'FIRST_SYNC', required: true, done: marketplace.bootstrapReady },
     { key: 'READY', required: false, done: Boolean(overrides.completed) },
   ]
   const blockers: string[] = []
+  if (overrides.businessDone === false) blockers.push('BUSINESS_PROFILE_INCOMPLETE')
   if (!marketplace.configured) blockers.push('MARKETPLACE_NOT_CONFIGURED')
   else if (!marketplace.bootstrapReady) {
     blockers.push(marketplace.credentialsRejected ? 'MARKETPLACE_NOT_VERIFIED' : 'FIRST_SYNC_REQUIRED')
@@ -132,16 +135,19 @@ test('ONB-UI-RESUME: kısmi kurulum İLK EKSİK zorunlu adımdan açılır', () 
 
 test('ONB-UI-NAV: ileri/geri gezinme', () => {
   responder = () => ({ status: 200, body: {} })
-  renderPage(statusOf({}))
+  renderPage(statusOf({ businessDone: false }))
   expect(heading()).toBe('Hoş Geldiniz')
   expect(button(/Geri/).hasAttribute('disabled')).toBe(true)
+  fireEvent.click(button(/İleri/))
+  expect(heading()).toBe('İşletme Bilgileri')
   fireEvent.click(button(/İleri/))
   expect(heading()).toBe('Trendyol Bağlantısı')
   fireEvent.click(button(/İleri/))
   expect(heading()).toBe('Sürat Kargo Bağlantısı')
   fireEvent.click(button(/Geri/))
   expect(heading()).toBe('Trendyol Bağlantısı')
-  expect(calls).toEqual([])
+  // Adıma gitmek senkron/test/yazma BAŞLATMAZ; yalnız işletme bilgisi OKUNUR.
+  expect(calls.every((call) => call.method === 'GET' && call.url === '/api/organization/profile')).toBe(true)
 })
 
 test('ONB-UI-TRUTH: kayıtlı ≠ doğrulandı (pazaryeri ve taşıyıcı)', () => {
@@ -253,7 +259,8 @@ test('ONB-UI-READY: tamamlama butonu yalnız sunucu uygun derse açılır', () =
   expect(screen.getByText('En az bir başarılı ilk senkron gerekli')).toBeTruthy()
   const checklist = screen.getByRole('list', { name: 'Kurulum kontrol listesi' })
   const items = [...checklist.querySelectorAll('li')].map((li) => li.getAttribute('data-done'))
-  expect(items).toEqual(['true', 'true', 'false'])
+  // İşletme · pazaryeri · taşıyıcı tamam; ilk senkron eksik.
+  expect(items).toEqual(['true', 'true', 'true', 'false'])
 })
 
 test('ONB-UI-HANDOFF: tamamla → uygulamaya geçiş (Gate) ve gövdesiz istek', async () => {
@@ -303,10 +310,39 @@ test('ONB-UI-REFRESH: yenileme kısmi kurulumdan sürer; tamamlanmış kurulum a
 
 test('ONB-UI-PROVIDER: sağlayıcı adı ve listesi SUNUCUDAN gelir', () => {
   responder = () => ({ status: 200, body: {} })
-  const status = statusOf({ marketplace: { displayName: 'Trendyol Pazaryeri' } })
+  const status = statusOf({ marketplace: { displayName: 'Trendyol Pazaryeri' }, businessDone: false })
   renderPage(status)
+  fireEvent.click(button(/İleri/))
   fireEvent.click(button(/İleri/))
   expect(heading()).toBe('Trendyol Pazaryeri Bağlantısı')
   expect(document.querySelectorAll('[data-provider]').length).toBe(1)
   expect(document.body.textContent).not.toMatch(/WooCommerce|ikas|Ticimax|Yakında/i)
+})
+
+test('ONB-UI-BUSINESS: işletme adımı sunucu durumundan; kaydetme PUT eder ve durumu yeniler', async () => {
+  responder = (url, init) => {
+    if (url === '/api/organization/profile' && (init?.method ?? 'GET') === 'GET') {
+      return { status: 200, body: { ok: true, complete: false, profile: { name: 'Ada Moda', contactPhone: null, addressLine: null, city: null, district: null } } }
+    }
+    if (url === '/api/organization/profile') {
+      const body = JSON.parse(String(init?.body))
+      return { status: 200, body: { ok: true, complete: true, profile: body } }
+    }
+    return { status: 200, body: { ok: true, ...statusOf({}) } }
+  }
+  renderPage({ ...statusOf({ businessDone: false }), resumeStep: 'BUSINESS' })
+  expect(heading()).toBe('İşletme Bilgileri')
+  expect(document.querySelector('[data-step="BUSINESS"]')?.getAttribute('aria-current')).toBe('step')
+  const name = await screen.findByDisplayValue('Ada Moda')
+  expect(name).toBeTruthy()
+  fireEvent.change(screen.getByLabelText('İletişim telefonu'), { target: { value: '0212 555 00 00' } })
+  fireEvent.change(screen.getByLabelText('Adres'), { target: { value: 'Örnek Cad. 1' } })
+  fireEvent.change(screen.getByLabelText('İl'), { target: { value: 'İstanbul' } })
+  fireEvent.change(screen.getByLabelText('İlçe'), { target: { value: 'Kadıköy' } })
+  fireEvent.click(button(/İşletme Bilgilerini Kaydet/))
+  expect(await screen.findByText('İşletme bilgileri kaydedildi.')).toBeTruthy()
+  const put = calls.find((call) => call.method === 'PUT')
+  expect(put?.url).toBe('/api/organization/profile')
+  expect(JSON.parse(String(put?.body))).toEqual({ name: 'Ada Moda', contactPhone: '0212 555 00 00', addressLine: 'Örnek Cad. 1', city: 'İstanbul', district: 'Kadıköy' })
+  await waitFor(() => expect(calls.some((call) => call.url === '/api/onboarding/status')).toBe(true))
 })

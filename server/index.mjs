@@ -380,6 +380,8 @@ const TENANT_AUTH_PATHS = [
   '/api/integrations/woocommerce',
   '/api/integrations/aras',
   '/api/shipping/payer',
+  // Çalışma alanı / işletme profili (PHASE2-B) — org kapsamlı.
+  '/api/organization',
   '/api/subscription',
   '/api/analytics/orders',
   '/api/analytics/claims',
@@ -2422,6 +2424,51 @@ async function requireOnboardingContext(request, response) {
     return null
   }
 }
+
+// İŞLETME PROFİLİ (PHASE2-B). Onboarding'in "İşletmenizi oluşturun" adımı bu
+// alanların dolu olmasından HESAPLANIR. Kiracı yalnız oturumdan gelir; yazma
+// yalnız owner/admin üyeliğiyle yapılır.
+app.get('/api/organization/profile', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const workspaces = await import('./auth/workspaces.ts')
+    const profile = await workspaces.getOrganizationProfile(context.db, context.organizationId)
+    if (!profile) {
+      response.status(404).json({ ok: false, message: 'Çalışma alanı bulunamadı.' })
+      return
+    }
+    response.json({ ok: true, profile, complete: workspaces.isOrganizationProfileComplete(profile) })
+  } catch {
+    response.status(500).json({ ok: false, message: 'İşletme bilgileri okunamadı.' })
+  }
+})
+
+app.put('/api/organization/profile', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const workspaces = await import('./auth/workspaces.ts')
+    const role = await workspaces.findMembershipRole(context.db, context.organizationId, request.auth.userId)
+    if (role !== 'owner' && role !== 'admin') {
+      response.status(403).json({ ok: false, message: 'İşletme bilgilerini yalnız yöneticiler değiştirebilir.' })
+      return
+    }
+    const validation = workspaces.validateOrganizationProfile(request.body ?? {})
+    if (!validation.ok) {
+      response.status(400).json({ ok: false, field: validation.field, message: validation.message })
+      return
+    }
+    await workspaces.updateOrganizationProfile(context.db, context.organizationId, validation.profile)
+    response.json({
+      ok: true,
+      profile: validation.profile,
+      complete: workspaces.isOrganizationProfileComplete(validation.profile),
+    })
+  } catch {
+    response.status(500).json({ ok: false, message: 'İşletme bilgileri kaydedilemedi.' })
+  }
+})
 
 // GET /api/onboarding/status — org-scoped kurulum durumu (DB'den türetilir).
 app.get('/api/onboarding/status', async (request, response) => {

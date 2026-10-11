@@ -11,7 +11,7 @@
 //
 // ⚠ Gerçek müşteri verisiyle açık BIRAKMAYIN.
 import { asc, eq } from 'drizzle-orm'
-import { organizations, organizationSettings, users } from '../db/schema.ts'
+import { organizationMembers, organizations, organizationSettings, users } from '../db/schema.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -104,6 +104,10 @@ export async function resolveBypassContext(db: Db): Promise<BypassContext> {
       .returning({ id: users.id })
     userId = String(created.id)
   }
+  await db
+    .insert(organizationMembers)
+    .values({ organizationId, userId, role: 'owner' })
+    .onConflictDoNothing({ target: [organizationMembers.organizationId, organizationMembers.userId] })
 
   // Doğrudan dashboard açılsın: onboarding tamamlanmış say.
   await db
