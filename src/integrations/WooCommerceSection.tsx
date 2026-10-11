@@ -120,7 +120,7 @@ export function WooCommerceSection() {
 
   if (loading) {
     return (
-      <section aria-labelledby="woocommerce-title">
+      <section className="integration-section" aria-labelledby="woocommerce-title">
         <h3 id="woocommerce-title">WooCommerce</h3>
         <p role="status">Yükleniyor…</p>
       </section>
@@ -128,7 +128,7 @@ export function WooCommerceSection() {
   }
 
   return (
-    <section aria-labelledby="woocommerce-title">
+    <section className="integration-section" aria-labelledby="woocommerce-title">
       <h3 id="woocommerce-title">WooCommerce</h3>
       <p>
         Birden çok WooCommerce mağazası bağlayabilirsiniz. Her mağaza bağımsızdır.

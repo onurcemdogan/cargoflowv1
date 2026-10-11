@@ -227,7 +227,7 @@ export function ProductsPage({
       <ActionResult result={result} />
 
       {syncUnavailable ? (
-        <p className="empty-state" role="note">
+        <p className="page-note" role="note">
           Ürün senkronu için önce satış kanalı bağlantısını kaydedin.
         </p>
       ) : null}

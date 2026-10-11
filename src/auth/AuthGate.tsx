@@ -13,7 +13,8 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (view === 'loading') {
     return (
       <div className="auth-loading-screen" role="status" aria-live="polite">
-        <div className="auth-brand-mark">CF</div>
+        <img className="auth-brand-logo" src="/favicon.png" alt="" width={32} height={32} />
+        <span className="ui-spinner" aria-hidden="true" />
         <span>Oturum kontrol ediliyor…</span>
       </div>
     )

@@ -155,7 +155,7 @@ export function IkasSection() {
   }
 
   return (
-    <section aria-labelledby="ikas-title" data-testid="ikas-section">
+    <section className="integration-section" aria-labelledby="ikas-title" data-testid="ikas-section">
       <h3 id="ikas-title">
         ikas <span data-testid="ikas-rollout-badge">İÇ TEST</span>
       </h3>

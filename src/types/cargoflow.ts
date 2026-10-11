@@ -1,5 +1,11 @@
 export type PageKey =
   | 'dashboard'
+  // Raporlar: ayrıntılı raporlama için ayrılmış route. Ana Sayfa istatistik
+  // özetini taşır; tarih aralığı, taşıyıcı performansı, kanal kırılımı gibi
+  // ayrıntılı kapsam gelene kadar menüde GÖSTERİLMEZ (pasif route).
+  | 'reports'
+  // Ayarlar: görünüm, çalışma alanı ve gelişmiş araçlara geçiş.
+  | 'settings'
   | 'orders'
   | 'products'
   | 'cargo'

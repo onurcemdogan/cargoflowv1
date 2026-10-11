@@ -57,7 +57,7 @@ export function BootstrapPage() {
         aria-busy={submitting}
       >
         <div className="auth-brand">
-          <div className="auth-brand-mark">CF</div>
+          <img className="auth-brand-logo" src="/favicon.png" alt="" width={32} height={32} />
           <div>
             <strong>CargoFlow</strong>
             <span>İlk Kurulum</span>

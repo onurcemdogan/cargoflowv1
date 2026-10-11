@@ -68,7 +68,7 @@ export function ArasSection() {
   if (loading) return <p className="text-sm text-muted">Aras hesapları yükleniyor…</p>
 
   return (
-    <section className="rounded-lg border p-4 space-y-3">
+    <section className="integration-section rounded-lg border p-4 space-y-3">
       <p className="text-sm font-medium">Aras Kargo — INTERNAL TEST</p>
       <p className="text-xs text-muted">
         Test uç noktası yalnızca yapılandırma içindir; canlı gönderi/etiket yan etkisi yoktur.

@@ -1,20 +1,24 @@
 import {
-  Bug,
   ClipboardList,
   Compass,
-  LayoutDashboard,
-  ListChecks,
+  House,
   LogOut,
+  Menu,
+  Moon,
   PackageSearch,
   Plug,
-  ScrollText,
+  Route,
+  Settings,
+  Sun,
   Tag,
   Truck,
+  X,
 } from 'lucide-react'
-import { useContext } from 'react'
+import { useContext, useState } from 'react'
 import type { ComponentType, ReactNode } from 'react'
 import { AuthContext } from '../auth/AuthProvider'
 import type { PageKey } from '../types/cargoflow'
+import { useTheme } from '../ui/theme'
 
 interface AppShellProps {
   activePage: PageKey
@@ -30,6 +34,13 @@ interface AppShellProps {
    * olarak yapar.
    */
   interactionLocked?: boolean
+  /**
+   * "Gönderiler / Takip" ayrı bir ekran DEĞİLDİR: Siparişler'in kargoya
+   * verilmiş gönderiler görünümünü açar. Verilmezse menü öğesi gösterilmez.
+   */
+  onOpenShipments?: () => void
+  /** Siparişler, gönderi görünümüyle açıldıysa menüde o öğe seçili görünür. */
+  shipmentsActive?: boolean
 }
 
 /** Arka plan olayını tur açıkken durdurur (yakalama aşamasında). */
@@ -38,19 +49,24 @@ function blockWhileLocked(event: { preventDefault: () => void; stopPropagation: 
   event.stopPropagation()
 }
 
+type NavIcon = ComponentType<{ size?: number; strokeWidth?: number }>
+
 const navItems: Array<{
   key: PageKey
   label: string
-  icon: ComponentType<{ size?: number }>
+  icon: NavIcon
 }> = [
-  { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { key: 'dashboard', label: 'Ana Sayfa', icon: House },
   { key: 'orders', label: 'Siparişler', icon: ClipboardList },
   { key: 'products', label: 'Ürünler', icon: PackageSearch },
   { key: 'cargo', label: 'Kargo İşlemleri', icon: Truck },
   { key: 'labelTemplates', label: 'Etiket Şablonları', icon: Tag },
-  { key: 'integrations', label: 'Entegrasyonlar / Ayarlar', icon: Plug },
-  { key: 'debug', label: 'Entegrasyonlar / Debug Merkezi', icon: Bug },
-  { key: 'logs', label: 'İşlem Logları', icon: ListChecks },
+  { key: 'integrations', label: 'Entegrasyonlar', icon: Plug },
+]
+
+/** Alt grup: yönetim. Debug ve İşlem Logları Ayarlar içinden açılır. */
+const footerItems: Array<{ key: PageKey; label: string; icon: NavIcon; also: PageKey[] }> = [
+  { key: 'settings', label: 'Ayarlar', icon: Settings, also: ['debug', 'logs'] },
 ]
 
 export function AppShell({
@@ -60,11 +76,21 @@ export function AppShell({
   onStartTour,
   tourNotice,
   interactionLocked = false,
+  onOpenShipments,
+  shipmentsActive = false,
 }: AppShellProps) {
   // AuthGate içinde context her zaman mevcuttur; testlerde/izole render'da
   // yoksa kullanıcı bloğu sessizce gizlenir (throw yok).
   const auth = useContext(AuthContext)
   const sessionUser = auth?.user ?? null
+  const [theme, setTheme] = useTheme()
+  const [menuOpen, setMenuOpen] = useState(false)
+
+  const go = (page: PageKey) => {
+    setMenuOpen(false)
+    onNavigate(page)
+  }
+
   return (
     <div
       className="app-shell"
@@ -75,7 +101,7 @@ export function AppShell({
       onKeyDownCapture={interactionLocked ? blockWhileLocked : undefined}
       onSubmitCapture={interactionLocked ? blockWhileLocked : undefined}
     >
-      <aside className="sidebar">
+      <aside className={menuOpen ? 'sidebar is-open' : 'sidebar'}>
         <div className="brand">
           {/*
             Marka simgesi TARAYICI FAVICON'UYLA AYNI dosyadır (/favicon.png).
@@ -84,72 +110,132 @@ export function AppShell({
           <img className="brand-mark" src="/favicon.png" alt="CargoFlow" />
           <div>
             <strong>CargoFlow</strong>
-            <span>Operasyon Paneli</span>
+            <span>{sessionUser?.organization.name ?? 'Operasyon Paneli'}</span>
           </div>
+          <button
+            type="button"
+            className="sidebar-menu-toggle"
+            aria-expanded={menuOpen}
+            aria-controls="app-sidebar-menu"
+            aria-label={menuOpen ? 'Menüyü kapat' : 'Menüyü aç'}
+            onClick={() => setMenuOpen((open) => !open)}
+          >
+            {menuOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
         </div>
 
-        <nav className="nav-list" aria-label="Ana navigasyon">
-          {navItems.map((item) => {
-            const Icon = item.icon
-            const active = activePage === item.key
-            return (
+        <div className="sidebar-menu" id="app-sidebar-menu">
+          <nav className="nav-list" aria-label="Ana navigasyon">
+            {navItems.map((item) => {
+              const Icon = item.icon
+              const active = activePage === item.key && !(item.key === 'orders' && shipmentsActive)
+              return (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={active ? 'nav-item active' : 'nav-item'}
+                  // Tur çapası TEK navigasyon tanımından türetilir (ikinci liste yok).
+                  data-tour={`nav-${item.key}`}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => go(item.key)}
+                >
+                  <Icon size={16} strokeWidth={1.9} />
+                  <span>{item.label}</span>
+                </button>
+              )
+            })}
+            {onOpenShipments ? (
               <button
-                key={item.key}
                 type="button"
-                className={active ? 'nav-item active' : 'nav-item'}
-                // Tur çapası TEK navigasyon tanımından türetilir (ikinci liste yok).
-                data-tour={`nav-${item.key}`}
-                onClick={() => onNavigate(item.key)}
+                className={shipmentsActive ? 'nav-item nav-item-sub active' : 'nav-item nav-item-sub'}
+                aria-current={shipmentsActive ? 'page' : undefined}
+                onClick={() => {
+                  setMenuOpen(false)
+                  onOpenShipments()
+                }}
               >
-                <Icon size={18} />
-                <span>{item.label}</span>
+                <Route size={16} strokeWidth={1.9} />
+                <span>Gönderiler / Takip</span>
               </button>
-            )
-          })}
-        </nav>
+            ) : null}
+          </nav>
 
-        {/* Sabit alt blok: menü listesi kaysa bile oturum/çıkış GÖRÜNÜR kalır ve
-            sayfanın en altına düşmez (sidebar viewport yüksekliğinde sabitlenir). */}
-        <div className="sidebar-footer">
-          {sessionUser ? (
-            <div className="sidebar-session" aria-label="Oturum bilgisi">
-              <div className="sidebar-session-identity">
-                <strong>{sessionUser.organization.name}</strong>
-                <span>{sessionUser.username}</span>
+          {/* Sabit alt blok: menü listesi kaysa bile oturum/çıkış GÖRÜNÜR kalır ve
+              sayfanın en altına düşmez (sidebar viewport yüksekliğinde sabitlenir). */}
+          <div className="sidebar-footer">
+            <nav className="nav-list nav-list-footer" aria-label="Yönetim">
+              {footerItems.map((item) => {
+                const Icon = item.icon
+                const active = activePage === item.key || item.also.includes(activePage)
+                return (
+                  <button
+                    key={item.key}
+                    type="button"
+                    className={active ? 'nav-item active' : 'nav-item'}
+                    aria-current={active ? 'page' : undefined}
+                    data-tour={`nav-${item.key}`}
+                    onClick={() => go(item.key)}
+                  >
+                    <Icon size={16} strokeWidth={1.9} />
+                    <span>{item.label}</span>
+                  </button>
+                )
+              })}
+            </nav>
+
+            <div className="sidebar-prefs">
+              <button
+                type="button"
+                className="sidebar-theme"
+                aria-pressed={theme === 'light'}
+                onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              >
+                {theme === 'dark' ? <Moon size={14} /> : <Sun size={14} />}
+                {theme === 'dark' ? 'Koyu tema' : 'Açık tema'}
+              </button>
+              <span className="sidebar-lang" title="Panel dili">
+                TR
+              </span>
+            </div>
+
+            {onStartTour ? (
+              <div className="sidebar-tour-block">
+                <button
+                  type="button"
+                  className="sidebar-tour"
+                  data-tour-replay
+                  onClick={onStartTour}
+                >
+                  <Compass size={14} />
+                  Ürün Turunu Başlat
+                </button>
+                {tourNotice ? (
+                  <p className="sidebar-tour-notice" role="status">
+                    {tourNotice}
+                  </p>
+                ) : null}
               </div>
-              <button
-                type="button"
-                className="sidebar-signout"
-                onClick={() => void auth?.signOut()}
-              >
-                <LogOut size={15} />
-                Çıkış Yap
-              </button>
-            </div>
-          ) : null}
+            ) : null}
 
-          {onStartTour ? (
-            <div className="sidebar-tour-block">
-              <button
-                type="button"
-                className="sidebar-tour"
-                data-tour-replay
-                onClick={onStartTour}
-              >
-                <Compass size={15} />
-                Ürün Turunu Başlat
-              </button>
-              {tourNotice ? (
-                <p className="sidebar-tour-notice" role="status">
-                  {tourNotice}
-                </p>
-              ) : null}
-            </div>
-          ) : null}
-
-          <div className="sidebar-note">
-            <ScrollText size={16} />
-            <span>Canlı pazaryeri ve kargo operasyon akışı.</span>
+            {sessionUser ? (
+              <div className="sidebar-session" aria-label="Oturum bilgisi">
+                <span className="sidebar-avatar" aria-hidden="true">
+                  {sessionUser.username.charAt(0).toUpperCase()}
+                </span>
+                <div className="sidebar-session-identity">
+                  <strong>{sessionUser.organization.name}</strong>
+                  <span>{sessionUser.username}</span>
+                </div>
+                <button
+                  type="button"
+                  className="sidebar-signout"
+                  onClick={() => void auth?.signOut()}
+                >
+                  <LogOut size={14} />
+                  Çıkış Yap
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </aside>

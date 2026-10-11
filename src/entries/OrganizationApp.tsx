@@ -11,6 +11,10 @@ import { AuthProvider } from '../auth/AuthProvider.tsx'
 import { AuthGate } from '../auth/AuthGate.tsx'
 import { OnboardingGate } from '../onboarding/OnboardingGate.tsx'
 import { APP_TITLE } from '../entryRoute.ts'
+import { applyStoredTheme } from '../ui/theme.ts'
+
+// Tema ilk boyamadan ÖNCE uygulanır (koyu varsayılan; tercih bu tarayıcıda).
+applyStoredTheme()
 
 export default function OrganizationApp() {
   useEffect(() => {

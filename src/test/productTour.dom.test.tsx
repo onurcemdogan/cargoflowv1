@@ -316,7 +316,8 @@ test('TOUR-22: tur açıkken arka plandaki operasyon düğmesi TETİKLENEMEZ', a
   expect(spies.sync).not.toHaveBeenCalled()
   expect(spies.createShipment).not.toHaveBeenCalled()
   // Arka plan navigasyonu da kilitli; sayfayı YALNIZ tur değiştirir.
-  fireEvent.click(document.querySelector('[data-tour="nav-logs"]') as HTMLElement)
+  // (İşlem Logları artık Ayarlar altında; Ayarlar menü öğesi kullanılır.)
+  fireEvent.click(document.querySelector('[data-tour="nav-settings"]') as HTMLElement)
   expect(activeNav()).toBe('nav-dashboard')
 })
 

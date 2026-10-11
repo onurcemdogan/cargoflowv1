@@ -25,6 +25,7 @@ import {
   type OnboardingStepKey,
 } from '../services/onboardingService'
 import { useAuth } from '../auth/useAuth'
+import { ProgressBar, SetupItem } from '../ui/primitives'
 
 const BLOCKER_LABELS: Record<string, string> = {
   NO_ELIGIBLE_MARKETPLACE: 'Şu anda kurulabilir bir pazaryeri bağlantısı yok',
@@ -191,16 +192,37 @@ export function OnboardingPage({
 
   const stepKey = ONBOARDING_STEP_ORDER[stepIndex]
   const requiredSteps = status.steps.filter((step) => step.required)
+  const requiredDone = requiredSteps.filter((step) => step.done).length
+  const stepDone = (key: OnboardingStepKey) =>
+    Boolean(status.steps.find((step) => step.key === key)?.done)
+  const goTo = (key: OnboardingStepKey) => setStepIndex(ONBOARDING_STEP_ORDER.indexOf(key))
+  const primaryMarketplace = status.marketplaces.length === 1 ? status.marketplaces[0] : null
+  const marketplaceName = primaryMarketplace?.displayName ?? 'Pazaryeri'
+  const anyBootstrapReady = status.marketplaces.some((marketplace) => marketplace.bootstrapReady)
+  const anyRejected = status.marketplaces.some((marketplace) => marketplace.credentialsRejected)
+  const organizationName = auth.user?.organization?.name
+  const percent = requiredSteps.length > 0 ? Math.round((requiredDone / requiredSteps.length) * 100) : 0
+
+  // Kurulum satırları SUNUCU durumundan türetilir. Gönderici bilgisi kargo
+  // firmasındaki firma kaydından gelir (ayrı bir kayıt YOKTUR); etiket
+  // şablonunun "kontrol edildi" diye kalıcı bir kaydı YOKTUR — bu satır
+  // isteğe bağlıdır ve tamamlanmış GÖSTERİLMEZ.
+  const marketplaceDescription = anyBootstrapReady
+    ? 'Senkronla doğrulandı'
+    : anyRejected
+      ? 'Bilgiler reddedildi; satıcı bilgilerini kontrol edin'
+      : stepDone('MARKETPLACE')
+        ? 'Bilgiler kaydedildi · ilk senkronla doğrulanır'
+        : 'Satıcı ID ve API bilgilerinizi girin'
 
   return (
     <div className="onboarding-screen">
       <div className="onboarding-shell">
-        <header className="onboarding-header">
-          <div className="auth-brand-mark">CF</div>
-          <div>
-            <h1>CargoFlow Kurulumu</h1>
-            <p>{auth.user?.username ? `${auth.user.username} · ` : ''}Organizasyon ilk kurulumu</p>
-          </div>
+        <header className="onboarding-top">
+          <span className="onboarding-brand">
+            <img src="/favicon.png" alt="" width={24} height={24} />
+            CargoFlow
+          </span>
           <button
             type="button"
             className="onboarding-logout"
@@ -210,6 +232,74 @@ export function OnboardingPage({
           </button>
         </header>
 
+        <div className="onboarding-hero">
+          <p className="onboarding-eyebrow">
+            <span>CargoFlow Kurulumu</span>
+            {organizationName ? <span>{organizationName}</span> : null}
+          </p>
+          <h1>Hoş geldiniz{auth.user?.username ? `, ${auth.user.username}` : ''}</h1>
+        </div>
+
+        <div className="onboarding-layout">
+          <div className="onboarding-main">
+            <section className="onboarding-setup" aria-label="Kurulum">
+              <div className="onboarding-setup-head">
+                <div>
+                  <b>Kurulum</b>
+                  <small>
+                    {requiredSteps.length} zorunlu adımdan {requiredDone} tamamlandı
+                  </small>
+                </div>
+                <ProgressBar value={requiredDone} max={requiredSteps.length} label="Kurulum ilerlemesi" />
+              </div>
+              <SetupItem
+                done={stepDone('MARKETPLACE')}
+                active={stepKey === 'MARKETPLACE'}
+                title={`${marketplaceName} hesabınızı bağlayın`}
+                description={marketplaceDescription}
+                onClick={() => goTo('MARKETPLACE')}
+              />
+              <SetupItem
+                done={status.carrier.configured}
+                active={stepKey === 'CARRIER'}
+                title={`${status.carrier.displayName} bağlantısını kurun`}
+                description={
+                  status.carrier.configured
+                    ? 'Bilgiler kaydedildi'
+                    : 'Kullanıcı adı, şifre ve firma bilgilerinizi girin'
+                }
+                onClick={() => goTo('CARRIER')}
+              />
+              <SetupItem
+                done={status.carrier.configured}
+                title="Gönderici bilgilerinizi tamamlayın"
+                description={
+                  status.carrier.configured
+                    ? 'Kargo firmasındaki firma kaydınızdan alınır'
+                    : 'Kargo bağlantısıyla birlikte tamamlanır'
+                }
+              />
+              <SetupItem
+                done={false}
+                optional
+                title="Etiket şablonunuzu kontrol edin"
+                description="İsteğe bağlı · kurulumdan sonra Etiket Şablonları ekranında"
+                meta={<span className="onboarding-optional">İsteğe bağlı</span>}
+              />
+              <SetupItem
+                done={stepDone('FIRST_SYNC')}
+                active={stepKey === 'FIRST_SYNC'}
+                title="İlk siparişinizi senkronize edin"
+                description={
+                  stepDone('FIRST_SYNC')
+                    ? `İlk senkron tamamlandı · ${status.counts.orders} sipariş`
+                    : 'Siparişleri ve ürünleri ilk kez alın'
+                }
+                onClick={() => goTo('FIRST_SYNC')}
+              />
+            </section>
+
+            <section className="onboarding-detail" aria-label="Seçili adım">
         <ol className="onboarding-steps" aria-label="Kurulum adımları">
           {ONBOARDING_STEP_ORDER.map((key, index) => {
             const view = status.steps.find((step) => step.key === key)
@@ -479,6 +569,69 @@ export function OnboardingPage({
             </button>
           )}
         </footer>
+            </section>
+          </div>
+
+          <aside className="onboarding-aside" aria-label="Çalışma alanı">
+            <b className="onboarding-aside-title">Çalışma Alanı</b>
+            <dl>
+              <div>
+                <dt>Firma</dt>
+                <dd>{organizationName ?? '—'}</dd>
+              </div>
+              <div>
+                <dt>Kullanıcı</dt>
+                <dd>{auth.user?.username ?? '—'}</dd>
+              </div>
+              {status.marketplaces.map((marketplace) => (
+                <div key={marketplace.providerKey}>
+                  <dt>{marketplace.displayName}</dt>
+                  <dd>
+                    <i
+                      className={
+                        marketplace.bootstrapReady
+                          ? 'onboarding-dot is-ok'
+                          : marketplace.credentialsRejected
+                            ? 'onboarding-dot is-bad'
+                            : marketplace.configured
+                              ? 'onboarding-dot is-warn'
+                              : 'onboarding-dot'
+                      }
+                      aria-hidden="true"
+                    />
+                    {marketplace.bootstrapReady
+                      ? 'Senkronla doğrulandı'
+                      : marketplace.credentialsRejected
+                        ? 'Bilgiler reddedildi'
+                        : marketplace.configured
+                          ? 'Bilgiler kaydedildi'
+                          : 'Bağlanmadı'}
+                  </dd>
+                </div>
+              ))}
+              <div>
+                <dt>{status.carrier.displayName}</dt>
+                <dd>
+                  <i
+                    className={status.carrier.configured ? 'onboarding-dot is-warn' : 'onboarding-dot'}
+                    aria-hidden="true"
+                  />
+                  {status.carrier.configured ? 'Bilgiler kaydedildi' : 'Bağlanmadı'}
+                </dd>
+              </div>
+              <div>
+                <dt>Kurulum</dt>
+                <dd>%{percent}</dd>
+              </div>
+              <div>
+                <dt>Kayıtlar</dt>
+                <dd>
+                  {status.counts.orders} sipariş · {status.counts.products} ürün
+                </dd>
+              </div>
+            </dl>
+          </aside>
+        </div>
       </div>
     </div>
   )

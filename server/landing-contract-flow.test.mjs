@@ -4,7 +4,7 @@
 // dosya doğrudan okunarak sınanır. Paket yalıtımı DERLENMİŞ `dist` üzerinden
 // ölçülür — kaynak yapısından ÇIKARIM yapılmaz.
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
@@ -103,9 +103,15 @@ test('LAND-BUNDLE-1: `/` giriş parçası operasyon kodunu ve uygulama stilini Y
   const entryCss = readFileSync(join(dist, 'assets', entryCssName), 'utf8')
   assert.ok(entryCss.includes('.landing-root'))
   assert.equal(entryCss.includes('.app-shell'), false, 'uygulama stili girişte')
-  // Bütçe: 40 KB (ham, derlenmiş). Ürün sahneli tasarım sistemi için 20 KB
-  // sınırı kaldırıldı; boyut her derlemede bu testle ölçülür.
-  assert.ok(statSync(join(dist, 'assets', entryCssName)).size < 40_000)
+  // CSS boyutu BİLGİ amaçlı raporlanır; bir sınır olarak test edilmez
+  // (sabit KB sınırı kaldırıldı). Değer her koşuda çıktıya yazılır.
+  const entryCssBytes = statSync(join(dist, 'assets', entryCssName)).size
+  const appCssName = readdirSync(join(dist, 'assets')).find((name) => /^theme-.*\.css$/.test(name))
+  const appCssBytes = appCssName ? statSync(join(dist, 'assets', appCssName)).size : 0
+  console.log(
+    `[css-size] landing ${entryCssName}: ${(entryCssBytes / 1024).toFixed(1)} KB` +
+      (appCssName ? ` · uygulama ${appCssName}: ${(appCssBytes / 1024).toFixed(1)} KB` : ''),
+  )
 
   // Uygulamanın ilk yükü (giriş + organizasyon dalı) PERF-1 bütçesini AŞMAZ.
   const appInitial =

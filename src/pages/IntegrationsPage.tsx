@@ -15,7 +15,7 @@ import {
   TestTube2,
   Truck,
 } from 'lucide-react'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { SuratLiveDebugPanel } from '../components/SuratLiveDebugPanel'
 import { ActionResult } from '../components/ActionResult'
 import { PageHeader } from '../components/PageHeader'
@@ -41,6 +41,10 @@ import { ShippingPayerSection } from '../integrations/ShippingPayerSection'
 import { WooCommerceSection } from '../integrations/WooCommerceSection'
 import { IkasSection } from '../integrations/IkasSection'
 import { ArasSection } from '../integrations/ArasSection'
+import {
+  IntegrationStatusBoard,
+  type IntegrationBoardKey,
+} from '../integrations/IntegrationStatusBoard'
 import {
   integrationCategoryTabs,
   suratDetailTabs,
@@ -136,6 +140,30 @@ export function IntegrationsPage({
     setActiveIntegration(null)
   }
 
+  // Durum panosundan ayrıntıya geçiş: kategori + (varsa) ayar paneli açılır,
+  // ardından ayrıntı alanı görünür hale kaydırılır.
+  const detailRef = useRef<HTMLDivElement>(null)
+  function openFromBoard(key: IntegrationBoardKey) {
+    if (key === 'trendyol') {
+      setActiveCategory('marketplaces')
+      setActiveIntegration('trendyol')
+      setActiveTrendyolTab('general')
+    } else if (key === 'surat') {
+      setActiveCategory('carriers')
+      setActiveIntegration('surat')
+      setActiveSuratTab('general')
+    } else if (key === 'aras') {
+      setActiveCategory('carriers')
+      setActiveIntegration('aras')
+    } else {
+      setActiveCategory('commerceSites')
+      setActiveIntegration(null)
+    }
+    requestAnimationFrame(() => {
+      detailRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+    })
+  }
+
   return (
     <div className="integrations-workspace">
       <PageHeader
@@ -146,22 +174,13 @@ export function IntegrationsPage({
 
       <ActionResult result={result} />
 
-      {/*
-        SAĞLAYICIDAN BAĞIMSIZ ORTAK BÖLÜM.
-        Gönderi varsayılanları organizasyon geneline aittir ve ileride
-        eklenecek TÜM kargo firmaları için geçerlidir; bu yüzden hiçbir kargo
-        kartının veya sağlayıcı sekmesinin ÇOCUĞU DEĞİLDİR. Seçili kategori ne
-        olursa olsun görünür ve sağlayıcı hesabı tanımlı olmasa da erişilebilir.
-      */}
-      <ShipmentDefaultsSection form={form} setForm={setForm} busy={busy} onSave={onSave} />
+      <IntegrationStatusBoard
+        trendyolConfigured={trendyolConfigured}
+        suratConfigured={suratConfigured}
+        onOpen={openFromBoard}
+      />
 
-      {/*
-        KARGO ÜCRETİ ÖDEYENİ — hesap bazlı, kendi verisini çeker.
-        Bu bölüm CargoFlow ABONELİĞİ DEĞİL, gönderi ücretinin ödeyenidir.
-        Trendyol'da alan düzenlenemez: ödeyen sipariş sözleşmesinden okunur.
-      */}
-      <WooCommerceSection />
-      <ShippingPayerSection />
+      <div className="integration-detail-area" ref={detailRef}>
 
       <nav className="integration-category-tabs" aria-label="Entegrasyon kategorileri">
         {integrationCategoryTabs.map((tab) => (
@@ -306,7 +325,36 @@ export function IntegrationsPage({
         kendi düğmeleri vardır ve ikas alanında Enter, sayfanın ayar formunu
         GÖNDEREMEZ.
       */}
-      {activeCategory === 'commerceSites' ? <IkasSection /> : null}
+      {activeCategory === 'commerceSites' ? (
+        <div className="integration-commerce-sites">
+          <WooCommerceSection />
+          <IkasSection />
+        </div>
+      ) : null}
+      </div>
+
+      <div className="integration-shared-settings">
+        <div className="integration-shared-head">
+          <span>Gönderi ayarları</span>
+          <small>Tüm bağlantılar için geçerli organizasyon ayarları</small>
+        </div>
+      {/*
+        SAĞLAYICIDAN BAĞIMSIZ ORTAK BÖLÜM.
+        Gönderi varsayılanları organizasyon geneline aittir ve ileride
+        eklenecek TÜM kargo firmaları için geçerlidir; bu yüzden hiçbir kargo
+        kartının veya sağlayıcı sekmesinin ÇOCUĞU DEĞİLDİR. Seçili kategori ne
+        olursa olsun görünür ve sağlayıcı hesabı tanımlı olmasa da erişilebilir.
+      */}
+      <ShipmentDefaultsSection form={form} setForm={setForm} busy={busy} onSave={onSave} />
+
+      {/*
+        KARGO ÜCRETİ ÖDEYENİ — hesap bazlı, kendi verisini çeker.
+        Bu bölüm CargoFlow ABONELİĞİ DEĞİL, gönderi ücretinin ödeyenidir.
+        Trendyol'da alan düzenlenemez: ödeyen sipariş sözleşmesinden okunur.
+      */}
+      <ShippingPayerSection />
+
+      </div>
     </div>
   )
 }

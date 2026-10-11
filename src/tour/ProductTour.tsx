@@ -127,9 +127,12 @@ export function ProductTour({
           index,
           rect: toRect(element),
           viewport: viewportSize(),
+          // Genişlik ölçülmez: ölçülen genişlik bir sonraki yerleşimin
+          // girdisi olursa dar bir an (ör. pencere daralması) kartı kalıcı
+          // olarak daraltır. Yalnız yükseklik içerikten ölçülür.
           card:
-            cardBox && cardBox.width > 0 && cardBox.height > 0
-              ? { width: cardBox.width, height: cardBox.height }
+            cardBox && cardBox.height > 0
+              ? { width: DEFAULT_CARD.width, height: cardBox.height }
               : DEFAULT_CARD,
         })
       })

@@ -37,13 +37,14 @@ export function LoginPage() {
         aria-busy={submitting}
       >
         <div className="auth-brand">
-          <div className="auth-brand-mark">CF</div>
+          <img className="auth-brand-logo" src="/favicon.png" alt="" width={32} height={32} />
           <div>
             <strong>CargoFlow</strong>
             <span>Operasyon Paneli</span>
           </div>
         </div>
         <h1>Giriş Yap</h1>
+        <p className="auth-lead">Organizasyon hesabınızla panele girin.</p>
 
         {bannerMessage ? (
           <p className="auth-banner" role="alert">
@@ -107,7 +108,13 @@ export function LoginPage() {
         {/* Public "İlk kurulumu yap" bağlantısı kaldırıldı: organization
             hesapları platform yöneticisi tarafından oluşturulur. Backend
             ALLOW_PUBLIC_BOOTSTRAP=false koruması ayrıca geçerlidir. */}
+        <p className="auth-footnote">
+          Hesaplar organizasyon yöneticisi tarafından oluşturulur.
+        </p>
       </form>
+      <a className="auth-back" href="/">
+        CargoFlow ana sayfası
+      </a>
     </div>
   )
 }

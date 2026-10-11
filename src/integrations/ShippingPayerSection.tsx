@@ -107,7 +107,7 @@ export function ShippingPayerSection() {
 
   if (loading) {
     return (
-      <section aria-labelledby="shipping-payer-title">
+      <section className="integration-section" aria-labelledby="shipping-payer-title">
         <h3 id="shipping-payer-title">Kargo ücreti ödeyeni</h3>
         <p role="status">Yükleniyor…</p>
       </section>
@@ -115,7 +115,7 @@ export function ShippingPayerSection() {
   }
 
   return (
-    <section aria-labelledby="shipping-payer-title">
+    <section className="integration-section" aria-labelledby="shipping-payer-title">
       <h3 id="shipping-payer-title">Kargo ücreti ödeyeni</h3>
       <p>Etiket ve kargo oluşturma yöntemi bu sözleşme tipine göre değişebilir.</p>
 

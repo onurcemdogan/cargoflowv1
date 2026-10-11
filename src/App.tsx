@@ -31,6 +31,8 @@ const PrintPreviewModal = lazy(async () => ({
 // Panel ve Siparisler ILK EKRANLARDIR; onlar statik kalir (lazy yapmak
 // gorunur bir bosluk yaratirdi). Geri kalan rotalar TALEP UZERINE gelir.
 import { DashboardPage } from './pages/DashboardPage'
+import { HomePage } from './pages/HomePage'
+import { SettingsPage } from './pages/SettingsPage'
 import { OrdersPage, type OrdersFetchOptions } from './pages/OrdersPage'
 import type {
   OrdersWorkspaceQuery,
@@ -188,6 +190,9 @@ function App() {
   // gelsin görseller doğru zenginleşsin diye en güncel katalog burada tutulur.
   const catalogProductsRef = useRef<CargoProduct[]>([])
   const [activePage, setActivePage] = useState<PageKey>('dashboard')
+  // "Gönderiler / Takip" ayrı ekran değildir: Siparişler'in kargoya verilmiş
+  // gönderiler görünümüdür; menüde seçili görünsün diye ayrıca izlenir.
+  const [shipmentsView, setShipmentsView] = useState(false)
 
   // ═══ ÜRÜN TURU (ONBOARDING DEĞİL) ══════════════════════════════════════
   // Bu bileşen yalnız `OnboardingGate` kurulumu tamamlanmış gördüğünde
@@ -635,6 +640,7 @@ function App() {
   }
 
   function handleNavigate(page: PageKey) {
+    setShipmentsView(false)
     setActivePage(page)
     if (page === 'orders') {
       // Sayfa açılışında YALNIZ DB'den oku; Trendyol'a otomatik istek YOK.
@@ -651,6 +657,7 @@ function App() {
     orderId?: string,
     filters?: OrdersNavigationFilters,
   ) {
+    setShipmentsView(false)
     setActivePage('orders')
     setSelectedIds([])
     setOrdersNavigationRequest({
@@ -1805,9 +1812,64 @@ function App() {
       onStartTour={() => void productTour.start()}
       tourNotice={productTour.notice}
       interactionLocked={productTour.active}
+      onOpenShipments={() => {
+        handleDashboardNavigateOrders('handedToCargo')
+        setShipmentsView(true)
+      }}
+      shipmentsActive={shipmentsView && activePage === 'orders'}
     >
       {effectivePage === 'dashboard' ? (
+        <HomePage
+          orders={orders}
+          products={products}
+          useServerOperationalSnapshot={
+            integrationHydrated && integrationConfigService.isAuthMode()
+          }
+          dataSourceResolved={integrationHydrated}
+          loading={ordersState.ordersLoading || !integrationHydrated}
+          error={ordersState.ordersError}
+          lastSyncedAt={resolvedLastSyncedAt}
+          onRefresh={handleReloadOrders}
+          onNavigatePage={handleNavigate}
+          onNavigateOrders={handleDashboardNavigateOrders}
+          renderStatistics={(refreshHome) => (
+            <DashboardPage
+              orders={orders}
+              useServerOperationalSnapshot={
+                integrationHydrated && integrationConfigService.isAuthMode()
+              }
+              dataSourceResolved={integrationHydrated}
+              products={products}
+              integrationConfig={integrationConfig}
+              maskedIntegrationStatus={maskedIntegrationStatus}
+              printerSettings={printerSettings}
+              apiDebugLogs={apiDebugLogs}
+              loading={ordersState.ordersLoading || !integrationHydrated}
+              error={ordersState.ordersError}
+              lastSyncedAt={resolvedLastSyncedAt}
+              onNavigatePage={handleNavigate}
+              onNavigateOrders={handleDashboardNavigateOrders}
+              onDownloadOrder={handleDownloadZplForOrder}
+              onPrintOrder={handleMarkPrintedForOrder}
+              onCreateAndPrintLabelForOrder={
+                handleCreateAndPrintCarrierLabelForOrder
+              }
+              isCarrierLabelActionBusy={isCarrierLabelActionBusy}
+              carrierLabelPhaseText={carrierLabelPhaseText}
+              onCreateShipment={handleCreateShipmentForOrder}
+              onTrackShipment={handleTrackShipmentForOrder}
+              onDesiChange={handleOrderDesiChange}
+              desiConfig={integrationConfig.desi}
+              onRefresh={refreshHome}
+            />
+          )}
+        />
+      ) : null}
+
+      {/* Raporlar: menüde gösterilmeyen pasif route (ayrıntılı raporlama için ayrıldı). */}
+      {effectivePage === 'reports' ? (
         <DashboardPage
+          variant="page"
           orders={orders}
           useServerOperationalSnapshot={
             integrationHydrated && integrationConfigService.isAuthMode()
@@ -1973,6 +2035,13 @@ function App() {
           onClear={handleClearApiDebugLogs}
         />
         </Suspense>
+      ) : null}
+
+      {activePage === 'settings' ? (
+        <SettingsPage
+          onNavigate={handleNavigate}
+          onStartTour={() => void productTour.start()}
+        />
       ) : null}
 
       {activePage === 'logs' ? (

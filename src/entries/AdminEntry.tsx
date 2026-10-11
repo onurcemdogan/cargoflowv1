@@ -4,6 +4,10 @@ import { useEffect } from 'react'
 import '../index.css'
 import { AdminApp } from '../admin/AdminApp.tsx'
 import { ADMIN_TITLE } from '../entryRoute.ts'
+import { applyStoredTheme } from '../ui/theme.ts'
+
+// Tema ilk boyamadan ÖNCE uygulanır (koyu varsayılan; tercih bu tarayıcıda).
+applyStoredTheme()
 
 export default function AdminEntry() {
   useEffect(() => {
