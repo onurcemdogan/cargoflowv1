@@ -230,7 +230,7 @@ test('LAND-UI-1/3/4: tek h1; "Nasıl çalışır?" çapası akışa ulaşır; ye
     node.getAttribute('data-capability'),
   )
   expect(capabilities).toEqual(LANDING_CAPABILITIES.map((capability) => capability.title))
-  for (const section of ['entegrasyonlar', 'faydalar', 'nasil-calisir', 'urun', 'guvenilirlik']) {
+  for (const section of ['nasil-calisir', 'urun', 'entegrasyonlar', 'guvenilirlik']) {
     const element = document.getElementById(section)
     expect(element?.getAttribute('aria-labelledby')).toBeTruthy()
   }
@@ -261,7 +261,7 @@ test('LAND-UI-8: temsili ürün sahnesi süs olarak işaretli ve kişisel veri �
   expect(document.querySelector('.landing-scene .landing-badge-market')?.textContent).toBe('Trendyol')
   expect(document.querySelector('.landing-scene .landing-badge-carrier')?.textContent).toBe('Sürat Kargo')
   expect(scene).toMatch(/Etiket/)
-  expect(scene).toMatch(/Gönderi/)
+  expect(scene).toMatch(/gönderi/i)
   expect(scene).toMatch(/Bağlantı sağlığı/)
   // Sahne yalnız CANLI entegrasyonları kullanır.
   expect(scene).not.toMatch(/WooCommerce|\bikas\b|Ticimax|\bAras\b|Hepsiburada|\bn11\b/i)

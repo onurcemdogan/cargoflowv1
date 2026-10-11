@@ -4,16 +4,20 @@
 //   · Entegrasyonlar GERÇEK durumlarıyla anılır. Yalnız üretimde kullanılanlar
 //     "Canlı" etiketi taşır: Trendyol (pazaryeri) ve Sürat Kargo. WooCommerce,
 //     ikas ve Aras `internal_test`; Hepsiburada, n11 ve Ticimax geliştirme
-//     aşamasındadır — bunlar "mevcut/canlı" gibi GÖSTERİLMEZ.
+//     aşamasındadır — bunlar "mevcut/canlı" gibi GÖSTERİLMEZ ve entegrasyon
+//     bölümü DIŞINDA anılmaz.
 //   · Resmî iş ortaklığı / partnerlik iddiası YOK.
 //   · Herkese açık kayıt YOK (üretimde kapalı) → kayıt/deneme çağrısı YOK.
 //   · Kamuya açık fiyat YOK → fiyat bölümü YOK.
 //   · Uydurma müşteri sayısı, referans, oran veya sertifika YOK.
 //   · "Tam otomatik / hatasız / her yazıcıda" gibi iddialar YOK.
+//   · Ürün sahnesindeki her değer TEMSİLİDİR ("örnek" olarak etiketlenir).
 
 export const LANDING_HERO = {
   eyebrow: 'Türkiye e-ticaret operasyonları için',
   headline: 'Siparişten kargo etiketine tek operasyon akışı.',
+  /** Masaüstü satır kırılımı (görsel); erişilebilir ad `headline` ile AYNIDIR. */
+  headlineLines: ['Siparişten kargo', 'etiketine tek', 'operasyon akışı.'],
   body:
     'Pazaryeri siparişlerinizi, kargo gönderilerinizi ve etiket baskınızı tek panelde yönetin. CargoFlow her gönderiyi siparişin atandığı kargo akışıyla oluşturur ve bağlantılarınızın durumunu görünür tutar.',
   assurances: [
@@ -33,7 +37,7 @@ export const INTEGRATION_STATUS_LABEL: Record<IntegrationStatus, string> = {
 
 export const INTEGRATION_STATUS_HELP: Record<IntegrationStatus, string> = {
   live: 'Üretimde kullanılıyor.',
-  internal_test: 'Bağlantı altyapısı hazır; canlı gönderi ve sipariş akışına henüz açılmadı.',
+  internal_test: 'Bağlantı altyapısı hazır; canlı sipariş ve gönderi akışına henüz açılmadı.',
   in_development: 'Bağlantı altyapısı üzerinde çalışılıyor.',
 }
 
@@ -56,53 +60,27 @@ export const LANDING_INTEGRATIONS: readonly LandingIntegration[] = [
   { name: 'Aras Kargo', group: 'carrier', kind: 'Kargo', status: 'internal_test' },
 ]
 
-export const LANDING_VALUES = [
-  {
-    icon: 'orders',
-    title: 'Siparişleri tek ekranda yönetin',
-    body:
-      'Pazaryeri siparişleri statü, kargo ve etiket durumlarıyla tek listede. Filtreleyin, toplu seçin, işlemi listeden başlatın.',
-  },
-  {
-    icon: 'route',
-    title: 'Doğru kargo akışı, siparişin atamasına göre',
-    body:
-      'Gönderi, siparişin atandığı kargo firmasının akışıyla oluşturulur. Atama belirsizse sistem tahmin yürütmez; işlemi durdurur ve sebebini gösterir.',
-  },
-  {
-    icon: 'label',
-    title: 'Etiket oluşturma ve tekrar yazdırma',
-    body:
-      'Etiketi önizleyin, tarayıcıdan yazdırın ya da ZPL olarak indirin. Oluşan etiket saklanır; tekrar yazdırmak için gönderi yeniden oluşturulmaz.',
-  },
-  {
-    icon: 'health',
-    title: 'Entegrasyon sağlığını takip edin',
-    body:
-      'Her bağlı hesabın son senkron zamanı ve hata durumu görünür. Bağlantı bilgisi eksik ya da hatalı olan hesap panelde ayrıca işaretlenir.',
-  },
-] as const
-
+/** Sipariş → Kargo → Etiket → Takip. */
 export const LANDING_WORKFLOW = [
   {
-    title: 'Siparişleri senkronize et',
-    body:
-      'Bağlı pazaryeri hesaplarındaki siparişler panele alınır; her sipariş geldiği hesapla birlikte saklanır.',
+    stage: 'Sipariş',
+    title: 'Siparişler panele gelir',
+    body: 'Bağlı pazaryeri hesaplarındaki siparişler senkronize edilir; her sipariş geldiği hesapla birlikte saklanır.',
   },
   {
-    title: 'Kargo ve gönderi bilgilerini doğrula',
-    body:
-      'Kargo ataması, desi ve alıcı bilgileri kontrol edilir; eksik ya da çelişkili bilgi işlemden önce görünür.',
+    stage: 'Kargo',
+    title: 'Gönderi bilgisi doğrulanır',
+    body: 'Kargo ataması, desi ve alıcı bilgisi kontrol edilir. Eksik ya da çelişkili bilgi işlemden önce görünür.',
   },
   {
-    title: 'Gönderi + etiketi oluştur',
-    body:
-      'Gönderi kargo firmasında oluşturulur, etiket önizlenir ve yazdırılır. Otomatik etiket isteğe bağlıdır, varsayılan olarak kapalıdır.',
+    stage: 'Etiket',
+    title: 'Gönderi ve etiket oluşur',
+    body: 'Gönderi atanan kargo firmasında oluşturulur; etiket önizlenir, yazdırılır ve tekrar yazdırmak için saklanır.',
   },
   {
-    title: 'Operasyonu ve bağlantıları takip et',
-    body:
-      "Bekleyen işlemleri, kargo durumlarını ve bağlantı sağlığını Dashboard'dan izleyin.",
+    stage: 'Takip',
+    title: 'Operasyon görünür kalır',
+    body: "Bekleyen işler, kargo durumları ve bağlantı sağlığı Dashboard'da tek yerde izlenir.",
   },
 ] as const
 
@@ -116,7 +94,7 @@ export const LANDING_CAPABILITIES = [
   {
     icon: 'label',
     title: 'Etiketler',
-    body: 'Etiket şablonu düzenleme, önizleme, tarayıcı ya da ZPL ile baskı ve tekrar yazdırma.',
+    body: 'Şablon düzenleme, önizleme; tarayıcıdan ya da ZPL ile baskı ve tekrar yazdırma.',
   },
   {
     icon: 'route',
@@ -143,22 +121,22 @@ export const LANDING_CAPABILITIES = [
 export const LANDING_CONTROL_POINTS = [
   {
     icon: 'organization',
-    title: 'Organizasyonunuzun verisi ayrı',
+    title: 'Organizasyon verisi ayrı',
     body: 'Siparişler, ürünler ve ayarlar organizasyon bazında ayrılır; bir organizasyon diğerinin verisini göremez.',
   },
   {
     icon: 'key',
-    title: 'Her hesabın bağlantı bilgisi ayrı',
-    body: 'Birden çok mağaza ya da pazaryeri hesabı bağladığınızda bağlantı bilgileri hesap bazında şifreli saklanır.',
+    title: 'Her hesabın bağlantısı ayrı',
+    body: 'Birden çok mağaza ya da pazaryeri hesabında bağlantı bilgileri hesap bazında şifreli saklanır.',
   },
   {
     icon: 'health',
-    title: 'Görünür bağlantı durumu',
+    title: 'Bağlantı durumu görünür',
     body: 'Senkron ve bağlantı durumları panelde görünür; sorun olduğunda nerede olduğunu görürsünüz.',
   },
   {
     icon: 'hand',
-    title: 'Kontrollü gönderi',
+    title: 'İşlem sizin onayınızla',
     body: 'Gönderi oluşturma ve baskı sizin aksiyonunuzla çalışır. Test aşamasındaki entegrasyonlar canlı gönderi oluşturmaz.',
   },
   {
