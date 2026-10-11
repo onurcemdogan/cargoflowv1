@@ -586,7 +586,7 @@ function TrackingScene({ step }: { step: number }) {
 /* ═══ 6 — BAĞLANTI SAĞLIĞI ══════════════════════════════════════════════ */
 
 const HEALTH_STEPS = [1200, 1200, 1200, 2800] as const
-const HEALTH_NAMES = ['Trendyol', 'Sürat Kargo', 'WooCommerce', 'ikas'] as const
+const HEALTH_NAMES = ['Trendyol', 'Sürat Kargo', 'WooCommerce', 'Aras Kargo'] as const
 const HEALTH_ACTIVITY = [
   { time: '09:42', text: 'Sipariş senkronizasyonu tamamlandı' },
   { time: '09:43', text: '12 sipariş alındı' },
@@ -731,7 +731,6 @@ const HUB_LAYOUT: Record<string, { x: number; y: number }> = {
   Trendyol: { x: 18, y: 24 },
   'Sürat Kargo': { x: 82, y: 24 },
   WooCommerce: { x: 14, y: 60 },
-  ikas: { x: 86, y: 60 },
   'Aras Kargo': { x: 50, y: 96 },
   Hepsiburada: { x: 22, y: 84 },
   n11: { x: 78, y: 84 },

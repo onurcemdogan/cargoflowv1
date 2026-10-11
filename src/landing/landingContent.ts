@@ -2,9 +2,9 @@
 //
 // Kurallar (testle kilitli):
 //   · Entegrasyonlar GERÇEK durumlarıyla anılır. Yalnız üretimde kullanılanlar
-//     "Canlı" etiketi taşır: Trendyol (pazaryeri) ve Sürat Kargo. WooCommerce,
-//     ikas ve Aras `internal_test`; Hepsiburada, n11 ve Ticimax geliştirme
-//     aşamasındadır. Canlı OLMAYAN bir entegrasyon sayfada yalnız durum
+//     "Canlı" etiketi taşır: Trendyol (pazaryeri) ve Sürat Kargo. WooCommerce
+//     ve Aras `internal_test`; Hepsiburada, n11 ve Ticimax geliştirme
+//     aşamasındadır. ikas tanıtımda ANILMAZ (IKAS-ROLLOUT-4/5). Canlı OLMAYAN bir entegrasyon sayfada yalnız durum
 //     etiketiyle (`data-integration` + `data-status`) anılır.
 //   · Resmî iş ortaklığı / partnerlik iddiası YOK.
 //   · Herkese açık kayıt YOK (üretimde kapalı) → kayıt/deneme çağrısı, "kredi
@@ -139,7 +139,6 @@ export const LANDING_INTEGRATIONS: readonly LandingIntegration[] = [
   { name: 'Trendyol', group: 'commerce', kind: 'Pazaryeri', status: 'live' },
   { name: 'Sürat Kargo', group: 'carrier', kind: 'Kargo', status: 'live' },
   { name: 'WooCommerce', group: 'commerce', kind: 'E-ticaret sitesi', status: 'internal_test' },
-  { name: 'ikas', group: 'commerce', kind: 'E-ticaret sitesi', status: 'internal_test' },
   { name: 'Aras Kargo', group: 'carrier', kind: 'Kargo', status: 'internal_test' },
   { name: 'Hepsiburada', group: 'commerce', kind: 'Pazaryeri', status: 'in_development' },
   { name: 'n11', group: 'commerce', kind: 'Pazaryeri', status: 'in_development' },

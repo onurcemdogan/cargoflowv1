@@ -217,7 +217,6 @@ test('LAND-UI-5: entegrasyon kapsamı gerçek durumuyla; YALNIZ Trendyol ve Sür
     { name: 'Trendyol', status: 'Canlı' },
     { name: 'Sürat Kargo', status: 'Canlı' },
     { name: 'WooCommerce', status: 'İç test' },
-    { name: 'ikas', status: 'İç test' },
     { name: 'Aras Kargo', status: 'İç test' },
     { name: 'Hepsiburada', status: 'Geliştiriliyor' },
     { name: 'n11', status: 'Geliştiriliyor' },
