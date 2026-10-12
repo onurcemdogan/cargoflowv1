@@ -15,5 +15,10 @@ export default defineConfig({
     globals: false,
     setupFiles: ['./src/test/setupDom.ts'],
     include: ['src/test/**/*.test.tsx', 'src/test/**/*.test.ts'],
+    // Tam suite 40 jsdom dosyasını paralel koşar; CPU paylaşımında ağır
+    // render testleri (tanıtım sahneleri, katalog) tek başına ~1 sn sürerken
+    // varsayılan 5 sn'yi aşabiliyor. Sınır, ağır testlerde zaten kullanılan
+    // 20 sn'ye hizalanır; askıda kalan test yine başarısız olur.
+    testTimeout: 20_000,
   },
 })
