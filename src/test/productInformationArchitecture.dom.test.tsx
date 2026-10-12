@@ -131,15 +131,21 @@ test('IA-NAV-2: Gönderiler gerçek shipments sayfasına gider; Siparişler AYRI
 })
 
 test('IA-NAV-3: App shipments rotası ShipmentsPage çizer; Orders handedToCargo yönlendirmesi YOK', () => {
-  expect(appSource).toMatch(/activePage === 'shipments' \? \([\s\S]{0,120}<ShipmentsPage/)
-  expect(appSource).not.toMatch(/setShipmentsView|shipmentsActive|onOpenShipments=\{\(\) => \{[^}]*handedToCargo/)
+  // Windows'ta core.autocrlf=true çalışma ağacını CRLF yapar; kaynak dilimleri
+  // satır sonundan BAĞIMSIZ olmalı (yoksa sınır bulunamaz ve dosyanın geri
+  // kalanı yanlışlıkla taranır).
+  const app = appSource.replace(/\r\n/g, '\n')
+  expect(app).toMatch(/activePage === 'shipments' \? \([\s\S]{0,120}<ShipmentsPage/)
+  expect(app).not.toMatch(/setShipmentsView|shipmentsActive|onOpenShipments=\{\(\) => \{[^}]*handedToCargo/)
   // Gönderiler'den yeniden yazdırma MEVCUT baskı akışına gider; create YOK.
-  const effect = appSource.slice(appSource.indexOf('async function requestOrderAction'))
+  const effect = app.slice(app.indexOf('async function requestOrderAction'))
   const block = effect.slice(0, effect.indexOf('function refreshLogs'))
   expect(block).toMatch(/kind === 'print' \? handlePrintLabelsForIds\(\[orderId\]\) : handleTrackShipmentForOrder\(orderId\)/)
   expect(block).not.toMatch(/Create|create\(|createShipment|CreateAndPrint/)
-  const printer = appSource.slice(appSource.indexOf('async function handlePrintLabelsForIds'))
-  const printBody = printer.slice(0, printer.indexOf('\n  }\n'))
+  const printer = app.slice(app.indexOf('async function handlePrintLabelsForIds'))
+  const printEnd = printer.indexOf('\n  }\n')
+  expect(printEnd, 'baskı işleyicisinin sonu bulunmalı').toBeGreaterThan(0)
+  const printBody = printer.slice(0, printEnd)
   expect(printBody).not.toMatch(/handleCreate|SuratCreateAndPrint|createShipments\(/)
 })
 
