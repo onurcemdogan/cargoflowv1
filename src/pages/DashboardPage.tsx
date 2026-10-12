@@ -288,6 +288,8 @@ export function DashboardPage({
   // Sunucu modeli varken YEREL hesap KULLANILMAZ: tarayıcıda tam satış
   // verisi yoktur ve kısmi havuzdan hesaplanmış bir model YANLIŞ olurdu.
   const viewModel = serverViewModel ?? localViewModel
+  // Sunucu modunda istatistikler YALNIZ sunucu modelinden gösterilir.
+  const statsBlocked = useServerOperationalSnapshot && serverViewModel === null
   // İlk açılışta kartların tamamını (Geçen Ay başı → Bugün sonu) kapsayan
   // TEK aralık çekilir; seçili dönem bu kapsamın dışına çıkarsa service
   // birleşik aralığı yeniden çeker, kapsam içindeyse cache'ten döner.
@@ -658,6 +660,37 @@ export function DashboardPage({
         </section>
       ) : null}
 
+      {operationalError ? (
+        <section className="dashboard-analytics-error" role="alert">
+          <p>İstatistikler yüklenemedi.</p>
+          <small>{operationalError}</small>
+          <button
+            type="button"
+            className="secondary-button"
+            onClick={() => setOperationalRefreshTick((tick) => tick + 1)}
+          >
+            Tekrar dene
+          </button>
+        </section>
+      ) : null}
+
+      {/* SUNUCU MODU: model gelmeden (ya da hata verdiyse) KISMİ istemci
+          havuzundan hesaplanmış sayı GÖSTERİLMEZ. Hata açıkça yukarıda
+          yazılır; yüklenirken iskelet görünür. */}
+      {statsBlocked ? (
+        operationalError ? null : (
+          <section
+            className="dashboard-analytics-loading"
+            aria-busy="true"
+            aria-label="İstatistikler yükleniyor"
+          >
+            <div className="dashboard-skeleton dashboard-skeleton-cards" />
+            <div className="dashboard-skeleton dashboard-skeleton-chart" />
+            <span>İstatistikler yükleniyor…</span>
+          </section>
+        )
+      ) : (
+        <>
       <section className="dashboard-section-heading" aria-labelledby="sales-analytics-title">
         <div>
           <span>Satış Analitiği</span>
@@ -677,20 +710,6 @@ export function DashboardPage({
           Rapor günü UTC bazında hesaplanır.
         </p>
       </section>
-
-      {operationalError ? (
-        <section className="dashboard-analytics-error" role="alert">
-          <p>Operasyon özeti yüklenemedi.</p>
-          <small>{operationalError}</small>
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={() => setOperationalRefreshTick((tick) => tick + 1)}
-          >
-            Tekrar dene
-          </button>
-        </section>
-      ) : null}
 
       {analyticsError ? (
         <section className="dashboard-analytics-error" role="alert">
@@ -739,6 +758,41 @@ export function DashboardPage({
           İade verileri yerel sipariş statülerinden hesaplanmıştır.
         </p>
       ) : null}
+      {/* SEÇİLİ DÖNEM ÖZETİ — dönem düğmeleri (Bugün / Dün / 7 Gün / 30 Gün /
+          Bu Ay / Özel) bu sayıları DEĞİŞTİRİR. Kaynak sunucu modelidir
+          (auth modunda); tutar eksikse "Veri yok" yazılır, ₺0 uydurulmaz. */}
+      <section
+        className="dashboard-period-kpis"
+        aria-label={`${viewModel.period.label} satış özeti`}
+        data-testid="dashboard-period-summary"
+      >
+        <PeriodSummaryItem label="Satış adedi" value={String(viewModel.salesSummary.orderCount.value)} comparison={viewModel.salesSummary.orderCount.comparison} />
+        <PeriodSummaryItem
+          label="Brüt satış"
+          value={viewModel.salesSummary.grossAmount.available ? formatCurrency(viewModel.salesSummary.grossAmount.value) : 'Veri yok'}
+          comparison={viewModel.salesSummary.grossAmount.comparison}
+        />
+        <PeriodSummaryItem
+          label="İptal"
+          value={`${viewModel.salesSummary.cancelCount.value} paket`}
+          detail={viewModel.salesSummary.cancelAmount.available ? formatCurrency(viewModel.salesSummary.cancelAmount.value) : 'Tutar yok'}
+        />
+        <PeriodSummaryItem
+          label="İade"
+          value={`${viewModel.salesSummary.returnCount.value} paket`}
+          detail={viewModel.salesSummary.returnAmount.available ? formatCurrency(viewModel.salesSummary.returnAmount.value) : 'Tutar yok'}
+        />
+        <PeriodSummaryItem
+          label="Net satış"
+          value={viewModel.salesSummary.salesAmount.available ? formatCurrency(viewModel.salesSummary.salesAmount.value) : 'Veri yok'}
+          comparison={viewModel.salesSummary.salesAmount.comparison}
+          emphasis
+        />
+        <PeriodSummaryItem
+          label="Ortalama sipariş"
+          value={viewModel.salesSummary.averageOrderAmount.available ? formatCurrency(viewModel.salesSummary.averageOrderAmount.value) : '—'}
+        />
+      </section>
       <section className="dashboard-sales-period-cards" aria-label="Dönemsel satış kartları">
         {viewModel.salesPeriodCards.map((card) => (
           <SalesPeriodCard key={card.key} card={card} />
@@ -1000,6 +1054,8 @@ export function DashboardPage({
           )}
         </article>
       </section>
+        </>
+      )}
       {dashboardDetailError ? (
         <div className="dashboard-detail-error" role="status">
           {dashboardDetailError}
@@ -1027,6 +1083,30 @@ export function DashboardPage({
           desiConfig={desiConfig}
         />
       ) : null}
+    </div>
+  )
+}
+
+function PeriodSummaryItem({
+  label,
+  value,
+  detail,
+  comparison,
+  emphasis = false,
+}: {
+  label: string
+  value: string
+  detail?: string
+  comparison?: DashboardSalesPeriodCard['comparison']
+  emphasis?: boolean
+}) {
+  const trend = comparison && comparison.comparable ? salesTrend(comparison) : null
+  return (
+    <div className={emphasis ? 'dashboard-period-kpi is-emphasis' : 'dashboard-period-kpi'}>
+      <small>{label}</small>
+      <strong>{value}</strong>
+      {detail ? <span>{detail}</span> : null}
+      {trend ? <span className={`dashboard-sales-trend ${comparison?.direction ?? ''}`}>{trend.label}</span> : null}
     </div>
   )
 }

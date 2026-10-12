@@ -4567,6 +4567,86 @@ button:disabled {
 
 .dashboard-operation-heading span { color: var(--accent-text); }
 
+/* Seçili dönem özeti — dönem düğmeleriyle değişen tek satırlık KPI şeridi. */
+.dashboard-period-kpis {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  margin-bottom: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.dashboard-period-kpi {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+  min-width: 0;
+  padding: 12px 14px;
+}
+
+.dashboard-period-kpi + .dashboard-period-kpi {
+  border-left: 1px solid var(--border);
+}
+
+.dashboard-period-kpi small {
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.dashboard-period-kpi strong {
+  overflow: hidden;
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-period-kpi.is-emphasis strong {
+  color: var(--accent);
+}
+
+.dashboard-period-kpi > span {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+@media (max-width: 1100px) {
+  .dashboard-period-kpis {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .dashboard-period-kpi:nth-child(3n + 1) {
+    border-left: 0;
+  }
+
+  .dashboard-period-kpi:nth-child(n + 4) {
+    border-top: 1px solid var(--border);
+  }
+}
+
+@media (max-width: 560px) {
+  .dashboard-period-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-period-kpi:nth-child(3n + 1) {
+    border-left: 1px solid var(--border);
+  }
+
+  .dashboard-period-kpi:nth-child(2n + 1) {
+    border-left: 0;
+  }
+
+  .dashboard-period-kpi:nth-child(n + 3) {
+    border-top: 1px solid var(--border);
+  }
+}
+
 .dashboard-sales-period-cards {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -9947,7 +10027,7 @@ button.integration-board-item:hover {
 
 .home-ops {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   margin-bottom: 20px;
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
@@ -11155,6 +11235,248 @@ button.integration-board-item:hover {
 
   .auth-card {
     padding: 24px 20px 20px;
+  }
+}
+
+/* ── Kargo Operasyonları ─────────────────────────────────────────────── */
+.cargo-ops,
+.shipments-page {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+/* Sayfa başlığı diğer sayfalarla aynı 24px nefesi korur (8 + 16 boşluk). */
+.cargo-ops > .page-header,
+.shipments-page > .page-header {
+  margin-bottom: 8px;
+}
+
+.cargo-ops-kpis {
+  margin-bottom: 0;
+}
+
+.cargo-ops-kpis .home-op:disabled {
+  cursor: default;
+}
+
+.cargo-ops-kpis .home-op:disabled:hover {
+  background: transparent;
+}
+
+.cargo-ops-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  align-items: start;
+  gap: 16px;
+}
+
+.cargo-ops-grid > .ui-card {
+  min-width: 0;
+}
+
+.cargo-ops-worker-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  color: var(--text-2);
+  font-size: 13.5px;
+}
+
+.cargo-ops-facts {
+  display: grid;
+  margin: 0 0 12px;
+}
+
+.cargo-ops-facts div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13.5px;
+}
+
+.cargo-ops-facts dt {
+  color: var(--muted);
+}
+
+.cargo-ops-facts dd {
+  margin: 0;
+  color: var(--text);
+  text-align: right;
+}
+
+.cargo-ops-facts dd small {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.cargo-ops-queue {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cargo-ops-queue li {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.cargo-ops-queue span {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cargo-ops-queue b {
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.cargo-ops-queue li.is-warning b {
+  color: var(--amber);
+}
+
+.cargo-ops-queue li.is-danger b {
+  color: var(--red);
+}
+
+.cargo-ops-attention-list {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.home-list-row.cargo-ops-attention-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.home-list-row.cargo-ops-attention-row .home-row-main small {
+  white-space: normal;
+}
+
+.table-row-actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.cargo-ops-table td,
+.shipments-table td {
+  white-space: nowrap;
+}
+
+.page-inline-error {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--red-border);
+  border-radius: var(--radius);
+  background: var(--red-soft);
+  color: var(--red);
+  font-size: 13.5px;
+}
+
+/* ── Gönderiler ve Takip ──────────────────────────────────────────────── */
+.shipments-tabs {
+  margin-bottom: 0;
+}
+
+.shipments-tab-count {
+  margin-left: 6px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+
+.shipments-filters {
+  grid-template-columns: minmax(200px, 2fr) repeat(5, minmax(0, 1fr)) auto;
+  align-items: end;
+  margin-bottom: 0;
+}
+
+.shipments-filters input,
+.shipments-filters select {
+  width: 100%;
+  min-width: 0;
+}
+
+.shipments-filters-submit {
+  display: flex;
+  align-items: end;
+}
+
+.shipments-pager {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.shipments-pager > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* ── Ayarlar · Baskı ve Etiket ────────────────────────────────────────── */
+.settings-print .settings-facts {
+  margin-bottom: 12px;
+}
+
+.settings-note {
+  margin: 0 0 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+@media (max-width: 1280px) {
+  .shipments-filters {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .shipments-filters > label:first-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 1100px) {
+  .cargo-ops-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 640px) {
+  .cargo-ops-queue {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .shipments-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-list-row.cargo-ops-attention-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .home-list-row.cargo-ops-attention-row > .ui-btn {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 }
 

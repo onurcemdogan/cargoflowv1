@@ -260,6 +260,17 @@ export interface DashboardViewModel {
     productCount: DashboardMetric
     returnAmount: DashboardMetric
     returnCount: DashboardMetric
+    /** İptal edilen paket sayısı / tutarı (seçili dönem, satış kohortu). */
+    cancelCount: DashboardMetric
+    cancelAmount: DashboardMetric
+    /**
+     * Brüt satış = net satış + iade + iptal tutarı (aynı kohort). Herhangi bir
+     * bileşenin tutarı eksikse `available=false` — kesin olmayan toplam
+     * gösterilmez.
+     */
+    grossAmount: DashboardMetric
+    /** Net satış / satış adedi; tutar eksikse ya da satış yoksa yok. */
+    averageOrderAmount: DashboardMetric
     // İade metriğinin KESİN veri kaynağı. "persisted_claims": gerçek claim
     // muhasebesi (legacy Trendyol getClaims / ileride kalıcı claims).
     // "order_status": claim verisi yok; iade YALNIZ Returned sipariş
@@ -275,6 +286,12 @@ export interface DashboardViewModel {
     handedToCargo: number
     delivered: number
     errors: number
+    /**
+     * Bugün (Europe/Istanbul günü, sipariş tarihine göre) gelen TÜM paketler —
+     * statüden bağımsız operasyon girdisi. Satış kartlarındaki UTC rapor günü
+     * ve yalnız "satış" dispozisyonu bundan AYRIDIR.
+     */
+    receivedToday: number
     snapshotLabel: string
   }
   salesChart: {
@@ -545,6 +562,15 @@ export function buildDashboardViewModel({
   // `isPickingEligible` ile tanımlıdır (bkz. buildPickingLists).
   // Sunucu anlık görüntüsü VARSA sayaçlar ONDAN gelir. `operationFlow` de
   // bu nesneden türediği için huni ile kartlar ASLA ayrışamaz.
+  // Operasyon girdisi: İstanbul günü, statüden bağımsız (makine TZ'sinden
+  // bağımsız — sunucu UTC'de çalışsa da aynı gün).
+  const istanbulToday = resolveReportingRange('today', now, 'Europe/Istanbul')
+  const receivedToday = uniqueOrders.filter((order) => {
+    const time = new Date(String(order.orderDate || order.createdAt || '')).getTime()
+    return Number.isFinite(time)
+      && time >= istanbulToday.start.getTime()
+      && time <= istanbulToday.end.getTime()
+  }).length
   const operationalSummary = operationalSnapshot?.operationalSummary ?? {
     openOperations,
     barcodeWaiting: stageCounts.barcodeWaiting,
@@ -553,6 +579,7 @@ export function buildDashboardViewModel({
     handedToCargo: stageCounts.handedToCargo,
     delivered: stageCounts.delivered,
     errors: stageCounts.error,
+    receivedToday,
     snapshotLabel: 'Anlık operasyon durumu',
   }
   const granularity = resolveChartGranularity(period)
@@ -590,6 +617,24 @@ export function buildDashboardViewModel({
       returnCount: metric(
         currentTotals.returnCount,
         previousTotals.returnCount,
+      ),
+      cancelCount: metric(currentTotals.cancelCount, previousTotals.cancelCount),
+      cancelAmount: metric(
+        currentTotals.cancelAmount,
+        previousTotals.cancelAmount,
+        currentTotals.cancelAmountAvailable,
+      ),
+      grossAmount: metric(
+        currentTotals.salesAmount + currentTotals.returnAmount + currentTotals.cancelAmount,
+        previousTotals.salesAmount + previousTotals.returnAmount + previousTotals.cancelAmount,
+        currentTotals.salesAmountAvailable
+          && currentTotals.returnAmountAvailable
+          && currentTotals.cancelAmountAvailable,
+      ),
+      averageOrderAmount: metric(
+        currentTotals.orderCount > 0 ? currentTotals.salesAmount / currentTotals.orderCount : 0,
+        previousTotals.orderCount > 0 ? previousTotals.salesAmount / previousTotals.orderCount : 0,
+        currentTotals.salesAmountAvailable && currentTotals.orderCount > 0,
       ),
       refundDataSource,
     },

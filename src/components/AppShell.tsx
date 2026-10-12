@@ -10,7 +10,6 @@ import {
   Route,
   Settings,
   Sun,
-  Tag,
   Truck,
   X,
 } from 'lucide-react'
@@ -34,13 +33,6 @@ interface AppShellProps {
    * olarak yapar.
    */
   interactionLocked?: boolean
-  /**
-   * "Gönderiler / Takip" ayrı bir ekran DEĞİLDİR: Siparişler'in kargoya
-   * verilmiş gönderiler görünümünü açar. Verilmezse menü öğesi gösterilmez.
-   */
-  onOpenShipments?: () => void
-  /** Siparişler, gönderi görünümüyle açıldıysa menüde o öğe seçili görünür. */
-  shipmentsActive?: boolean
 }
 
 /** Arka plan olayını tur açıkken durdurur (yakalama aşamasında). */
@@ -56,17 +48,22 @@ const navItems: Array<{
   label: string
   icon: NavIcon
 }> = [
+  // Ürün akışı: ne satıldı → kargo hattında ne oluyor → kargoya çıktıktan
+  // sonra ne oldu → katalog → bağlantılar.
   { key: 'dashboard', label: 'Ana Sayfa', icon: House },
   { key: 'orders', label: 'Siparişler', icon: ClipboardList },
+  { key: 'cargo', label: 'Kargo Operasyonları', icon: Truck },
+  { key: 'shipments', label: 'Gönderiler', icon: Route },
   { key: 'products', label: 'Ürünler', icon: PackageSearch },
-  { key: 'cargo', label: 'Kargo İşlemleri', icon: Truck },
-  { key: 'labelTemplates', label: 'Etiket Şablonları', icon: Tag },
   { key: 'integrations', label: 'Entegrasyonlar', icon: Plug },
 ]
 
-/** Alt grup: yönetim. Debug ve İşlem Logları Ayarlar içinden açılır. */
+/**
+ * Alt grup: yönetim. Debug, İşlem Logları ve etiket yerleşimi düzenleyicisi
+ * (Ayarlar > Baskı ve Etiket) Ayarlar içinden açılır.
+ */
 const footerItems: Array<{ key: PageKey; label: string; icon: NavIcon; also: PageKey[] }> = [
-  { key: 'settings', label: 'Ayarlar', icon: Settings, also: ['debug', 'logs'] },
+  { key: 'settings', label: 'Ayarlar', icon: Settings, also: ['debug', 'logs', 'labelTemplates'] },
 ]
 
 export function AppShell({
@@ -76,8 +73,6 @@ export function AppShell({
   onStartTour,
   tourNotice,
   interactionLocked = false,
-  onOpenShipments,
-  shipmentsActive = false,
 }: AppShellProps) {
   // AuthGate içinde context her zaman mevcuttur; testlerde/izole render'da
   // yoksa kullanıcı bloğu sessizce gizlenir (throw yok).
@@ -128,7 +123,7 @@ export function AppShell({
           <nav className="nav-list" aria-label="Ana navigasyon">
             {navItems.map((item) => {
               const Icon = item.icon
-              const active = activePage === item.key && !(item.key === 'orders' && shipmentsActive)
+              const active = activePage === item.key
               return (
                 <button
                   key={item.key}
@@ -144,20 +139,6 @@ export function AppShell({
                 </button>
               )
             })}
-            {onOpenShipments ? (
-              <button
-                type="button"
-                className={shipmentsActive ? 'nav-item nav-item-sub active' : 'nav-item nav-item-sub'}
-                aria-current={shipmentsActive ? 'page' : undefined}
-                onClick={() => {
-                  setMenuOpen(false)
-                  onOpenShipments()
-                }}
-              >
-                <Route size={16} strokeWidth={1.9} />
-                <span>Gönderiler / Takip</span>
-              </button>
-            ) : null}
           </nav>
 
           {/* Sabit alt blok: menü listesi kaysa bile oturum/çıkış GÖRÜNÜR kalır ve

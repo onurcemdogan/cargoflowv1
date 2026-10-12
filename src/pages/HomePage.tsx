@@ -130,6 +130,10 @@ export function HomePage({
   )
   const viewModel = server?.viewModel ?? localViewModel
   const waitingForData = !dataSourceResolved || (useServerOperationalSnapshot && !server && !serverError)
+  // Sunucu modunda özet HİÇ alınamadıysa sayılar KISMİ istemci havuzundan
+  // hesaplanmaz: "—" gösterilir ve hata açıkça yazılır.
+  const serverMissing = useServerOperationalSnapshot && !server
+  const valuesHidden = waitingForData || serverMissing
 
   // ── Bağlantı sağlığı (yalnız auth modunda uç vardır) ──────────────────
   const [health, setHealth] = useState<{ items: PresentedHealth[]; error?: string } | null>(null)
@@ -158,17 +162,12 @@ export function HomePage({
   }> = [
     {
       key: 'today',
+      // İstanbul günü, statüden bağımsız gelen paketler (satış kartlarındaki
+      // UTC rapor günü / yalnız satış dispozisyonu DEĞİL).
       label: 'Bugün gelen',
-      count: viewModel.salesSummary.orderCount.value,
+      count: summary.receivedToday ?? viewModel.salesSummary.orderCount.value,
       tone: 'neutral',
       onOpen: () => onNavigateOrders('all', undefined, { datePreset: 'today' }),
-    },
-    {
-      key: 'attention',
-      label: 'Hatalı işlem',
-      count: summary.errors,
-      tone: 'danger',
-      onOpen: () => document.getElementById('home-attention')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
     },
     {
       key: 'barcode',
@@ -185,11 +184,25 @@ export function HomePage({
       onOpen: () => onNavigateOrders('labelReady'),
     },
     {
+      key: 'attention',
+      label: 'Kontrol gereken',
+      count: summary.errors,
+      tone: 'danger',
+      onOpen: () => document.getElementById('home-attention')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    },
+    {
       key: 'cargo',
       label: 'Kargoya verildi',
       count: summary.handedToCargo,
       tone: 'success',
       onOpen: () => onNavigateOrders('handedToCargo'),
+    },
+    {
+      key: 'delivered',
+      label: 'Teslim edildi',
+      count: summary.delivered,
+      tone: 'neutral',
+      onOpen: () => onNavigateOrders('delivered'),
     },
   ]
 
@@ -216,9 +229,18 @@ export function HomePage({
         </Alert>
       ) : null}
       {serverError ? (
-        <Alert tone="warning" title="Operasyon özeti güncellenemedi" role="status">
-          Gösterilen sayılar son başarılı özetten. {serverError}
-        </Alert>
+        server ? (
+          <Alert tone="warning" title="Operasyon özeti güncellenemedi" role="status">
+            Gösterilen sayılar son başarılı özetten. {serverError}
+          </Alert>
+        ) : (
+          <Alert tone="danger" title="Operasyon özeti alınamadı" role="alert">
+            {serverError}{' '}
+            <button type="button" className="text-button" onClick={() => setRefreshTick((tick) => tick + 1)}>
+              Tekrar dene
+            </button>
+          </Alert>
+        )
       ) : null}
 
       <section className="home-ops" aria-label="Operasyon durumu" aria-busy={waitingForData || loading || undefined}>
@@ -228,7 +250,7 @@ export function HomePage({
               <i aria-hidden="true" />
               {item.label}
             </span>
-            <strong>{waitingForData ? '—' : item.count.toLocaleString('tr-TR')}</strong>
+            <strong>{valuesHidden ? '—' : item.count.toLocaleString('tr-TR')}</strong>
           </button>
         ))}
       </section>
@@ -240,6 +262,8 @@ export function HomePage({
                 <i />
                 <i />
               </div>
+            ) : serverMissing ? (
+              <EmptyState kind="error" compact title="Özet alınamadı" body="Kontrol gereken işlemler sunucudan okunamadı." />
             ) : attention.length === 0 ? (
               <EmptyState
                 kind="done"

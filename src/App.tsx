@@ -8,6 +8,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { ActionResult } from './components/ActionResult'
 import { AppShell } from './components/AppShell'
 import { AuthContext } from './auth/AuthProvider'
 import { ProductTour } from './tour/ProductTour'
@@ -61,6 +62,9 @@ const LabelTemplateEditorPage = lazy(async () => ({
 }))
 const ProductsPage = lazy(async () => ({
   default: (await import('./pages/ProductsPage')).ProductsPage,
+}))
+const ShipmentsPage = lazy(async () => ({
+  default: (await import('./pages/ShipmentsPage')).ShipmentsPage,
 }))
 import { apiDebugService } from './services/apiDebugService'
 import {
@@ -199,9 +203,8 @@ function App() {
   const [activePage, setActivePage] = useState<PageKey>(() =>
     readWooAuthReturn() ? 'integrations' : 'dashboard',
   )
-  // "Gönderiler / Takip" ayrı ekran değildir: Siparişler'in kargoya verilmiş
-  // gönderiler görünümüdür; menüde seçili görünsün diye ayrıca izlenir.
-  const [shipmentsView, setShipmentsView] = useState(false)
+  // Gönderiler ekranı Kargo Operasyonları'ndan bir aramayla açılabilir.
+  const [shipmentsSearch, setShipmentsSearch] = useState({ key: 0, value: '' })
 
   // ═══ ÜRÜN TURU (ONBOARDING DEĞİL) ══════════════════════════════════════
   // Bu bileşen yalnız `OnboardingGate` kurulumu tamamlanmış gördüğünde
@@ -648,8 +651,21 @@ function App() {
     }
   }
 
+  // Gönderiler / Kargo Operasyonları satır aksiyonlarının durumu (aşağıda).
+  const [pendingOrderAction, setPendingOrderAction] = useState<{
+    kind: 'open' | 'print' | 'track'
+    orderId: string
+  } | null>(null)
+  const [orderActionError, setOrderActionError] = useState<string | null>(null)
+  // Yazdır / takip sonucu (ordersMessage) yalnız aksiyonun başlatıldığı
+  // sayfada gösterilir; başka sayfaya geçince eski sonuç taşınmaz.
+  const [orderActionFeedbackPage, setOrderActionFeedbackPage] = useState<PageKey | null>(null)
+  // Yazdır / takip bittiğinde Gönderiler ve Kargo Operasyonları yeniden okunur.
+  const [shippingOverviewRefresh, setShippingOverviewRefresh] = useState(0)
+
   function handleNavigate(page: PageKey) {
-    setShipmentsView(false)
+    setOrderActionError(null)
+    setOrderActionFeedbackPage(null)
     setActivePage(page)
     if (page === 'orders') {
       // Sayfa açılışında YALNIZ DB'den oku; Trendyol'a otomatik istek YOK.
@@ -666,7 +682,6 @@ function App() {
     orderId?: string,
     filters?: OrdersNavigationFilters,
   ) {
-    setShipmentsView(false)
     setActivePage('orders')
     setSelectedIds([])
     setOrdersNavigationRequest({
@@ -678,6 +693,64 @@ function App() {
     // Dashboard kartından geçiş: YALNIZ DB'den oku; Trendyol'a otomatik istek YOK.
     void handleReloadOrders()
   }
+
+  // ═══ GÖNDERİLER / KARGO OPERASYONLARI SATIR AKSİYONLARI ═══════════════
+  //
+  // Auth modunda Siparişler listesi SAYFALIDIR: Gönderiler ya da Kargo
+  // Operasyonları satırındaki sipariş istemci havuzunda olmayabilir. O
+  // durumda sipariş TEK kayıt olarak (`GET /api/orders/:id`, kiracı kapsamlı)
+  // havuza eklenir; istenen eylem sipariş havuza girdikten SONRA mevcut
+  // işleyicilerle çalışır. Yazdırma mevcut BASKI akışıdır — create YOK.
+  async function requestOrderAction(kind: 'open' | 'print' | 'track', orderId: string) {
+    setOrderActionError(null)
+    if (!orders.some((order) => order.id === orderId)) {
+      try {
+        const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
+          credentials: 'include',
+        })
+        const payload = (await response.json().catch(() => null)) as { order?: CargoOrder } | null
+        if (!response.ok || !payload?.order) {
+          setOrderActionError('Sipariş yüklenemedi; Siparişler ekranından açmayı deneyin.')
+          return
+        }
+        const loaded = payload.order
+        setOrdersState((current) =>
+          current.orders.some((order) => order.id === loaded.id)
+            ? current
+            : { ...current, orders: [...current.orders, loaded] },
+        )
+      } catch {
+        setOrderActionError('Sipariş yüklenemedi; Siparişler ekranından açmayı deneyin.')
+        return
+      }
+    }
+    if (kind === 'open') {
+      setOrderActionFeedbackPage(null)
+    } else {
+      // Önceki (Siparişler) sonucu bu aksiyonun sonucu sanılmasın.
+      setOrdersState((current) => ({ ...current, ordersMessage: undefined }))
+      setOrderActionFeedbackPage(activePage)
+    }
+    setPendingOrderAction({ kind, orderId })
+  }
+
+  useEffect(() => {
+    if (!pendingOrderAction) return
+    if (!orders.some((order) => order.id === pendingOrderAction.orderId)) return
+    const { kind, orderId } = pendingOrderAction
+    setPendingOrderAction(null)
+    if (kind === 'open') {
+      setActivePage('orders')
+      setSelectedIds([])
+      setOrdersNavigationRequest({ id: Date.now(), tab: 'all', orderId })
+    } else {
+      const run = kind === 'print' ? handlePrintLabelsForIds([orderId]) : handleTrackShipmentForOrder(orderId)
+      void run.finally(() => setShippingOverviewRefresh((value) => value + 1))
+    }
+    // Yalnız bekleyen eylem ve havuz değişince çalışır; işleyiciler her
+    // render'da yeniden kurulur ve GÜNCEL havuzu okur.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingOrderAction, orders])
 
   function refreshLogs() {
     setLogs(auditLogService.load())
@@ -1830,11 +1903,6 @@ function App() {
       onStartTour={() => void productTour.start()}
       tourNotice={productTour.notice}
       interactionLocked={productTour.active}
-      onOpenShipments={() => {
-        handleDashboardNavigateOrders('handedToCargo')
-        setShipmentsView(true)
-      }}
-      shipmentsActive={shipmentsView && activePage === 'orders'}
     >
       {effectivePage === 'dashboard' ? (
         <HomePage
@@ -1992,18 +2060,38 @@ function App() {
         </Suspense>
       ) : null}
 
+      {orderActionError && (activePage === 'cargo' || activePage === 'shipments') ? (
+        <p className="page-inline-error" role="alert">{orderActionError}</p>
+      ) : orderActionFeedbackPage === activePage && ordersState.ordersMessage ? (
+        <div className="page-action-result" role="status">
+          <ActionResult result={ordersState.ordersMessage} />
+        </div>
+      ) : null}
+
       {activePage === 'cargo' ? (
         <Suspense fallback={<RouteSkeleton />}>
         <CargoOperationsPage
-          orders={orders}
-          selectedIds={selectedIds}
-          result={ordersState.ordersMessage}
-          busy={ordersState.ordersLoading}
-          onNavigateOrders={() => handleNavigate('orders')}
-          onCreateShipments={handleCreateShipments}
-          onTrackShipments={handleTrackShipments}
-          onPrintLabels={handleMarkPrinted}
-          onDownloadZpl={handleDownloadZpl}
+          onOpenOrder={(orderId) => void requestOrderAction('open', orderId)}
+          onPrintLabel={(orderId) => void requestOrderAction('print', orderId)}
+          onOpenShipments={(search) => {
+            setShipmentsSearch((current) => ({ key: current.key + 1, value: search ?? '' }))
+            setActivePage('shipments')
+          }}
+          onNavigateOrders={(tab) => handleDashboardNavigateOrders(tab ?? 'all')}
+          refreshToken={shippingOverviewRefresh}
+        />
+        </Suspense>
+      ) : null}
+
+      {activePage === 'shipments' ? (
+        <Suspense fallback={<RouteSkeleton />}>
+        <ShipmentsPage
+          key={shipmentsSearch.key}
+          initialSearch={shipmentsSearch.value}
+          refreshToken={shippingOverviewRefresh}
+          onOpenOrder={(orderId) => void requestOrderAction('open', orderId)}
+          onPrintLabel={(orderId) => void requestOrderAction('print', orderId)}
+          onTrackShipment={(orderId) => void requestOrderAction('track', orderId)}
         />
         </Suspense>
       ) : null}
@@ -2059,6 +2147,13 @@ function App() {
         <SettingsPage
           onNavigate={handleNavigate}
           onStartTour={() => void productTour.start()}
+          print={{
+            printer: printerSettings,
+            rawPrint: rawPrintCapability
+              ? { available: rawPrintCapability.available, reason: rawPrintCapability.reason }
+              : null,
+            activeLayoutName: activeLabelDocument?.name ?? null,
+          }}
         />
       ) : null}
 

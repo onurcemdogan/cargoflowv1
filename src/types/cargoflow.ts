@@ -9,6 +9,10 @@ export type PageKey =
   | 'orders'
   | 'products'
   | 'cargo'
+  // Gönderiler: gönderi merkezli defter (kargoya çıktıktan sonra ne oldu).
+  | 'shipments'
+  // Etiket yerleşimi düzenleyicisi: ana menüde DEĞİL, Ayarlar > Baskı ve
+  // Etiket içinden açılan gelişmiş araç.
   | 'labelTemplates'
   | 'integrations'
   | 'debug'

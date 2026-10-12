@@ -40,6 +40,7 @@ const PAGE_TOUR_IDS: Partial<Record<PageKey, string>> = {
   orders: 'orders-workspace',
   products: 'products-catalog',
   cargo: 'cargo-operations',
+  shipments: 'shipments-ledger',
   labelTemplates: 'label-templates',
   integrations: 'integrations-settings',
 }
@@ -251,8 +252,9 @@ test('TOUR-10/11: İleri mevcut PageKey ile gezer; Geri önceki sayfanın hedefi
   expect(activeNav()).toBe('nav-orders')
   await waitFor(() => expect(card()?.getAttribute('data-target-status')).toBe('found'))
   next()
-  await stepTo('products')
-  expect(activeNav()).toBe('nav-products')
+  // Tur sırası sidebar sırasını izler: Siparişler → Kargo Operasyonları.
+  await stepTo('cargo')
+  expect(activeNav()).toBe('nav-cargo')
   fireEvent.click(screen.getByRole('button', { name: 'Geri' }))
   await stepTo('orders')
   expect(activeNav()).toBe('nav-orders')
@@ -277,7 +279,7 @@ test('TOUR-13: hedef yoksa yumuşak başarısızlık; İleri ve Atla çalışır
   expect(screen.getByRole('note').textContent).toMatch(/görüntülenemiyor/)
   expect(card()?.getAttribute('data-placement')).toBe('center')
   next()
-  await stepTo('products')
+  await stepTo('cargo')
   fireEvent.click(screen.getByRole('button', { name: 'Turu Atla' }))
   expect(card()).toBeNull()
 })

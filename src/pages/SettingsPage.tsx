@@ -5,19 +5,36 @@
 // ekranındaki mevcut bölümlerde kalır ve buradan oraya geçilir. Paket /
 // abonelik bilgisi UYDURULMAZ.
 import { useContext } from 'react'
-import { Bug, ChevronRight, Compass, ListChecks, Moon, Plug, Sun } from 'lucide-react'
+import { Bug, ChevronRight, Compass, ListChecks, Moon, PenTool, Plug, Sun } from 'lucide-react'
 import { AuthContext } from '../auth/AuthProvider'
 import { PageHeader } from '../components/PageHeader'
-import type { PageKey } from '../types/cargoflow'
-import { Card } from '../ui/primitives'
+import type { PageKey, PrinterSettings } from '../types/cargoflow'
+import { Badge, Card } from '../ui/primitives'
 import { useTheme } from '../ui/theme'
+
+/** Ayarlar > Baskı ve Etiket kartının salt okunur özeti. */
+export interface PrintSettingsSummary {
+  printer: PrinterSettings
+  /** Ham (Zebra/yerel ajan) baskı yolu durumu; bilinmiyorsa null. */
+  rawPrint: { available: boolean; reason: string | null } | null
+  /** Yayındaki özel etiket yerleşiminin adı; kullanılmıyorsa null. */
+  activeLayoutName: string | null
+}
+
+const PRINT_MODE_LABEL: Record<PrinterSettings['mode'], string> = {
+  'browser-print': 'Tarayıcıdan yazdır',
+  download: 'Dosya olarak indir',
+  'local-agent': 'Yerel yazıcı ajanı',
+}
 
 export function SettingsPage({
   onNavigate,
   onStartTour,
+  print,
 }: {
   onNavigate: (page: PageKey) => void
   onStartTour?: () => void
+  print?: PrintSettingsSummary
 }) {
   const auth = useContext(AuthContext)
   const user = auth?.user ?? null
@@ -105,6 +122,63 @@ export function SettingsPage({
                 </button>
               </li>
             ) : null}
+          </ul>
+        </Card>
+
+        <Card
+          title="Baskı ve Etiket"
+          subtitle="Sürat gönderilerinde resmî taşıyıcı etiketi basılır."
+          labelledBy="settings-print"
+          className="settings-print"
+        >
+          <dl className="settings-facts">
+            <div>
+              <dt>Ana format</dt>
+              <dd>Resmî Sürat etiketi</dd>
+            </div>
+            <div>
+              <dt>Baskı yöntemi</dt>
+              <dd>{print ? PRINT_MODE_LABEL[print.printer.mode] ?? print.printer.mode : '—'}</dd>
+            </div>
+            <div>
+              <dt>Yazıcı bağlantısı</dt>
+              <dd>
+                {!print || print.rawPrint === null ? (
+                  'Kontrol edilmedi'
+                ) : print.rawPrint.available ? (
+                  <Badge tone="success" dot>Hazır</Badge>
+                ) : (
+                  <Badge tone="warning" dot>{print.rawPrint.reason ?? 'Kullanılamıyor'}</Badge>
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Etiket ölçüsü</dt>
+              <dd>{print ? `${print.printer.labelSize.replace('x', ' × ')} mm` : '—'}</dd>
+            </div>
+            <div>
+              <dt>Varsayılan davranış</dt>
+              <dd>Tek tıkla oluştur ve yazdır; hazır etiket yeniden oluşturulmadan basılır.</dd>
+            </div>
+            <div>
+              <dt>Özel yerleşim</dt>
+              <dd>{print?.activeLayoutName ? `Kullanılıyor: ${print.activeLayoutName}` : 'Kullanılmıyor'}</dd>
+            </div>
+          </dl>
+          <p className="settings-note">
+            Özel yerleşim, resmî taşıyıcı barkodunu, QR kodunu ve takip numarasını değiştiremez.
+          </p>
+          <ul className="settings-links">
+            <li>
+              <button type="button" onClick={() => onNavigate('labelTemplates')}>
+                <PenTool size={16} aria-hidden="true" />
+                <span>
+                  <b>Etiket yerleşimini özelleştir</b>
+                  <small>Gelişmiş: resmî etiketin üstüne alan ekleme ve önizleme</small>
+                </span>
+                <ChevronRight size={16} aria-hidden="true" />
+              </button>
+            </li>
           </ul>
         </Card>
 
