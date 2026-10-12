@@ -219,8 +219,10 @@ test('HF-5: yeni sipariş → üretici → worker → READY (taşıyıcı çağr
   assert.equal(calls, 5)
 })
 
-test('HF-6: worker olayla HEMEN uyanır; tur sürerken gelen istek kaybolmaz, turlar üst üste binmez; yedek aralık ≤ 5 sn', async (t) => {
-  assert.ok(worker.LABEL_WORKER_DEFAULT_INTERVAL_MS <= 5_000)
+// SÖZLEŞME DEĞİŞTİ (bellek hotfix'i, 2026-10-13): yedek yoklama 5 sn → 60 sn.
+// Gecikmenin asıl mekanizması olay tetiğidir; yedek yalnız kurtarmadır.
+test('HF-6: worker olayla HEMEN uyanır; tur sürerken gelen istek kaybolmaz, turlar üst üste binmez; yedek aralık 60 sn', async (t) => {
+  assert.equal(worker.LABEL_WORKER_DEFAULT_INTERVAL_MS, 60_000)
   worker.stopLabelJobScheduler()
   t.after(() => worker.stopLabelJobScheduler())
   // Bayrak kapalıyken uyandırma HİÇBİR ŞEY yapmaz (taşıyıcı çağrısı yok).
@@ -266,4 +268,113 @@ test('HF-7: çalışma zamanı bağlantısı — elle senkron üreticiyi besler 
   // Worker HÂLÂ elle butonla AYNI kanonik create yolunu kullanır.
   const boot = source.slice(source.indexOf('async function startLabelJobWorkerOnBoot'), source.indexOf('async function startTrendyolStreamSyncOnBoot'))
   assert.match(boot, /runLabel: runLabelJobViaCreateHandler/)
+})
+
+// ═══ MEM: BELLEK KAÇAĞI HOTFIX'İ — WORKER YOKLAMASI ═══════════════════════
+
+function captureSetInterval() {
+  const calls = []
+  const original = globalThis.setInterval
+  globalThis.setInterval = (fn, delay, ...rest) => {
+    calls.push(delay)
+    return original(fn, delay, ...rest)
+  }
+  return { calls, restore: () => { globalThis.setInterval = original } }
+}
+
+test('MEM-5: üretici kuyruğa aldığında worker 60 sn yedeği beklemeden HEMEN uyanır', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  worker.stopLabelJobScheduler()
+  t.after(() => worker.stopLabelJobScheduler())
+  const organizationId = await makeTenant(db)
+  await seedPackage(db, organizationId, 'WAKE-1')
+
+  let calls = 0
+  let resolveRan
+  const ran = new Promise((resolve) => { resolveRan = resolve })
+  // Aralık VERİLMEZ → üretim varsayılanı (60 sn); tek tetik olaydır.
+  const started = worker.startLabelJobScheduler({
+    env: { LABEL_WORKER_ENABLED: 'true' },
+    runCycle: async () => {
+      const report = await worker.runLabelJobCycle({
+        db,
+        workerId: 'mem-5',
+        runLabel: async () => { calls += 1; return { labelReady: true, networkCrossed: true, carrierCalls: 1 } },
+      })
+      if (report.claimed > 0) resolveRan()
+      return report
+    },
+  })
+  assert.equal(started, true)
+  const t0 = Date.now()
+  // index.mjs `enqueueAutoLabelAfterSync` ile AYNI sıra: kuyruğa al → uyandır.
+  const report = await producer.enqueueEligibleAutoLabelJobs(db, organizationId)
+  assert.equal(report.enqueued, 1)
+  assert.equal(worker.requestLabelJobCycle(), true)
+  await Promise.race([ran, new Promise((_, reject) => setTimeout(() => reject(new Error('worker uyanmadı')), 5_000))])
+  assert.ok(Date.now() - t0 < 5_000, 'yedek aralığı beklenmedi')
+  assert.equal(calls, 1)
+
+  const source = readFileSync(join(here, 'index.mjs'), 'utf8')
+  const feed = source.slice(source.indexOf('async function enqueueAutoLabelAfterSync'), source.indexOf('async function syncTrendyolOrdersForOrganization'))
+  assert.ok(
+    feed.indexOf('enqueueEligibleAutoLabelJobs(db, organizationId)') < feed.indexOf('worker.requestLabelJobCycle()'),
+    'uyandırma kuyruğa almadan SONRA',
+  )
+})
+
+test('MEM-6: worker yedek yoklaması 60 sn (5 sn DEĞİL); açılışta tek kurtarma turu', async (t) => {
+  worker.stopLabelJobScheduler()
+  const spy = captureSetInterval()
+  t.after(() => { spy.restore(); worker.stopLabelJobScheduler() })
+  let runs = 0
+  const started = worker.startLabelJobScheduler({
+    env: { LABEL_WORKER_ENABLED: 'true' },
+    runCycle: async () => { runs += 1 },
+  })
+  assert.equal(started, true)
+  assert.deepEqual(spy.calls, [60_000])
+  // Yedek tik 60 sn'den önce gelmez: kısa beklemede hiçbir tur koşmaz.
+  await new Promise((resolve) => setTimeout(resolve, 50))
+  assert.equal(runs, 0)
+
+  // Bayrak kapalıyken zamanlayıcı da uyandırma da YOK.
+  worker.stopLabelJobScheduler()
+  assert.equal(worker.startLabelJobScheduler({ env: {}, runCycle: async () => { runs += 1 } }), false)
+  assert.equal(worker.requestLabelJobCycle(), false)
+
+  // Açılış: zamanlayıcı kurulduysa TEK kurtarma turu hemen istenir; aralık
+  // üretimde verilmez (varsayılan 60 sn).
+  const source = readFileSync(join(here, 'index.mjs'), 'utf8')
+  const boot = source.slice(source.indexOf('async function startLabelJobWorkerOnBoot'), source.indexOf('async function startTrendyolStreamSyncOnBoot'))
+  assert.doesNotMatch(boot, /intervalMs/)
+  assert.equal(boot.match(/requestLabelJobCycle\(\)/g)?.length, 1)
+  assert.match(boot, /if \(started\) \{[\s\S]*worker\.requestLabelJobCycle\(\)/)
+})
+
+test('MEM-7: UNKNOWN_AFTER_NETWORK işi bir daha ASLA create\'e gitmez (worker turu, uyandırma, üretici tekrarı)', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const organizationId = await makeTenant(db)
+  await seedPackage(db, organizationId, 'UNK-1')
+  assert.equal((await producer.enqueueEligibleAutoLabelJobs(db, organizationId)).enqueued, 1)
+
+  let calls = 0
+  // Ağa çıkıldı, sonuç belirsiz.
+  const runLabel = async () => { calls += 1; return { labelReady: false, networkCrossed: true, carrierCalls: 1 } }
+  const first = await worker.runLabelJobCycle({ db, workerId: 'mem-7a', runLabel })
+  assert.equal(first.unknownAfterNetwork, 1)
+  assert.equal(calls, 1)
+  assert.deepEqual((await jobsOf(db, organizationId)).map((job) => job.status), ['UNKNOWN_AFTER_NETWORK'])
+
+  // Tekrarlı tetikler: üretici yeniden besler, worker defalarca uyanır.
+  for (let round = 0; round < 3; round += 1) {
+    const again = await producer.enqueueEligibleAutoLabelJobs(db, organizationId)
+    assert.equal(again.enqueued, 0, 'belirsiz paket yeniden kuyruğa girmez')
+    const cycle = await worker.runLabelJobCycle({ db, workerId: `mem-7-${round}`, runLabel })
+    assert.equal(cycle.claimed, 0, 'belirsiz iş tekrar talep edilmez')
+  }
+  assert.equal(calls, 1, 'ikinci create YOK')
+  assert.deepEqual((await jobsOf(db, organizationId)).map((job) => job.status), ['UNKNOWN_AFTER_NETWORK'])
 })

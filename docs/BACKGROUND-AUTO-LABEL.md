@@ -47,16 +47,25 @@ sessizce "hazır değil" demeye başlardı. HV-9 bunu korur.
   yaratılmaz (HV-4). Taşıyıcı etiketi geri alınamaz ve faturalanabilir;
   "tekrar dene" burada yanlış varsayılandır.
 
-## Bayraklar — ikisi de VARSAYILAN KAPALI
+## Bayraklar — hepsi VARSAYILAN KAPALI
 
 | Değişken | Ne açar | Varsayılan |
 | --- | --- | --- |
 | `LABEL_WORKER_ENABLED` | Arka plan etiket worker'ı | **kapalı** |
 | `TRENDYOL_STREAM_SYNC_ENABLED` | Trendyol akış senkronu | **kapalı** |
+| `LABEL_BUNDLE_RECONCILE_ENABLED` | Periyodik baskı paketi mutabakatı | **kapalı** |
 
 Bayrak açıkça `true`/`1` yapılmadıkça **hiçbir zamanlayıcı kurulmaz**:
 boot'ta taşıyıcı çağrısı yok, periyodik create yok, pazaryeri çağrısı yok
-(HV-1).
+(HV-1). `LABEL_BUNDLE_RECONCILE_ENABLED` yalnız `true` ile açılır.
+
+**Baskı paketi mutabakatı (bellek hotfix'i, 2026-10-13):** 60 sn'lik
+periyodik tur üretimde RSS'i dakikalar içinde ~868 MB'a taşıyıp PM2
+restart'ını tetikledi. Artık açılışta TEK sınırlı tur koşar; yeni
+gönderiler `shipmentPersistenceService → enqueueBundlePreparation` ile olay
+güdümlü hazırlanır. Worker'ın yedek yoklaması 60 sn'dir (yalnız kurtarma);
+üretici kuyruğa aldığında worker `requestLabelJobCycle()` ile hemen uyanır
+ve açılışta bir kurtarma turu koşar.
 
 **Dağıtım sırasında otomatik etiket AÇILMAZ.** Önce kod dağıtılır ve
 davranış gözlenir; worker ayrı ve bilinçli bir adımda açılır.

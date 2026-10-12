@@ -4117,10 +4117,15 @@ async function reconcileLabelBundlesOnBoot() {
         `[label-bundle] restart reconciliation: ${result.enqueued}/${result.scanned} kayıt kuyruğa alındı`,
       )
     }
-    // PERİYODİK MUTABAKAT: kuyruk taşması veya kaçırılan enqueue sonrası
-    // kalan kayıtlar BİR SONRAKİ RESTART'I beklemez. Tur sınırlı, imleçli
-    // (keyset) ve `unref` edilmiş zamanlayıcıyla; hot-loop yapmaz.
-    preparer.startPeriodicReconciliation(db)
+    // PERİYODİK MUTABAKAT VARSAYILAN KAPALI. Üretimde 60 sn'lik tur RSS'i
+    // dakikalar içinde ~868 MB'a taşıyıp PM2 restart'ı tetikledi. Normal yeni
+    // gönderiler zaten olay güdümlü hazırlanır (shipmentPersistenceService →
+    // enqueueBundlePreparation); açılıştaki bu TEK sınırlı tur kurtarmadır.
+    // Zamanlayıcı YALNIZ `LABEL_BUNDLE_RECONCILE_ENABLED=true` iken kurulur.
+    if (preparer.isBundleReconcileEnabled()) {
+      preparer.startPeriodicReconciliation(db)
+      console.log('[label-bundle] periyodik mutabakat etkin (LABEL_BUNDLE_RECONCILE_ENABLED=true)')
+    }
   } catch {
     // Mutabakat BEST-EFFORT: başarısız olursa ilk baskıda hydration devrede.
   }
@@ -4906,7 +4911,13 @@ async function startLabelJobWorkerOnBoot() {
         return report
       },
     })
-    if (started) console.log('[label-worker] arka plan etiket worker etkin')
+    if (started) {
+      console.log('[label-worker] arka plan etiket worker etkin')
+      // AÇILIŞ KURTARMASI: yedek yoklama 60 sn olduğundan restart öncesi
+      // kuyrukta kalan işler için TEK tur hemen koşulur. Asıl tetik olaydır
+      // (enqueueAutoLabelAfterSync → requestLabelJobCycle).
+      worker.requestLabelJobCycle()
+    }
   } catch {
     // BEST-EFFORT: kurulamazsa uygulama normal çalışır, elle etiket üretilir.
   }

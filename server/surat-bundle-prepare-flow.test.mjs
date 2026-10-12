@@ -507,17 +507,135 @@ test('PREP-14: hazırlama sırasında event-loop BLOKE OLMAZ', async () => {
 
 // ═══ PREP-15: PERİYODİK MUTABAKAT ════════════════════════════════════════
 
-test('PREP-15: mutabakat yalnız açılışa bağlı DEĞİL', async () => {
+// SÖZLEŞME DEĞİŞTİ (bellek hotfix'i, 2026-10-13): periyodik mutabakat artık
+// VARSAYILAN KAPALI ve yalnız açık bayrakla kurulur (bkz. MEM-1..4).
+test('PREP-15: periyodik mutabakat yalnız açık bayrakla kurulur ve durdurulabilir', async () => {
   const db = await makeDb()
   await seed(db, 'prep-15', { packageIds: ['PKG-P1'], lineItems: distinct(2) })
-  // Zamanlayıcı kurulur ve DURDURULABİLİR; süreç kapanışını geciktirmez.
-  const stop = preparer.startPeriodicReconciliation(db, { intervalMs: 10_000 })
+  const stop = preparer.startPeriodicReconciliation(db, {
+    intervalMs: 10_000,
+    env: { LABEL_BUNDLE_RECONCILE_ENABLED: 'true' },
+  })
   assert.equal(typeof stop, 'function')
+  assert.equal(preparer.isPeriodicReconciliationActive(), true)
   stop()
-  preparer.stopPeriodicReconciliation()
+  assert.equal(preparer.isPeriodicReconciliationActive(), false)
 
-  const server = readFileSync(join(here, 'index.mjs'), 'utf8')
-  assert.ok(server.includes('startPeriodicReconciliation'))
   // Aralık yapılandırılabilir ve muhafazakâr bir alt sınırı var.
   assert.ok(preparer.RECONCILE_INTERVAL_MS >= 10_000)
+})
+
+// ═══ MEM: BELLEK KAÇAĞI HOTFIX'İ — PERİYODİK TUR VARSAYILAN KAPALI ════════
+//
+// ÜRETİMDE ÖLÇÜLDÜ (master 7e59c65, LABEL_WORKER_ENABLED=false): 60 sn'lik
+// periyodik mutabakat RSS'i 3 dakikada ~184 → ~371 MB'a çıkardı ve PM2
+// süreci ~868 MB'ta öldürdü; aralık 1 saate çekilince büyüme durdu.
+
+function captureSetInterval() {
+  const calls = []
+  const original = globalThis.setInterval
+  globalThis.setInterval = (fn, delay, ...rest) => {
+    calls.push(delay)
+    return original(fn, delay, ...rest)
+  }
+  return { calls, restore: () => { globalThis.setInterval = original } }
+}
+
+test('MEM-1: periyodik paket mutabakatı VARSAYILAN KAPALI — zamanlayıcı kurulmaz', async (t) => {
+  const db = await makeDb()
+  const spy = captureSetInterval()
+  t.after(() => { spy.restore(); preparer.stopPeriodicReconciliation() })
+  const saved = process.env.LABEL_BUNDLE_RECONCILE_ENABLED
+  delete process.env.LABEL_BUNDLE_RECONCILE_ENABLED
+  t.after(() => {
+    if (saved === undefined) delete process.env.LABEL_BUNDLE_RECONCILE_ENABLED
+    else process.env.LABEL_BUNDLE_RECONCILE_ENABLED = saved
+  })
+  // Tanımsız (üretim varsayılanı) → kurulmaz.
+  assert.equal(preparer.isBundleReconcileEnabled(), false)
+  const stop = preparer.startPeriodicReconciliation(db)
+  assert.equal(typeof stop, 'function', 'durdurucu her durumda güvenle çağrılabilir')
+  stop()
+  // Açık "true" DIŞINDAKİ her değer kapalıdır.
+  for (const value of ['', 'false', '0', '1', 'yes', 'off']) {
+    preparer.startPeriodicReconciliation(db, { env: { LABEL_BUNDLE_RECONCILE_ENABLED: value } })
+    assert.equal(preparer.isPeriodicReconciliationActive(), false, `'${value}' kapalı olmalı`)
+  }
+  assert.deepEqual(spy.calls, [], '60 sn tarama zamanlayıcısı KURULMAMALI')
+})
+
+test('MEM-2: açık LABEL_BUNDLE_RECONCILE_ENABLED=true periyodik turu kurar', async (t) => {
+  const db = await makeDb()
+  const spy = captureSetInterval()
+  t.after(() => { spy.restore(); preparer.stopPeriodicReconciliation() })
+  for (const value of ['true', 'TRUE', ' true ']) {
+    preparer.startPeriodicReconciliation(db, { env: { LABEL_BUNDLE_RECONCILE_ENABLED: value } })
+    assert.equal(preparer.isPeriodicReconciliationActive(), true, `'${value}' açmalı`)
+    preparer.stopPeriodicReconciliation()
+  }
+  assert.deepEqual(spy.calls, [
+    preparer.RECONCILE_INTERVAL_MS,
+    preparer.RECONCILE_INTERVAL_MS,
+    preparer.RECONCILE_INTERVAL_MS,
+  ])
+  assert.equal(preparer.isBundleReconcileEnabled({ LABEL_BUNDLE_RECONCILE_ENABLED: 'true' }), true)
+})
+
+test('MEM-3: kalıcılaşan gönderi paket hazırlamayı HEMEN kuyruğa alır (zamanlayıcı/mutabakat olmadan)', async () => {
+  const db = await makeDb()
+  const shipmentService = await import('./shipments/shipmentPersistenceService.ts')
+  const [org] = await db.insert(schema.organizations).values({ name: 'mem-3', slug: 'mem-3' }).returning()
+  await db.insert(schema.orders).values({
+    organizationId: org.id, marketplace: 'Trendyol', packageId: 'PKG-MEM3', orderNumber: 'ORD-PKG-MEM3',
+    orderDate: new Date('2026-08-01T00:00:00.000Z'), operationStatus: 'NEW',
+  })
+  assert.equal(preparer.isPeriodicReconciliationActive(), false)
+  await shipmentService.writeOperationRecord(db, org.id, {
+    idempotencyKey: `SURAT:${org.id}:ORD-PKG-MEM3:CREATE`,
+    marketplace: 'Trendyol',
+    packageId: 'PKG-MEM3',
+    orderNumber: 'ORD-PKG-MEM3',
+    provider: 'surat',
+    operation: 'OrtakBarkodOlustur',
+    status: 'SUCCESS',
+    createCallCount: 1,
+    carrierTrackingNumber: '2512361562501',
+    technicalZpl: ZPL,
+  })
+  // Yazım döndüğü anda iş kuyrukta/işlenmekte ya da bitmiştir.
+  const now = preparer.bundlePrepareStats()
+  assert.ok(
+    now.pending + now.active + now.prepared + now.failed >= 1,
+    `hazırlama hemen kuyruğa alınmalı: ${JSON.stringify(now)}`,
+  )
+  await preparer.drainBundlePreparation()
+  const done = preparer.bundlePrepareStats()
+  assert.equal(done.prepared + done.failed, 1, 'gönderi başına TEK hazırlama işi')
+  assert.equal(preparer.isPeriodicReconciliationActive(), false)
+})
+
+test('MEM-4: açılışta TEK ve SINIRLI kurtarma turu; periyodik tur yalnız bayrakla', async () => {
+  const server = readFileSync(join(here, 'index.mjs'), 'utf8')
+  const boot = server.slice(
+    server.indexOf('async function reconcileLabelBundlesOnBoot'),
+    server.indexOf('async function startRetentionHousekeepingOnBoot'),
+  )
+  assert.equal(boot.match(/reconcilePendingBundles\(db\)/g)?.length, 1, 'açılışta tek tur')
+  assert.doesNotMatch(boot, /reconcileUntilDrained/, 'açılışta tüm tabloyu boşaltma döngüsü YOK')
+  assert.match(
+    boot,
+    /if \(preparer\.isBundleReconcileEnabled\(\)\) \{\s*preparer\.startPeriodicReconciliation\(db\)/,
+  )
+  assert.equal(boot.match(/startPeriodicReconciliation\(/g)?.length, 1)
+
+  // Tur sınırlıdır: istenen limitten fazlası taranmaz.
+  const db = await makeDb()
+  await seed(db, 'mem-4', { packageIds: ['PKG-B1', 'PKG-B2', 'PKG-B3'], lineItems: distinct(2) })
+  preparer.resetReconcileCursor()
+  const bounded = await preparer.reconcilePendingBundles(db, { limit: 2 })
+  assert.equal(bounded.scanned, 2)
+  assert.equal(bounded.wrapped, false)
+  await preparer.drainBundlePreparation()
+  assert.equal(preparer.RECONCILE_SCAN_LIMIT, 200)
+  assert.equal(preparer.isPeriodicReconciliationActive(), false, 'tur kendiliğinden zamanlayıcı kurmaz')
 })
