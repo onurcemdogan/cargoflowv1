@@ -64,11 +64,19 @@ export function resolvePrintSkips(
     .filter((item) => item.orderNumber)
 }
 
+/** Mevcut create servisinin sipariş başına özeti (orderWorkflowService). */
+export interface CreateServiceDebugLike {
+  failedOrderNumbers?: string[]
+  skippedOrderNumbers?: string[]
+  /** `${orderNumber}: ${sebep}` biçiminde. */
+  skippedReasons?: string[]
+}
+
 export interface CreateAdapterInput {
   callCreate: (
     orders: CargoOrder[],
     ids: string[],
-  ) => Promise<{ orders: CargoOrder[] }>
+  ) => Promise<{ orders: CargoOrder[]; result?: { bulkActionDebug?: CreateServiceDebugLike } }>
   /** Create SONRASI basılabilir etiket oluştu mu (gözlemlenebilir başarı). */
   hasPrintableLabel: (order: CargoOrder) => boolean
   /**
@@ -81,6 +89,18 @@ export interface CreateAdapterInput {
     orders: CargoOrder[],
     ids: string[],
   ) => Promise<CargoOrder[]>
+  /**
+   * Doğrulamayı ORKESTRATÖRE bırak: etiketi yanıtta görünmeyen siparişler
+   * `unverifiedIds` olarak döner ve tüm çalışma için TEK toplu kayıtlı-etiket
+   * okuması yapılır (sipariş başına ayrı tur YOK).
+   */
+  deferVerification?: boolean
+}
+
+function reasonFromSkipped(lines: string[] | undefined, orderNumber: string): string | null {
+  const prefix = `${orderNumber}: `
+  const line = (lines ?? []).find((item) => String(item).startsWith(prefix))
+  return line ? String(line).slice(prefix.length).trim() || null : null
 }
 
 // createShipments adaptörü: başarıyı sonuçtan TÜRETİR, varsaymaz.
@@ -94,7 +114,39 @@ export function buildCreateAdapter(input: CreateAdapterInput) {
   return async (orders: CargoOrder[], ids: string[]) => {
     const outcome = await input.callCreate(orders, ids)
     let next = outcome.orders ?? orders
-    let pending = missing(next, ids)
+    const debug = outcome.result?.bulkActionDebug
+    const skippedNumbers = new Set(debug?.skippedOrderNumbers ?? [])
+    const failedNumbers = new Set(debug?.failedOrderNumbers ?? [])
+    const failedIds: string[] = []
+    const skippedIds: string[] = []
+    const reasons: Record<string, string> = {}
+
+    // SERVİSİN KENDİ KARARI KAYBOLMAZ. Etiket oluştuysa başarı (mevcut
+    // kural); servis siparişi AĞA ÇIKMADAN atladıysa "atlandı" + gerekçe;
+    // create reddedildiyse "başarısız" + servis mesajı. Generic "etiket
+    // doğrulanamadı" YALNIZ gerçekten belirsiz kalan create içindir.
+    let pending = missing(next, ids).filter((id) => {
+      const order = next.find((item) => String(item.id) === String(id))
+        ?? orders.find((item) => String(item.id) === String(id))
+      const orderNumber = String(order?.orderNumber ?? '')
+      if (orderNumber && skippedNumbers.has(orderNumber)) {
+        skippedIds.push(id)
+        reasons[id] = reasonFromSkipped(debug?.skippedReasons, orderNumber)
+          ?? 'Sipariş create için uygun değil; gönderi oluşturulmadı.'
+        return false
+      }
+      if (orderNumber && failedNumbers.has(orderNumber)) {
+        failedIds.push(id)
+        reasons[id] = String(order?.errorMessage ?? '').trim()
+          || 'Sürat gönderisi oluşturulamadı.'
+        return false
+      }
+      return true
+    })
+
+    if (pending.length > 0 && input.deferVerification) {
+      return { orders: next, failedIds, skippedIds, unverifiedIds: pending, reasons }
+    }
     // Create yanıtı etiketi henüz göstermiyorsa TEK ve sınırlı doğrulama.
     // Sabit bekleme YOK; doğrulama da başarısızsa sipariş failed sayılır.
     if (pending.length > 0 && input.verifyAfterCreate) {
@@ -103,15 +155,13 @@ export function buildCreateAdapter(input: CreateAdapterInput) {
       } catch {
         // Doğrulama başarısızsa create başarı SAYILMAZ.
       }
-      pending = missing(next, ids)
+      pending = missing(next, pending)
     }
-    const failedIds: string[] = []
-    const reasons: Record<string, string> = {}
     for (const id of pending) {
       failedIds.push(id)
       reasons[id] = LABEL_NOT_VERIFIED_AFTER_CREATE_MESSAGE
     }
-    return { orders: next, failedIds, reasons }
+    return { orders: next, failedIds, skippedIds, reasons }
   }
 }
 

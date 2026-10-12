@@ -1718,6 +1718,11 @@ app.post('/api/orders/sync', async (request, response) => {
       // Sipariş durum/tutar/iptal/iade verisi değişti → bu tenant'ın satış
       // analitiği cache'i geçersizleşir; sonraki Dashboard isteği yeniden hesaplar.
       await invalidateTenantAnalyticsCache(context.organizationId)
+      // ELLE SENKRON DA OTOMATİK ETİKETİ BESLER (HOTFIX-LABEL-PERF): yeni
+      // görülen paketler bir sonraki arka plan turunu (5–15 dk) beklemeden
+      // kuyruğa girer ve worker hemen uyanır. Yanıtı BEKLETMEZ; hata senkronu
+      // bozmaz. Aktivasyon/alt sınır ve tüm kapılar üreticide AYNEN geçerli.
+      void enqueueAutoLabelAfterSync(context.db, context.organizationId)
       released = true
       if (partial) {
         // KISMİ başarı: uygulama hatası DEĞİL → HTTP 207 (2xx; tarayıcıda 502
@@ -4390,6 +4395,10 @@ async function enqueueAutoLabelAfterSync(db, organizationId) {
         `[auto-label] ${report.enqueued} paket kuyruga alindi `
         + `(incelenen ${report.examined})`,
       )
+      // OLAY TETİĞİ: worker yoklama aralığını beklemeden HEMEN uyanır.
+      // Bayrak kapalıysa (zamanlayıcı yok) hiçbir şey yapmaz.
+      const worker = await import('./shipments/labelJobWorker.ts')
+      worker.requestLabelJobCycle()
     }
     return report
   } catch (error) {
@@ -4879,12 +4888,23 @@ async function startLabelJobWorkerOnBoot() {
       import('./shipments/labelJobWorker.ts'),
     ])
     const started = worker.startLabelJobScheduler({
-      runCycle: () =>
-        worker.runLabelJobCycle({
+      runCycle: async () => {
+        const report = await worker.runLabelJobCycle({
           db: getDb(),
           workerId: `${process.pid}@${BUILD_REVISION}`,
           runLabel: runLabelJobViaCreateHandler,
-        }),
+        })
+        // GÜVENLİ TOPLU İZ — yalnız sayılar (paket/müşteri/kimlik YOK).
+        if (report.claimed > 0) {
+          console.log(
+            `[label-worker] claimed=${report.claimed} ready=${report.ready}`
+            + ` blocked=${report.blocked} unknown=${report.unknownAfterNetwork}`
+            + ` retry=${report.failedSafeToRetry} carrierCalls=${report.carrierCalls}`
+            + ` maxConcurrent=${report.maxConcurrentObserved} durationMs=${report.durationMs}`,
+          )
+        }
+        return report
+      },
     })
     if (started) console.log('[label-worker] arka plan etiket worker etkin')
   } catch {

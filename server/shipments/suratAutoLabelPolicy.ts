@@ -82,6 +82,18 @@ export interface AutoLabelSettings {
    */
   activatedAt?: string
   /**
+   * ═══ ÜRETİCİ ALT SINIRI (HOTFIX-LABEL-PERF) ══════════════════════════
+   *
+   * Üretici aday penceresini `activatedAt`'ten daha GERİYE açmaz. Bu
+   * sürümle aday sorgusu en yeniden başlar ve işlenmiş paketleri dışlar;
+   * eski sürüm pencereyi en eskiden başlatıp 200 adayda tıkandığı için
+   * sınırdan sonra görülmüş ama HİÇ incelenmemiş paketler birikmişti.
+   * O birikim (geri alınamaz, faturalanabilir) otomatik işlenmesin diye
+   * dağıtım migration'ı bu anı damgalar: yalnız SONRA ilk görülen paketler
+   * otomatik hazırlanır. Geçmiş yığın elle / catch-up ile ele alınır.
+   */
+  producerFloorAt?: string
+  /**
    * ═══ ARKA PLANDA Created → Picking ═══════════════════════════════════
    *
    * Elle buton, `Created` bir paketi Sürat'e çıkmadan ÖNCE kanonik
@@ -116,6 +128,19 @@ export function resolveActivationBoundary(
   if (!raw) return null
   const parsed = Date.parse(raw)
   return Number.isFinite(parsed) ? parsed : null
+}
+
+/**
+ * Üreticinin aday penceresinin GEÇERLİ alt sınırı (ms): aktivasyon sınırı ile
+ * üretici alt sınırının GEÇ olanı. Aktivasyon sınırı yoksa `null` (fail-safe).
+ */
+export function resolveProducerWindowStart(
+  settings?: AutoLabelSettings | null,
+): number | null {
+  const boundary = resolveActivationBoundary(settings)
+  if (boundary === null) return null
+  const floor = Date.parse(String(settings?.producerFloorAt ?? '').trim())
+  return Number.isFinite(floor) ? Math.max(boundary, floor) : boundary
 }
 
 /**

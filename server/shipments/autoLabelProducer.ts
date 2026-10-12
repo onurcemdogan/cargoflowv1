@@ -19,11 +19,12 @@
 // Uygunluk kararı gerçek create kapısından (`resolveSuratCreateEligibility`)
 // gelir; burada kopyalanmaz. Kuyruğa ekleme tekilliği VERİTABANINDADIR.
 
-import { and, eq, gte, isNull, sql } from 'drizzle-orm'
+import { and, desc, eq, gte, isNull, notInArray, or, sql } from 'drizzle-orm'
 import { labelJobs, orders, organizationSettings, shipments } from '../db/schema.ts'
 import {
   resolveActivationBoundary,
   resolveAutoLabelEnqueue,
+  resolveProducerWindowStart,
   type AutoLabelScope,
   type AutoLabelSettings,
 } from './suratAutoLabelPolicy.ts'
@@ -33,7 +34,10 @@ import {
   enqueueLabelJob,
   reactivateDependencyBlockedJob,
 } from './labelJobQueue.ts'
-import { resolveBackgroundPreparationGate } from './trendyolShipmentEligibility.ts'
+import {
+  resolveBackgroundPreparationGate,
+  TRENDYOL_TERMINAL_STATUSES,
+} from './trendyolShipmentEligibility.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -185,7 +189,8 @@ export async function enqueueEligibleAutoLabelJobs(
     blocked[reason] = (blocked[reason] ?? 0) + 1
   }
   // FAIL-SAFE: sınır yoksa TEK BİR paket bile taranmaz.
-  if (settings?.enabled !== true || boundaryMs === null) {
+  const windowStartMs = resolveProducerWindowStart(settings)
+  if (settings?.enabled !== true || boundaryMs === null || windowStartMs === null) {
     return { examined: 0, enqueued: 0, blocked, boundaryMs }
   }
 
@@ -194,17 +199,85 @@ export async function enqueueEligibleAutoLabelJobs(
     Math.min(Number(options.limit ?? AUTO_LABEL_PRODUCER_BATCH), AUTO_LABEL_PRODUCER_BATCH),
   )
   // ADAY SORGUSU: sınır SQL'de uygulanır — geçmiş yığın Node'a bile gelmez.
+  //
+  // ═══ ÖLÇÜLEN KUSUR (HOTFIX-LABEL-PERF) ═════════════════════════════════
+  // Pencere EN ESKİDEN başlayıp 200 adayla sınırlıydı ve işlenmiş paketler
+  // dışlanmıyordu. Sınırdan sonra 200'den fazla paket biriktiğinde her tur
+  // AYNI eski 200'ü (kargoya verilmiş, zaten kuyrukta, bloke) inceliyor,
+  // yeni siparişlere HİÇ sıra gelmiyordu: QUEUED=0, PREPARING=0.
+  //
+  // Artık: (1) EN YENİDEN başlanır, (2) gönderisi olan, ağ sınırını geçmiş
+  // işlemi olan (UNKNOWN dahil — ikinci create YOK) ve canlandırılamayacak
+  // iş satırı olan paketler SQL'de dışlanır, (3) terminal statüler elenir.
+  // Kalan her paket yine aşağıdaki kapılardan TEK TEK geçer; bu filtre
+  // yalnız pencereyi tıkayanları çıkarır, hiçbir güvenlik kapısının YERİNE
+  // GEÇMEZ.
+  const revivableCodes = sql.join(
+    DEPENDENCY_BLOCKED_CODES.map((code) => sql`${code}`),
+    sql`, `,
+  )
+  const terminalStatuses = sql.join(
+    TRENDYOL_TERMINAL_STATUSES.map((status) => sql`${status}`),
+    sql`, `,
+  )
+  const hasShipment = sql`EXISTS (SELECT 1 FROM "shipments" s
+    WHERE s."organization_id" = "orders"."organization_id"
+      AND s."marketplace" = "orders"."marketplace"
+      AND s."package_id" = "orders"."package_id")`
+  const hasSettledJob = sql`EXISTS (SELECT 1 FROM "label_jobs" j
+    WHERE j."organization_id" = "orders"."organization_id"
+      AND j."marketplace" = "orders"."marketplace"
+      AND j."carrier" = 'surat'
+      AND j."package_id" = "orders"."package_id"
+      AND NOT (j."status" = 'BLOCKED' AND j."last_error_code" IN (${revivableCodes})))`
+  const hasCrossedOperation = sql`EXISTS (SELECT 1 FROM "shipment_operations" so
+    WHERE so."organization_id" = "orders"."organization_id"
+      AND so."package_id" = "orders"."package_id"
+      AND so."carrier_create_called" = true)`
+  const isTerminal = sql`COALESCE("orders"."marketplace_status" IN (${terminalStatuses}), false)`
+
+  // GÖZLEMLENEBİLİRLİK KORUNUR: SQL'de dışlanan paketler, eski tek tek
+  // değerlendirmeyle AYNI öncelik ve AYNI sebep kodlarıyla sayılır
+  // (terminal → artefakt → kuyrukta → ağ sınırı geçilmiş). Tek toplu sorgu.
+  const excluded = (await db.execute(sql`SELECT
+      count(*) FILTER (WHERE ${isTerminal})::int AS terminal,
+      count(*) FILTER (WHERE NOT ${isTerminal} AND ${hasShipment})::int AS artifact,
+      count(*) FILTER (WHERE NOT ${isTerminal} AND NOT ${hasShipment} AND ${hasSettledJob})::int AS queued,
+      count(*) FILTER (WHERE NOT ${isTerminal} AND NOT ${hasShipment} AND NOT ${hasSettledJob}
+        AND ${hasCrossedOperation})::int AS crossed
+    FROM "orders"
+    WHERE "orders"."organization_id" = ${organizationId}
+      AND "orders"."first_seen_at" >= ${new Date(windowStartMs).toISOString()}
+      AND "orders"."archived_at" IS NULL`)) as unknown
+  const excludedRow = ((excluded as { rows?: Record<string, unknown>[] })?.rows
+    ?? (excluded as Record<string, unknown>[]))?.[0] ?? {}
+  const addExcluded = (reason: string, value: unknown) => {
+    const count = Number(value ?? 0)
+    if (count > 0) blocked[reason] = (blocked[reason] ?? 0) + count
+  }
+  addExcluded('MARKETPLACE_LIFECYCLE_TERMINAL', excludedRow.terminal)
+  addExcluded('LABEL_ALREADY_PRESENT', excludedRow.artifact)
+  addExcluded('ALREADY_QUEUED', excludedRow.queued)
+  addExcluded('CARRIER_NETWORK_CROSSED', excludedRow.crossed)
+
   const candidates = await db
     .select()
     .from(orders)
     .where(
       and(
         eq(orders.organizationId, organizationId),
-        gte(orders.firstSeenAt, new Date(boundaryMs)),
+        gte(orders.firstSeenAt, new Date(windowStartMs)),
         isNull(orders.archivedAt),
+        or(
+          isNull(orders.marketplaceStatus),
+          notInArray(orders.marketplaceStatus, [...TRENDYOL_TERMINAL_STATUSES]),
+        ),
+        sql`NOT ${hasShipment}`,
+        sql`NOT ${hasCrossedOperation}`,
+        sql`NOT ${hasSettledJob}`,
       ),
     )
-    .orderBy(orders.firstSeenAt)
+    .orderBy(desc(orders.firstSeenAt))
     .limit(limit)
 
   let enqueued = 0

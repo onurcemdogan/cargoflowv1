@@ -76,6 +76,17 @@ export interface TrendyolShipmentEligibility {
 /** Uygunsuz statü için KESİN kod — yenisi uydurulmaz. */
 export const TRENDYOL_NOT_ELIGIBLE_CODE = 'TRENDYOL_CARGO_NOT_ELIGIBLE_STATUS'
 
+/** Pazaryeri statüsüne göre KAPANMIŞ paketler (iptal/iade). */
+export const TRENDYOL_CANCELLED_STATUSES = ['Cancelled', 'Returned', 'UnDelivered', 'UnSupplied'] as const
+/** Kargoya verilmiş / taşımada. */
+export const TRENDYOL_SHIPPED_STATUSES = ['Shipped', 'AtCollectionPoint'] as const
+/** Yeni create ASLA açılmayacak statüler (üretici SQL ön elemesi dahil). */
+export const TRENDYOL_TERMINAL_STATUSES: readonly string[] = [
+  ...TRENDYOL_CANCELLED_STATUSES,
+  'Delivered',
+  ...TRENDYOL_SHIPPED_STATUSES,
+]
+
 /**
  * PAZARYERİ YAŞAM DÖNGÜSÜ SINIFI — TEK LİSTE.
  *
@@ -487,13 +498,12 @@ export function buildTrendyolShipmentEligibility(
     .join(' ')
     .toLocaleLowerCase('tr-TR')
   const isCancelled =
-    ['Cancelled', 'Returned', 'UnDelivered', 'UnSupplied'].includes(
-      marketplaceStatus,
-    ) || /cancel|iptal|return|iade|refund|un.?supplied/i.test(statusText)
+    (TRENDYOL_CANCELLED_STATUSES as readonly string[]).includes(marketplaceStatus)
+    || /cancel|iptal|return|iade|refund|un.?supplied/i.test(statusText)
   const isDelivered =
     marketplaceStatus === 'Delivered' || /delivered|teslim/i.test(statusText)
   const isShipped =
-    ['Shipped', 'AtCollectionPoint'].includes(marketplaceStatus) ||
+    (TRENDYOL_SHIPPED_STATUSES as readonly string[]).includes(marketplaceStatus) ||
     /shipped|kargoda|ta[sş][iı]mada|at.?collection/i.test(statusText)
   const hasCargoTrackingNumber = Boolean(cargoTrackingNumber)
   const normalizedCargoProviderName = normalizeSearchText(cargoProviderName)

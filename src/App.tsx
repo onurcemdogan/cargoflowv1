@@ -121,7 +121,12 @@ import { orderPackageIdentity } from './utils/orderCounts'
 import { resolveEffectiveLabelDesi } from './utils/labelDesi'
 import { resolveLabelLayoutBlockReason } from './utils/labelLayoutResolver'
 import { resolvePersistedLabelArtifact } from './utils/persistedLabel'
-import { hydratePersistedLabels as hydratePersistedLabelsFor } from './services/persistedLabelHydration'
+import {
+  discoverPersistedLabels,
+  hydratePersistedLabels as hydratePersistedLabelsFor,
+} from './services/persistedLabelHydration'
+import { hasCarrierShipmentEvidence, resolveOrderLifecycle } from './utils/orderLifecycle'
+import { logSuratBulkRunSummary } from './utils/suratBulkRunLog'
 import type {
   AuditLog,
   ApiDebugLog,
@@ -1309,7 +1314,21 @@ function App() {
           isInFlight: (order) =>
             hasPendingServerOperation(order) ||
             isOperationInFlight(orderPackageIdentity(order)),
+          // Kargoya verilmiş / iptal-iade sipariş create'e DÜŞMEZ; gönderi
+          // izi olan siparişin kayıtlı etiketi önce aranır.
+          resolveLifecycle: resolveOrderLifecycle,
+          hasCarrierEvidence: hasCarrierShipmentEvidence,
         },
+        // Kayıtlı etiket araması (provider'a ÇIKMAZ, sınırlı eşzamanlılık):
+        // gönderi izi olan siparişler ve etiketi yanıtta görünmeyen
+        // create'ler için çalışma başına TEK toplu tur.
+        lookupLabels: async (list, lookupIds) =>
+          (
+            await discoverPersistedLabels(lookupIds, list, {
+              fetchPersistedLabel: (id) => workflowService.fetchPersistedLabel(id),
+            })
+          ).orders,
+        onRunSummary: logSuratBulkRunSummary,
         createShipments: buildCreateAdapter({
           // Ayni paket kimligi icin IKINCI istek acilmaz; devam eden Promise
           // yeniden kullanilir. Sunucu idempotency'si AYRICA korunur.
@@ -1326,16 +1345,11 @@ function App() {
           },
           hasPrintableLabel: (order) =>
             Boolean(resolvePersistedLabelArtifact(order).hasPrintableLabel),
-          // Create yaniti etiketi henuz gostermiyorsa SINIRLI ve kontrollu
-          // dogrulama: mevcut tenant-scoped kayitli etiket okuma yolu (GET
-          // /api/orders/:id/label). Provider'a CIKILMAZ, sabit sleep YOK.
-          verifyAfterCreate: async (list, pendingIds) => {
-            const { effectiveOrders } = await hydratePersistedLabels(
-              pendingIds,
-              list,
-            )
-            return effectiveOrders
-          },
+          // Create yaniti etiketi henuz gostermiyorsa dogrulama siparis
+          // basina AYRI tur olarak yapilmaz: orkestrator tum calisma icin TEK
+          // toplu kayitli etiket okumasi yapar (lookupLabels). Provider'a
+          // CIKILMAZ, sabit sleep YOK.
+          deferVerification: true,
         }),
         printLabels: buildPrintAdapter({
           // KRITIK: `list` orkestratorun create SONRASI guncel listesidir.

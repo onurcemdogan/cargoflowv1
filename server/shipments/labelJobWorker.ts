@@ -154,8 +154,15 @@ export async function runLabelJobCycle(params: {
 
 let timer: ReturnType<typeof setInterval> | null = null
 let cycleRunning = false
+let rerunRequested = false
+let scheduledCycle: (() => Promise<unknown>) | null = null
 
-export const LABEL_WORKER_DEFAULT_INTERVAL_MS = 60_000
+/**
+ * YEDEK yoklama aralığı. Asıl tetik olaydır (`requestLabelJobCycle`):
+ * üretici iş kuyruğa aldığında worker HEMEN uyanır. Eskiden tek tetik 60 sn
+ * aralıktı; yeni sipariş en kötü ~1 dk boşta bekliyordu.
+ */
+export const LABEL_WORKER_DEFAULT_INTERVAL_MS = 5_000
 
 /** `LABEL_WORKER_ENABLED`: yalnız `true`/`1` etkinleştirir. */
 export function isLabelWorkerEnabled(
@@ -214,6 +221,42 @@ export async function drainLabelJobScheduler(
   return { drained: finished === 'finished', hadActiveCycle }
 }
 
+// Tek tur başlatıcı — aralık ve olay AYNI yolu kullanır. Turlar ÜST ÜSTE
+// BİNMEZ: tur sürerken gelen istek kaybolmaz, tur bitince BİR kez daha
+// koşulur (ikinci bir eşzamanlı talep dalgası AÇILMAZ).
+function triggerCycle(): boolean {
+  if (!scheduledCycle || draining) return false
+  if (cycleRunning) {
+    rerunRequested = true
+    return true
+  }
+  cycleRunning = true
+  const runCycle = scheduledCycle
+  const cycle = Promise.resolve()
+    .then(() => runCycle())
+    .catch(() => undefined)
+    .finally(() => {
+      cycleRunning = false
+      activeCycle = null
+      if (rerunRequested && !draining && timer) {
+        rerunRequested = false
+        triggerCycle()
+      }
+    })
+  activeCycle = cycle
+  void cycle
+  return true
+}
+
+/**
+ * OLAY TETİĞİ: iş kuyruğa alındığında worker'ı HEMEN uyandırır. Zamanlayıcı
+ * kurulmamışsa (bayrak kapalı) hiçbir şey yapmaz → taşıyıcı çağrısı YOK.
+ */
+export function requestLabelJobCycle(): boolean {
+  if (!timer) return false
+  return triggerCycle()
+}
+
 export function startLabelJobScheduler(params: {
   runCycle: () => Promise<unknown>
   intervalMs?: number
@@ -226,20 +269,13 @@ export function startLabelJobScheduler(params: {
   const intervalMs = Math.max(
     5_000, Number(params.intervalMs ?? LABEL_WORKER_DEFAULT_INTERVAL_MS),
   )
+  scheduledCycle = params.runCycle
   timer = setInterval(() => {
     // Turlar ÜST ÜSTE BİNMEZ: yavaş bir tur ikinci bir talep dalgası açmaz.
     if (cycleRunning) return
     // Kapanış başladıysa YENİ tur AÇILMAZ.
     if (draining) return
-    cycleRunning = true
-    const cycle = Promise.resolve(params.runCycle())
-      .catch(() => undefined)
-      .finally(() => {
-        cycleRunning = false
-        activeCycle = null
-      })
-    activeCycle = cycle
-    void cycle
+    triggerCycle()
   }, intervalMs)
   timer.unref?.()
   return true
@@ -251,4 +287,6 @@ export function stopLabelJobScheduler(): void {
   cycleRunning = false
   draining = false
   activeCycle = null
+  rerunRequested = false
+  scheduledCycle = null
 }

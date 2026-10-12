@@ -135,3 +135,54 @@ export async function hydratePersistedLabels(
     },
   }
 }
+
+export const LABEL_LOOKUP_CONCURRENCY = 6
+
+/**
+ * KAYITLI ETİKET KEŞFİ — istemcide etiketi hidrate edilmemiş siparişler.
+ *
+ * `hydratePersistedLabels` yalnız "etiketi var" GÖRÜNEN siparişlere sorar.
+ * Kargoya verilmiş ya da gönderi izi olan sipariş istemcide etiketsiz
+ * görünebilir; bunlar için create AÇILMAZ, kayıtlı etiket sunucudan aranır.
+ * Provider'a ÇIKILMAZ (yalnız tenant-scoped kayıtlı etiket okuması).
+ *
+ * Sınırlı eşzamanlılık: 25 sipariş 25 ardışık tur DEĞİLDİR. Basılabilirliğe
+ * yine SUNUCU karar verir; sözleşme gelmeyen sipariş DEĞİŞMEDEN döner.
+ */
+export async function discoverPersistedLabels(
+  orderIds: string[],
+  baseOrders: CargoOrder[],
+  deps: HydratePersistedLabelsDeps,
+  options: { concurrency?: number } = {},
+): Promise<{ orders: CargoOrder[]; resolvedIds: string[] }> {
+  const idSet = new Set(orderIds.map(String))
+  const targets = baseOrders.filter((order) => idSet.has(String(order.id)))
+  const contracts = new Map<string, ServerPrintContract>()
+  let cursor = 0
+  const limit = Math.max(1, Math.min(Number(options.concurrency ?? LABEL_LOOKUP_CONCURRENCY), targets.length))
+  await Promise.all(
+    Array.from({ length: limit }, async () => {
+      for (;;) {
+        const order = targets[cursor]
+        cursor += 1
+        if (!order) return
+        try {
+          const fetched = await deps.fetchPersistedLabel(order.id)
+          if (fetched?.print?.carrierPrintReady && fetched.print.zpl) {
+            contracts.set(String(order.id), fetched.print)
+          }
+        } catch {
+          // Bulunamadı/okunamadı: sipariş DEĞİŞMEZ, çağıran açık sebeple atlar.
+        }
+      }
+    }),
+  )
+  if (contracts.size === 0) return { orders: baseOrders, resolvedIds: [] }
+  const orders = baseOrders.map((order) => {
+    const contract = contracts.get(String(order.id))
+    if (!contract) return order
+    const applied = applyServerPrintContract(order, contract)
+    return { ...applied, hasPrintableLabel: true }
+  })
+  return { orders, resolvedIds: [...contracts.keys()] }
+}

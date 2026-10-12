@@ -259,5 +259,6 @@
   "server/shipment-preflight-flow.test.mjs",
   "server/local-secret-policy-flow.test.mjs",
   "server/integration-status-flow.test.mjs",
-  "server/woocommerce-authorization-flow.test.mjs"
+  "server/woocommerce-authorization-flow.test.mjs",
+  "server/label-perf-hotfix-flow.test.mjs"
 ]

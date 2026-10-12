@@ -141,6 +141,13 @@
       "when": 1791787511683,
       "tag": "0019_connector_authorizations",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1791806005003,
+      "tag": "0020_auto_label_producer_floor",
+      "breakpoints": true
     }
   ]
 }

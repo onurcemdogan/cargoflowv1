@@ -24,6 +24,25 @@ export type SuratCreatePrintStage =
   | 'CREATE_IN_PROGRESS'
   | 'LABEL_READY'
   | 'PRINT_READY'
+  /** Gönderi izi var ama etiket istemciye hidrate edilmedi: önce ARANIR. */
+  | 'LABEL_LOOKUP'
+
+/**
+ * Siparişin pazaryeri yaşam döngüsü (istemcideki kanonik durum çözümünden).
+ *
+ *   ACTIVE       create'e uygun olabilir (Created/Picking/Invoiced)
+ *   POST_CREATE  kargoya verilmiş / teslim edilmiş — yeni gönderi ASLA;
+ *                kayıtlı etiket varsa basılabilir
+ *   CLOSED       iptal / iade — ne yeni gönderi ne baskı
+ */
+export type OrderLifecycle = 'ACTIVE' | 'POST_CREATE' | 'CLOSED'
+
+export const POST_CREATE_NO_LABEL_MESSAGE =
+  'Sipariş kargoya verilmiş; CargoFlow’da kayıtlı etiket bulunamadı. Yeni gönderi oluşturulmadı.'
+export const CLOSED_ORDER_MESSAGE =
+  'Sipariş iptal/iade statüsünde; etiket basılmaz ve yeni gönderi oluşturulmaz.'
+export const EVIDENCE_NO_LABEL_MESSAGE =
+  'Bu sipariş için gönderi kaydı var ama basılabilir etiket alınamadı. İkinci gönderi oluşturulmadı.'
 
 export interface PlanEntry {
   orderId: string
@@ -42,6 +61,12 @@ export interface SuratCreatePrintPlan {
   reprint: PlanEntry[]
   /** Halen süren bir create/print operasyonu var. */
   inFlight: PlanEntry[]
+  /**
+   * Gönderi izi var (kargoya verilmiş ya da taşıyıcı kaydı) ama etiket
+   * istemciye hidrate edilmemiş. Bunlar için create AÇILMAZ; kayıtlı etiket
+   * sunucudan aranır, bulunamazsa açık sebeple atlanır.
+   */
+  needsLabelLookup: PlanEntry[]
   /** Mutasyon ÖNCESİ elenen siparişler. */
   blocked: PlanEntry[]
   /** Aynı sipariş birden fazla seçildiyse düşen kopya sayısı. */
@@ -77,6 +102,16 @@ export interface PlanPreflightInput {
   isPrinted: (order: CargoOrder) => boolean
   /** Bu sipariş için halen süren bir operasyon var mı. */
   isInFlight: (order: CargoOrder) => boolean
+  /**
+   * Pazaryeri yaşam döngüsü. Verilmezse ACTIVE varsayılır (eski davranış);
+   * üretim çağıranı HER ZAMAN verir.
+   */
+  resolveLifecycle?: (order: CargoOrder) => OrderLifecycle
+  /**
+   * Taşıyıcı tarafında gönderi izi (takip no, barkod, kayıtlı gönderi) var
+   * mı? Varsa ve etiket hidrate değilse sipariş create'e GİRMEZ, aranır.
+   */
+  hasCarrierEvidence?: (order: CargoOrder) => boolean
 }
 
 function entryOf(order: CargoOrder, stage: SuratCreatePrintStage, reason?: string): PlanEntry {
@@ -97,7 +132,8 @@ export function resolveSuratCreateAndPrintPlan(
 ): SuratCreatePrintPlan {
   const plan: SuratCreatePrintPlan = {
     needsCreate: [], readyToPrint: [], reprint: [],
-    inFlight: [], blocked: [], duplicateCount: 0, uniqueCount: 0,
+    inFlight: [], needsLabelLookup: [], blocked: [],
+    duplicateCount: 0, uniqueCount: 0,
   }
   const seen = new Set<string>()
 
@@ -125,17 +161,15 @@ export function resolveSuratCreateAndPrintPlan(
         UNSUPPORTED_CARRIER_MESSAGE))
       continue
     }
+    // İptal/iade: ne yeni gönderi ne baskı. Sebep AÇIKTIR.
+    const lifecycle = input.resolveLifecycle?.(order) ?? 'ACTIVE'
+    if (lifecycle === 'CLOSED') {
+      plan.blocked.push(entryOf(order, 'PREFLIGHT_BLOCKED', CLOSED_ORDER_MESSAGE))
+      continue
+    }
     const dataBlock = input.resolveDataBlock(order)
     if (dataBlock) {
       plan.blocked.push(entryOf(order, 'PREFLIGHT_BLOCKED', dataBlock))
-      continue
-    }
-    // Finansal eleme veri kontrolünden SONRA, fit/desi'den ÖNCE: eksik alan
-    // zaten daha anlaşılır bir mesaj verir, ama finansal olarak kesin
-    // reddedilecek sipariş pahalı sığdırma/desi hesabına GİRMEMELİDİR.
-    const financialBlock = input.resolveFinancialBlock?.(order) ?? null
-    if (financialBlock) {
-      plan.blocked.push(entryOf(order, 'PREFLIGHT_BLOCKED', financialBlock))
       continue
     }
     // Ürün sığdırma HER durumda kontrol edilir: sığmayan etiket ne basılabilir
@@ -159,8 +193,23 @@ export function resolveSuratCreateAndPrintPlan(
       plan.readyToPrint.push(entryOf(order, 'LABEL_READY'))
       continue
     }
-    // 5) Etiket yok → create gerekir. Desi YALNIZ burada zorunludur
-    //    (mevcut sözleşme: kayıtlı etiket varsa desi istenmez).
+    // 5) Etiket istemcide yok AMA gönderi izi var (kargoya verilmiş ya da
+    //    taşıyıcı kaydı): create AÇILMAZ. Kayıtlı etiket sunucudan aranır;
+    //    bulunamazsa sipariş açık sebeple atlanır. İkinci gönderi YOK.
+    if (lifecycle === 'POST_CREATE' || input.hasCarrierEvidence?.(order) === true) {
+      plan.needsLabelLookup.push(entryOf(order, 'LABEL_LOOKUP'))
+      continue
+    }
+    // 6) Etiket yok → create gerekir. Finansal ön kontrol YALNIZ burada
+    //    anlamlıdır: kesin reddedilecek sipariş create denemesi harcamasın.
+    //    (Kayıtlı etiketi olan siparişin yeniden basılmasını ENGELLEMEZ.)
+    const financialBlock = input.resolveFinancialBlock?.(order) ?? null
+    if (financialBlock) {
+      plan.blocked.push(entryOf(order, 'PREFLIGHT_BLOCKED', financialBlock))
+      continue
+    }
+    // Desi YALNIZ create için zorunludur (mevcut sözleşme: kayıtlı etiket
+    // varsa desi istenmez).
     const desiBlock = input.resolveDesiBlock(order)
     if (desiBlock) {
       plan.blocked.push(entryOf(order, 'PREFLIGHT_BLOCKED', desiBlock))
