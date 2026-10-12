@@ -35,6 +35,7 @@ import {
   type WooErrorClass,
 } from './wooClient.ts'
 import { marketplaceAccounts } from '../../db/schema.ts'
+import { recordMarketplaceVerification } from '../../carriers/carrierAccounts.ts'
 import { and, eq } from 'drizzle-orm'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -178,6 +179,14 @@ export async function connectWooStore(
       ...(input.webhookSecret ? { webhookSecret: String(input.webhookSecret) } : {}),
     },
   })
+  // KALICI DOĞRULAMA (PHASE2-F): kayıt yalnız gerçek okuma BAŞARILI olduktan
+  // sonra yapıldığı için bu an doğrulama anıdır; pano/onboarding bunu okur.
+  await recordMarketplaceVerification(db, {
+    organizationId,
+    marketplaceAccountId: account.id,
+    status: 'verified',
+    now,
+  })
 
   const refreshed = await getAccountByProviderAccountId(
     db,
@@ -279,6 +288,12 @@ export async function disconnectWooStore(
   return { outcome: 'DISCONNECTED' }
 }
 
+function toIsoOrNull(value: unknown): string | null {
+  if (value == null || value === '') return null
+  const date = value instanceof Date ? value : new Date(String(value))
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null
+}
+
 export interface WooStoreView {
   marketplaceAccountId: string
   providerAccountId: string
@@ -288,6 +303,8 @@ export interface WooStoreView {
   consumerKeyMasked: string | null
   hasConsumerSecret: boolean
   hasWebhookSecret: boolean
+  verificationStatus: string
+  lastVerifiedAt: string | null
 }
 
 /**
@@ -320,6 +337,8 @@ export async function listWooStores(
       consumerKeyMasked: consumerKey === '' ? null : `••••${consumerKey.slice(-4)}`,
       hasConsumerSecret: String(credential?.payload.consumerSecret ?? '') !== '',
       hasWebhookSecret: String(credential?.payload.webhookSecret ?? '') !== '',
+      verificationStatus: String((account as { verificationStatus?: unknown }).verificationStatus ?? 'unverified'),
+      lastVerifiedAt: toIsoOrNull((account as { lastVerifiedAt?: unknown }).lastVerifiedAt),
     })
   }
   return views

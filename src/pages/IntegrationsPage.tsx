@@ -42,6 +42,7 @@ import { WooCommerceSection } from '../integrations/WooCommerceSection'
 import { IkasSection } from '../integrations/IkasSection'
 import { ArasSection } from '../integrations/ArasSection'
 import { CarrierAccountsSection } from '../integrations/CarrierAccountsSection'
+import { readWooAuthReturn } from '../integrations/wooAuthReturn'
 import {
   IntegrationStatusBoard,
   type IntegrationBoardKey,
@@ -120,8 +121,9 @@ export function IntegrationsPage({
       trackingServiceType: 'KargoTakipHareketDetayiSoap',
     },
   })
-  const [activeCategory, setActiveCategory] =
-    useState<IntegrationCategory>('marketplaces')
+  const [activeCategory, setActiveCategory] = useState<IntegrationCategory>(() =>
+    readWooAuthReturn() ? 'commerceSites' : 'marketplaces',
+  )
   const [activeIntegration, setActiveIntegration] = useState<
     'trendyol' | 'surat' | 'aras' | null
   >(null)

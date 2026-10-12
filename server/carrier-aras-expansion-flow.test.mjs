@@ -467,3 +467,69 @@ test('ARE-13: ortak işlem kaydı — tekrar replay eder, eşzamanlı çift tık
   assert.equal(reopened.ok, true)
   assert.equal(setOrderCalls(rejectCalls), 2)
 })
+
+/* ─── PHASE2-F: normalize sağlayıcı hataları + taşıyıcı hesabı hizası ── */
+
+const providerErrors = await import('./carriers/aras/arasProviderErrors.ts')
+const arasHandlers = await import('./connectors/aras/arasHttpHandlers.ts')
+
+test('ARE-14: sağlayıcı hataları kararlı sınıfa çevrilir; ham Aras metni ön yüze GİTMEZ', async (t) => {
+  assert.equal(providerErrors.normalizeArasError(null), null)
+  assert.equal(providerErrors.normalizeArasError('ARAS_TRANSPORT_TIMEOUT').errorClass, 'PROVIDER_UNAVAILABLE')
+  assert.equal(providerErrors.normalizeArasError('ARAS_PAYER_MAPPING_UNVERIFIED').errorClass, 'CONTRACT_UNVERIFIED')
+  assert.equal(providerErrors.normalizeArasError('ARAS_CREATE_OUTCOME_UNKNOWN').errorClass, 'OUTCOME_UNKNOWN')
+  assert.equal(providerErrors.normalizeArasError('BILINMEYEN_KOD').errorClass, 'UNKNOWN')
+  // Kimlik hatası sınıfı UYDURULMAZ (ResultCode anlam tablosu yok).
+  assert.equal(providerErrors.ARAS_PROVIDER_ERROR_CLASSES.includes('AUTH'), false)
+
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const calls = []
+  const run = (orderId, fetchImpl, extra = {}) =>
+    pipeline.runArasInternalTestPipeline({
+      organizationId: org, orderId, credentials: { userName: 'u', password: 'p' },
+      shipmentFields: { ReceiverName: 'A' }, fetchImpl,
+      artifactStore: artifactStoreModule.createDbArasLabelArtifactStore(db), ...hardened(), ...extra,
+    })
+  const rejected = await run('ord-f-reject', countingFetch(calls, { setOrder: 'reject' }))
+  assert.equal(rejected.providerError.errorClass, 'REJECTED')
+  assert.equal(JSON.stringify(rejected.providerError).includes('Hatalı alan'), false, 'ham ResultMessage sızmamalı')
+  const blockedRun = await run('ord-f-block', countingFetch(calls), { preflight: { ok: false, blockers: ['PAYER_UNKNOWN'] } })
+  assert.equal(blockedRun.providerError.errorClass, 'PREFLIGHT_BLOCKED')
+  assert.match(blockedRun.providerError.message, /^Kontrol gerekli/)
+  const done = await run('ord-f-ok', countingFetch(calls))
+  assert.equal(done.ok, true)
+  assert.equal(done.providerError, null)
+})
+
+test('ARE-15: hesap listesi doğrulamayı carrier_accounts kaydından okur; kayıtlı ≠ doğrulandı; sır dönmez', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const connected = await connection.connectArasCarrierAccount(db, {
+    organizationId: org, userName: 'aras-user', password: 'GIZLI-ARAS-PAROLA', displayName: 'Aras Depo',
+  })
+  assert.equal(connected.ok, true)
+  assert.match(connected.message, /doğrulanmadı/)
+
+  let listed = await arasHandlers.handleArasListStores({ db, organizationId: org })
+  assert.equal(listed.body.stores.length, 1)
+  assert.deepEqual(
+    {
+      configured: listed.body.stores[0].configured,
+      verificationStatus: listed.body.stores[0].verificationStatus,
+      enabled: listed.body.stores[0].enabled,
+    },
+    { configured: true, verificationStatus: 'unverified', enabled: true },
+  )
+  assert.equal(JSON.stringify(listed.body).includes('GIZLI-ARAS-PAROLA'), false)
+  assert.equal(JSON.stringify(listed.body).includes('aras-user'), false)
+
+  await connection.disconnectArasCarrierAccount(db, { organizationId: org, marketplaceAccountId: connected.marketplaceAccountId })
+  listed = await arasHandlers.handleArasListStores({ db, organizationId: org })
+  assert.deepEqual(
+    { configured: listed.body.stores[0].configured, enabled: listed.body.stores[0].enabled, isActive: listed.body.stores[0].isActive },
+    { configured: false, enabled: false, isActive: false },
+  )
+})

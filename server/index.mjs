@@ -2778,8 +2778,14 @@ app.get('/api/integrations/woocommerce/stores', async (request, response) => {
   if (!context) return
   try {
     const service = await import('./connectors/woocommerce/wooConnectionService.ts')
+    const authorization = await import('./connectors/woocommerce/wooAuthorization.ts')
     const stores = await service.listWooStores(context.db, context.organizationId)
-    response.json({ ok: true, stores })
+    response.json({
+      ok: true,
+      stores,
+      // Resmî yetkilendirme sihirbazı yalnız HTTPS uygulama adresiyle açılır.
+      authorizationAvailable: authorization.resolveWooAuthBaseUrl(process.env.APP_BASE_URL) !== null,
+    })
   } catch {
     response.status(500).json({ ok: false, message: 'WooCommerce mağazaları okunamadı.' })
   }
@@ -2821,6 +2827,72 @@ app.post('/api/integrations/woocommerce/stores', async (request, response) => {
     })
   } catch {
     response.status(500).json({ ok: false, message: 'WooCommerce mağazası kaydedilemedi.' })
+  }
+})
+
+// ── WOOCOMMERCE BAĞLANTI SİHİRBAZI (PHASE2-F) ─────────────────────────────
+//
+// Resmî `/wc-auth/v1/authorize` akışı. Başlatma ve tamamlama oturumlu ve
+// kiracı kapsamlıdır; mağazanın anahtar geri çağrısı oturumsuzdur ve tek
+// kullanımlık belirteçle yetkilendirilir (aşağıda, tenant auth DIŞINDA).
+app.post('/api/integrations/woocommerce/authorizations', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const authorization = await import('./connectors/woocommerce/wooAuthorization.ts')
+    const result = await authorization.startWooAuthorization(context.db, {
+      organizationId: context.organizationId,
+      userId: request.auth?.userId ?? null,
+      storeUrl: String(request.body?.storeUrl ?? ''),
+      appBaseUrl: authorization.resolveWooAuthBaseUrl(process.env.APP_BASE_URL),
+    })
+    if (!result.ok) {
+      response.status(result.outcome === 'STORE_URL_REJECTED' ? 400 : 409).json(result)
+      return
+    }
+    response.json(result)
+  } catch {
+    response.status(500).json({ ok: false, message: 'Bağlantı başlatılamadı.' })
+  }
+})
+
+app.post('/api/integrations/woocommerce/authorizations/:authorizationId/complete', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const authorization = await import('./connectors/woocommerce/wooAuthorization.ts')
+    const client = await import('./connectors/woocommerce/wooClient.ts')
+    const result = await authorization.completeWooAuthorization(context.db, {
+      organizationId: context.organizationId,
+      authorizationId: String(request.params.authorizationId ?? ''),
+      denied: request.body?.denied === true,
+      options: { transport: client.fetchWooTransport },
+    })
+    response.status(result.outcome === 'NOT_FOUND' ? 404 : 200).json({ ok: result.outcome === 'CONNECTED', ...result })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Bağlantı tamamlanamadı.' })
+  }
+})
+
+// Mağazanın anahtar geri çağrısı. WooCommerce yalnız 200'ü başarı sayar;
+// başka her yanıtta ürettiği anahtarı siler. Yanıt asla sır taşımaz.
+app.post('/api/webhooks/woocommerce-auth/:authorizationId/:token', async (request, response) => {
+  try {
+    const { getDb } = await import('./db/client.ts')
+    const db = getDb()
+    if (!db) {
+      response.status(503).json({ ok: false, outcome: 'UNAVAILABLE' })
+      return
+    }
+    const authorization = await import('./connectors/woocommerce/wooAuthorization.ts')
+    const result = await authorization.receiveWooAuthCallback(db, {
+      authorizationId: String(request.params.authorizationId ?? ''),
+      token: String(request.params.token ?? ''),
+      body: request.body,
+    })
+    response.status(result.httpStatus).json(result.body)
+  } catch {
+    response.status(503).json({ ok: false, outcome: 'NOT_DURABLE' })
   }
 })
 

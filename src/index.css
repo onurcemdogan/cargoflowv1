@@ -9588,6 +9588,100 @@ button.integration-board-item:hover {
   background: var(--accent-hover);
 }
 
+.woo-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: none;
+}
+
+.integration-section .woo-steps li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+
+.woo-steps li > span {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.integration-section .woo-steps li.is-current {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.woo-steps li.is-current > span {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.integration-section .woo-steps li.is-done {
+  color: var(--text-2);
+}
+
+.woo-steps li.is-done > span {
+  border-color: transparent;
+  background: var(--green);
+  color: var(--on-accent);
+}
+
+.integration-section .woo-steps li.is-failed {
+  color: var(--red);
+}
+
+.woo-steps li.is-failed > span {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+.woo-advanced {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.woo-advanced summary {
+  width: fit-content;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.woo-advanced > div {
+  display: grid;
+  gap: 6px;
+  max-width: 520px;
+  margin-top: 12px;
+}
+
+.woo-advanced > div > label {
+  display: grid;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.woo-advanced > div > label:not(:first-child) {
+  margin-top: 6px;
+}
+
 @media (max-width: 1100px) {
   .integration-board {
     grid-template-columns: minmax(0, 1fr);

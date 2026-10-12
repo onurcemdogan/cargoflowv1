@@ -62,6 +62,9 @@ test('drizzle migration dört tabloyu ve constraintleri kurar', async (t) => {
       // TAŞIYICI HESAPLARI (0017). Kullanıcının kendi kargo hesapları; sır
       // burada DURMAZ (credential_ref). Kalıcı doğrulama durumu taşır.
       'carrier_accounts',
+      // BAĞLAYICI YETKİLENDİRME İSTEKLERİ (0019). WooCommerce resmî onay
+      // akışı; belirteç yalnız hash, anahtar doğrulamaya kadar şifreli.
+      'connector_authorizations',
       // HESAP KAPSAMLI BAĞLAYICI KİMLİKLERİ (0013). `integration_credentials`
       // org+provider TEKİLDİR ve bir org'un İKİ Woo mağazası için ayrı sır
       // TUTAMAZ; bu tablo hesap kapsamlıdır ve sağlayıcı-nötrdür.

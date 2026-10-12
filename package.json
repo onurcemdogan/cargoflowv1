@@ -53,7 +53,7 @@
     "test:aras": "node --test server/carrier-aras-contract-flow.test.mjs server/carrier-aras-client-flow.test.mjs server/carrier-aras-expansion-flow.test.mjs",
     "test:ticimax": "node --test server/ticimax-connector-flow.test.mjs",
     "test:onboarding": "node --test server/onboarding-provider-flow.test.mjs server/tenant-onboarding-flow.test.mjs && vitest run --config vitest.config.ts src/test/onboardingWizard.dom.test.tsx",
-    "test:woocommerce": "node --test server/woocommerce-connector-flow.test.mjs server/woocommerce-runtime-closeout-flow.test.mjs server/woocommerce-dns-rebinding-flow.test.mjs",
+    "test:woocommerce": "node --test server/woocommerce-connector-flow.test.mjs server/woocommerce-runtime-closeout-flow.test.mjs server/woocommerce-dns-rebinding-flow.test.mjs server/woocommerce-authorization-flow.test.mjs && vitest run --config vitest.config.ts src/test/wooCommerceWizard.dom.test.tsx",
     "test:billing-model": "npm run test:subscription",
     "trendyol:package-status:check": "node server/orders/trendyolPackageIdentityTraceCli.ts",
     "surat:zpl:diagnose": "node server/integrations/suratZplDiagnosticCli.ts",

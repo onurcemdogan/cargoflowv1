@@ -134,6 +134,13 @@
       "when": 1791785197418,
       "tag": "0018_shipment_provenance",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1791787511683,
+      "tag": "0019_connector_authorizations",
+      "breakpoints": true
     }
   ]
 }

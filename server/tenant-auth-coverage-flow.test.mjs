@@ -91,8 +91,10 @@ test('TAC-3: public uçlar kapıya alınmadı (webhook, auth, health)', async ()
   const paths = tenantAuthPaths()
   const gatedPublic = await ungatedRoutes(paths, [
     { method: 'POST', path: '/api/webhooks/woocommerce/x' },
+    // WooCommerce yetkilendirme geri çağrısı (PHASE2-F): oturumsuz, belirteçli.
+    { method: 'POST', path: '/api/webhooks/woocommerce-auth/x/y' },
     { method: 'POST', path: '/api/auth/login' },
     { method: 'GET', path: '/api/health' },
   ])
-  assert.equal(gatedPublic.length, 3, 'public uç tenantAuth arkasına düştü')
+  assert.equal(gatedPublic.length, 4, 'public uç tenantAuth arkasına düştü')
 })

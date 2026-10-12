@@ -1,4 +1,6 @@
 import { listAccounts } from '../../integrations/marketplaceAccountRepository.ts'
+import { arasCredentialRef, listCarrierAccounts } from '../../carriers/carrierAccounts.ts'
+import { getConnectorCredential } from '../connectorCredentialStore.ts'
 import {
   connectArasCarrierAccount,
   disconnectArasCarrierAccount,
@@ -12,19 +14,36 @@ export async function handleArasListStores(params: {
   db: Db
   organizationId: string
 }): Promise<{ httpStatus: number; body: Record<string, unknown> }> {
-  const accounts = await listAccounts(params.db, params.organizationId, ARAS_PROVIDER_KEY)
+  const [accounts, carrierAccounts] = await Promise.all([
+    listAccounts(params.db, params.organizationId, ARAS_PROVIDER_KEY),
+    listCarrierAccounts(params.db, params.organizationId),
+  ])
+  // TAŞIYICI HESABI HİZASI (PHASE2-F): doğrulama durumu `carrier_accounts`
+  // kaydından gelir — bu uç "kayıtlı = doğrulandı" demez. Sır DÖNMEZ.
+  const stores = []
+  for (const account of accounts) {
+    const carrier = carrierAccounts.find(
+      (row) => row.provider === ARAS_PROVIDER_KEY && row.credentialRef === arasCredentialRef(account.id),
+    )
+    const credential = await getConnectorCredential(params.db, {
+      organizationId: params.organizationId,
+      marketplaceAccountId: account.id,
+      providerKey: ARAS_PROVIDER_KEY,
+    })
+    stores.push({
+      marketplaceAccountId: account.id,
+      displayName: account.displayName,
+      isActive: account.isActive,
+      configured: Boolean(credential),
+      carrierAccountId: carrier?.id ?? null,
+      verificationStatus: carrier?.verificationStatus ?? 'unverified',
+      lastVerifiedAt: carrier?.lastVerifiedAt ?? null,
+      enabled: carrier?.enabled ?? false,
+    })
+  }
   return {
     httpStatus: 200,
-    body: {
-      ok: true,
-      rolloutStage: 'internal_test',
-      stores: accounts.map((a) => ({
-        marketplaceAccountId: a.id,
-        displayName: a.displayName,
-        isActive: a.isActive,
-        configured: true,
-      })),
-    },
+    body: { ok: true, rolloutStage: 'internal_test', stores },
   }
 }
 

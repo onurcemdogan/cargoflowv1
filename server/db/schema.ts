@@ -417,6 +417,50 @@ export const connectorCredentials = pgTable(
 )
 
 /**
+ * BAĞLAYICI YETKİLENDİRME İSTEĞİ (PHASE2-F) — WooCommerce resmî
+ * `/wc-auth/v1/authorize` akışı.
+ *
+ * Mağaza adresi istek ANINDA sunucuda bağlanır; geri çağrı gövdesindeki
+ * hiçbir alan mağazayı DEĞİŞTİREMEZ. Geri çağrı yalnız tek kullanımlık
+ * belirteçle (`callback_token_hash`, düz değer SAKLANMAZ) kabul edilir.
+ * Gelen anahtarlar doğrulamaya kadar AES-256-GCM zarfında (`encrypted_
+ * credentials`) bekler; doğrulama bitince (başarılı ya da değil) SİLİNİR —
+ * kalıcı kimlik yalnız `connector_credentials`'tadır.
+ */
+export const connectorAuthorizations = pgTable(
+  'connector_authorizations',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    organizationId: uuid('organization_id')
+      .notNull()
+      .references(() => organizations.id, { onDelete: 'cascade' }),
+    providerKey: text('provider_key').notNull(),
+    storeUrl: text('store_url').notNull(),
+    callbackTokenHash: text('callback_token_hash').notNull(),
+    status: text('status').notNull().default('pending'),
+    requestedScope: text('requested_scope').notNull(),
+    grantedScope: text('granted_scope'),
+    encryptedCredentials: text('encrypted_credentials'),
+    errorClass: text('error_class'),
+    marketplaceAccountId: uuid('marketplace_account_id').references(() => marketplaceAccounts.id, {
+      onDelete: 'set null',
+    }),
+    createdByUserId: uuid('created_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp('expires_at', { withTimezone: true }).notNull(),
+    callbackReceivedAt: timestamp('callback_received_at', { withTimezone: true }),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (table) => [
+    index('connector_authorizations_org_provider_idx').on(table.organizationId, table.providerKey, table.createdAt),
+    check(
+      'connector_authorizations_status_check',
+      sql`${table.status} in ('pending', 'callback_received', 'verifying', 'connected', 'failed', 'expired')`,
+    ),
+  ],
+)
+
+/**
  * DAYANIKLI WEBHOOK GELEN KUTUSU — SAĞLAYICI-NÖTR.
  *
  * ═══ NEDEN DAYANIKLI ═════════════════════════════════════════════════════

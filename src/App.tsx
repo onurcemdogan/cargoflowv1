@@ -146,6 +146,7 @@ import {
 import { loadLabelPreviewDrafts } from './utils/labelPreviewDrafts'
 import { migrateAlternateLoopbackStorage } from './utils/localStorageMigration'
 import { type QuickTab } from './utils/ordersTabs'
+import { readWooAuthReturn } from './integrations/wooAuthReturn'
 import type { OrdersNavigationFilters } from './utils/ordersNavigation'
 
 interface OrdersState {
@@ -189,7 +190,10 @@ function App() {
   // (görsel eşleme kaynağı) siparişlerden bağımsız gelir; hangisi önce gelirse
   // gelsin görseller doğru zenginleşsin diye en güncel katalog burada tutulur.
   const catalogProductsRef = useRef<CargoProduct[]>([])
-  const [activePage, setActivePage] = useState<PageKey>('dashboard')
+  // WooCommerce onay ekranından dönüş doğrudan Entegrasyonlar'da tamamlanır.
+  const [activePage, setActivePage] = useState<PageKey>(() =>
+    readWooAuthReturn() ? 'integrations' : 'dashboard',
+  )
   // "Gönderiler / Takip" ayrı ekran değildir: Siparişler'in kargoya verilmiş
   // gönderiler görünümüdür; menüde seçili görünsün diye ayrıca izlenir.
   const [shipmentsView, setShipmentsView] = useState(false)

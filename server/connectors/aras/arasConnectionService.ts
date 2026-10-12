@@ -112,7 +112,11 @@ export async function connectArasCarrierAccount(
       ),
     )
 
-  return { ok: true, marketplaceAccountId: accountId, message: 'Aras hesabı kaydedildi (internal_test).' }
+  return {
+    ok: true,
+    marketplaceAccountId: accountId,
+    message: 'Aras hesabı kaydedildi. Kimlik bilgileri henüz doğrulanmadı; Aras Kargo iç testtedir.',
+  }
 }
 
 export async function disconnectArasCarrierAccount(

@@ -9,6 +9,17 @@ interface ArasStoreRow {
   marketplaceAccountId: string
   displayName: string | null
   isActive: boolean
+  configured?: boolean
+  verificationStatus?: string
+  lastVerifiedAt?: string | null
+}
+
+// Aras kimlik doğrulama yanıtının resmî anlam tablosu yok: kayıtlı hesap
+// "doğrulandı" GÖSTERİLMEZ; ön kontrol doğrulanmamış hesapla gönderi açmaz.
+function verificationText(store: ArasStoreRow): string {
+  if (!store.isActive) return 'Pasif'
+  if (store.verificationStatus === 'verified') return 'Doğrulandı'
+  return 'Kayıtlı, doğrulanmadı'
 }
 
 export function ArasSection() {
@@ -65,39 +76,52 @@ export function ArasSection() {
     }
   }
 
-  if (loading) return <p className="text-sm text-muted">Aras hesapları yükleniyor…</p>
+  if (loading) {
+    return (
+      <section className="integration-section" aria-labelledby="aras-title">
+        <h3 id="aras-title">Aras Kargo</h3>
+        <p role="status">Aras hesapları yükleniyor…</p>
+      </section>
+    )
+  }
 
   return (
-    <section className="integration-section rounded-lg border p-4 space-y-3">
-      <p className="text-sm font-medium">Aras Kargo — INTERNAL TEST</p>
-      <p className="text-xs text-muted">
-        Test uç noktası yalnızca yapılandırma içindir; canlı gönderi/etiket yan etkisi yoktur.
+    <section className="integration-section" aria-labelledby="aras-title">
+      <h3 id="aras-title">
+        Aras Kargo <span className="ui-badge tone-info">İç test</span>
+      </h3>
+      <p>
+        Bağlantı Aras test servisine yapılır; canlı gönderi ve etiket kapalıdır. Kimlik bilgileri
+        doğrulanana kadar Aras ile gönderi oluşturulmaz.
       </p>
-      <label className="block text-sm">
-        Görünen ad
-        <input className="mt-1 w-full border rounded px-2 py-1" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-      </label>
-      <label className="block text-sm">
-        UserName
-        <input className="mt-1 w-full border rounded px-2 py-1" value={userName} onChange={(e) => setUserName(e.target.value)} autoComplete="off" />
-      </label>
-      <label className="block text-sm">
-        Password
-        <input type="password" className="mt-1 w-full border rounded px-2 py-1" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-      </label>
-      <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void connect()}>
-        {busy ? 'Kaydediliyor…' : 'Bağla'}
-      </button>
-      {message ? <p className="text-sm">{message}</p> : null}
       {stores.length > 0 ? (
-        <ul className="text-sm space-y-1">
+        <ul aria-label="Aras hesapları">
           {stores.map((s) => (
             <li key={s.marketplaceAccountId}>
-              {s.displayName ?? s.marketplaceAccountId} — {s.isActive ? 'aktif' : 'pasif'}
+              <span>{s.displayName ?? 'Aras Kargo'}</span>
+              <span data-verification={s.verificationStatus ?? 'unverified'}>{verificationText(s)}</span>
             </li>
           ))}
         </ul>
       ) : null}
+      <div>
+        <label htmlFor="aras-display-name">Görünen ad</label>
+        <input id="aras-display-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+        <label htmlFor="aras-user-name">Kullanıcı adı</label>
+        <input id="aras-user-name" value={userName} onChange={(e) => setUserName(e.target.value)} autoComplete="off" />
+        <label htmlFor="aras-password">Şifre</label>
+        <input
+          id="aras-password"
+          type="password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoComplete="new-password"
+        />
+        <button type="button" disabled={busy} onClick={() => void connect()}>
+          {busy ? 'Kaydediliyor…' : 'Kaydet'}
+        </button>
+        {message ? <span role="status">{message}</span> : null}
+      </div>
     </section>
   )
 }

@@ -33,6 +33,7 @@ import {
 import { canArasCarrierAffectLiveFulfillment } from './arasRollout.ts'
 import { arasIdempotencyKey, type ArasOperationIdentity, type ArasOperationStore } from './arasOperationStore.ts'
 import type { PreflightResult } from '../../shipments/shipmentPreflight.ts'
+import { normalizeArasError, type ArasProviderError } from './arasProviderErrors.ts'
 
 export interface ArasPipelineParams {
   organizationId: string
@@ -85,6 +86,8 @@ export interface ArasPipelineResult {
   /** Önceki başarılı işlem kayıttan döndürüldü (yeni gönderi YOK). */
   replayed: boolean
   preflightBlockers?: string[]
+  /** Ön yüze gidebilecek TEK hata görünümü — ham SOAP/ResultMessage YOK. */
+  providerError: ArasProviderError | null
 }
 
 function blocked(
@@ -101,6 +104,7 @@ function blocked(
     errorCode,
     carrierCreateCalled: false,
     replayed: false,
+    providerError: normalizeArasError(errorCode),
     ...extra,
   }
 }
@@ -147,6 +151,7 @@ export async function runArasInternalTestPipeline(
       errorCode: reprint.ok ? null : 'ARAS_REPLAY_ARTIFACT_MISSING',
       carrierCreateCalled: false,
       replayed: true,
+      providerError: reprint.ok ? null : normalizeArasError('ARAS_REPLAY_ARTIFACT_MISSING'),
     }
   }
   if (existing?.status === 'pending' && existing.carrierCreateCalled) {
@@ -281,5 +286,6 @@ export async function runArasInternalTestPipeline(
     errorCode: setOrder.ok ? null : setOrder.errorCode,
     carrierCreateCalled: true,
     replayed: false,
+    providerError: setOrder.ok ? null : normalizeArasError(setOrder.errorCode),
   }
 }
