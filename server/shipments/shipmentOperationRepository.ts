@@ -48,6 +48,8 @@ export interface OperationColumns {
   errorCode?: string | null
   errorMessage?: string | null
   completedAt?: Date | null
+  /** Gönderi kökeni (PHASE2-D) — `provenanceColumns` çıktısı. */
+  provenance?: Record<string, unknown> | null
 }
 
 export async function findLatestOperationByPackage(
@@ -197,6 +199,7 @@ function toValues(columns: OperationColumns): Record<string, unknown> {
     errorCode: columns.errorCode ?? null,
     errorMessage: columns.errorMessage ?? null,
     completedAt: columns.completedAt ?? null,
+    ...(columns.provenance ?? {}),
   }
 }
 
@@ -248,6 +251,8 @@ export async function upsertCreateOperation(
         errorCode: values.errorCode,
         errorMessage: values.errorMessage,
         completedAt: values.completedAt,
+        // Köken yalnız BİLİNİYORSA yazılır; köksüz yazım mevcut kökeni SİLMEZ.
+        ...(columns.provenance ?? {}),
         updatedAt: new Date(),
       },
     })

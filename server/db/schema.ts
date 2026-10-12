@@ -504,6 +504,35 @@ export const shipments = pgTable(
     barcode: text('barcode'),
     trackingLink: text('tracking_link'),
     carrierPayloadEncrypted: text('carrier_payload_encrypted'),
+    // ═══ GÖNDERİ KÖKENİ (PHASE2-D) ═══════════════════════════════════════
+    // Gönderinin HANGİ satış hesabı, HANGİ kargo hesabı ve HANGİ ödeyen
+    // kuralıyla açıldığı — sorgulanabilir, normalize kolonlarda. Yalnız
+    // sağlayıcıya özgü ham kanıt `preflight_evidence` (JSON) içindedir.
+    // Eski satırlarda NULL'dur (köken o dönemde kaydedilmiyordu).
+    marketplaceAccountId: uuid('marketplace_account_id').references(() => marketplaceAccounts.id, {
+      onDelete: 'set null',
+    }),
+    carrierAccountId: uuid('carrier_account_id').references(() => carrierAccounts.id, {
+      onDelete: 'set null',
+    }),
+    /** Gönderide uygulanan ödeyen: MARKETPLACE_PAYS | SELLER_PAYS. */
+    payerType: text('payer_type'),
+    /** Ödeyenin kaynağı: ORDER_CONTRACT | ACCOUNT_CONFIG | TENANT_CONFIG. */
+    payerSource: text('payer_source'),
+    /** Pazaryeri/sipariş tarafının söylediği ödeyen. */
+    expectedPayer: text('expected_payer'),
+    /** Taşıyıcıya giden isteğin taşıdığı ödeyen anlamı. */
+    resolvedPayer: text('resolved_payer'),
+    /** Anlaşma kaynağı: CARRIER_ACCOUNT (kullanıcının kendi kargo hesabı). */
+    contractSource: text('contract_source'),
+    /** Fiyat kaynağı: NOT_QUOTED (taşıyıcı fiyat döndürmez; uydurulmaz). */
+    rateSource: text('rate_source'),
+    /** Kullanılan kargo hesabının son doğrulanma zamanı (create anında). */
+    carrierVerifiedAt: timestamp('carrier_verified_at', { withTimezone: true }),
+    /** Ön kontrol başvurusu (işlem/izleme kimliği). */
+    preflightReference: text('preflight_reference'),
+    /** Sağlayıcıya özgü kanıt — kritik alanlar YUKARIDA normalize. */
+    preflightEvidence: jsonb('preflight_evidence'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -512,6 +541,14 @@ export const shipments = pgTable(
       .defaultNow(),
   },
   (table) => [
+    check(
+      'shipments_payer_type_check',
+      sql`${table.payerType} is null or ${table.payerType} in ('MARKETPLACE_PAYS', 'SELLER_PAYS')`,
+    ),
+    check(
+      'shipments_payer_source_check',
+      sql`${table.payerSource} is null or ${table.payerSource} in ('ORDER_CONTRACT', 'ACCOUNT_CONFIG', 'TENANT_CONFIG')`,
+    ),
     uniqueIndex('shipments_org_marketplace_package_provider_unique').on(
       table.organizationId,
       table.marketplace,
@@ -582,6 +619,35 @@ export const shipmentOperations = pgTable(
     carrierCreateCalled: boolean('carrier_create_called').notNull().default(false),
     errorCode: text('error_code'),
     errorMessage: text('error_message'),
+    // ═══ GÖNDERİ KÖKENİ (PHASE2-D) ═══════════════════════════════════════
+    // Gönderinin HANGİ satış hesabı, HANGİ kargo hesabı ve HANGİ ödeyen
+    // kuralıyla açıldığı — sorgulanabilir, normalize kolonlarda. Yalnız
+    // sağlayıcıya özgü ham kanıt `preflight_evidence` (JSON) içindedir.
+    // Eski satırlarda NULL'dur (köken o dönemde kaydedilmiyordu).
+    marketplaceAccountId: uuid('marketplace_account_id').references(() => marketplaceAccounts.id, {
+      onDelete: 'set null',
+    }),
+    carrierAccountId: uuid('carrier_account_id').references(() => carrierAccounts.id, {
+      onDelete: 'set null',
+    }),
+    /** Gönderide uygulanan ödeyen: MARKETPLACE_PAYS | SELLER_PAYS. */
+    payerType: text('payer_type'),
+    /** Ödeyenin kaynağı: ORDER_CONTRACT | ACCOUNT_CONFIG | TENANT_CONFIG. */
+    payerSource: text('payer_source'),
+    /** Pazaryeri/sipariş tarafının söylediği ödeyen. */
+    expectedPayer: text('expected_payer'),
+    /** Taşıyıcıya giden isteğin taşıdığı ödeyen anlamı. */
+    resolvedPayer: text('resolved_payer'),
+    /** Anlaşma kaynağı: CARRIER_ACCOUNT (kullanıcının kendi kargo hesabı). */
+    contractSource: text('contract_source'),
+    /** Fiyat kaynağı: NOT_QUOTED (taşıyıcı fiyat döndürmez; uydurulmaz). */
+    rateSource: text('rate_source'),
+    /** Kullanılan kargo hesabının son doğrulanma zamanı (create anında). */
+    carrierVerifiedAt: timestamp('carrier_verified_at', { withTimezone: true }),
+    /** Ön kontrol başvurusu (işlem/izleme kimliği). */
+    preflightReference: text('preflight_reference'),
+    /** Sağlayıcıya özgü kanıt — kritik alanlar YUKARIDA normalize. */
+    preflightEvidence: jsonb('preflight_evidence'),
     createdAt: timestamp('created_at', { withTimezone: true })
       .notNull()
       .defaultNow(),
@@ -591,6 +657,15 @@ export const shipmentOperations = pgTable(
     completedAt: timestamp('completed_at', { withTimezone: true }),
   },
   (table) => [
+    check(
+      'shipment_operations_payer_type_check',
+      sql`${table.payerType} is null or ${table.payerType} in ('MARKETPLACE_PAYS', 'SELLER_PAYS')`,
+    ),
+    check(
+      'shipment_operations_payer_source_check',
+      sql`${table.payerSource} is null or ${table.payerSource} in ('ORDER_CONTRACT', 'ACCOUNT_CONFIG', 'TENANT_CONFIG')`,
+    ),
+
     uniqueIndex('shipment_operations_org_idempotency_unique').on(
       table.organizationId,
       table.idempotencyKey,

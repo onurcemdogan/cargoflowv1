@@ -12,6 +12,7 @@ import {
 } from './shipmentOperationRepository.ts'
 import { upsertShipment, type RepositoryDb } from './shipmentRepository.ts'
 import { SURAT_PERSISTENCE_PROVIDER } from './suratProvider.ts'
+import { provenanceColumns, type ShipmentProvenance } from './shipmentPreflight.ts'
 
 type ServiceDb = OperationDb &
   RepositoryDb & {
@@ -66,6 +67,9 @@ function recordToColumns(
       ? String(record.businessMessage).slice(0, 600)
       : null,
     completedAt: record.completedAt ? new Date(String(record.completedAt)) : null,
+    provenance: record.shipmentProvenance
+      ? provenanceColumns(record.shipmentProvenance as ShipmentProvenance)
+      : null,
   }
 }
 
@@ -256,6 +260,7 @@ export async function writeOperationRecord(
           ) || null,
         trackingLink: first(shipment.trackingLink) || null,
         carrierPayload,
+        provenance: columns.provenance ?? null,
       })
     })
     // Kuyruğa alma YAZIMDAN SONRA ve transaction DIŞINDA yapılır: hazırlama

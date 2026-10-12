@@ -252,5 +252,9 @@
   "server/woocommerce-connector-flow.test.mjs",
   "server/woocommerce-runtime-closeout-flow.test.mjs",
   "server/woocommerce-dns-rebinding-flow.test.mjs",
-  "server/tenant-auth-coverage-flow.test.mjs"
+  "server/tenant-auth-coverage-flow.test.mjs",
+  "server/self-service-auth-flow.test.mjs",
+  "server/workspace-membership-flow.test.mjs",
+  "server/carrier-accounts-flow.test.mjs",
+  "server/shipment-preflight-flow.test.mjs"
 ]

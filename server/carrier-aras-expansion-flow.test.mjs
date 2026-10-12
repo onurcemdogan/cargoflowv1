@@ -25,6 +25,42 @@ const eligibility = await import('./shipments/trendyolShipmentEligibility.ts')
 const pipeline = await import('./carriers/aras/arasShipmentPipeline.ts')
 const rollout = await import('./carriers/aras/arasRollout.ts')
 const artifactStoreModule = await import('./carriers/aras/arasLabelArtifactStore.ts')
+const operationStoreModule = await import('./carriers/aras/arasOperationStore.ts')
+const preflightModule = await import('./shipments/shipmentPreflight.ts')
+
+// PHASE2-D: Aras create ONAYLI ortak ön kontrol + DOĞRULANMIŞ ödeyen kodu +
+// ortak işlem kaydı ister. Test kimliği AÇIKÇA test değeridir — resmî Aras
+// değer tablosu iddiası DEĞİLDİR.
+const TEST_VERIFIED_PAYOR_CODE = 'TEST-VERIFIED-MAPPING'
+
+function approvedPreflight(organizationId = 'org-test', carrierAccountId = 'aras-ca') {
+  const result = preflightModule.evaluateShipmentPreflight({
+    organizationId,
+    provider: 'aras',
+    order: { marketplace: 'Trendyol', packageId: 'pkg', recipientName: 'A', address: 'B', city: 'İstanbul' },
+    marketplaceAccounts: [],
+    carrierAccounts: [{
+      id: carrierAccountId, provider: 'aras', displayName: 'Aras', externalAccountRef: null,
+      credentialRef: 'connector_credentials:x', verificationStatus: 'verified',
+      lastVerifiedAt: '2026-10-12T09:00:00.000Z', lastVerificationAttemptAt: null, enabled: true,
+    }],
+    carrierMappings: [],
+    payer: { payer: 'SELLER_PAYS', source: 'ACCOUNT_CONFIG' },
+    carrierPayer: null,
+    idempotencyKey: `ARAS:${organizationId}:pkg:CREATE`,
+  })
+  assert.equal(result.ok, true)
+  return result
+}
+
+function hardened(extra = {}) {
+  return {
+    preflight: approvedPreflight(),
+    verifiedPayorTypeCode: TEST_VERIFIED_PAYOR_CODE,
+    operationStore: operationStoreModule.createMemoryArasOperationStore(),
+    ...extra,
+  }
+}
 
 function migrationStatements() {
   const dir = join(root, 'drizzle')
@@ -198,6 +234,7 @@ test('ARE-9: boru hatti mock tasima ile create-verify-label-reprint (KALICI depo
     shipmentFields: { ReceiverName: 'A', ReceiverAddress: 'B' },
     fetchImpl: arasFetchImpl(calls),
     artifactStore,
+    ...hardened(),
   })
   assert.equal(outcome.ok, true)
   assert.equal(outcome.verificationState, 'VERIFIED_REGISTERED')
@@ -265,6 +302,7 @@ test('ARE-9b: depoda artefakt yokken reprint FAIL-CLOSED olur (taşıyıcıya ye
       return { ok: false, status: 500, text: async () => '<Envelope/>' }
     },
     artifactStore,
+    ...hardened(),
   })
   assert.equal(outcome.ok, false)
   assert.equal(outcome.persistedArtifact, null)
@@ -284,7 +322,148 @@ test('ARE-10: COD dogrulanmamis deger tablosu boru hattinda reddedilir', async (
     cod: { isCod: true, codAmount: 10 },
     fetchImpl: async () => ({ ok: true, status: 200, text: async () => '<Envelope/>' }),
     artifactStore: artifactStoreModule.createDbArasLabelArtifactStore(db),
+    ...hardened(),
   })
   assert.equal(outcome.ok, false)
   assert.equal(outcome.errorCode, 'ARAS_COD_VALUE_TABLE_UNVERIFIED')
+  assert.equal(outcome.carrierCreateCalled, false)
+})
+
+/* ─── PHASE2-D: ödeyen fail-closed, ön kontrol, ortak idempotency ───── */
+
+function countingFetch(calls, { setOrder = 'ok' } = {}) {
+  const base = arasFetchImpl(calls)
+  return async (url, init) => {
+    if (init.body.includes('<SetOrder')) {
+      calls.push(init.headers.SOAPAction)
+      if (setOrder === 'timeout') throw new Error('zaman aşımı')
+      if (setOrder === '503') return { ok: false, status: 503, text: async () => '' }
+      if (setOrder === 'reject') {
+        return { ok: true, status: 200, text: async () => '<Envelope><ResultCode>1</ResultCode><ResultMessage>Hatalı alan</ResultMessage></Envelope>' }
+      }
+      return { ok: true, status: 200, text: async () => '<Envelope><ResultCode>0</ResultCode><ResultMessage>OK</ResultMessage></Envelope>' }
+    }
+    return base(url, init)
+  }
+}
+
+const setOrderCalls = (calls) => calls.filter((action) => action === 'http://tempuri.org/SetOrder').length
+
+test('ARE-11: ödeyen FAIL-CLOSED — eşleme yoksa veya PayorTypeCode doğrudan verilirse SetOrder YOK', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const calls = []
+  const common = {
+    organizationId: org,
+    orderId: 'ord-payer',
+    credentials: { userName: 'u', password: 'p' },
+    fetchImpl: countingFetch(calls),
+    artifactStore: artifactStoreModule.createDbArasLabelArtifactStore(db),
+  }
+  const noMapping = await pipeline.runArasInternalTestPipeline({
+    ...common, shipmentFields: { ReceiverName: 'A' }, ...hardened({ verifiedPayorTypeCode: null }),
+  })
+  assert.equal(noMapping.errorCode, 'ARAS_PAYER_MAPPING_UNVERIFIED')
+  const guessed = await pipeline.runArasInternalTestPipeline({
+    ...common, shipmentFields: { ReceiverName: 'A', PayorTypeCode: '1' }, ...hardened(),
+  })
+  assert.equal(guessed.errorCode, 'ARAS_PAYER_FIELD_NOT_ALLOWED')
+  assert.equal(setOrderCalls(calls), 0)
+})
+
+test('ARE-12: onaysız ortak ön kontrol (UNKNOWN ödeyen) → SetOrder YOK', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const calls = []
+  const rejected = preflightModule.evaluateShipmentPreflight({
+    organizationId: org,
+    provider: 'aras',
+    order: { marketplace: 'Trendyol', packageId: 'p', recipientName: 'A', address: 'B', city: 'İstanbul' },
+    marketplaceAccounts: [],
+    carrierAccounts: [],
+    carrierMappings: [],
+    payer: { payer: 'UNKNOWN', source: 'UNKNOWN' },
+    carrierPayer: null,
+    idempotencyKey: 'k',
+  })
+  const outcome = await pipeline.runArasInternalTestPipeline({
+    organizationId: org,
+    orderId: 'ord-pf',
+    credentials: { userName: 'u', password: 'p' },
+    shipmentFields: { ReceiverName: 'A' },
+    fetchImpl: countingFetch(calls),
+    artifactStore: artifactStoreModule.createDbArasLabelArtifactStore(db),
+    ...hardened({ preflight: rejected }),
+  })
+  assert.equal(outcome.errorCode, 'ARAS_PREFLIGHT_BLOCKED')
+  assert.ok(outcome.preflightBlockers.includes('PAYER_UNKNOWN'))
+  assert.ok(outcome.preflightBlockers.includes('CARRIER_ACCOUNT_NOT_CONFIGURED'))
+  assert.equal(setOrderCalls(calls), 0)
+})
+
+test('ARE-13: ortak işlem kaydı — tekrar replay eder, eşzamanlı çift tıklama TEK SetOrder, zaman aşımı sonrası yeniden create YOK', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const artifactStore = artifactStoreModule.createDbArasLabelArtifactStore(db)
+  const operationStore = operationStoreModule.createDbArasOperationStore(db)
+  const connected = await connection.connectArasCarrierAccount(db, { organizationId: org, userName: 'aras-user', password: 'aras-pass' })
+  const carrierRow = (await pglite.query(`select id from carrier_accounts where credential_ref = $1`, [`connector_credentials:${connected.marketplaceAccountId}`])).rows[0]
+  const calls = []
+  const run = (orderId, fetchImpl) =>
+    pipeline.runArasInternalTestPipeline({
+      organizationId: org,
+      orderId,
+      credentials: { userName: 'u', password: 'p' },
+      shipmentFields: { ReceiverName: 'A', ReceiverAddress: 'B' },
+      fetchImpl,
+      artifactStore,
+      ...hardened({ operationStore, preflight: approvedPreflight(org, carrierRow.id) }),
+    })
+
+  // Eşzamanlı çift tıklama.
+  const [first, second] = await Promise.all([run('ord-dup', countingFetch(calls)), run('ord-dup', countingFetch(calls))])
+  assert.equal(setOrderCalls(calls), 1, 'tek SetOrder')
+  assert.deepEqual([first.ok || second.ok, [first.errorCode, second.errorCode].includes('ARAS_CREATE_IN_FLIGHT')], [true, true])
+
+  // Yeniden deneme / istemcinin tekrar göndermesi → kayıttan replay.
+  const again = await run('ord-dup', countingFetch(calls))
+  assert.equal(again.replayed, true)
+  assert.equal(again.ok, true)
+  assert.equal(again.carrierCreateCalled, false)
+  assert.equal(setOrderCalls(calls), 1)
+
+  // Ortak tablo: işlem + gönderi satırı, köken normalize kolonlarda.
+  const operation = (await pglite.query(`select provider, status, carrier_create_called, payer_type, payer_source, contract_source, rate_source, carrier_account_id from shipment_operations where idempotency_key = $1`, [`ARAS:${org}:ord-dup:CREATE`])).rows[0]
+  assert.deepEqual(operation, {
+    provider: 'aras', status: 'succeeded', carrier_create_called: true,
+    payer_type: 'SELLER_PAYS', payer_source: 'ACCOUNT_CONFIG', contract_source: 'CARRIER_ACCOUNT', rate_source: 'NOT_QUOTED',
+    carrier_account_id: carrierRow.id,
+  })
+  const shipment = (await pglite.query(`select provider, package_id, payer_type, expected_payer, resolved_payer from shipments`)).rows
+  assert.deepEqual(shipment, [{ provider: 'aras', package_id: 'ord-dup', payer_type: 'SELLER_PAYS', expected_payer: 'SELLER_PAYS', resolved_payer: 'SELLER_PAYS' }])
+
+  // Zaman aşımı: sonuç belirsiz → ikinci create MÜKERRER olur → bloke.
+  const timeoutCalls = []
+  const timedOut = await run('ord-timeout', countingFetch(timeoutCalls, { setOrder: 'timeout' }))
+  assert.equal(timedOut.errorCode, 'ARAS_CREATE_OUTCOME_UNKNOWN')
+  const retry = await run('ord-timeout', countingFetch(timeoutCalls))
+  assert.equal(retry.errorCode, 'ARAS_CREATE_OUTCOME_UNKNOWN')
+  assert.equal(setOrderCalls(timeoutCalls), 1, 'zaman aşımı sonrası ikinci SetOrder YOK')
+
+  // 5xx de belirsizdir.
+  const fiveCalls = []
+  await run('ord-503', countingFetch(fiveCalls, { setOrder: '503' }))
+  assert.equal((await run('ord-503', countingFetch(fiveCalls))).errorCode, 'ARAS_CREATE_OUTCOME_UNKNOWN')
+  assert.equal(setOrderCalls(fiveCalls), 1)
+
+  // Açık RED: Aras'ta gönderi yok → düzeltilip yeniden açılabilir.
+  const rejectCalls = []
+  const rejected = await run('ord-reject', countingFetch(rejectCalls, { setOrder: 'reject' }))
+  assert.equal(rejected.ok, false)
+  const reopened = await run('ord-reject', countingFetch(rejectCalls))
+  assert.equal(reopened.ok, true)
+  assert.equal(setOrderCalls(rejectCalls), 2)
 })

@@ -25,6 +25,8 @@ export interface ShipmentRecord {
   barcode?: string | null
   trackingLink?: string | null
   carrierPayload?: Record<string, unknown> | null
+  /** Gönderi kökeni (PHASE2-D) — `provenanceColumns` çıktısı. */
+  provenance?: Record<string, unknown> | null
 }
 
 // Minimal yapısal db arayüzü (node-postgres/pglite drizzle).
@@ -126,6 +128,7 @@ export async function upsertShipment(
     barcode: record.barcode ?? null,
     trackingLink: record.trackingLink ?? null,
     carrierPayloadEncrypted: encryptShipmentPayload(record.carrierPayload),
+    ...(record.provenance ?? {}),
   }
   await db
     .insert(shipments)
@@ -146,6 +149,8 @@ export async function upsertShipment(
         barcode: values.barcode,
         trackingLink: values.trackingLink,
         carrierPayloadEncrypted: values.carrierPayloadEncrypted,
+        // Köken yalnız BİLİNİYORSA yazılır; köksüz yazım mevcut kökeni SİLMEZ.
+        ...(record.provenance ?? {}),
         updatedAt: new Date(),
       },
     })

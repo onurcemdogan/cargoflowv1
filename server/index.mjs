@@ -4945,6 +4945,8 @@ async function createSuratShipment(request, response) {
     selectedConfig,
     financialFingerprint,
   )
+  // Ortak ön kontrol bu işlem kimliğini kayda yazar (deterministik anahtar).
+  suratCreateContextOf(request).operationKey = operation.idempotencyKey
   const inFlight = suratCreateLocks.get(operation.idempotencyKey)
   if (inFlight) {
     const result = await inFlight
@@ -5038,6 +5040,74 @@ async function ensureTenantResolvedDesi(request) {
     // Çözülemedi: create kendi "Desi bilgisi eksik" kapısında ve
     // TAŞIYICIYA ÇIKMADAN durur. Uydurma desi ASLA yazılmaz.
   }
+}
+
+// İSTEK BAĞLAMI — işlem kimliği ve gönderi kökeni istek nesnesine ÖZELLİK
+// olarak EKLENMEZ: arka plan worker'ı sentetik bir istek verir ve create
+// yolunun kullandığı istek yüzeyi testle sınırlıdır (HV-8). Bağlam istek
+// nesnesine bağlı bir WeakMap'te yaşar; istek bitince kendiliğinden düşer.
+const suratCreateContext = new WeakMap()
+function suratCreateContextOf(request) {
+  let context = suratCreateContext.get(request)
+  if (!context) {
+    context = { operationKey: null, provenance: null }
+    suratCreateContext.set(request, context)
+  }
+  return context
+}
+
+async function runSuratShipmentPreflight(request, order, financialGate) {
+  const organizationId = request?.auth?.organizationId
+  if (!isTenantAuthMode()) return null
+  const [{ getDb }, preflightModule, carriers] = await Promise.all([
+    import('./db/client.ts'),
+    import('./shipments/shipmentPreflight.ts'),
+    import('./carriers/carrierAccounts.ts'),
+  ])
+  const db = getDb()
+  const marketplace = String(order?.marketplace ?? 'Trendyol')
+  const packageId = String(order?.packageId ?? order?.shipmentPackageId ?? '').trim() || null
+  const scoped = String(organizationId ?? '').trim()
+  const [orderAccountId, marketplaceAccounts, carrierAccounts, carrierMappings] = scoped
+    ? await Promise.all([
+        preflightModule.loadOrderMarketplaceAccountId(db, { organizationId: scoped, marketplace, packageId }),
+        preflightModule.loadPreflightMarketplaceAccounts(db, scoped),
+        carriers.listCarrierAccounts(db, scoped),
+        carriers.listCarrierMappings(db, scoped),
+      ])
+    : [null, [], [], []]
+  const trace = financialGate?.trace ?? {}
+  const expectedPayer = preflightModule.suratExpectedPayer(trace.billingParty)
+  return preflightModule.evaluateShipmentPreflight({
+    organizationId: scoped || null,
+    provider: 'surat',
+    order: {
+      marketplace,
+      packageId,
+      orderNumber: order?.orderNumber ?? null,
+      marketplaceAccountId: orderAccountId,
+      recipientName: order?.customerName ?? null,
+      address: typeof order?.address === 'string' ? order.address : order?.address?.address1 ?? null,
+      city: order?.city ?? null,
+    },
+    marketplaceAccounts,
+    carrierAccounts,
+    carrierMappings,
+    payer: {
+      payer: expectedPayer,
+      // Sürat kapısı ödeyeni YALNIZ kanıtlı sipariş sözleşmesinden (whoPays) okur.
+      source: expectedPayer === 'UNKNOWN' ? 'UNKNOWN' : 'ORDER_CONTRACT',
+    },
+    carrierPayer: preflightModule.suratCarrierPayer(trace.credentialRole),
+    idempotencyKey: suratCreateContextOf(request).operationKey,
+    evidence: {
+      billingEvidence: trace.billingEvidence ?? null,
+      rawWhoPaysPresent: trace.rawWhoPaysPresent ?? null,
+      credentialRole: trace.credentialRole ?? null,
+      expectedSuratWhoPays: trace.expectedSuratWhoPays ?? null,
+      traceId: trace.traceId ?? null,
+    },
+  })
 }
 
 async function createSuratShipmentCore(request, response) {
@@ -5233,6 +5303,27 @@ async function createSuratShipmentCore(request, response) {
     })
     return
   }
+
+  // ═══ ORTAK GÖNDERİ ÖN KONTROLÜ (PHASE2-D) ═══════════════════════════════
+  // Finansal kapının ÜSTÜNE eklenir (yerine geçmez): satış hesabı, kargo
+  // hesabı + eşleme, kargo doğrulaması, ödeyen tutarlılığı, zorunlu alanlar ve
+  // işlem kimliği kesin değilse taşıyıcıya GİDİLMEZ. Ağdan önce durduğu için
+  // idempotency rezervasyonu silinir (NOT_SENT) ve düzeltme sonrası yeniden
+  // denenebilir. Legacy (DB'siz) yerel mod bu katmana girmez.
+  const shipmentPreflight = await runSuratShipmentPreflight(request, orderForSurat, financialGate)
+  if (shipmentPreflight && !shipmentPreflight.ok) {
+    response.json({
+      ok: false,
+      source: 'real',
+      errorSource: 'Frontend',
+      errorCode: shipmentPreflight.errorCode,
+      message: shipmentPreflight.message,
+      shipmentPreflight: { blockers: shipmentPreflight.blockers },
+      suratCreateTrace: financialGate.trace,
+    })
+    return
+  }
+  if (shipmentPreflight?.ok) suratCreateContextOf(request).provenance = shipmentPreflight.provenance
 
   // KANONİK SÜRAT WEB API DALI (api02 · POST /api/OrtakBarkodOlustur).
   // Credential çözümü, DTO eşlemesi, marketplace faturalama bağlamı ve
@@ -6023,6 +6114,9 @@ async function executeIdempotentSuratCreate(request, operation) {
     : null
   const record = {
     ...inProgressRecord,
+    // Ön kontrolün ürettiği KÖKEN (satış/kargo hesabı, ödeyen, kaynaklar):
+    // operasyon ve gönderi satırına normalize kolon olarak yazılır.
+    shipmentProvenance: suratCreateContextOf(request).provenance ?? inProgressRecord.shipmentProvenance ?? null,
     status: canonicalStatus
       ? canonicalStatus
       : verified
@@ -6116,6 +6210,23 @@ async function executeIdempotentSuratCreate(request, operation) {
     lastCheckedAt: completedAt,
   }
   await writeSuratCreateOperation(record)
+  // Taşıyıcının KABUL ETTİĞİ gönderi, kullanılan kargo hesabının kimliğinin
+  // çalıştığının kanıtıdır → kalıcı doğrulama tazelenir (best-effort).
+  if (record.status === 'SUCCESS' && record.shipmentProvenance?.carrierAccountId && operation.organizationId) {
+    try {
+      const [{ getDb }, carriers] = await Promise.all([
+        import('./db/client.ts'),
+        import('./carriers/carrierAccounts.ts'),
+      ])
+      await carriers.recordCarrierVerification(getDb(), {
+        organizationId: operation.organizationId,
+        carrierAccountId: record.shipmentProvenance.carrierAccountId,
+        status: 'verified',
+      })
+    } catch {
+      // doğrulama tazeleme gönderi sonucunu ETKİLEMEZ
+    }
+  }
 
   return withSuratIdempotencyDebug(result, operation, {
     carrierCreateCalled: true,
