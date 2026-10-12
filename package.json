@@ -100,7 +100,8 @@
     "benchmark:scale": "node --experimental-strip-types server/benchmarks/realPostgresScaleBenchmark.mjs",
     "test:performance:acceptance": "node --test server/performance-acceptance-flow.test.mjs server/orders-workspace-parity-flow.test.mjs server/dashboard-operational-parity-flow.test.mjs",
     "test:self-service": "node --test server/self-service-auth-flow.test.mjs server/workspace-membership-flow.test.mjs && vitest run --config vitest.config.ts src/test/selfServiceAuth.dom.test.tsx",
-    "test:carriers": "node --test server/carrier-accounts-flow.test.mjs server/shipment-preflight-flow.test.mjs && vitest run --config vitest.config.ts src/test/carrierAccounts.dom.test.tsx"
+    "test:carriers": "node --test server/carrier-accounts-flow.test.mjs server/shipment-preflight-flow.test.mjs && vitest run --config vitest.config.ts src/test/carrierAccounts.dom.test.tsx",
+    "test:integration-status": "node --test server/integration-status-flow.test.mjs server/local-secret-policy-flow.test.mjs server/local-config-flow.test.mjs && vitest run --config vitest.config.ts src/test/integrationStatusBoard.dom.test.tsx src/test/integrationSecretStorage.test.ts"
   },
   "dependencies": {
     "@types/jsbarcode": "^3.11.4",

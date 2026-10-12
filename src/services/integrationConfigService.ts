@@ -111,6 +111,37 @@ export interface MaskedIntegrationStatus {
 // DEĞİLDİR (yalnız input placeholder attribute'u); kaydedilirken gönderilmez.
 export const SAVED_SECRET_PLACEHOLDER = '•••••••• (kayıtlı)'
 
+/**
+ * SIR ALANLARI — tarayıcı depolamasına (localStorage/sessionStorage) ASLA
+ * yazılmaz. Sırlar yalnız sunucuda şifreli durur (auth: PostgreSQL, yerel:
+ * şifreli dosya) ve isteklere SUNUCU tarafından eklenir. Kayıttan sonra
+ * arayüz yalnız maskeli durumu gösterir.
+ */
+// Ad DESENİNE göre (sabit liste değil): yeni bir şifre alanı (ör. `liveSifre`,
+// `restBasicPassword`) eklendiğinde sessizce depoya sızmaz.
+export const SECRET_FIELD_PATTERN = /sifre|password|secret|apikey/i
+
+/** Sır alanlarını boşaltır; geri kalan (gizli olmayan) ayarlar korunur. */
+export function stripIntegrationSecrets(config: IntegrationConfig): IntegrationConfig {
+  const trendyol = { ...config.trendyol } as Record<string, unknown>
+  const surat = { ...config.surat } as Record<string, unknown>
+  for (const field of Object.keys(trendyol)) if (SECRET_FIELD_PATTERN.test(field)) trendyol[field] = ''
+  for (const field of Object.keys(surat)) if (SECRET_FIELD_PATTERN.test(field)) surat[field] = ''
+  return {
+    ...config,
+    trendyol: trendyol as unknown as IntegrationConfig['trendyol'],
+    surat: surat as unknown as IntegrationConfig['surat'],
+  }
+}
+
+function hasStoredSecret(config: Partial<IntegrationConfig> | null | undefined): boolean {
+  const trendyol = (config?.trendyol ?? {}) as Record<string, unknown>
+  const surat = (config?.surat ?? {}) as Record<string, unknown>
+  const filled = (source: Record<string, unknown>) =>
+    Object.keys(source).some((field) => SECRET_FIELD_PATTERN.test(field) && String(source[field] ?? '') !== '')
+  return filled(trendyol) || filled(surat)
+}
+
 export function mmToDots(mm: number): number {
   return Math.round((mm / 25.4) * 203)
 }
@@ -265,12 +296,18 @@ export class IntegrationConfigService {
       },
       desi: normalizeTenantDesiConfig(stored.desi),
     }
+    // ESKİ SÜRÜMDEN KALAN SIRLAR TEMİZLENİR: önceden yerel modda düz metin
+    // yazılmış sırlar tarayıcıdan SİLİNİR (sunucudaki şifreli kayıt durur).
+    if (hasStoredSecret(stored)) {
+      saveToStorage(INTEGRATION_KEY, stripIntegrationSecrets(normalized))
+      return stripIntegrationSecrets(normalized)
+    }
     if (
       stored.surat?.serviceMode !== normalized.surat.serviceMode ||
       stored.surat?.serviceType !== normalized.surat.serviceType ||
       stored.surat?.createShipmentPath !== normalized.surat.createShipmentPath
     ) {
-      saveToStorage(INTEGRATION_KEY, normalized)
+      saveToStorage(INTEGRATION_KEY, stripIntegrationSecrets(normalized))
     }
     return normalized
   }
@@ -344,8 +381,9 @@ export class IntegrationConfigService {
       }
       this.authMode = false
       if (response.ok && payload?.configured && payload?.config) {
+        // Sunucu sırları yalnız MASKELİ döndürür; tarayıcıya sır yazılmaz.
         const normalized = normalizeIntegrationConfig(payload.config)
-        saveToStorage(INTEGRATION_KEY, normalized)
+        saveToStorage(INTEGRATION_KEY, stripIntegrationSecrets(normalized))
         return normalized
       }
       if (isLoopbackBrowser() && hasIntegrationCredentials(localConfig)) {
@@ -362,7 +400,9 @@ export class IntegrationConfigService {
     // Auth modda düz credential localStorage'a YAZILMAZ; yalnız sunucuya
     // (şifreli DB) PUT edilir. Legacy modda mevcut davranış korunur.
     if (!this.authMode) {
-      saveToStorage(INTEGRATION_KEY, normalized)
+      // Yerel modda da tarayıcıya SIR YAZILMAZ; sır sunucudaki şifreli
+      // dosyaya gider ve isteklere sunucu tarafından eklenir.
+      saveToStorage(INTEGRATION_KEY, stripIntegrationSecrets(normalized))
     }
     this.pendingPersistence = this.persistIntegrationConfig(normalized)
     return normalized

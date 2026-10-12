@@ -76,6 +76,7 @@ export async function listOrganizationMarketplaceAccounts(
       displayName: marketplaceAccounts.displayName,
       isActive: marketplaceAccounts.isActive,
       verificationStatus: marketplaceAccounts.verificationStatus,
+      lastVerifiedAt: marketplaceAccounts.lastVerifiedAt,
     })
     .from(marketplaceAccounts)
     .where(eq(marketplaceAccounts.organizationId, organizationId))

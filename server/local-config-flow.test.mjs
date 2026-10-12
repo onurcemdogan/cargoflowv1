@@ -38,8 +38,12 @@ test('Entegrasyon anahtarları yeniden başlatma sonrasında şifreli kalır', a
 
   const firstRead = await request(running.port, 'GET')
   assert.equal(firstRead.status, 200)
-  assert.equal(firstRead.body.config.trendyol.apiKey, config.trendyol.apiKey)
-  assert.equal(firstRead.body.config.surat.sifre, config.surat.sifre)
+  // PHASE2-E: sır ön yüze GERİ DÖNMEZ; yalnız "kayıtlı" maskesi döner.
+  const SAVED = '•••••••• (kayıtlı)'
+  assert.equal(firstRead.body.config.trendyol.apiKey, SAVED)
+  assert.equal(firstRead.body.config.surat.sifre, SAVED)
+  assert.equal(firstRead.body.config.trendyol.sellerId, config.trendyol.sellerId)
+  assert.doesNotMatch(JSON.stringify(firstRead.body), /api-key-local-test|api-secret-local-test|surat-password-local-test/)
   assert.equal(
     firstRead.body.config.surat.entegrasyonSozlesme,
     config.surat.entegrasyonSozlesme,
@@ -55,10 +59,19 @@ test('Entegrasyon anahtarları yeniden başlatma sonrasında şifreli kalır', a
 
   const secondRead = await request(running.port, 'GET')
   assert.equal(secondRead.status, 200)
-  assert.equal(
-    secondRead.body.config.trendyol.apiSecret,
-    config.trendyol.apiSecret,
-  )
+  assert.equal(secondRead.body.config.trendyol.apiSecret, SAVED)
+
+  // Maskeli görünümle yeniden kaydetmek (yalnız gizli olmayan alan değişir)
+  // kayıtlı sırları SİLMEZ.
+  const resaved = await request(running.port, 'PUT', {
+    ...secondRead.body.config,
+    trendyol: { ...secondRead.body.config.trendyol, sellerId: 'seller-local-test-2' },
+  })
+  assert.equal(resaved.status, 200)
+  const thirdRead = await request(running.port, 'GET')
+  assert.equal(thirdRead.body.config.trendyol.sellerId, 'seller-local-test-2')
+  assert.equal(thirdRead.body.config.trendyol.apiSecret, SAVED)
+  assert.equal(thirdRead.body.config.surat.sifre, SAVED)
 
   const encrypted = await readFile(
     join(configDirectory, 'integration-config.enc.json'),

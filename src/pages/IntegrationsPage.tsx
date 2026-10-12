@@ -176,9 +176,8 @@ export function IntegrationsPage({
       <ActionResult result={result} />
 
       <IntegrationStatusBoard
-        trendyolConfigured={trendyolConfigured}
-        suratConfigured={suratConfigured}
         onOpen={openFromBoard}
+        refreshKey={`${trendyolTest?.checkedAt ?? ''}|${suratTest?.checkedAt ?? ''}|${busy ? 'busy' : 'idle'}`}
       />
 
       <div className="integration-detail-area" ref={detailRef}>

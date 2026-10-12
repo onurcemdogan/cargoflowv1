@@ -9399,6 +9399,24 @@ button.integration-board-item:hover {
   color: var(--text-3);
 }
 
+.integration-board.is-loading {
+  min-height: 120px;
+}
+
+.integration-board.is-unavailable {
+  display: block;
+}
+
+.integration-board-note {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text-2);
+  font-size: 13px;
+}
+
 .integration-detail-area {
   scroll-margin-top: 16px;
 }

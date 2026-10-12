@@ -328,8 +328,42 @@ async function loadRequestOrgConfig(request) {
 // DB'den gelen org credential'ıyla EZER (frontend'in gönderdiği credential/
 // organizationId yok sayılır). Sürat create/idempotency ve mevcut handler'lar
 // değişmez; yalnız credential KAYNAĞI değişir.
+// YEREL (DB'SİZ) MOD: tarayıcı sır TUTMAZ (PHASE2-E). Gövdede gelen
+// yapılandırmadaki eksik/maskeli sırlar, bu bilgisayardaki ŞİFRELİ dosyadan
+// sunucu tarafında doldurulur. Gövdenin şekli değişmez; yalnız sır alanları.
+async function legacyInjectLocalSecrets(request) {
+  if (!isTrustedLocalConfigRequest(request)) return
+  const body = request.body
+  if (!body || typeof body !== 'object') return
+  const stored = await readEncryptedIntegrationConfig()
+  if (!stored) return
+  const normalizedStored = normalizeLocalIntegrationConfig(stored)
+  const { mergeLocalSecrets } = await import('./integrations/localSecretPolicy.ts')
+  const fill = (target, provider) => {
+    if (!target || typeof target !== 'object') return target
+    return mergeLocalSecrets({ [provider]: target }, normalizedStored)[provider]
+  }
+  if (body.credentials && typeof body.credentials === 'object') {
+    body.credentials = fill(body.credentials, 'trendyol')
+  }
+  if (body.config && typeof body.config === 'object') {
+    if (body.config.trendyol) body.config.trendyol = fill(body.config.trendyol, 'trendyol')
+    if (body.config.surat) body.config.surat = fill(body.config.surat, 'surat')
+    // Bazı uçlar Sürat yapılandırmasını doğrudan `config` olarak alır.
+    if (!body.config.surat && 'kullaniciAdi' in body.config) body.config = fill(body.config, 'surat')
+  }
+}
+
 async function tenantInjectCredentials(request, response, next) {
-  if (!isTenantAuthMode() || !request.auth) return next()
+  if (!isTenantAuthMode()) {
+    try {
+      await legacyInjectLocalSecrets(request)
+    } catch {
+      // Yerel sır doldurma başarısızsa istek kendi gövdesiyle sürer.
+    }
+    return next()
+  }
+  if (!request.auth) return next()
   try {
     const config = await loadRequestOrgConfig(request)
     if (request.body && typeof request.body === 'object') {
@@ -377,6 +411,8 @@ const TENANT_AUTH_PATHS = [
   // oturuma rağmen `request.auth` boş kalıyor ve 404 dönüyorlardı. Kapsam
   // artık `tenant-auth-coverage-flow.test.mjs` ile TÜM uçlar için kilitli.
   '/api/integrations/health',
+  // Entegrasyon durum panosu (PHASE2-E) — org kapsamlı bağlantı sağlığı.
+  '/api/integrations/catalog',
   '/api/integrations/woocommerce',
   '/api/integrations/aras',
   '/api/shipping/payer',
@@ -537,10 +573,13 @@ app.get('/api/local-config/integration', async (request, response) => {
     ) {
       await writeEncryptedIntegrationConfig(config)
     }
+    const { maskLocalSecrets } = await import('./integrations/localSecretPolicy.ts')
     response.json({
       ok: true,
       configured: hasIntegrationCredentials(config),
-      config: config || null,
+      // Sırlar YALNIZ MASKELİ döner; gerçek değer bu bilgisayardaki şifreli
+      // dosyada kalır ve isteklere sunucu tarafından eklenir.
+      config: config ? maskLocalSecrets(config) : null,
     })
   } catch {
     response.status(500).json({
@@ -701,7 +740,12 @@ app.put('/api/local-config/integration', async (request, response) => {
     return
   }
   try {
-    const normalized = normalizeLocalIntegrationConfig(config)
+    // Boş/maskeli sır kayıtlı değeri KORUR; yalnız gerçek yeni değer yazılır.
+    const { mergeLocalSecrets } = await import('./integrations/localSecretPolicy.ts')
+    const stored = await readEncryptedIntegrationConfig()
+    const normalized = normalizeLocalIntegrationConfig(
+      mergeLocalSecrets(config, stored ? normalizeLocalIntegrationConfig(stored) : null),
+    )
     await writeEncryptedIntegrationConfig(normalized)
     response.json({
       ok: true,
@@ -2534,6 +2578,21 @@ app.put('/api/organization/profile', async (request, response) => {
     })
   } catch {
     response.status(500).json({ ok: false, message: 'İşletme bilgileri kaydedilemedi.' })
+  }
+})
+
+// ENTEGRASYON DURUM PANOSU (PHASE2-E). Uygulama aşaması, yayın aşaması ve
+// bağlantı sağlığı AYRI alanlardır; panodaki grup ilk ikisinden, rozet
+// üçüncüsünden türer. Yalnız yerel DB okunur; sağlayıcıya çağrı YOK.
+app.get('/api/integrations/catalog', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const { loadIntegrationStatusBoard } = await import('./connectors/integrationStatus.ts')
+    const providers = await loadIntegrationStatusBoard(context.db, { organizationId: context.organizationId })
+    response.json({ ok: true, providers })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Entegrasyon durumu okunamadı.' })
   }
 })
 

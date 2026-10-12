@@ -256,5 +256,7 @@
   "server/self-service-auth-flow.test.mjs",
   "server/workspace-membership-flow.test.mjs",
   "server/carrier-accounts-flow.test.mjs",
-  "server/shipment-preflight-flow.test.mjs"
+  "server/shipment-preflight-flow.test.mjs",
+  "server/local-secret-policy-flow.test.mjs",
+  "server/integration-status-flow.test.mjs"
 ]
