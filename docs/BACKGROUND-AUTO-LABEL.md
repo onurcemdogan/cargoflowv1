@@ -57,7 +57,9 @@ sessizce "hazır değil" demeye başlardı. HV-9 bunu korur.
 
 Bayrak açıkça `true`/`1` yapılmadıkça **hiçbir zamanlayıcı kurulmaz**:
 boot'ta taşıyıcı çağrısı yok, periyodik create yok, pazaryeri çağrısı yok
-(HV-1). `LABEL_BUNDLE_RECONCILE_ENABLED` yalnız `true` ile açılır.
+(HV-1). `LABEL_BUNDLE_RECONCILE_ENABLED` de aynı kuralı izler: yalnız
+`true`/`TRUE`/`1` açar; tanımsız, boş, `false`, `0`, `yes`, `off` ve diğer
+her değer kapalıdır.
 
 **Baskı paketi mutabakatı (bellek hotfix'i, 2026-10-13):** 60 sn'lik
 periyodik tur üretimde RSS'i dakikalar içinde ~868 MB'a taşıyıp PM2

@@ -556,19 +556,19 @@ test('MEM-1: periyodik paket mutabakatı VARSAYILAN KAPALI — zamanlayıcı kur
   const stop = preparer.startPeriodicReconciliation(db)
   assert.equal(typeof stop, 'function', 'durdurucu her durumda güvenle çağrılabilir')
   stop()
-  // Açık "true" DIŞINDAKİ her değer kapalıdır.
-  for (const value of ['', 'false', '0', '1', 'yes', 'off']) {
+  // Depodaki diğer zamanlayıcı bayraklarıyla AYNI: yalnız true/1 açar.
+  for (const value of ['', 'false', 'FALSE', '0', 'yes', 'off', 'on', 'enabled']) {
     preparer.startPeriodicReconciliation(db, { env: { LABEL_BUNDLE_RECONCILE_ENABLED: value } })
     assert.equal(preparer.isPeriodicReconciliationActive(), false, `'${value}' kapalı olmalı`)
   }
   assert.deepEqual(spy.calls, [], '60 sn tarama zamanlayıcısı KURULMAMALI')
 })
 
-test('MEM-2: açık LABEL_BUNDLE_RECONCILE_ENABLED=true periyodik turu kurar', async (t) => {
+test('MEM-2: açık LABEL_BUNDLE_RECONCILE_ENABLED=true/1 periyodik turu kurar', async (t) => {
   const db = await makeDb()
   const spy = captureSetInterval()
   t.after(() => { spy.restore(); preparer.stopPeriodicReconciliation() })
-  for (const value of ['true', 'TRUE', ' true ']) {
+  for (const value of ['true', 'TRUE', '1']) {
     preparer.startPeriodicReconciliation(db, { env: { LABEL_BUNDLE_RECONCILE_ENABLED: value } })
     assert.equal(preparer.isPeriodicReconciliationActive(), true, `'${value}' açmalı`)
     preparer.stopPeriodicReconciliation()
@@ -579,6 +579,16 @@ test('MEM-2: açık LABEL_BUNDLE_RECONCILE_ENABLED=true periyodik turu kurar', a
     preparer.RECONCILE_INTERVAL_MS,
   ])
   assert.equal(preparer.isBundleReconcileEnabled({ LABEL_BUNDLE_RECONCILE_ENABLED: 'true' }), true)
+  assert.equal(preparer.isBundleReconcileEnabled({ LABEL_BUNDLE_RECONCILE_ENABLED: '1' }), true)
+  // Worker bayrağıyla aynı anlam.
+  const worker = await import('./shipments/labelJobWorker.ts')
+  for (const value of ['true', 'TRUE', '1', '', 'false', '0', 'yes', 'off']) {
+    assert.equal(
+      preparer.isBundleReconcileEnabled({ LABEL_BUNDLE_RECONCILE_ENABLED: value }),
+      worker.isLabelWorkerEnabled({ LABEL_WORKER_ENABLED: value }),
+      `'${value}' iki bayrakta aynı sonuç vermeli`,
+    )
+  }
 })
 
 test('MEM-3: kalıcılaşan gönderi paket hazırlamayı HEMEN kuyruğa alır (zamanlayıcı/mutabakat olmadan)', async () => {
