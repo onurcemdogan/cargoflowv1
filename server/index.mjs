@@ -620,6 +620,10 @@ app.put('/api/local-config/integration', async (request, response) => {
         await saveIntegrationCredential(db, organizationId, 'trendyol', normalized.trendyol)
       }
       if (incoming.surat && typeof incoming.surat === 'object') {
+        // Backfill'li hesabın parmak izi kimlik YAZILMADAN önce benimsenir:
+        // aynı kimlikle yeniden kaydetmek kanıtlı doğrulamayı sıfırlamaz.
+        const { adoptLegacySuratFingerprint } = await import('./carriers/carrierAccounts.ts')
+        await adoptLegacySuratFingerprint(db, organizationId)
         await saveIntegrationCredential(db, organizationId, 'surat', normalized.surat)
         // Taşıyıcı hesabı eşitlenir; kimlik değiştiyse doğrulama SIFIRLANIR.
         const { syncSuratCarrierAccount } = await import('./carriers/carrierAccounts.ts')

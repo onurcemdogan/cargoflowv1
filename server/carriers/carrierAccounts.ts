@@ -13,7 +13,7 @@
 // Doğrulama durumu yalnız taşıyıcıya yapılan gerçek, gönderi OLUŞTURMAYAN bir
 // kimlik kontrolünden gelir. Kimlik değişince (anahtarlı parmak izi) doğrulama
 // `unverified`a döner: eski doğrulama YENİ kimliği kanıtlamaz.
-import { and, asc, eq } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 import { carrierAccounts, marketplaceAccounts, marketplaceCarrierMappings } from '../db/schema.ts'
 import {
   credentialFingerprint,
@@ -186,6 +186,40 @@ export async function syncSuratCarrierAccount(db: Db, organizationId: string): P
     externalAccountRef: customerCode,
     fingerprint: credentialFingerprint(payload),
   })
+}
+
+/**
+ * ESKİ HESAP PARMAK İZİNİ BENİMSE (0017/0018 backfill'i sonrası).
+ *
+ * SQL backfill'i sırrı çözemediği için parmak izi YAZAMAZ (NULL kalır).
+ * NULL parmak izi "kimlik değişti" sayılırsa, mevcut müşteri ayarlarını AYNI
+ * kimlikle yeniden kaydettiğinde kanıta dayalı doğrulaması sıfırlanır ve
+ * Sürat gönderileri ön kontrolde bloklanırdı. Bu yüzden kimlik YAZILMADAN
+ * ÖNCE, saklı (backfill'de kanıtlanmış) kimliğin parmak izi benimsenir:
+ * aynı kimlik doğrulamayı korur, değişen kimlik sıfırlar. Durum DEĞİŞMEZ.
+ */
+export async function adoptLegacySuratFingerprint(db: Db, organizationId: string): Promise<boolean> {
+  const org = requireOrg(organizationId)
+  const rows = await db
+    .select({ id: carrierAccounts.id, credentialFingerprint: carrierAccounts.credentialFingerprint })
+    .from(carrierAccounts)
+    .where(
+      and(
+        eq(carrierAccounts.organizationId, org),
+        eq(carrierAccounts.provider, 'surat'),
+        eq(carrierAccounts.credentialRef, SURAT_CREDENTIAL_REF),
+      ),
+    )
+    .limit(1)
+  if (!rows[0] || rows[0].credentialFingerprint !== null) return false
+  const payload = await getIntegrationCredential(db, org, 'surat')
+  const fingerprint = payload ? credentialFingerprint(payload) : null
+  if (!fingerprint) return false
+  await db
+    .update(carrierAccounts)
+    .set({ credentialFingerprint: fingerprint })
+    .where(and(eq(carrierAccounts.id, rows[0].id), isNull(carrierAccounts.credentialFingerprint)))
+  return true
 }
 
 export async function findCarrierAccountByRef(

@@ -238,3 +238,43 @@ test('SP-10: 0018 kanıta dayalı doğrulama — başarı kimlik değişiminden 
   assert.equal((await status(changed)).verification_status, 'unverified', 'kimlik başarıdan sonra değişti')
   assert.equal((await status(never)).verification_status, 'unverified', 'başarı kanıtı yok')
 })
+
+test('SP-11: backfill ile doğrulanan Sürat hesabı AYNI kimlikle yeniden kaydedilince doğrulamayı korur; değişen kimlik sıfırlar', async (t) => {
+  const migration = FILES.find((file) => file.startsWith('0018_'))
+  const { pglite, db } = await makeDb({ until: migration })
+  t.after(() => pglite.close())
+  const org = await makeOrg(pglite, 'legacy')
+  const stored = { kullaniciAdi: 'cari', sifre: 'kanitli-sifre' }
+  await credentials.saveIntegrationCredential(db, org, 'surat', stored)
+  await pglite.query(`INSERT INTO carrier_accounts (organization_id, provider, display_name, credential_ref) VALUES ($1, 'surat', 'Sürat Kargo', 'integration_credentials:surat')`, [org])
+  await pglite.query(`UPDATE integration_credentials SET updated_at = '2026-09-01T00:00:00Z'`)
+  await pglite.query(
+    `INSERT INTO shipment_operations (organization_id, marketplace, package_id, provider, operation_type, idempotency_key, status, completed_at)
+     VALUES ($1, 'Trendyol', 'P', 'surat', 'CREATE', $2, 'succeeded', '2026-10-01T00:00:00Z')`,
+    [org, `SURAT:${org}:P:CREATE`],
+  )
+  for (const statement of statementsOf(migration)) await pglite.exec(statement)
+  const row = async () => (await pglite.query('select verification_status, credential_fingerprint from carrier_accounts where organization_id = $1', [org])).rows[0]
+  assert.deepEqual(await row(), { verification_status: 'verified', credential_fingerprint: null })
+
+  // Kayıt ucunun sırası: benimse → kaydet (aynı kimlik) → eşitle.
+  const resave = async (payload) => {
+    await carriers.adoptLegacySuratFingerprint(db, org)
+    await credentials.saveIntegrationCredential(db, org, 'surat', payload)
+    await carriers.syncSuratCarrierAccount(db, org)
+  }
+  await resave(stored)
+  assert.equal((await row()).verification_status, 'verified', 'aynı kimlik doğrulamayı korumalı')
+  assert.ok((await row()).credential_fingerprint, 'parmak izi benimsenmeli')
+  // İkinci benimseme NO-OP (parmak izi artık dolu).
+  assert.equal(await carriers.adoptLegacySuratFingerprint(db, org), false)
+
+  await resave({ kullaniciAdi: 'cari', sifre: 'yeni-sifre' })
+  assert.equal((await row()).verification_status, 'unverified', 'değişen kimlik doğrulamayı sıfırlamalı')
+
+  // Üretim kayıt ucu AYNI sırayı izler: benimseme, Sürat kimliği yazılmadan ÖNCE.
+  const index = readFileSync(join(here, 'index.mjs'), 'utf8')
+  const adopt = index.indexOf('await adoptLegacySuratFingerprint(db, organizationId)')
+  const save = index.indexOf("await saveIntegrationCredential(db, organizationId, 'surat', normalized.surat)")
+  assert.ok(adopt > 0 && save > adopt, 'kayıt ucu parmak izini kimlik yazılmadan önce benimsemeli')
+})
