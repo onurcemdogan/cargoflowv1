@@ -153,15 +153,20 @@ export async function runLabelJobCycle(params: {
 // taşıyıcı mutasyonu üretebildiği için varsayılan kapalı olması ŞARTTIR.
 
 let timer: ReturnType<typeof setInterval> | null = null
+/**
+ * Worker ETKİN mi (olay tetiği). Zamanlayıcının varlığından AYRIDIR: yedek
+ * yoklama kapalıyken de `requestLabelJobCycle()` tur başlatır.
+ */
+let workerActive = false
 let cycleRunning = false
 let rerunRequested = false
 let scheduledCycle: (() => Promise<unknown>) | null = null
 
 /**
- * YEDEK (yalnız kurtarma) yoklama aralığı. Gecikmenin asıl mekanizması
- * olaydır (`requestLabelJobCycle`): üretici iş kuyruğa aldığında worker
- * HEMEN uyanır; açılışta da bir kurtarma turu koşulur. Yedek yoklama
- * gecikme mekanizması DEĞİLDİR; 5 sn yerine 60 sn'dir.
+ * YEDEK (yalnız kurtarma) yoklama aralığı — YALNIZ `LABEL_WORKER_POLL_ENABLED`
+ * açıkken kurulur. Gecikmenin asıl mekanizması olaydır
+ * (`requestLabelJobCycle`): üretici iş kuyruğa aldığında worker HEMEN
+ * uyanır; açılışta da bir kurtarma turu koşulur.
  */
 export const LABEL_WORKER_DEFAULT_INTERVAL_MS = 60_000
 
@@ -171,6 +176,38 @@ export function isLabelWorkerEnabled(
 ): boolean {
   const raw = String(env.LABEL_WORKER_ENABLED ?? '').trim().toLowerCase()
   return raw === 'true' || raw === '1'
+}
+
+/**
+ * `LABEL_WORKER_POLL_ENABLED`: 60 sn'lik yedek yoklama — VARSAYILAN KAPALI.
+ * Yalnız `true`/`1` açar (`LABEL_WORKER_ENABLED` ile aynı anlam).
+ *
+ * ÜRETİM İZOLASYON KANITI (2026-10-13, master b1cfb0a): paket mutabakatı
+ * kapalıyken worker KAPALI → bellek stabil; worker yeniden AÇIK → 01:56
+ * ~602 MB, 02:30 ~867 MB ve PM2 restart. Kuyrukta PREPARING yoktu,
+ * UNKNOWN_AFTER_NETWORK 25'te sabitti. Tek değişken worker'ı açıp kapatmaktı
+ * ve worker'ın tek periyodik işi 60 sn'lik TAM turdur. Heap snapshot YOK: bu
+ * kesin kök neden değil, üretim izolasyon kanıtı + kod çıkarımıdır.
+ *
+ * Kapalıyken worker yine olay güdümlü çalışır: açılışta tek kurtarma turu,
+ * üretici kuyruğa aldığında anında uyanma. Boş sistemde her 60 sn tam
+ * DB/worker turu DÖNMEZ.
+ */
+export function isLabelWorkerPollEnabled(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const raw = String(env.LABEL_WORKER_POLL_ENABLED ?? '').trim().toLowerCase()
+  return raw === 'true' || raw === '1'
+}
+
+/** Worker olay tetiğiyle etkin mi (test/teşhis). */
+export function isLabelJobSchedulerActive(): boolean {
+  return workerActive
+}
+
+/** 60 sn yedek yoklama zamanlayıcısı kurulu mu (test/teşhis). */
+export function isLabelWorkerPollActive(): boolean {
+  return timer !== null
 }
 
 // ═══ ZARİF BOŞALTMA (DRAIN) ══════════════════════════════════════════════
@@ -202,6 +239,8 @@ export async function drainLabelJobScheduler(
   graceMs = 30_000,
 ): Promise<{ drained: boolean; hadActiveCycle: boolean }> {
   draining = true
+  // Olay tetiği de kapanır: yeni tur AÇILMAZ.
+  workerActive = false
   if (timer) clearInterval(timer)
   timer = null
   const hadActiveCycle = Boolean(activeCycle)
@@ -226,7 +265,7 @@ export async function drainLabelJobScheduler(
 // BİNMEZ: tur sürerken gelen istek kaybolmaz, tur bitince BİR kez daha
 // koşulur (ikinci bir eşzamanlı talep dalgası AÇILMAZ).
 function triggerCycle(): boolean {
-  if (!scheduledCycle || draining) return false
+  if (!workerActive || !scheduledCycle || draining) return false
   if (cycleRunning) {
     rerunRequested = true
     return true
@@ -239,7 +278,9 @@ function triggerCycle(): boolean {
     .finally(() => {
       cycleRunning = false
       activeCycle = null
-      if (rerunRequested && !draining && timer) {
+      // Yeniden koşma zamanlayıcıya BAĞLI DEĞİL: yoklama kapalıyken de tur
+      // sırasında gelen uyandırma kaybolmaz.
+      if (rerunRequested && workerActive && !draining) {
         rerunRequested = false
         triggerCycle()
       }
@@ -250,11 +291,13 @@ function triggerCycle(): boolean {
 }
 
 /**
- * OLAY TETİĞİ: iş kuyruğa alındığında worker'ı HEMEN uyandırır. Zamanlayıcı
- * kurulmamışsa (bayrak kapalı) hiçbir şey yapmaz → taşıyıcı çağrısı YOK.
+ * OLAY TETİĞİ: iş kuyruğa alındığında worker'ı HEMEN uyandırır. Yedek
+ * yoklama zamanlayıcısı GEREKMEZ. Worker etkin değilse (`LABEL_WORKER_ENABLED`
+ * kapalı, durdurulmuş veya boşaltılıyor) hiçbir şey yapmaz → taşıyıcı
+ * çağrısı YOK.
  */
 export function requestLabelJobCycle(): boolean {
-  if (!timer) return false
+  if (!workerActive) return false
   return triggerCycle()
 }
 
@@ -263,14 +306,19 @@ export function startLabelJobScheduler(params: {
   intervalMs?: number
   env?: Record<string, string | undefined>
 }): boolean {
-  if (timer) return true
+  if (workerActive) return true
   if (!isLabelWorkerEnabled(params.env)) return false
   // Boşaltma başladıysa yeniden kurulmaz.
   if (draining) return false
+  scheduledCycle = params.runCycle
+  // Olay tetiği etkin: `requestLabelJobCycle()` artık tur başlatır.
+  workerActive = true
+  // YEDEK YOKLAMA VARSAYILAN KAPALI: yalnız `LABEL_WORKER_POLL_ENABLED`
+  // açıkken 60 sn'lik zamanlayıcı kurulur.
+  if (!isLabelWorkerPollEnabled(params.env)) return true
   const intervalMs = Math.max(
     5_000, Number(params.intervalMs ?? LABEL_WORKER_DEFAULT_INTERVAL_MS),
   )
-  scheduledCycle = params.runCycle
   timer = setInterval(() => {
     // Turlar ÜST ÜSTE BİNMEZ: yavaş bir tur ikinci bir talep dalgası açmaz.
     if (cycleRunning) return
@@ -285,6 +333,7 @@ export function startLabelJobScheduler(params: {
 export function stopLabelJobScheduler(): void {
   if (timer) clearInterval(timer)
   timer = null
+  workerActive = false
   cycleRunning = false
   draining = false
   activeCycle = null

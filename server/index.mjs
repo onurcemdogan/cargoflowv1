@@ -4961,9 +4961,13 @@ async function startLabelJobWorkerOnBoot() {
       },
     })
     if (started) {
-      console.log('[label-worker] arka plan etiket worker etkin')
-      // AÇILIŞ KURTARMASI: yedek yoklama 60 sn olduğundan restart öncesi
-      // kuyrukta kalan işler için TEK tur hemen koşulur. Asıl tetik olaydır
+      console.log(
+        '[label-worker] arka plan etiket worker etkin (olay güdümlü; 60 sn yedek yoklama '
+          + (worker.isLabelWorkerPollActive() ? 'AÇIK' : 'kapalı') + ')',
+      )
+      // AÇILIŞ KURTARMASI: yedek yoklama varsayılan KAPALI
+      // (LABEL_WORKER_POLL_ENABLED); restart öncesi kuyrukta kalan işler için
+      // TEK tur hemen koşulur. Asıl tetik olaydır
       // (enqueueAutoLabelAfterSync → requestLabelJobCycle).
       worker.requestLabelJobCycle()
     }
