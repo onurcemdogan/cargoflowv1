@@ -185,10 +185,13 @@ export function HomePage({
     },
     {
       key: 'attention',
+      // Aşağıdaki "Kontrol gereken işlemler" kartındaki "Hatalı / kritik
+      // bilgisi eksik" satırıyla AYNI kaynak (gerçek hata, adres/desi
+      // kontrolü). "Sürat doğrulama bekleyenler" hata değildir, sayılmaz.
       label: 'Kontrol gereken',
-      count: summary.errors,
+      count: viewModel.actionRequired.find((item) => item.key === 'critical-data')?.count ?? summary.errors,
       tone: 'danger',
-      onOpen: () => document.getElementById('home-attention')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      onOpen: () => onNavigateOrders('all', undefined, { actionFilter: 'critical' }),
     },
     {
       key: 'cargo',

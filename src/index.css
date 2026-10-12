@@ -11239,9 +11239,12 @@ button.integration-board-item:hover {
 }
 
 /* ── Kargo Operasyonları ─────────────────────────────────────────────── */
+/* Tek sütun minmax(0, 1fr): geniş tablo sütunu büyütüp sayfayı taşırmaz;
+   tablo kendi .table-shell kaydırmasında kalır. */
 .cargo-ops,
 .shipments-page {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   min-width: 0;
 }
@@ -11316,7 +11319,8 @@ button.integration-board-item:hover {
 
 .cargo-ops-queue {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  /* Etiketler kırpılmaz: dar kartta sayaçlar alt satıra geçer. */
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 6px;
   margin: 0;
   padding: 0;
@@ -11378,6 +11382,29 @@ button.integration-board-item:hover {
 .cargo-ops-table td,
 .shipments-table td {
   white-space: nowrap;
+}
+
+/* 12 sütunluk defter 1440'ta sığar; daha darda tablo kendi içinde kayar ve
+   işlem sütunu sağa sabitlenir — aksiyonlar her genişlikte görünür. */
+/* .data-table'ın overflow: hidden'ı tabloyu yapışkan konumun kaydırma
+   kabı yapar ve sabitlemeyi etkisizleştirir; bu tabloda kaydırma kabı
+   .table-shell'dir. */
+.shipments-table {
+  overflow: visible;
+}
+
+.shipments-table th,
+.shipments-table td {
+  padding-right: 8px;
+  padding-left: 8px;
+}
+
+.shipments-table th:last-child,
+.shipments-table td:last-child {
+  position: sticky;
+  right: 0;
+  background: var(--surface);
+  box-shadow: -1px 0 0 var(--border);
 }
 
 .page-inline-error {
@@ -11462,10 +11489,6 @@ button.integration-board-item:hover {
 }
 
 @media (max-width: 640px) {
-  .cargo-ops-queue {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
   .shipments-filters {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -11477,6 +11500,30 @@ button.integration-board-item:hover {
   .home-list-row.cargo-ops-attention-row > .ui-btn {
     grid-column: 1 / -1;
     justify-self: start;
+  }
+}
+
+/* Dar ekranda dönem seçimi gizli yatay kaydırma yerine 3×2 ızgaradır:
+   "Özel" dahil altı seçenek de görünür kalır. */
+@media (max-width: 480px) {
+  .dashboard-period-switch {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .dashboard-period-switch button {
+    min-width: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .dashboard-period-switch button:nth-child(3n) {
+    border-right: 0;
+  }
+
+  .dashboard-period-switch button:nth-child(n + 4) {
+    border-bottom: 0;
   }
 }
 

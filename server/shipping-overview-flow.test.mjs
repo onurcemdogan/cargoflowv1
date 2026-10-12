@@ -108,6 +108,20 @@ test('PIPE-1: özet ve arka plan hazırlama sayıları gerçek DB satırlarında
   assert.equal(off.worker.backgroundEnabled, false)
 })
 
+test('PIPE-2b: her kanonik kontrol durumu sade Türkçe sebeple gösterilir; ham kod yazılmaz', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db, 'pipe2b')
+  for (const status of overview.ATTENTION_OPERATION_STATUSES) {
+    await order(db, org, `S-${status}`, { operationStatus: status })
+  }
+  const { attention } = await overview.loadShippingPipeline(db, { organizationId: org, now: NOW })
+  assert.equal(attention.length, overview.ATTENTION_OPERATION_STATUSES.length)
+  for (const row of attention) {
+    assert.doesNotMatch(row.reason, /Kontrol gerekli \(|[A-Z]{3,}_[A-Z_]+/, `${row.packageId}: ${row.reason}`)
+  }
+})
+
 test('PIPE-2: kontrol gerekenler gerçek durumlarla ve güvenli sebeple listelenir; kişisel veri yok; kiracıya özel', async (t) => {
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
@@ -127,6 +141,7 @@ test('PIPE-2: kontrol gerekenler gerçek durumlarla ve güvenli sebeple listelen
   assert.match(byPackage['4238186037'].reason, /Mutabakat gerekli/)
   assert.equal(byPackage.F1.kind, 'OPERATION_FAILED')
   assert.equal(byPackage.V1.kind, 'UNVERIFIED')
+  assert.equal(byPackage.V1.reason, 'Etiket oluştu ancak Sürat kaydı doğrulanamadı.')
   assert.equal(byPackage.B1.orderNumber, 'ON-B1')
   assert.ok(byPackage.B1.orderId)
   const dump = JSON.stringify(attention)
@@ -150,6 +165,10 @@ test('PIPE-3: son işlemler aşaması doğru; yalnız oluşturulmuş + etiketli 
   assert.equal(byPackage.F1.stage, 'Taşıyıcı reddetti')
   assert.equal(byPackage.F1.canReprint, false)
   assert.equal(byPackage.L1.carrier, 'Sürat Kargo')
+  // "Gönderiyi görüntüle" yalnız gönderi kaydı olan satırda.
+  assert.equal(byPackage.L1.hasShipment, true)
+  assert.equal(byPackage['4238186037'].hasShipment, false)
+  assert.equal(byPackage.F1.hasShipment, false)
 })
 
 test('LEDGER-1: gönderi defteri — sekmeler, sayaçlar, filtreler, sayfalama, ödeyen ve kargo hesabı', async (t) => {
@@ -183,6 +202,8 @@ test('LEDGER-1: gönderi defteri — sekmeler, sayaçlar, filtreler, sayfalama, 
   assert.equal(byPackage['S-READY'].canReprint, true)
   assert.equal(byPackage['S-PRINTED'].labelState, 'printed')
   assert.equal(byPackage['S-SHIPPED'].lifecycleLabel, 'Kargoda')
+  assert.equal(byPackage['S-READY'].lifecycleLabel, 'Etiketi hazır')
+  assert.equal(byPackage['S-PRINTED'].lifecycleLabel, 'Etiket basıldı')
   assert.equal(byPackage['S-SHIPPED'].lastActivityAt, TODAY_TR_0130.toISOString())
   // Belirsiz create: kontrol gerekli ve yeniden yazdırma/aksiyon YOK.
   assert.equal(byPackage['S-UNKNOWN'].lifecycle, 'attention')

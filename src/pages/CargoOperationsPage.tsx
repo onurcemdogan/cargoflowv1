@@ -210,7 +210,7 @@ export function CargoOperationsPage({
               <ul className="cargo-ops-queue" aria-label="Hazırlama kuyruğu">
                 <li><span>Sırada</span><b>{worker.counts.QUEUED + worker.counts.FAILED_SAFE_TO_RETRY}</b></li>
                 <li><span>Hazırlanıyor</span><b>{worker.counts.PREPARING}</b></li>
-                <li><span>Hazır</span><b>{worker.counts.READY}</b></li>
+                <li><span>Hazırlandı</span><b>{worker.counts.READY}</b></li>
                 <li className="is-warning"><span>Engellendi</span><b>{worker.counts.BLOCKED}</b></li>
                 <li className="is-danger"><span>Sonucu belirsiz</span><b>{worker.counts.UNKNOWN_AFTER_NETWORK}</b></li>
               </ul>
@@ -318,15 +318,17 @@ export function CargoOperationsPage({
                             <Printer size={15} />
                           </button>
                         ) : null}
-                        <button
-                          type="button"
-                          className="icon-button"
-                          title="Gönderiyi görüntüle"
-                          aria-label={`${row.orderNumber} gönderisini görüntüle`}
-                          onClick={() => onOpenShipments(row.orderNumber)}
-                        >
-                          <Route size={15} />
-                        </button>
+                        {row.hasShipment ? (
+                          <button
+                            type="button"
+                            className="icon-button"
+                            title="Gönderiyi görüntüle"
+                            aria-label={`${row.orderNumber} gönderisini görüntüle`}
+                            onClick={() => onOpenShipments(row.orderNumber)}
+                          >
+                            <Route size={15} />
+                          </button>
+                        ) : null}
                       </div>
                     </td>
                   </tr>

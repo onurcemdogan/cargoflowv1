@@ -68,6 +68,14 @@ const REASON_TEXT: Record<string, string> = {
   SHIPMENT_PREFLIGHT_BLOCKED: 'Gönderi ön kontrolü tamamlanmadı (kargo hesabı / ödeyen / doğrulama).',
   BILLING_CONTEXT_INVALID: 'Kargo ücretini kimin ödeyeceği belirlenemedi.',
   LABEL_WORKER_EXCEPTION: 'Arka plan hazırlama beklenmeyen hata verdi; sonuç belirsiz sayıldı.',
+  // Kanonik sipariş operasyon durumları (ATTENTION_OPERATION_STATUSES).
+  ERROR: 'Gönderi işleminde hata oluştu; sipariş detayını kontrol edin.',
+  SURAT_BARCODE_FAILED: 'Sürat barkodu alınamadı.',
+  SURAT_DISPATCH_REJECTED: 'Sürat gönderi isteğini reddetti.',
+  SURAT_TRACKING_MISSING: 'Sürat takip numarası alınamadı.',
+  LABEL_CREATED_UNVERIFIED: 'Etiket oluştu ancak Sürat kaydı doğrulanamadı.',
+  LABEL_CREATED_NOT_REGISTERED: 'Etiket oluştu ancak Sürat kaydı bulunamadı.',
+  CREATE_ACCEPTED_UNCONFIRMED: 'Sürat isteği kabul etti ancak sonuç doğrulanmadı.',
 }
 
 function reasonFor(code: unknown, summary: unknown): string {
@@ -106,6 +114,8 @@ export interface PipelineRecentRow {
   trackingNumber: string | null
   updatedAt: string | null
   canReprint: boolean
+  /** Bu paket için gönderi kaydı var mı ("Gönderiyi görüntüle" yalnız o zaman). */
+  hasShipment: boolean
 }
 
 export interface ShippingPipeline {
@@ -228,7 +238,7 @@ export async function loadShippingPipeline(
   // ── Son işlemler (gönderi oluşturma kayıtları) ───────────────────────
   const recentRows = rowsOf(await db.execute(sql`
     SELECT so.package_id, so.marketplace, so.provider, so.status, so.carrier_create_called, so.updated_at,
-           o.id AS order_id, o.order_number, o.operation_status, s.tracking_number
+           o.id AS order_id, o.order_number, o.operation_status, s.id AS shipment_id, s.tracking_number
     FROM shipment_operations so
     LEFT JOIN LATERAL (
       SELECT id, order_number, operation_status FROM orders o
@@ -269,6 +279,7 @@ export async function loadShippingPipeline(
       trackingNumber: row.tracking_number ? String(row.tracking_number) : null,
       updatedAt: iso(row.updated_at),
       canReprint: status === 'succeeded' && labelState !== 'none' && Boolean(row.order_id),
+      hasShipment: Boolean(row.shipment_id),
     }
   })
 
@@ -434,7 +445,11 @@ export async function listShipmentLedger(
         carrier: carrierLabel(row.provider),
         trackingNumber: row.tracking_number ? String(row.tracking_number) : null,
         lifecycle,
-        lifecycleLabel: LIFECYCLE_LABEL[lifecycle] ?? lifecycle,
+        // Basılmış ama henüz kargoya verilmemiş etiket "hazır" değil "basıldı" yazar.
+        lifecycleLabel:
+          lifecycle === 'label_ready' && labelState === 'printed'
+            ? 'Etiket basıldı'
+            : (LIFECYCLE_LABEL[lifecycle] ?? lifecycle),
         labelState,
         payer: PAYER_LABEL[String(row.payer_type ?? '')] ?? '—',
         carrierAccount: row.carrier_account_name ? String(row.carrier_account_name) : null,

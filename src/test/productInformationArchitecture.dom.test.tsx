@@ -210,6 +210,7 @@ function pipeline(overrides: Partial<ShippingPipeline> = {}): ShippingPipeline {
         trackingNumber: '11419469827',
         updatedAt: '2026-10-12T08:20:00.000Z',
         canReprint: true,
+        hasShipment: true,
       },
       {
         orderId: 'o-pending',
@@ -223,6 +224,7 @@ function pipeline(overrides: Partial<ShippingPipeline> = {}): ShippingPipeline {
         trackingNumber: null,
         updatedAt: '2026-10-12T08:21:00.000Z',
         canReprint: false,
+        hasShipment: false,
       },
     ],
     ...overrides,
@@ -261,8 +263,11 @@ test('IA-CARGO-1: Kargo Operasyonları gerçek kuyruk sayılarını gösterir; b
   // Hazır etiket: yeniden yazdırma mevcut baskı akışına gider.
   fireEvent.click(screen.getByRole('button', { name: 'TY-READY hazır etiketi yazdır' }))
   expect(onPrintLabel).toHaveBeenCalledWith('o-ready')
-  // Sonucu belirsiz kayıt için yazdırma da sunulmaz.
+  // Sonucu belirsiz kayıt için yazdırma da sunulmaz; gönderi kaydı olmadığından
+  // "Gönderiyi görüntüle" de yoktur.
   expect(screen.queryByRole('button', { name: 'TY-PENDING hazır etiketi yazdır' })).toBeNull()
+  expect(screen.queryByRole('button', { name: 'TY-PENDING gönderisini görüntüle' })).toBeNull()
+  expect(screen.getByRole('button', { name: 'TY-READY gönderisini görüntüle' })).toBeTruthy()
   expect(load).toHaveBeenCalledTimes(1)
 })
 
@@ -456,4 +461,31 @@ test('IA-HOME-1: Ana Sayfa altı operasyon göstergesi; sunucu hatasında "—" 
   expect(Array.from(ops.querySelectorAll('strong')).map((node) => node.textContent)).toEqual(['—', '—', '—', '—', '—', '—'])
   fireEvent.click(within(ops).getByText('Teslim edildi'))
   expect(onNavigateOrders).toHaveBeenCalledWith('delivered')
+})
+
+test('IA-HOME-2: "Kontrol gereken" göstergesi kontrol kartındaki kritik satırla AYNI sayıdır', async () => {
+  dashboardService.orders = [
+    order('c1', new Date(), 100, { operationStatus: 'ERROR' } as Partial<CargoOrder>),
+    order('c2', new Date(), 200),
+  ]
+  const expected = buildDashboardViewModel({ orders: dashboardService.orders, selectedPeriod: { key: 'today' } })
+    .actionRequired.find((item) => item.key === 'critical-data')?.count
+  const onNavigateOrders = vi.fn()
+  render(
+    <HomePage
+      orders={[]}
+      useServerOperationalSnapshot
+      dataSourceResolved
+      loading={false}
+      onRefresh={vi.fn()}
+      onNavigatePage={vi.fn()}
+      onNavigateOrders={onNavigateOrders}
+    />,
+  )
+  const ops = screen.getByRole('region', { name: 'Operasyon durumu' })
+  const attention = within(ops).getByText('Kontrol gereken').closest('button') as HTMLElement
+  await waitFor(() => expect(attention.querySelector('strong')?.textContent).toBe(String(expected)))
+  expect(expected).toBeGreaterThan(0)
+  fireEvent.click(attention)
+  expect(onNavigateOrders).toHaveBeenCalledWith('all', undefined, { actionFilter: 'critical' })
 })

@@ -54,18 +54,23 @@ const LABEL_STATE: Record<ShipmentLedgerRow['labelState'], { label: string; tone
   none: { label: 'Yok', tone: 'neutral' },
 }
 
+const YEAR_FORMAT = new Intl.DateTimeFormat('tr-TR', { timeZone: 'Europe/Istanbul', year: 'numeric' })
+
+/** Bu yılın tarihleri yılsız yazılır (tablo genişliği); eski yıllar yıllı. */
 function formatDateTime(value: string | null): string {
   if (!value) return '—'
   const ms = Date.parse(value)
   if (!Number.isFinite(ms)) return '—'
+  const date = new Date(ms)
+  const sameYear = YEAR_FORMAT.format(date) === YEAR_FORMAT.format(new Date())
   return new Intl.DateTimeFormat('tr-TR', {
     timeZone: 'Europe/Istanbul',
     day: '2-digit',
     month: 'short',
-    year: 'numeric',
+    ...(sameYear ? {} : { year: 'numeric' as const }),
     hour: '2-digit',
     minute: '2-digit',
-  }).format(new Date(ms))
+  }).format(date)
 }
 
 const PAGE_SIZE = 25
@@ -230,7 +235,11 @@ export function ShipmentsPage({
         <EmptyState
           kind="package"
           title="Bu filtrelerle gönderi yok"
-          body="Siparişler ekranından oluşturulan gönderiler burada izlenir."
+          body={
+            tab === 'attention'
+              ? 'Gönderi kaydı oluşmamış engellenen veya sonucu belirsiz işlemler Kargo Operasyonları > Kontrol gereken işlemler altında izlenir.'
+              : 'Siparişler ekranından oluşturulan gönderiler burada izlenir.'
+          }
         />
       ) : result ? (
         <>
@@ -245,10 +254,10 @@ export function ShipmentsPage({
                   <th>Takip No</th>
                   <th>Gönderi durumu</th>
                   <th>Etiket</th>
-                  <th>Kargo ücreti</th>
+                  <th>Ödeyen</th>
                   <th>Kargo hesabı</th>
                   <th>Oluşturulma</th>
-                  <th>Son güncelleme</th>
+                  <th>Son takip</th>
                   <th aria-label="İşlem" />
                 </tr>
               </thead>

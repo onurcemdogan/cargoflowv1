@@ -28,6 +28,7 @@ export interface PipelineRecentRow {
   trackingNumber: string | null
   updatedAt: string | null
   canReprint: boolean
+  hasShipment: boolean
 }
 
 export interface ShippingPipeline {
