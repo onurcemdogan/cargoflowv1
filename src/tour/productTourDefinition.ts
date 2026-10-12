@@ -60,27 +60,28 @@ export const PRODUCT_TOUR_V1: readonly ProductTourStep[] = [
     body: 'Siparişlerin kargo, etiket ve işlem durumlarını yönettiğiniz ana çalışma alanıdır.',
   },
   {
+    id: 'cargo',
+    page: 'cargo',
+    target: 'cargo-operations',
+    title: 'Kargo Operasyonları',
+    body:
+      'Kargo hattında şu anda ne olduğunu izlersiniz: kuyruk, hazır etiketler ve kontrol gereken işlemler. ' +
+      'Gönderi oluşturma Siparişler ekranından yapılır.',
+  },
+  {
+    id: 'shipments',
+    page: 'shipments',
+    target: 'shipments-ledger',
+    title: 'Gönderiler',
+    body: 'Kargoya çıkan gönderilerin durumunu, takip bilgisini ve etiketini buradan izlersiniz.',
+  },
+  {
     id: 'products',
     page: 'products',
     target: 'products-catalog',
     title: 'Ürünler',
     body:
       'Bağlı satış kanalındaki ürün ve varyant kataloğunu burada görüntüler ve senkronize edersiniz.',
-  },
-  {
-    id: 'cargo',
-    page: 'cargo',
-    target: 'cargo-operations',
-    title: 'Kargo İşlemleri',
-    body: 'Seçili siparişlerin gönderi, takip ve etiket işlemlerini bu ekrandan kontrol edersiniz.',
-  },
-  {
-    id: 'label-templates',
-    page: 'labelTemplates',
-    target: 'label-templates',
-    title: 'Etiket Şablonları',
-    body:
-      'Etiket yerleşimini gerçek sipariş verisiyle önizler ve düzenlersiniz. Kaydetmek, yayınlamak anlamına gelmez.',
   },
   {
     id: 'integrations',

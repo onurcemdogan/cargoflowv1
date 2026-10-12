@@ -416,6 +416,9 @@ const TENANT_AUTH_PATHS = [
   '/api/integrations/woocommerce',
   '/api/integrations/aras',
   '/api/shipping/payer',
+  // Kargo Operasyonları özeti + Gönderiler defteri — org kapsamlı, salt okunur.
+  '/api/shipping/pipeline',
+  '/api/shipping/shipments',
   // Çalışma alanı / işletme profili (PHASE2-B) — org kapsamlı.
   '/api/organization',
   // Taşıyıcı hesapları ve pazaryeri↔taşıyıcı eşlemesi (PHASE2-C).
@@ -2772,6 +2775,52 @@ app.post('/api/shipping/payer', async (request, response) => {
       return
     }
     response.status(500).json({ ok: false, message: 'Ödeyen ayarı kaydedilemedi.' })
+  }
+})
+
+// ── KARGO OPERASYONLARI / GÖNDERİLER — SALT OKUNUR ──────────────────────
+//
+// Taşıyıcıya/pazaryerine çağrı, yazım ve create YOKTUR. Kiracı yalnız
+// oturumdan gelir. Yanıtlarda ham taşıyıcı yükü, ZPL veya müşteri kişisel
+// verisi bulunmaz.
+app.get('/api/shipping/pipeline', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const { loadShippingPipeline } = await import('./shipments/shippingOverviewService.ts')
+    const pipeline = await loadShippingPipeline(context.db, { organizationId: context.organizationId })
+    response.json({ ok: true, ...pipeline })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Kargo operasyon özeti yüklenemedi.' })
+  }
+})
+
+app.get('/api/shipping/shipments', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  try {
+    const { listShipmentLedger, SHIPMENT_TABS } = await import('./shipments/shippingOverviewService.ts')
+    const query = request.query ?? {}
+    const text = (value) => (typeof value === 'string' && value.trim() ? value.trim() : undefined)
+    const tab = SHIPMENT_TABS.includes(text(query.tab)) ? text(query.tab) : 'all'
+    const labelState = ['ready', 'printed', 'none'].includes(text(query.labelState)) ? text(query.labelState) : undefined
+    const result = await listShipmentLedger(context.db, {
+      organizationId: context.organizationId,
+      filters: {
+        tab,
+        labelState,
+        provider: text(query.provider),
+        marketplace: text(query.marketplace),
+        search: text(query.search),
+        from: text(query.from),
+        to: text(query.to),
+        page: Number(query.page ?? 1),
+        pageSize: Number(query.pageSize ?? 25),
+      },
+    })
+    response.json({ ok: true, ...result })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Gönderiler yüklenemedi.' })
   }
 })
 
