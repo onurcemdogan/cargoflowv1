@@ -158,11 +158,12 @@ let rerunRequested = false
 let scheduledCycle: (() => Promise<unknown>) | null = null
 
 /**
- * YEDEK yoklama aralığı. Asıl tetik olaydır (`requestLabelJobCycle`):
- * üretici iş kuyruğa aldığında worker HEMEN uyanır. Eskiden tek tetik 60 sn
- * aralıktı; yeni sipariş en kötü ~1 dk boşta bekliyordu.
+ * YEDEK (yalnız kurtarma) yoklama aralığı. Gecikmenin asıl mekanizması
+ * olaydır (`requestLabelJobCycle`): üretici iş kuyruğa aldığında worker
+ * HEMEN uyanır; açılışta da bir kurtarma turu koşulur. Yedek yoklama
+ * gecikme mekanizması DEĞİLDİR; 5 sn yerine 60 sn'dir.
  */
-export const LABEL_WORKER_DEFAULT_INTERVAL_MS = 5_000
+export const LABEL_WORKER_DEFAULT_INTERVAL_MS = 60_000
 
 /** `LABEL_WORKER_ENABLED`: yalnız `true`/`1` etkinleştirir. */
 export function isLabelWorkerEnabled(

@@ -277,8 +277,9 @@ export async function writeOperationRecord(
           provider: columns.provider,
         })
         // KUYRUK DOLU → iş KAYBOLMAZ. Kayıt DB'de "taşıyıcı hazır +
-        // artefakt yok" durumunda kalır; bu SOURCE-OF-TRUTH'tur ve
-        // periyodik mutabakat onu sonraki sınırlı turda alır. Burada
+        // artefakt yok" durumunda kalır; bu SOURCE-OF-TRUTH'tur. Açılış
+        // mutabakatı veya ilk baskıdaki hydration onu tamamlar (periyodik
+        // mutabakat yalnız LABEL_BUNDLE_RECONCILE_ENABLED=true iken). Burada
         // yalnız görünürlük sağlanır; create sonucu ETKİLENMEZ.
         if (!enqueued) {
           console.warn(
