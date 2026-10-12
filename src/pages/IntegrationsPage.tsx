@@ -262,9 +262,9 @@ export function IntegrationsPage({
             <IntegrationCard
               type="carrier"
               title="Aras Kargo"
-              description="INTERNAL TEST — resmî test SOAP uç noktası"
+              description="İç test — resmî Aras test servisi"
               configured={false}
-              facts={[['Yayın', 'internal_test'], ['Canlı gönderi', 'Kapalı']]}
+              facts={[['Yayın', 'İç test'], ['Canlı gönderi', 'Kapalı']]}
               busy={busy}
               primaryAction={{
                 label: 'Hesap Bağla',

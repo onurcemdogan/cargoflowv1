@@ -66,7 +66,7 @@ export function ArasSection() {
         setMessage(body?.message ?? 'Kayıt başarısız.')
         return
       }
-      setMessage(body.message ?? 'Kaydedildi (internal_test).')
+      setMessage(body.message ?? 'Kaydedildi. Aras Kargo iç testtedir.')
       setPassword('')
       await load()
     } catch {
