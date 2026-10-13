@@ -112,7 +112,13 @@ export function parseTrendyolStreamPage(body: unknown): TrendyolStreamPage {
 }
 
 export interface StreamRunResult {
+  /**
+   * Toplanan paketler — YALNIZ `onPage` VERİLMEDİĞİNDE dolar. `onPage`
+   * verildiyse her sayfa orada işlenir ve burada TUTULMAZ (boş dizi).
+   */
   packages: Record<string, unknown>[]
+  /** Zincirde görülen toplam paket sayısı (`onPage` verilse de). */
+  packageCount: number
   pages: number
   lastCursor: string | null
   stopReason: StreamStopReason
@@ -124,6 +130,12 @@ export interface StreamRunResult {
 /**
  * İmleç zincirini yürütür. Sayfa başına `onPage` çağrılır; çağıran yerel
  * yazmayı orada yapar, böylece bellek şişmez.
+ *
+ * BELLEK (2026-10-13): `onPage` verildiğinde sayfalar ARTIK bir dizide
+ * BİRİKTİRİLMEZ. Eskiden her sayfa koşulsuz `collected`'a ekleniyordu;
+ * varsayılan sınırla bir tur 500 sayfa × 200 = 100.000 paketi aynı anda
+ * bellekte tutabiliyordu. `onPage` verilmezse davranış AYNI kalır (paketler
+ * döner).
  *
  * Zincir boyunca filtreler DEĞİŞMEZ (parmak izi ile kilitli).
  */
@@ -145,6 +157,7 @@ export async function runTrendyolStream(params: {
     params.minIntervalMs ?? TRENDYOL_STREAM_MIN_INTERVAL_MS,
   )
   const collected: Record<string, unknown>[] = []
+  let packageCount = 0
   let cursor = params.startCursor ?? null
   let lastCursor: string | null = null
   let pages = 0
@@ -165,8 +178,10 @@ export async function runTrendyolStream(params: {
     }
     const page = parseTrendyolStreamPage(response.body)
     pages += 1
-    collected.push(...page.packages)
+    packageCount += page.packages.length
+    // Sayfa YA `onPage`'de işlenir YA DA toplanır — ikisi birden DEĞİL.
     if (params.onPage) await params.onPage(page, index)
+    else collected.push(...page.packages)
     lastCursor = page.nextCursor ?? lastCursor
 
     if (!page.hasMore) { stopReason = 'NO_MORE_PAGES'; break }
@@ -182,6 +197,7 @@ export async function runTrendyolStream(params: {
 
   return {
     packages: collected,
+    packageCount,
     pages,
     lastCursor,
     stopReason,
