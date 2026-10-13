@@ -54,20 +54,35 @@ sessizce "hazır değil" demeye başlardı. HV-9 bunu korur.
 | `LABEL_WORKER_ENABLED` | Arka plan etiket worker'ı | **kapalı** |
 | `TRENDYOL_STREAM_SYNC_ENABLED` | Trendyol akış senkronu | **kapalı** |
 | `LABEL_BUNDLE_RECONCILE_ENABLED` | Periyodik baskı paketi mutabakatı | **kapalı** |
+| `LABEL_WORKER_POLL_ENABLED` | Worker'ın 60 sn yedek yoklaması | **kapalı** |
 
 Bayrak açıkça `true`/`1` yapılmadıkça **hiçbir zamanlayıcı kurulmaz**:
 boot'ta taşıyıcı çağrısı yok, periyodik create yok, pazaryeri çağrısı yok
-(HV-1). `LABEL_BUNDLE_RECONCILE_ENABLED` de aynı kuralı izler: yalnız
-`true`/`TRUE`/`1` açar; tanımsız, boş, `false`, `0`, `yes`, `off` ve diğer
-her değer kapalıdır.
+(HV-1). `LABEL_BUNDLE_RECONCILE_ENABLED` ve `LABEL_WORKER_POLL_ENABLED` de
+aynı kuralı izler: yalnız `true`/`TRUE`/`1` açar; tanımsız, boş, `false`,
+`0`, `yes`, `off` ve diğer her değer kapalıdır.
 
 **Baskı paketi mutabakatı (bellek hotfix'i, 2026-10-13):** 60 sn'lik
 periyodik tur üretimde RSS'i dakikalar içinde ~868 MB'a taşıyıp PM2
 restart'ını tetikledi. Artık açılışta TEK sınırlı tur koşar; yeni
 gönderiler `shipmentPersistenceService → enqueueBundlePreparation` ile olay
-güdümlü hazırlanır. Worker'ın yedek yoklaması 60 sn'dir (yalnız kurtarma);
-üretici kuyruğa aldığında worker `requestLabelJobCycle()` ile hemen uyanır
-ve açılışta bir kurtarma turu koşar.
+güdümlü hazırlanır.
+
+**Worker yedek yoklaması (ikinci bellek hotfix'i, 2026-10-13):** paket
+mutabakatı kapalıyken worker yeniden açıldığında bellek yine büyüdü
+(~602 → ~867 MB, PM2 restart; PREPARING yok, UNKNOWN sabit). Heap snapshot
+alınmadı; tek değişken worker'ı açıp kapatmaktı ve worker'ın tek periyodik
+işi 60 sn'lik tam turdur (üretim izolasyonu + kod çıkarımı, kesin kök neden
+değil). `LABEL_WORKER_ENABLED=true` artık worker'ı **olay güdümlü**
+açar: açılışta tek kurtarma turu, üretici kuyruğa aldığında
+`requestLabelJobCycle()` ile anında uyanma. 60 sn yedek yoklama yalnız
+`LABEL_WORKER_POLL_ENABLED=true` ile kurulur.
+
+Yoklama kapalıyken şu işler bir sonraki uyandırmada (yeni iş kuyruğa
+alan bir senkron) veya açılışta işlenir: `FAILED_SAFE_TO_RETRY` yeniden
+denemeleri, CLI'larla (`auto-label:catchup`, BLOCKED kurtarma, karantina,
+normalizer) kuyruğa geri alınan işler ve bayat kilit serbest bırakma.
+Bunların periyodik işlenmesi gerekiyorsa yoklama açılır.
 
 **Dağıtım sırasında otomatik etiket AÇILMAZ.** Önce kod dağıtılır ve
 davranış gözlenir; worker ayrı ve bilinçli bir adımda açılır.

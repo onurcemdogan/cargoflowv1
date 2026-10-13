@@ -265,7 +265,9 @@ test('STALE-10/11: SIGTERM yeni talebi durdurur ve calisani bosaltir', async (t)
   const worker = await import('./shipments/labelJobWorker.ts')
   t.after(() => worker.stopLabelJobScheduler())
 
-  const env = { LABEL_WORKER_ENABLED: 'true' }
+  // İlk tur yedek yoklamayla açılır; yoklama artık varsayılan KAPALI olduğu
+  // için bu boşaltma testi onu AÇIKÇA etkinleştirir.
+  const env = { LABEL_WORKER_ENABLED: 'true', LABEL_WORKER_POLL_ENABLED: 'true' }
   let cycles = 0
   let release
   const gate = new Promise((resolve) => { release = resolve })
@@ -308,7 +310,7 @@ test('STALE-11b: sure dolarsa zorla beklenmez ama kanit kalicidir', async (t) =>
   const gate = new Promise((resolve) => { release = resolve })
   worker.startLabelJobScheduler({
     intervalMs: 5_000,
-    env: { LABEL_WORKER_ENABLED: 'true' },
+    env: { LABEL_WORKER_ENABLED: 'true', LABEL_WORKER_POLL_ENABLED: 'true' },
     runCycle: async () => { await gate },
   })
   await new Promise((resolve) => setTimeout(resolve, 5_200))

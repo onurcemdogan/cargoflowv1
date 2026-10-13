@@ -324,13 +324,21 @@ test('MEM-5: üretici kuyruğa aldığında worker 60 sn yedeği beklemeden HEME
   )
 })
 
-test('MEM-6: worker yedek yoklaması 60 sn (5 sn DEĞİL); açılışta tek kurtarma turu', async (t) => {
+// SÖZLEŞME DEĞİŞTİ (ikinci bellek hotfix'i, 2026-10-13): yedek yoklama artık
+// VARSAYILAN KAPALI; yalnız LABEL_WORKER_POLL_ENABLED ile 60 sn kurulur.
+test('MEM-6: worker yedek yoklaması varsayılan KAPALI, açıkça açılınca 60 sn; açılışta tek kurtarma turu', async (t) => {
   worker.stopLabelJobScheduler()
   const spy = captureSetInterval()
   t.after(() => { spy.restore(); worker.stopLabelJobScheduler() })
   let runs = 0
-  const started = worker.startLabelJobScheduler({
+  assert.equal(worker.startLabelJobScheduler({
     env: { LABEL_WORKER_ENABLED: 'true' },
+    runCycle: async () => { runs += 1 },
+  }), true)
+  assert.deepEqual(spy.calls, [], 'yoklama bayrağı yokken zamanlayıcı KURULMAZ')
+  worker.stopLabelJobScheduler()
+  const started = worker.startLabelJobScheduler({
+    env: { LABEL_WORKER_ENABLED: 'true', LABEL_WORKER_POLL_ENABLED: 'true' },
     runCycle: async () => { runs += 1 },
   })
   assert.equal(started, true)
@@ -351,6 +359,188 @@ test('MEM-6: worker yedek yoklaması 60 sn (5 sn DEĞİL); açılışta tek kurt
   assert.doesNotMatch(boot, /intervalMs/)
   assert.equal(boot.match(/requestLabelJobCycle\(\)/g)?.length, 1)
   assert.match(boot, /if \(started\) \{[\s\S]*worker\.requestLabelJobCycle\(\)/)
+})
+
+// ═══ POLL: İKİNCİ BELLEK HOTFIX'İ — YEDEK YOKLAMA VARSAYILAN KAPALI ══════
+//
+// ÜRETİM İZOLASYON KANITI (master b1cfb0a): paket mutabakatı kapalıyken
+// worker KAPALI → stabil; worker AÇIK → ~602 → ~867 MB ve PM2 restart
+// (PREPARING yok, UNKNOWN 25'te sabit). Heap snapshot yok; şüpheli 60 sn'lik
+// tam worker turu. Worker artık olay güdümlü; yoklama yalnız açık bayrakla.
+
+const tick = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms))
+
+test('POLL-1: worker açık + LABEL_WORKER_POLL_ENABLED tanımsız/kapalı → zamanlayıcı KURULMAZ, olay tetiği etkin', async (t) => {
+  worker.stopLabelJobScheduler()
+  const spy = captureSetInterval()
+  t.after(() => { spy.restore(); worker.stopLabelJobScheduler() })
+  for (const poll of [undefined, '', 'false', 'FALSE', '0', 'yes', 'off', 'on']) {
+    const env = { LABEL_WORKER_ENABLED: 'true' }
+    if (poll !== undefined) env.LABEL_WORKER_POLL_ENABLED = poll
+    assert.equal(worker.startLabelJobScheduler({ env, runCycle: async () => {} }), true)
+    assert.equal(worker.isLabelJobSchedulerActive(), true, `poll=${poll}: worker etkin`)
+    assert.equal(worker.isLabelWorkerPollActive(), false, `poll=${poll}: yoklama kapalı`)
+    worker.stopLabelJobScheduler()
+  }
+  assert.deepEqual(spy.calls, [], 'hiçbir 60 sn zamanlayıcı kurulmamalı')
+  assert.equal(worker.isLabelWorkerPollEnabled({}), false)
+})
+
+test('POLL-2: LABEL_WORKER_POLL_ENABLED=true/TRUE/1 → 60 sn yedek yoklama kurulur', async (t) => {
+  worker.stopLabelJobScheduler()
+  const spy = captureSetInterval()
+  t.after(() => { spy.restore(); worker.stopLabelJobScheduler() })
+  for (const poll of ['true', 'TRUE', '1']) {
+    assert.equal(worker.startLabelJobScheduler({
+      env: { LABEL_WORKER_ENABLED: 'true', LABEL_WORKER_POLL_ENABLED: poll },
+      runCycle: async () => {},
+    }), true)
+    assert.equal(worker.isLabelWorkerPollActive(), true, `poll=${poll}`)
+    worker.stopLabelJobScheduler()
+    assert.equal(worker.isLabelWorkerPollActive(), false)
+  }
+  assert.deepEqual(spy.calls, [60_000, 60_000, 60_000])
+  // Worker bayrağıyla AYNI anlam.
+  for (const value of ['true', 'TRUE', '1', '', 'false', '0', 'yes', 'off']) {
+    assert.equal(
+      worker.isLabelWorkerPollEnabled({ LABEL_WORKER_POLL_ENABLED: value }),
+      worker.isLabelWorkerEnabled({ LABEL_WORKER_ENABLED: value }),
+      `'${value}'`,
+    )
+  }
+})
+
+test('POLL-3: yoklama kapalıyken requestLabelJobCycle() turu HEMEN çalıştırır', async (t) => {
+  worker.stopLabelJobScheduler()
+  t.after(() => worker.stopLabelJobScheduler())
+  let runs = 0
+  worker.startLabelJobScheduler({ env: { LABEL_WORKER_ENABLED: 'true' }, runCycle: async () => { runs += 1 } })
+  assert.equal(worker.isLabelWorkerPollActive(), false)
+  assert.equal(runs, 0, 'başlatma tek başına tur açmaz')
+  assert.equal(worker.requestLabelJobCycle(), true)
+  await tick()
+  assert.equal(runs, 1)
+})
+
+test('POLL-4: yoklama kapalıyken tur sürerken gelen uyandırma kaybolmaz; tur bitince TEK kez yeniden koşar', async (t) => {
+  worker.stopLabelJobScheduler()
+  t.after(() => worker.stopLabelJobScheduler())
+  let runs = 0
+  let running = 0
+  let maxRunning = 0
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  worker.startLabelJobScheduler({
+    env: { LABEL_WORKER_ENABLED: 'true' },
+    runCycle: async () => {
+      runs += 1
+      running += 1
+      maxRunning = Math.max(maxRunning, running)
+      if (runs === 1) await gate
+      running -= 1
+    },
+  })
+  assert.equal(worker.isLabelWorkerPollActive(), false)
+  worker.requestLabelJobCycle()
+  await tick()
+  assert.equal(runs, 1)
+  // Tur sürerken üç uyandırma → tur bitince YALNIZ bir ek tur.
+  assert.equal(worker.requestLabelJobCycle(), true)
+  worker.requestLabelJobCycle()
+  worker.requestLabelJobCycle()
+  release()
+  await tick(40)
+  assert.equal(runs, 2)
+  assert.equal(maxRunning, 1, 'turlar üst üste binmez')
+  await tick(40)
+  assert.equal(runs, 2, 'zamanlayıcı yokken kendiliğinden tur açılmaz')
+})
+
+test('POLL-5: açılış TEK kurtarma turu çağırır; sonrasında kendiliğinden tur yok', async (t) => {
+  worker.stopLabelJobScheduler()
+  t.after(() => worker.stopLabelJobScheduler())
+  // index.mjs `startLabelJobWorkerOnBoot` sırası: kur → başladıysa tek uyandırma.
+  let runs = 0
+  const started = worker.startLabelJobScheduler({ env: { LABEL_WORKER_ENABLED: 'true' }, runCycle: async () => { runs += 1 } })
+  if (started) worker.requestLabelJobCycle()
+  await tick(60)
+  assert.equal(runs, 1)
+
+  const source = readFileSync(join(here, 'index.mjs'), 'utf8')
+  const boot = source.slice(source.indexOf('async function startLabelJobWorkerOnBoot'), source.indexOf('async function startTrendyolStreamSyncOnBoot'))
+  assert.equal(boot.match(/requestLabelJobCycle\(\)/g)?.length, 1, 'açılışta tek kurtarma turu')
+  assert.doesNotMatch(boot, /intervalMs|LABEL_WORKER_POLL_ENABLED\s*[:=]/, 'açılış yoklamayı kendisi açmaz')
+  assert.match(boot, /isLabelWorkerPollActive\(\)/, 'günlük yoklama durumunu yazar')
+})
+
+test('POLL-6: worker kapalı / durdurulmuş / boşaltılıyorken uyandırma HİÇBİR ŞEY yapmaz', async (t) => {
+  worker.stopLabelJobScheduler()
+  t.after(() => worker.stopLabelJobScheduler())
+  let runs = 0
+  const runCycle = async () => { runs += 1 }
+  // LABEL_WORKER_ENABLED kapalı → kurulmaz, uyandırma yok.
+  for (const value of [undefined, '', 'false', '0']) {
+    const env = value === undefined ? {} : { LABEL_WORKER_ENABLED: value }
+    assert.equal(worker.startLabelJobScheduler({ env: { ...env, LABEL_WORKER_POLL_ENABLED: 'true' }, runCycle }), false)
+    assert.equal(worker.isLabelJobSchedulerActive(), false)
+    assert.equal(worker.requestLabelJobCycle(), false)
+  }
+  // Durdurulmuş worker uyanmaz.
+  worker.startLabelJobScheduler({ env: { LABEL_WORKER_ENABLED: 'true' }, runCycle })
+  worker.stopLabelJobScheduler()
+  assert.equal(worker.requestLabelJobCycle(), false)
+  // Boşaltılan worker uyanmaz ve yeniden kurulmaz.
+  worker.startLabelJobScheduler({ env: { LABEL_WORKER_ENABLED: 'true' }, runCycle })
+  const drained = await worker.drainLabelJobScheduler(100)
+  assert.equal(drained.drained, true)
+  assert.equal(worker.isLabelJobSchedulerActive(), false)
+  assert.equal(worker.requestLabelJobCycle(), false)
+  assert.equal(worker.startLabelJobScheduler({ env: { LABEL_WORKER_ENABLED: 'true' }, runCycle }), false)
+  await tick()
+  assert.equal(runs, 0, 'hiçbir tur koşmamalı')
+})
+
+test('POLL-7: UNKNOWN_AFTER_NETWORK — yoklama kapalı worker\'a tekrarlı uyandırma ikinci create ÜRETMEZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  worker.stopLabelJobScheduler()
+  t.after(() => worker.stopLabelJobScheduler())
+  const organizationId = await makeTenant(db)
+  await seedPackage(db, organizationId, 'UNK-POLL')
+
+  let calls = 0
+  let cycles = 0
+  worker.startLabelJobScheduler({
+    env: { LABEL_WORKER_ENABLED: 'true' },
+    runCycle: async () => {
+      cycles += 1
+      return worker.runLabelJobCycle({
+        db,
+        workerId: `poll-7-${cycles}`,
+        // Ağa çıkıldı, sonuç belirsiz.
+        runLabel: async () => { calls += 1; return { labelReady: false, networkCrossed: true, carrierCalls: 1 } },
+      })
+    },
+  })
+  assert.equal(worker.isLabelWorkerPollActive(), false)
+  const waitIdle = async (target) => {
+    for (let i = 0; i < 200 && cycles < target; i += 1) await tick(10)
+    await tick(30)
+  }
+  assert.equal((await producer.enqueueEligibleAutoLabelJobs(db, organizationId)).enqueued, 1)
+  worker.requestLabelJobCycle()
+  await waitIdle(1)
+  assert.equal(calls, 1)
+  assert.deepEqual((await jobsOf(db, organizationId)).map((job) => job.status), ['UNKNOWN_AFTER_NETWORK'])
+
+  for (let round = 2; round <= 4; round += 1) {
+    assert.equal((await producer.enqueueEligibleAutoLabelJobs(db, organizationId)).enqueued, 0)
+    worker.requestLabelJobCycle()
+    await waitIdle(round)
+  }
+  assert.ok(cycles >= 4, `uyandırmalar tur açtı (${cycles})`)
+  assert.equal(calls, 1, 'ikinci create YOK')
+  assert.deepEqual((await jobsOf(db, organizationId)).map((job) => job.status), ['UNKNOWN_AFTER_NETWORK'])
 })
 
 test('MEM-7: UNKNOWN_AFTER_NETWORK işi bir daha ASLA create\'e gitmez (worker turu, uyandırma, üretici tekrarı)', async (t) => {
