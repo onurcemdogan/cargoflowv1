@@ -61,6 +61,12 @@ const CONTRACT_PACK_PATHS: Record<string, string> = {
  * kanıtlanmadı (yapılandırmadan gelir) ve canlı doğrulama YAPILMADI —
  * kanonik yazım ve karşılama yan etkileri `liveWriteGate` ile KAPALIDIR.
  *
+ * n11 `internal_test`tir (N11-LIVE-001): resmî sözleşme (shipmentPackages,
+ * appkey/appsecret başlıkları, 0-tabanlı page + size ≤ 100 + totalPages,
+ * 15 günlük pencere, `content` zarfı) uygulandı; hesap kapsamlı şifreli kimlik,
+ * yalnız-okuma elle senkron. Canlı doğrulama YAPILMADI (gerçek hesap yok) —
+ * kanonik yazım `liveWriteGate` ile KAPALIDIR; pazaryeri yazması YOK.
+ *
  * Bu harita KONFİGÜRASYONDUR; sağlık sonucundan ETKİLENMEZ.
  */
 export const ROLLOUT_STAGE_POLICY: Record<string, CapabilityStage> = {
@@ -69,6 +75,7 @@ export const ROLLOUT_STAGE_POLICY: Record<string, CapabilityStage> = {
   ikas: 'internal_test',
   ticimax: 'off',
   hepsiburada: 'internal_test',
+  n11: 'internal_test',
 }
 
 export function resolveRolloutStage(providerKey: string): CapabilityStage {
@@ -160,11 +167,35 @@ function hepsiburadaDescriptor(): ConnectorDescriptor {
   }
 }
 
+/**
+ * N11 — yalnız-okuma sipariş/paket bağlayıcısı (iç test).
+ *
+ * `orders.read` resmî sözleşmeyle doğrulandı. Pazaryeri statü yazması
+ * CargoFlow politikasıyla KAPALIDIR. Webhook desteği kanıtlanmadığı için
+ * BEYAN EDİLMEZ (ne var ne yok denir).
+ */
+function n11Descriptor(): ConnectorDescriptor {
+  return {
+    providerKey: 'n11',
+    kind: 'marketplace',
+    displayName: 'n11',
+    capabilities: [
+      declareCapability('orders.read', { stage: 'internal_test' }),
+      declareCapability('orders.status.write', {
+        supported: false,
+        contractVerified: true,
+        reason: 'Pazaryeri yazmaları global olarak kapalıdır.',
+      }),
+    ],
+  }
+}
+
 /** Kayıt defterini kurar. Saf: DB/ağ YOK, yalnız dosya okuma. */
 export function buildProviderCatalog(): ConnectorRegistry {
   const registry = new ConnectorRegistry()
   registry.register(trendyolDescriptor())
   registry.register(hepsiburadaDescriptor())
+  registry.register(n11Descriptor())
   for (const providerKey of Object.keys(CONTRACT_PACK_PATHS)) {
     registry.register(descriptorFromContractPack(providerKey))
   }
@@ -172,5 +203,5 @@ export function buildProviderCatalog(): ConnectorRegistry {
 }
 
 export const HEALTH_SUPPORTED_PROVIDERS = [
-  'trendyol', 'woocommerce', 'ikas', 'ticimax', 'hepsiburada',
+  'trendyol', 'woocommerce', 'ikas', 'ticimax', 'hepsiburada', 'n11',
 ] as const

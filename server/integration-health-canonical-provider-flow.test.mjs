@@ -186,13 +186,15 @@ test('IH-CANON-6: desteklenmeyen hesap satırı sağlayıcı UYDURMAZ', async (t
   // sağlayıcı olarak Hepsiburada'yı kullanıyordu; Hepsiburada artık sağlık
   // destekli bir bağlayıcıdır. İlke AYNEN korunur: hâlâ desteklenmeyen bir
   // pazaryerinin (N11) hesap satırı sağlayıcı UYDURMAZ.
+  // SUPERSEDED (N11-LIVE-001): n11 de artık sağlık destekli bir bağlayıcıdır;
+  // örnek, kataloğda OLMAYAN varsayımsal bir pazaryeriyle (Amazon) sürer.
   await db.insert(schema.marketplaceAccounts).values([
-    { organizationId: org, marketplace: 'N11', providerAccountId: 'n1' },
+    { organizationId: org, marketplace: 'Amazon', providerAccountId: 'a1' },
     { organizationId: org, marketplace: '', providerAccountId: 'blank' },
   ])
   const entries = await loadHealth(db, org)
   const keys = [...new Set(entries.map((entry) => entry.providerKey))].sort()
-  assert.deepEqual(keys, ['hepsiburada', 'ikas', 'ticimax', 'trendyol', 'woocommerce'])
+  assert.deepEqual(keys, ['hepsiburada', 'ikas', 'n11', 'ticimax', 'trendyol', 'woocommerce'])
   assert.equal(entries.some((entry) => entry.marketplaceAccountId !== null), false)
 })
 

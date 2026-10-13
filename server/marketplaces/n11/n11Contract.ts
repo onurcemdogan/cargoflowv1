@@ -11,6 +11,35 @@
 //   · pencere: yalnız startDate → sonraki 15 gün; yalnız endDate → önceki
 //     15 gün; aşırı geniş aralık SON 15 günlük pencereye indirgenebilir
 //   · statü TEK değer alır (çok statü → ÇOK İSTEK)
+//
+// Ek kanıt — n11 Developer, "Sipariş Listeleme Servisi"
+// (developer.n11.com/documentation/n11-siparis-entegrasyonu/
+// siparis-listeleme-servisi/; Mağaza Destek sayfası buraya yönlendirir),
+// doğrulama 2026-10-13:
+//   · yanıt zarfı: { pageCount, totalPages, page, size, content: [...] }
+//   · `startDate`/`endDate`: long, epoch MİLİSANİYE ("GMT +3 olarak
+//     gönderilmelidir" notuyla)
+//   · `orderByField=true` → tarih aralığı paketin `lastModifiedDate`ine
+//     uygulanır; yoksa sipariş oluşturma tarihine
+//   · yanıttaki tarihler epoch ms SAYIDIR; paket statüsü `shipmentPackageStatus`
+//   · `sellerId` paket içinde döner
+//   · "Konuma Özel Teslimat" siparişlerinde paket numarası (`id`) NULL döner
+
+/** Resmî yanıt zarfında paket listesini taşıyan alan — kanıtlı. */
+export const N11_LIST_FIELD = 'content'
+
+/**
+ * Okuma isteklerinde `sender` değeri — HER İSTEKTE AÇIKÇA gönderilir.
+ *
+ * Resmî: `sender` (SELLER: satıcı gönderir · n11: n11 depo gönderir · ALL:
+ * tümü) gönderilmezse varsayılan "SELLER"dır; n11depom siparişleri ancak
+ * parametreyle listelenir. Parametresiz okuma n11 depo siparişlerini SESSİZCE
+ * dışlar, pencere yine "tam" sanılır ve imleç onları kalıcı olarak geçerdi.
+ * CargoFlow sipariş okuması bu yüzden TÜM göndericileri ister; değer kullanıcı
+ * tarafından yapılandırılamaz. (Hangi siparişin CargoFlow karşılamasına
+ * uygun olduğu — ör. n11 depo gönderimi DEĞİL — okuma değil, ayrı karardır.)
+ */
+export const N11_READ_SENDER = 'ALL'
 
 /** Resmî uç nokta — kanıtlı. */
 export const N11_SHIPMENT_PACKAGES_URL =

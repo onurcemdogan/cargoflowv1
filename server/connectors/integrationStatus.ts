@@ -66,9 +66,9 @@ interface ProviderStatusDefinition {
  * Uygulama aşaması KOD gerçeğidir (sözleşme paketi, bağlayıcı, test kapsamı);
  * yayın aşaması POLİTİKADIR. Hepsiburada bağlayıcısı uygulandı
  * (HEPSIBURADA-LIVE-001: hesap kapsamlı yalnız-okuma) ama canlı doğrulama
- * YOK → yayın aşaması `internal_test` ("İç test", asla "Canlı"). n11 sipariş
- * sözleşmesi doğrulandı ama bağlantı akışı yok → geliştiriliyor; Ticimax
- * iskelet bağlayıcıdır.
+ * YOK → yayın aşaması `internal_test` ("İç test", asla "Canlı"). n11 de aynı
+ * durumdadır (N11-LIVE-001: hesap kapsamlı yalnız-okuma; canlı doğrulama
+ * YOK). Ticimax iskelet bağlayıcıdır.
  */
 const DEFINITIONS: readonly ProviderStatusDefinition[] = [
   { providerKey: 'trendyol', displayName: 'Trendyol', kind: 'marketplace', implementationStage: 'production', rolloutStage: () => resolveRolloutStage('trendyol') },
@@ -77,7 +77,7 @@ const DEFINITIONS: readonly ProviderStatusDefinition[] = [
   { providerKey: 'ikas', displayName: 'ikas', kind: 'commerce_platform', implementationStage: 'implemented', rolloutStage: () => resolveRolloutStage('ikas') },
   { providerKey: 'aras', displayName: 'Aras Kargo', kind: 'shipping', implementationStage: 'implemented', rolloutStage: () => ARAS_ROLLOUT_STAGE },
   { providerKey: 'hepsiburada', displayName: 'Hepsiburada', kind: 'marketplace', implementationStage: 'implemented', rolloutStage: () => resolveRolloutStage('hepsiburada') },
-  { providerKey: 'n11', displayName: 'n11', kind: 'marketplace', implementationStage: 'in_development', rolloutStage: () => 'off' },
+  { providerKey: 'n11', displayName: 'n11', kind: 'marketplace', implementationStage: 'implemented', rolloutStage: () => resolveRolloutStage('n11') },
   { providerKey: 'ticimax', displayName: 'Ticimax', kind: 'commerce_platform', implementationStage: 'in_development', rolloutStage: () => resolveRolloutStage('ticimax') },
 ]
 
