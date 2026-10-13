@@ -408,6 +408,8 @@ const TENANT_AUTH_PATHS = [
   '/api/integrations/ikas',
   // Hepsiburada hesap uçları da org kapsamlıdır (HEPSIBURADA-LIVE-001).
   '/api/integrations/hepsiburada',
+  // n11 hesap uçları da org kapsamlıdır (N11-LIVE-001).
+  '/api/integrations/n11',
   // AYNI KÖK NEDEN, ÜÇÜNCÜ KEZ: bu uçların hepsi `requireOnboardingContext`
   // ile org kapsamı ister ama listede YOKTU; auth modda (üretim) geçerli
   // oturuma rağmen `request.auth` boş kalıyor ve 404 dönüyorlardı. Kapsam
@@ -3140,6 +3142,61 @@ app.post('/api/integrations/hepsiburada/accounts/sync', async (request, response
   const context = await requireOnboardingContext(request, response)
   if (!context) return
   await runHepsiburadaHandler(context, request, response, 'handleHepsiburadaSync', 'Hepsiburada senkronu tamamlanamadı.')
+})
+
+// ── N11 (İÇ TEST, HESAP KAPSAMLI, YALNIZ OKUMA) ────────────────────────
+//
+// Uç davranışı `connectors/n11/n11HttpHandlers.ts` içindedir; burada YALNIZ
+// kiracı kapsamı çözülür. Kiracı gövdeden ALINMAZ. appSecret HİÇBİR yanıtta
+// dönmez. OTOMATİK ZAMANLAYICI YOK; pazaryeri YAZMASI YOK. Rotalar AÇIK
+// yazılır ve kiracı kapsamını HER rota kendi gövdesinde çözer
+// (`tenant-auth-coverage-flow` kaynak taramasıyla kilitlidir).
+async function runN11Handler(context, request, response, handlerName, failure) {
+  try {
+    const [handlers, client] = await Promise.all([
+      import('./connectors/n11/n11HttpHandlers.ts'),
+      import('./connectors/n11/n11Client.ts'),
+    ])
+    const result = await handlers[handlerName]({
+      db: context.db,
+      organizationId: context.organizationId,
+      body: request.body ?? {},
+      clientOptions: { transport: client.fetchN11Transport },
+    })
+    response.status(result.status).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: failure })
+  }
+}
+
+app.get('/api/integrations/n11/accounts', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runN11Handler(context, request, response, 'handleN11ListAccounts', 'n11 hesapları okunamadı.')
+})
+
+app.post('/api/integrations/n11/accounts', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runN11Handler(context, request, response, 'handleN11Connect', 'n11 API bilgileri kaydedilemedi.')
+})
+
+app.post('/api/integrations/n11/accounts/disconnect', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runN11Handler(context, request, response, 'handleN11Disconnect', 'Bağlantı kaldırılamadı.')
+})
+
+app.post('/api/integrations/n11/accounts/test', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runN11Handler(context, request, response, 'handleN11Test', 'n11 okuma testi tamamlanamadı.')
+})
+
+app.post('/api/integrations/n11/accounts/sync', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runN11Handler(context, request, response, 'handleN11Sync', 'n11 senkronu tamamlanamadı.')
 })
 
 // ── ARAS KARGO (İÇ TEST, HESAP KAPSAMLI) ───────────────────────────────

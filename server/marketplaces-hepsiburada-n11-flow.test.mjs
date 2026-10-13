@@ -437,7 +437,10 @@ const n11Raw = {
   cargoProviderName: 'Aras Kargo',
   lastModifiedDate: '2026-08-19T08:30:00Z',
   sellerId: 'SELLER-7',
-  status: 'Picking',
+  // SUPERSEDED (N11-LIVE-001): resmî yanıt sözlüğünde paket statüsü
+  // `shipmentPackageStatus`tır (developer.n11.com, 2026-10-13); `status` yalnız
+  // istek filtresidir. Fixture resmî alana taşındı; ilke aynen korunur.
+  shipmentPackageStatus: 'Picking',
   shippingAddress: { city: 'Ankara', district: 'Çankaya' },
   billingAddress: { city: 'Ankara' },
   lines: [{ orderLineId: 'N11-LINE-1', productName: 'Ürün A', quantity: 3 }],
@@ -473,7 +476,7 @@ test('N11-14: ham statu KORUNUR ve Trendyol sozlugu KULLANILMAZ', () => {
   assert.equal(order.rawMarketplaceStatus, 'Picking')
   assert.equal(order.operationStatus, 'PICKING')
   // Bilinmeyen statu sessizce "Yeni"ye DUSMEZ.
-  const unknown = N11O.normalizeN11Order({ ...n11Raw, status: 'Awaiting' })
+  const unknown = N11O.normalizeN11Order({ ...n11Raw, shipmentPackageStatus: 'Awaiting' })
   assert.equal(unknown.operationStatus, null)
   assert.equal(unknown.rawMarketplaceStatus, 'Awaiting')
 })

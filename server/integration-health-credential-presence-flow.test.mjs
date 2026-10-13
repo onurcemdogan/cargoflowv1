@@ -357,9 +357,11 @@ test('IHB-13: uc nokta UYDURMAZ — gozlenemeyen saglayici UNKNOWN bildirir', ()
   // SUPERSEDED (HEPSIBURADA-LIVE-001): hepsiburada da gerçek hesap kapsamlı
   // kimlik kalıcılığına sahiptir (connector_credentials) ve YALNIZ bu
   // listede geçer; varlığı yine gerçek satırlardan türetilir.
+  // SUPERSEDED (N11-LIVE-001): n11 de aynı modele girdi (connector_credentials,
+  // hesap kapsamlı); varlığı gerçek satırlardan türetilir.
   assert.match(
     service,
-    /ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS = \['woocommerce', 'ikas', 'aras', 'hepsiburada'\] as const/,
+    /ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS = \['woocommerce', 'ikas', 'aras', 'hepsiburada', 'n11'\] as const/,
   )
   assert.equal(service.split('ikas').length - 1, 1, 'ikas yalniz listede gecer')
   // Woo/ikas varligi LITERAL DEGIL, GERCEK SATIRLARDAN turetilir.

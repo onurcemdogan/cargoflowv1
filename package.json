@@ -53,6 +53,7 @@
     "test:landing": "node --test server/landing-contract-flow.test.mjs && vitest run --config vitest.config.ts src/test/landing.dom.test.tsx",
     "test:ikas": "node --test server/ikas-connector-flow.test.mjs && vitest run --config vitest.config.ts src/test/ikasSection.dom.test.tsx",
     "test:hepsiburada": "node --test server/hepsiburada-live-read-flow.test.mjs && vitest run --config vitest.config.ts src/test/hepsiburadaSection.dom.test.tsx",
+    "test:n11": "node --test server/n11-live-read-flow.test.mjs && vitest run --config vitest.config.ts src/test/n11Section.dom.test.tsx",
     "test:aras": "node --test server/carrier-aras-contract-flow.test.mjs server/carrier-aras-client-flow.test.mjs server/carrier-aras-expansion-flow.test.mjs",
     "test:ticimax": "node --test server/ticimax-connector-flow.test.mjs",
     "test:onboarding": "node --test server/onboarding-provider-flow.test.mjs server/tenant-onboarding-flow.test.mjs && vitest run --config vitest.config.ts src/test/onboardingWizard.dom.test.tsx",

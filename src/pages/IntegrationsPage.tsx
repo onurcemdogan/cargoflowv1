@@ -41,6 +41,7 @@ import { ShippingPayerSection } from '../integrations/ShippingPayerSection'
 import { WooCommerceSection } from '../integrations/WooCommerceSection'
 import { IkasSection } from '../integrations/IkasSection'
 import { HepsiburadaSection } from '../integrations/HepsiburadaSection'
+import { N11Section } from '../integrations/N11Section'
 import { ArasSection } from '../integrations/ArasSection'
 import { CarrierAccountsSection } from '../integrations/CarrierAccountsSection'
 import { readWooAuthReturn } from '../integrations/wooAuthReturn'
@@ -159,7 +160,7 @@ export function IntegrationsPage({
     } else if (key === 'aras') {
       setActiveCategory('carriers')
       setActiveIntegration('aras')
-    } else if (key === 'hepsiburada') {
+    } else if (key === 'hepsiburada' || key === 'n11') {
       setActiveCategory('marketplaces')
       setActiveIntegration(null)
     } else {
@@ -327,12 +328,13 @@ export function IntegrationsPage({
       </form>
 
       {/*
-        PAZARYERİ — Hepsiburada (İÇ TEST, YALNIZ OKUMA). Formun DIŞINDA durur:
+        PAZARYERİ — Hepsiburada + n11 (İÇ TEST, YALNIZ OKUMA). Formun DIŞINDA durur:
         bölümün kendi düğmeleri vardır; Enter sayfanın ayar formunu GÖNDEREMEZ.
       */}
       {activeCategory === 'marketplaces' ? (
         <div className="integration-marketplace-sections">
           <HepsiburadaSection />
+          <N11Section />
         </div>
       ) : null}
 

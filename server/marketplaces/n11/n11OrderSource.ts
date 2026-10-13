@@ -18,11 +18,41 @@ import { N11_PACKAGE_STATUSES, type N11PackageStatus } from './n11Contract.ts'
 const str = (value: unknown): string =>
   value === null || value === undefined ? '' : String(value).trim()
 
+/**
+ * Tarih → ISO. Resmî yanıt (developer.n11.com, Sipariş Listeleme Servisi)
+ * tarihleri EPOCH MİLİSANİYE SAYI olarak döndürür (`lastModifiedDate`,
+ * `packageHistories[].createdDate`); `Date.parse(String(sayı))` bunları
+ * NaN'a çevirirdi. Sayı / rakam dizesi epoch ms kabul edilir; ISO dizesi
+ * de okunur. Okunamayan değer BOŞ döner — tarih UYDURULMAZ.
+ */
 const toIso = (value: unknown): string => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 ? new Date(value).toISOString() : ''
+  }
   const raw = str(value)
   if (!raw) return ''
+  if (/^\d{12,16}$/.test(raw)) return new Date(Number(raw)).toISOString()
   const parsed = Date.parse(raw)
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : ''
+}
+
+/**
+ * Sipariş tarihi: `packageHistories` içindeki `Created` statüsünün
+ * `createdDate`'i (n11 statü sözlüğünde Created = "Ödendi").
+ *
+ * Resmî yanıtta paket düzeyinde sipariş tarihi alanı YOKTUR. `lastModifiedDate`
+ * ("son hareket tarihi") ve `agreedDeliveryDate` ("maksimum kargolama tarihi")
+ * sipariş tarihi DEĞİLDİR ve KULLANILMAZ. Created kaydı yoksa BOŞ döner;
+ * kayıt kanonik depoya yazılamaz sayılır (tarih uydurulmaz).
+ */
+function resolveN11OrderDate(histories: Array<Record<string, unknown>>): string {
+  let earliest: string | null = null
+  for (const entry of histories) {
+    if (str(entry.status) !== 'Created') continue
+    const iso = toIso(entry.createdDate)
+    if (iso !== '' && (earliest === null || iso < earliest)) earliest = iso
+  }
+  return earliest ?? ''
 }
 
 /**
@@ -91,6 +121,10 @@ export interface NormalizedN11Order {
   operationStatus: string | null
   sellerId: string
   lastModifiedDate: string
+  /** `packageHistories` Created kaydından; yoksa BOŞ (bkz. resolveN11OrderDate). */
+  orderDate: string
+  /** Resmî alan `customerfullName` (kurumsal faturada firma ünvanı). */
+  customerName: string
   shipmentAddress: Record<string, unknown>
   billingAddress: Record<string, unknown>
   city: string
@@ -107,7 +141,9 @@ export function normalizeN11Order(
   const orderNumber = str(raw.orderNumber)
   const shipmentAddress = (raw.shippingAddress ?? {}) as Record<string, unknown>
   const billingAddress = (raw.billingAddress ?? {}) as Record<string, unknown>
-  const rawStatus = str(raw.status)
+  // Resmî yanıt alanı `shipmentPackageStatus`tır (paket düzeyinde `status`
+  // alanı yanıt sözlüğünde YOK; `status` yalnız İSTEK filtresidir).
+  const rawStatus = str(raw.shipmentPackageStatus)
   const lines = Array.isArray(raw.lines) ? (raw.lines as Record<string, unknown>[]) : []
   const histories = Array.isArray(raw.packageHistories)
     ? (raw.packageHistories as Record<string, unknown>[])
@@ -136,6 +172,8 @@ export function normalizeN11Order(
     operationStatus: mapN11StatusToOperation(rawStatus),
     sellerId: str(raw.sellerId),
     lastModifiedDate: toIso(raw.lastModifiedDate),
+    orderDate: resolveN11OrderDate(histories),
+    customerName: str(raw.customerfullName),
     shipmentAddress,
     billingAddress,
     city: str(shipmentAddress.city),
@@ -145,6 +183,12 @@ export function normalizeN11Order(
         str(line.orderLineId) || `n11-line-${packageId || orderNumber}-${index}`,
       productName: str(line.productName ?? line.name) || 'Ürün',
       quantity: Math.max(0, Math.trunc(Number(line.quantity ?? 1)) || 0),
+      // Resmî: `stockCode` = satıcı ürün kodu, satır `barcode` = ÜRÜN barkodu
+      // (kargo barkodu DEĞİL — o paket düzeyinde `cargoTrackingNumber`dır).
+      merchantSku: str(line.stockCode),
+      productBarcode: str(line.barcode),
+      variantAttributes: Array.isArray(line.variantAttributes) ? line.variantAttributes : null,
+      lineStatus: str(line.orderItemLineItemStatusName),
       rawLine: line,
     })),
     packageHistories: histories.map((entry) => ({
@@ -156,23 +200,47 @@ export function normalizeN11Order(
   }
 }
 
+/**
+ * Toplu normalizasyon — hiçbir ham kayıt SESSİZCE düşmez:
+ *  · `duplicateRemovedCount` — aynı PAKET kimliğinin tekrarı; veri kaybı DEĞİL,
+ *  · `invalidIdentityCount` — nesne olmayan girdi ya da ne paket (`id`) ne
+ *    sipariş (`orderNumber`) kimliği taşıyan kayıt; veri EKSİKTİR.
+ *
+ * Tekilleştirme YALNIZ paket kimliğiyle yapılır. `id`si null kayıt (resmî:
+ * "Konuma Özel Teslimat" siparişleri) sipariş numarasıyla tekilleştirilmez —
+ * aynı siparişin iki ayrı paketi "tekrar" sanılıp gizlenmez; bu kayıtlar
+ * paketsiz oldukları için kanonik yazımda AYRICA görünür.
+ *
+ * `seenPackageIds` verilirse sayfalar/statüler arası tekrarlar da sayılır.
+ */
 export function normalizeN11Orders(
   rawOrders: unknown,
-): { orders: NormalizedN11Order[]; duplicateRemovedCount: number } {
-  const list = Array.isArray(rawOrders) ? (rawOrders as Record<string, unknown>[]) : []
-  const seen = new Map<string, NormalizedN11Order>()
+  seenPackageIds: Set<string> = new Set(),
+): { orders: NormalizedN11Order[]; duplicateRemovedCount: number; invalidIdentityCount: number } {
+  const list = Array.isArray(rawOrders) ? (rawOrders as unknown[]) : []
+  const orders: NormalizedN11Order[] = []
   let duplicateRemovedCount = 0
+  let invalidIdentityCount = 0
   for (const raw of list) {
-    const normalized = normalizeN11Order(raw)
-    const key = normalized.marketplacePackageId || normalized.externalOrderId
-    if (!key) continue
-    if (seen.has(key)) {
-      duplicateRemovedCount += 1
+    if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+      invalidIdentityCount += 1
       continue
     }
-    seen.set(key, normalized)
+    const normalized = normalizeN11Order(raw as Record<string, unknown>)
+    if (!normalized.marketplacePackageId && !normalized.orderNumber) {
+      invalidIdentityCount += 1
+      continue
+    }
+    if (normalized.marketplacePackageId) {
+      if (seenPackageIds.has(normalized.marketplacePackageId)) {
+        duplicateRemovedCount += 1
+        continue
+      }
+      seenPackageIds.add(normalized.marketplacePackageId)
+    }
+    orders.push(normalized)
   }
-  return { orders: [...seen.values()], duplicateRemovedCount }
+  return { orders, duplicateRemovedCount, invalidIdentityCount }
 }
 
 /**

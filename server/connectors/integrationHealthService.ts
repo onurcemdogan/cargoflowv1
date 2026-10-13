@@ -47,7 +47,7 @@ type Db = any
  * `integration_credentials` içinde SAĞLAYICI GENELİDİR ve semantikleri
  * değiştirilmez.
  */
-export const ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS = ['woocommerce', 'ikas', 'aras', 'hepsiburada'] as const
+export const ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS = ['woocommerce', 'ikas', 'aras', 'hepsiburada', 'n11'] as const
 
 /**
  * BAĞLANTI kapsamlı kimlik varlığı haritası.
