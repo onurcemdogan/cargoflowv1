@@ -354,9 +354,12 @@ test('IHB-13: uc nokta UYDURMAZ — gozlenemeyen saglayici UNKNOWN bildirir', ()
   // gecmez" diyordu; o gun dogruydu cunku kalicilik YOKTU. Degismez olan
   // ilke GUCLENDIRILEREK korunur: ikas YALNIZ hesap kapsamli saglayici
   // listesinde gecer ve varligi ASLA literal bir degerle yazilmaz.
+  // SUPERSEDED (HEPSIBURADA-LIVE-001): hepsiburada da gerçek hesap kapsamlı
+  // kimlik kalıcılığına sahiptir (connector_credentials) ve YALNIZ bu
+  // listede geçer; varlığı yine gerçek satırlardan türetilir.
   assert.match(
     service,
-    /ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS = \['woocommerce', 'ikas', 'aras'\] as const/,
+    /ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS = \['woocommerce', 'ikas', 'aras', 'hepsiburada'\] as const/,
   )
   assert.equal(service.split('ikas').length - 1, 1, 'ikas yalniz listede gecer')
   // Woo/ikas varligi LITERAL DEGIL, GERCEK SATIRLARDAN turetilir.

@@ -64,8 +64,10 @@ interface ProviderStatusDefinition {
 
 /**
  * Uygulama aşaması KOD gerçeğidir (sözleşme paketi, bağlayıcı, test kapsamı);
- * yayın aşaması POLİTİKADIR. Hepsiburada/n11 sipariş sözleşmesi doğrulandı
- * ama bağlantı akışı ve canlı doğrulama yok → geliştiriliyor; Ticimax
+ * yayın aşaması POLİTİKADIR. Hepsiburada bağlayıcısı uygulandı
+ * (HEPSIBURADA-LIVE-001: hesap kapsamlı yalnız-okuma) ama canlı doğrulama
+ * YOK → yayın aşaması `internal_test` ("İç test", asla "Canlı"). n11 sipariş
+ * sözleşmesi doğrulandı ama bağlantı akışı yok → geliştiriliyor; Ticimax
  * iskelet bağlayıcıdır.
  */
 const DEFINITIONS: readonly ProviderStatusDefinition[] = [
@@ -74,7 +76,7 @@ const DEFINITIONS: readonly ProviderStatusDefinition[] = [
   { providerKey: 'woocommerce', displayName: 'WooCommerce', kind: 'commerce_platform', implementationStage: 'implemented', rolloutStage: () => resolveRolloutStage('woocommerce') },
   { providerKey: 'ikas', displayName: 'ikas', kind: 'commerce_platform', implementationStage: 'implemented', rolloutStage: () => resolveRolloutStage('ikas') },
   { providerKey: 'aras', displayName: 'Aras Kargo', kind: 'shipping', implementationStage: 'implemented', rolloutStage: () => ARAS_ROLLOUT_STAGE },
-  { providerKey: 'hepsiburada', displayName: 'Hepsiburada', kind: 'marketplace', implementationStage: 'in_development', rolloutStage: () => 'off' },
+  { providerKey: 'hepsiburada', displayName: 'Hepsiburada', kind: 'marketplace', implementationStage: 'implemented', rolloutStage: () => resolveRolloutStage('hepsiburada') },
   { providerKey: 'n11', displayName: 'n11', kind: 'marketplace', implementationStage: 'in_development', rolloutStage: () => 'off' },
   { providerKey: 'ticimax', displayName: 'Ticimax', kind: 'commerce_platform', implementationStage: 'in_development', rolloutStage: () => resolveRolloutStage('ticimax') },
 ]

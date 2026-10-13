@@ -182,13 +182,17 @@ test('IH-CANON-6: desteklenmeyen hesap satırı sağlayıcı UYDURMAZ', async (t
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
   const org = await makeOrg(db)
+  // SUPERSEDED (HEPSIBURADA-LIVE-001): bu test örnek "desteklenmeyen"
+  // sağlayıcı olarak Hepsiburada'yı kullanıyordu; Hepsiburada artık sağlık
+  // destekli bir bağlayıcıdır. İlke AYNEN korunur: hâlâ desteklenmeyen bir
+  // pazaryerinin (N11) hesap satırı sağlayıcı UYDURMAZ.
   await db.insert(schema.marketplaceAccounts).values([
-    { organizationId: org, marketplace: 'Hepsiburada', providerAccountId: 'h1' },
+    { organizationId: org, marketplace: 'N11', providerAccountId: 'n1' },
     { organizationId: org, marketplace: '', providerAccountId: 'blank' },
   ])
   const entries = await loadHealth(db, org)
   const keys = [...new Set(entries.map((entry) => entry.providerKey))].sort()
-  assert.deepEqual(keys, ['ikas', 'ticimax', 'trendyol', 'woocommerce'])
+  assert.deepEqual(keys, ['hepsiburada', 'ikas', 'ticimax', 'trendyol', 'woocommerce'])
   assert.equal(entries.some((entry) => entry.marketplaceAccountId !== null), false)
 })
 

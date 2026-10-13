@@ -505,10 +505,13 @@ test('TICIMAX-10/11: liveWriteGate bloklar; rollout ticimax=off; ACCOUNT_SCOPED 
   assert.equal(gate.reasonCode, 'ROLLOUT_STAGE_NOT_LIVE')
   assert.equal(liveGate.canTriggerFulfillmentSideEffects('ticimax').decision, 'BLOCKED_BY_ROLLOUT')
 
+  // HEPSIBURADA-LIVE-001: hepsiburada hesap kapsamlı kimlikle eklendi;
+  // ticimax HÂLÂ listede yok (aşağıdaki iddia değişmedi).
   assert.deepEqual([...healthService.ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS], [
     'woocommerce',
     'ikas',
     'aras',
+    'hepsiburada',
   ])
   assert.equal(healthService.ACCOUNT_SCOPED_CREDENTIAL_PROVIDERS.includes('ticimax'), false)
 

@@ -406,6 +406,8 @@ const TENANT_AUTH_PATHS = [
   // ikas mağaza uçları org kapsamlıdır: AYNI auth kapısının ARKASINDA durur
   // (listede olmayan org-kapsamlı uç `request.auth` boş kalır ve 404 döner).
   '/api/integrations/ikas',
+  // Hepsiburada hesap uçları da org kapsamlıdır (HEPSIBURADA-LIVE-001).
+  '/api/integrations/hepsiburada',
   // AYNI KÖK NEDEN, ÜÇÜNCÜ KEZ: bu uçların hepsi `requireOnboardingContext`
   // ile org kapsamı ister ama listede YOKTU; auth modda (üretim) geçerli
   // oturuma rağmen `request.auth` boş kalıyor ve 404 dönüyorlardı. Kapsam
@@ -3082,6 +3084,62 @@ app.post('/api/integrations/ikas/stores/orders-read-test', async (request, respo
   } catch {
     response.status(500).json({ ok: false, message: 'Sipariş okuma testi tamamlanamadı.' })
   }
+})
+
+// ── HEPSIBURADA (İÇ TEST, HESAP KAPSAMLI, YALNIZ OKUMA) ───────────────
+//
+// Uç davranışı `connectors/hepsiburada/hepsiburadaHttpHandlers.ts` içindedir;
+// burada YALNIZ kiracı kapsamı çözülür. Kiracı gövdeden ALINMAZ. Parola
+// HİÇBİR yanıtta dönmez. OTOMATİK ZAMANLAYICI YOK; pazaryeri YAZMASI YOK.
+// Rotalar AÇIK yazılır ve kiracı kapsamını HER rota kendi gövdesinde çözer
+// (`tenant-auth-coverage-flow` kaynak taramasıyla kilitlidir); yardımcı yalnız
+// çözülmüş kapsamı işleyiciye devreder.
+async function runHepsiburadaHandler(context, request, response, handlerName, failure) {
+  try {
+    const [handlers, client] = await Promise.all([
+      import('./connectors/hepsiburada/hepsiburadaHttpHandlers.ts'),
+      import('./connectors/hepsiburada/hepsiburadaClient.ts'),
+    ])
+    const result = await handlers[handlerName]({
+      db: context.db,
+      organizationId: context.organizationId,
+      body: request.body ?? {},
+      clientOptions: { transport: client.fetchHepsiburadaTransport },
+    })
+    response.status(result.status).json(result.body)
+  } catch {
+    response.status(500).json({ ok: false, message: failure })
+  }
+}
+
+app.get('/api/integrations/hepsiburada/accounts', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runHepsiburadaHandler(context, request, response, 'handleHepsiburadaListAccounts', 'Hepsiburada hesapları okunamadı.')
+})
+
+app.post('/api/integrations/hepsiburada/accounts', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runHepsiburadaHandler(context, request, response, 'handleHepsiburadaConnect', 'Hepsiburada yapılandırması kaydedilemedi.')
+})
+
+app.post('/api/integrations/hepsiburada/accounts/disconnect', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runHepsiburadaHandler(context, request, response, 'handleHepsiburadaDisconnect', 'Bağlantı kaldırılamadı.')
+})
+
+app.post('/api/integrations/hepsiburada/accounts/test', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runHepsiburadaHandler(context, request, response, 'handleHepsiburadaTest', 'Hepsiburada okuma testi tamamlanamadı.')
+})
+
+app.post('/api/integrations/hepsiburada/accounts/sync', async (request, response) => {
+  const context = await requireOnboardingContext(request, response)
+  if (!context) return
+  await runHepsiburadaHandler(context, request, response, 'handleHepsiburadaSync', 'Hepsiburada senkronu tamamlanamadı.')
 })
 
 // ── ARAS KARGO (İÇ TEST, HESAP KAPSAMLI) ───────────────────────────────

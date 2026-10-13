@@ -22,9 +22,9 @@ import {
   type ProviderKind,
 } from '../services/integrationStatusClient'
 
-export type IntegrationBoardKey = 'trendyol' | 'surat' | 'woocommerce' | 'ikas' | 'aras'
+export type IntegrationBoardKey = 'trendyol' | 'surat' | 'woocommerce' | 'ikas' | 'aras' | 'hepsiburada'
 
-const OPENABLE: ReadonlySet<string> = new Set<IntegrationBoardKey>(['trendyol', 'surat', 'woocommerce', 'ikas', 'aras'])
+const OPENABLE: ReadonlySet<string> = new Set<IntegrationBoardKey>(['trendyol', 'surat', 'woocommerce', 'ikas', 'aras', 'hepsiburada'])
 
 const GROUPS: ReadonlyArray<{ key: Exclude<Availability, 'hidden'>; className: string; title: string; caption: string }> = [
   { key: 'live', className: 'is-live', title: 'Canlı', caption: 'Üretimde kullanılabilir' },
