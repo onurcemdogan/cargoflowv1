@@ -28,6 +28,19 @@
 /** Resmî yanıt zarfında paket listesini taşıyan alan — kanıtlı. */
 export const N11_LIST_FIELD = 'content'
 
+/**
+ * Okuma isteklerinde `sender` değeri — HER İSTEKTE AÇIKÇA gönderilir.
+ *
+ * Resmî: `sender` (SELLER: satıcı gönderir · n11: n11 depo gönderir · ALL:
+ * tümü) gönderilmezse varsayılan "SELLER"dır; n11depom siparişleri ancak
+ * parametreyle listelenir. Parametresiz okuma n11 depo siparişlerini SESSİZCE
+ * dışlar, pencere yine "tam" sanılır ve imleç onları kalıcı olarak geçerdi.
+ * CargoFlow sipariş okuması bu yüzden TÜM göndericileri ister; değer kullanıcı
+ * tarafından yapılandırılamaz. (Hangi siparişin CargoFlow karşılamasına
+ * uygun olduğu — ör. n11 depo gönderimi DEĞİL — okuma değil, ayrı karardır.)
+ */
+export const N11_READ_SENDER = 'ALL'
+
 /** Resmî uç nokta — kanıtlı. */
 export const N11_SHIPMENT_PACKAGES_URL =
   'https://api.n11.com/rest/delivery/v1/shipmentPackages'

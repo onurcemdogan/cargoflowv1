@@ -1,4 +1,4 @@
-// N11 OKUMA SENKRONU — hesap kapsamlı, SINIRLI, yalnız-okuma, sayfa sayfa işler.
+// N11 OKUMA SENKRONU — hesap kapsamlı, SINIRLI, yalnız-okuma, uyarlanır aralık bölme.
 //
 // ═══ PENCERE / İMLEÇ MODELİ ═════════════════════════════════════════════
 //
@@ -8,18 +8,36 @@
 //   kırpılmaz — kırpma aradaki siparişleri kalıcı olarak atlardı. Koşu başına
 //   en fazla N11_MAX_WINDOWS_PER_RUN pencere; kalan aralık `moreRemaining`.
 //   `orderByField=true`: aralık paketin `lastModifiedDate`ine uygulanır
-//   (güncellenen eski siparişler de okunur).
+//   (güncellenen eski siparişler de okunur). Her istek `sender=ALL` taşır.
 //
-//   Her pencerede statü başına AYRI istek dizisi (resmî: statü TEK değer
-//   alır; statüsüz isteğin tüm statüleri döndürdüğü KANITLANMADI). page 0'dan,
-//   size ≤ 100, `totalPages` + boş `content` sonlandırır, pencere-statü başına
-//   SINIRLI sayfa.
+// ═══ SAYFA YÜRÜTME YOK — UYARLANIR ARALIK BÖLME ═════════════════════════
+//
+// Sağlayıcı veri kümesi okuma sırasında DEĞİŞİR. Sabit bir aralıkta page
+// 0, 1, 2… yürümek güvensizdir: okunmuş sayfadaki bir kayıt değişip
+// aralıktan çıkarsa sonraki kayıtlar bir sıra geri kayar ve sayfa sınırındaki
+// kayıt HİÇ görülmeden pencere "tamam" sayılırdı.
+//
+// Bu yüzden her (statü, aralık) için YALNIZ page 0 istenir:
+//   · totalPages ≤ 1 → aralığın TÜM sonucu tek yanıtta, tek anda → işlenir;
+//   · totalPages > 1 → yanıt İŞLENMEZ (yazılmaz); aralık ikiye bölünür, önce
+//     ESKİ yarı, sonra YENİ yarı (açık yığıt, en eski önce).
+// Bölme N11_MIN_SPLIT_INTERVAL_MS'e kadar iner; o aralık hâlâ çok sayfalıysa
+// (aynı zaman damgasında çok kayıt) PARTIAL `N11_DENSE_WINDOW_UNSPLITTABLE` —
+// güvensiz sayfa yürütmeye DÜŞÜLMEZ, imleç o pencereden geçmez. Koşu başına
+// istek tavanı N11_MAX_REQUESTS_PER_RUN; dolarsa PARTIAL
+// `N11_REQUEST_BUDGET_EXHAUSTED`.
+//
+// Sınır anlamı (dahil/hariç) resmî olarak KANITLANMADI ve bölme sınır sayısını
+// artırır: her istek aralık başından N11_BOUNDARY_OVERLAP_MS ÖNCE başlar, böylece
+// tam sınır milisaniyesindeki kayıt hangi anlamda olursa olsun bir yarıda
+// görülür; çift görülen kayıt paket kimliğiyle tekilleşir (kayıp değil).
 //
 // ═══ BELLEK ═════════════════════════════════════════════════════════════
 //
-// PR #15 dersi: tüm geçmiş bellekte BİRİKTİRİLMEZ. Her SAYFA normalize edilir,
-// sahiplik denetlenir ve (kapı izin veriyorsa) hemen yazılır; bellekte yalnız
-// sayaçlar ve pencere içi paket kimliği kümesi kalır.
+// PR #15 dersi: tüm geçmiş bellekte BİRİKTİRİLMEZ. Her tek-sayfa yanıt
+// normalize edilir, sahiplik denetlenir ve (kapı izin veriyorsa) hemen
+// yazılır; bellekte yalnız sayaçlar, pencere içi paket kimliği kümesi ve
+// derinliği log₂ ile sınırlı aralık yığıtı kalır.
 //
 // ═══ İMLEÇ DEĞİŞMEZİ ════════════════════════════════════════════════════
 //
@@ -37,7 +55,6 @@
 import { recordSyncState } from '../../onboarding/onboardingRepository.ts'
 import { canPersistCanonicalOrders, type LiveWriteGateResult } from '../liveWriteGate.ts'
 import {
-  hasNextN11Page,
   N11_MAX_PAGE_SIZE,
   N11_PACKAGE_STATUSES,
   N11_WINDOW_MS,
@@ -48,11 +65,12 @@ import { N11_PROVIDER_KEY, type N11ConnectorConfig } from './n11Config.ts'
 import { bindN11Seller, findN11SellerConflict } from './n11ConnectionService.ts'
 import {
   N11_CANONICAL_WRITE_BLOCKED,
-  N11_PAGE_LIMIT_REACHED,
+  N11_DENSE_WINDOW_UNSPLITTABLE,
   N11_PERSIST_INCOMPLETE,
   N11_PERSIST_SKIPPED,
   N11_RECORD_IDENTITY_MISSING,
   N11_RECORD_NOT_PERSISTABLE,
+  N11_REQUEST_BUDGET_EXHAUSTED,
   N11_SELLER_ALREADY_CONNECTED,
   N11_SELLER_MISMATCH,
 } from './n11Health.ts'
@@ -62,12 +80,18 @@ import { countN11Unpersistable } from './n11Persistence.ts'
 type Db = any
 
 export const N11_SYNC_PAGE_SIZE = N11_MAX_PAGE_SIZE
-/** Pencere × statü başına sayfa tavanı: 50 × 100 = 5.000 kayıt. */
-export const N11_MAX_PAGES_PER_STATUS_WINDOW = 50
 /** Koşu başına 15 günlük pencere tavanı. */
 export const N11_MAX_WINDOWS_PER_RUN = 4
 /** İlk koşu (imleç yokken) geriye bakış: tek resmî pencere. */
 export const N11_INITIAL_LOOKBACK_MS = N11_WINDOW_MS
+/** Bölünebilecek en kısa aralık; bunun altında çok sayfalı aralık "yoğun" sayılır. */
+export const N11_MIN_SPLIT_INTERVAL_MS = 1_000
+/** Koşu başına mantıksal istek tavanı (tekrarlar hariç; resmî limit 1000/dk). */
+export const N11_MAX_REQUESTS_PER_RUN = 1_500
+/** Her istek aralık başından bu kadar önce başlar (sınır anlamı kanıtsız). */
+export const N11_BOUNDARY_OVERLAP_MS = 1
+/** Pencere dilimi: örtüşmeyle birlikte istek aralığı ≤ 15 gün kalır. */
+const N11_WINDOW_SLICE_MS = N11_WINDOW_MS - N11_BOUNDARY_OVERLAP_MS
 
 export type N11FetchOutcome = 'SUCCESS' | 'PARTIAL' | 'FAILED'
 
@@ -88,7 +112,7 @@ export function planN11Windows(params: {
   const windows: N11Window[] = []
   let start = Math.min(from, upper)
   while (start < upper && windows.length < maxWindows) {
-    const end = Math.min(start + N11_WINDOW_MS, upper)
+    const end = Math.min(start + N11_WINDOW_SLICE_MS, upper)
     windows.push({ startMs: start, endMs: end })
     start = end
   }
@@ -158,6 +182,8 @@ interface WindowStats {
   reasonCode: string | null
   pagesFetched: number
   networkCalls: number
+  /** Çok sayfalı yanıt yüzünden bölünen aralık sayısı. */
+  splitCount: number
   rawCount: number
   ownCount: number
   duplicateRemovedCount: number
@@ -181,6 +207,8 @@ export interface N11SyncResult {
   reasonCode: string | null
   networkCalls: number
   pagesFetched: number
+  /** Çok sayfalı yanıt yüzünden bölünen aralık sayısı (yanıtları işlenmedi). */
+  splitCount: number
   windows: N11Window[]
   windowsProcessed: number
   windowsDurable: number
@@ -220,7 +248,7 @@ export async function syncN11OrdersForAccount(
     liveWriteGate?: (providerKey: string) => LiveWriteGateResult
     maxWindows?: number
   },
-  options: N11ClientOptions & { pageSize?: number; maxPagesPerStatusWindow?: number },
+  options: N11ClientOptions & { pageSize?: number; minSplitIntervalMs?: number; maxRequestsPerRun?: number },
 ): Promise<N11SyncResult> {
   const organizationId = String(params.organizationId ?? '').trim()
   const marketplaceAccountId = String(params.marketplaceAccountId ?? '').trim()
@@ -235,11 +263,13 @@ export async function syncN11OrdersForAccount(
   const persister = gateAllowed ? params.persistCanonical : undefined
   const plan = planN11Windows({ fromMs: params.fromMs, upperBoundMs: params.upperBoundMs, maxWindows: params.maxWindows })
   const pageSize = Math.min(N11_MAX_PAGE_SIZE, Math.max(1, options.pageSize ?? N11_SYNC_PAGE_SIZE))
-  const maxPages = Math.max(1, options.maxPagesPerStatusWindow ?? N11_MAX_PAGES_PER_STATUS_WINDOW)
+  const minSplitMs = Math.max(1, options.minSplitIntervalMs ?? N11_MIN_SPLIT_INTERVAL_MS)
+  const maxRequests = Math.max(1, options.maxRequestsPerRun ?? N11_MAX_REQUESTS_PER_RUN)
+  let requestsUsed = 0
   const seller: SellerState = { bound: params.config.boundSellerId, candidate: null, conflict: false, ambiguous: false }
 
   const result: N11SyncResult = {
-    outcome: 'SUCCESS', errorClass: null, reasonCode: null, networkCalls: 0, pagesFetched: 0,
+    outcome: 'SUCCESS', errorClass: null, reasonCode: null, networkCalls: 0, pagesFetched: 0, splitCount: 0,
     windows: plan.windows, windowsProcessed: 0, windowsDurable: 0, moreRemaining: false,
     fetchedCount: 0, normalizedCount: 0, duplicateRemovedCount: 0, invalidIdentityCount: 0,
     sellerMismatchCount: 0, unpersistable: { NO_PACKAGE_ID: 0, NO_ORDER_DATE: 0 },
@@ -282,22 +312,32 @@ export async function syncN11OrdersForAccount(
   let prefixIntact = true
   for (const window of plan.windows) {
     const stats: WindowStats = {
-      outcome: 'SUCCESS', errorClass: null, reasonCode: null, pagesFetched: 0, networkCalls: 0,
+      outcome: 'SUCCESS', errorClass: null, reasonCode: null, pagesFetched: 0, networkCalls: 0, splitCount: 0,
       rawCount: 0, ownCount: 0, duplicateRemovedCount: 0, invalidIdentityCount: 0, sellerMismatchCount: 0,
       unpersistable: { NO_PACKAGE_ID: 0, NO_ORDER_DATE: 0 }, expectedCanonical: 0, persist: null,
     }
     const seenPackageIds = new Set<string>()
     statusLoop: for (const status of N11_PACKAGE_STATUSES) {
-      for (let page = 0; ; page += 1) {
-        if (page >= maxPages) {
+      // Açık yığıt: en eski yarı ÜSTTE → en eski önce işlenir. Derinlik
+      // log₂(pencere / en kısa aralık) ile sınırlı; bellek sabit kalır.
+      const intervals: N11Window[] = [{ startMs: window.startMs, endMs: window.endMs }]
+      while (intervals.length > 0) {
+        const interval = intervals.pop() as N11Window
+        if (requestsUsed >= maxRequests) {
           stats.outcome = 'PARTIAL'
-          stats.errorClass = 'PROVIDER_UNAVAILABLE'
-          stats.reasonCode = N11_PAGE_LIMIT_REACHED
+          stats.reasonCode = N11_REQUEST_BUDGET_EXHAUSTED
           break statusLoop
         }
+        requestsUsed += 1
         const fetched = await fetchN11Page(
           params.config,
-          { status, page, size: pageSize, startMs: window.startMs, endMs: window.endMs },
+          {
+            status,
+            page: 0,
+            size: pageSize,
+            startMs: interval.startMs - N11_BOUNDARY_OVERLAP_MS,
+            endMs: interval.endMs,
+          },
           options,
         )
         stats.networkCalls += fetched.networkCalls
@@ -308,9 +348,26 @@ export async function syncN11OrdersForAccount(
           break statusLoop
         }
         stats.pagesFetched += 1
+
+        if (fetched.totalPages > 1) {
+          // Çok sayfalı GENİŞ sonuç İŞLENMEZ (sayfa ofseti değişken veride kayar).
+          const span = interval.endMs - interval.startMs
+          if (span <= minSplitMs) {
+            // Aynı zaman diliminde tek sayfaya sığmayan yoğunluk: güvenli bölme
+            // yok, sayfa yürütmeye de DÜŞÜLMEZ → imleç bu pencereden geçmez.
+            stats.outcome = 'PARTIAL'
+            stats.reasonCode = N11_DENSE_WINDOW_UNSPLITTABLE
+            break statusLoop
+          }
+          const mid = interval.startMs + Math.floor(span / 2)
+          intervals.push({ startMs: mid, endMs: interval.endMs })
+          intervals.push({ startMs: interval.startMs, endMs: mid })
+          stats.splitCount += 1
+          continue
+        }
         stats.rawCount += fetched.entries.length
 
-        // Sayfa işlenir ve bırakılır: normalize → sahiplik → hazırlık → yazım.
+        // Tek anlık tam yanıt işlenir ve bırakılır: normalize → sahiplik → hazırlık → yazım.
         const normalization = normalizeN11Orders(fetched.entries, seenPackageIds)
         stats.duplicateRemovedCount += normalization.duplicateRemovedCount
         stats.invalidIdentityCount += normalization.invalidIdentityCount
@@ -334,8 +391,6 @@ export async function syncN11OrdersForAccount(
         } else if (own.length > 0) {
           stats.expectedCanonical += own.length
         }
-
-        if (!hasNextN11Page({ page, totalPages: fetched.totalPages, returnedCount: fetched.entries.length })) break
       }
     }
 
@@ -343,6 +398,7 @@ export async function syncN11OrdersForAccount(
     result.windowsProcessed += 1
     result.networkCalls += stats.networkCalls
     result.pagesFetched += stats.pagesFetched
+    result.splitCount += stats.splitCount
     result.fetchedCount += stats.rawCount
     result.normalizedCount += stats.ownCount
     result.duplicateRemovedCount += stats.duplicateRemovedCount

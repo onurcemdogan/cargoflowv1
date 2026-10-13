@@ -32,8 +32,13 @@ export const N11_PERSIST_INCOMPLETE = 'N11_PERSIST_INCOMPLETE'
 export const N11_SELLER_MISMATCH = 'N11_SELLER_MISMATCH'
 /** Aynı satıcı bu kiracıda BAŞKA etkin n11 hesabına bağlı (mükerrer sipariş riski). */
 export const N11_SELLER_ALREADY_CONNECTED = 'N11_SELLER_ALREADY_CONNECTED'
-/** Pencere içinde sayfa tavanına ulaşıldı. */
-export const N11_PAGE_LIMIT_REACHED = 'N11_PAGE_LIMIT_REACHED'
+/**
+ * En kısa bölünebilir aralık bile tek sayfaya sığmadı (aynı zaman diliminde
+ * çok kayıt). Güvensiz sayfa yürütmeye düşülmez; imleç o pencereden geçmez.
+ */
+export const N11_DENSE_WINDOW_UNSPLITTABLE = 'N11_DENSE_WINDOW_UNSPLITTABLE'
+/** Koşu başına istek tavanı doldu; imleç son dayanıklı pencerede durur. */
+export const N11_REQUEST_BUDGET_EXHAUSTED = 'N11_REQUEST_BUDGET_EXHAUSTED'
 
 export interface N11HealthInput {
   credentialsComplete: boolean

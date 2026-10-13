@@ -19,6 +19,7 @@ import {
   buildN11PageRequest,
   N11_LIST_FIELD,
   N11_MAX_PAGE_SIZE,
+  N11_READ_SENDER,
   N11_SHIPMENT_PACKAGES_URL,
   type N11PackageStatus,
 } from '../../marketplaces/n11/n11Contract.ts'
@@ -142,6 +143,9 @@ export function buildN11RequestUrl(query: N11PageQuery): string {
   url.searchParams.set('status', String(request.status))
   url.searchParams.set('orderByField', String(request.orderByField))
   url.searchParams.set('orderByDirection', String(request.orderByDirection))
+  // Parametresiz istek yalnız SELLER siparişlerini döndürür (resmî varsayılan);
+  // n11 depo siparişleri sessizce dışlanmasın diye HER okumada ALL.
+  url.searchParams.set('sender', N11_READ_SENDER)
   return url.toString()
 }
 

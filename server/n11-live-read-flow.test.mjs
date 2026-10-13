@@ -74,7 +74,7 @@ function pkg(i, over = {}) {
     cargoProviderName: 'MNG Kargo',
     shippingAddress: { city: 'İstanbul', district: 'Sarıyer', fullName: 'N11 müşteri' },
     billingAddress: { city: 'İstanbul' },
-    lines: [{ orderLineId: 415490000 + i, productName: `Ürün ${i}`, stockCode: `SKU-${i}`, barcode: `869000${i}`, quantity: 1, orderItemLineItemStatusName: 'Created' }],
+    lines: [{ orderLineId: 415490000 + i, productName: `Ürün ${i}`, stockCode: `SKU-${i}`, barcode: `869000${i}`, quantity: 1, orderItemLineItemStatusName: 'Created', sender: 'SELLER' }],
     lastModifiedDate: modified,
     packageHistories: [{ createdDate: modified - 5_000, status: 'Created' }],
     shipmentPackageStatus: 'Created',
@@ -84,8 +84,11 @@ function pkg(i, over = {}) {
 }
 
 /**
- * Sahte n11: statü + `lastModifiedDate` penceresine göre süzer, page/size ile
- * dilimler ve resmî zarfı döndürür. Çağrıları kaydeder.
+ * Sahte n11: statü + `lastModifiedDate` penceresine (ASC) ve `sender`e göre
+ * süzer, page/size ile dilimler, resmî zarfı döndürür. Resmî varsayılan
+ * modellenir: `sender` yoksa YALNIZ SELLER kayıtları döner. `onCall`, yanıt
+ * hesaplanmadan ÖNCE veri kümesini değiştirebilir (okuma sırasında değişen
+ * sağlayıcı). Her çağrının totalPages'i ve döndürdüğü kimlikler kaydedilir.
  */
 function fakeTransport(dataset, behaviour = {}) {
   const calls = []
@@ -98,6 +101,7 @@ function fakeTransport(dataset, behaviour = {}) {
       page: Number(url.searchParams.get('page')),
       size: Number(url.searchParams.get('size')),
       status: url.searchParams.get('status'),
+      sender: url.searchParams.get('sender'),
       startDate: Number(url.searchParams.get('startDate')),
       endDate: Number(url.searchParams.get('endDate')),
       orderByField: url.searchParams.get('orderByField'),
@@ -105,16 +109,28 @@ function fakeTransport(dataset, behaviour = {}) {
       headers: request.headers,
     }
     calls.push(call)
+    behaviour.onCall?.(call, calls.length, dataset)
     const scripted = behaviour.respond?.(call, calls.length)
     if (scripted) return scripted
-    const matching = dataset.filter((row) => {
-      if (typeof row !== 'object' || row === null) return call.status === 'Created'
-      const status = row.shipmentPackageStatus ?? 'Created'
-      const modified = Number(row.lastModifiedDate ?? NOW - HOUR)
-      return status === call.status && modified >= call.startDate && modified < call.endDate
-    })
+    const requestedSender = String(call.sender ?? 'SELLER').toUpperCase()
+    const matching = dataset
+      .filter((row) => {
+        if (typeof row !== 'object' || row === null) return call.status === 'Created'
+        const status = row.shipmentPackageStatus ?? 'Created'
+        const modified = Number(row.lastModifiedDate ?? NOW - HOUR)
+        const rowSender = String(row.lines?.[0]?.sender ?? 'SELLER').toUpperCase()
+        // Sınır anlamı resmî olarak kanıtsız: varsayılan [start, end); `exclusive`
+        // modu (start, end) — en kötü durumu modeller.
+        const inWindow = behaviour.boundary === 'exclusive'
+          ? modified > call.startDate && modified < call.endDate
+          : modified >= call.startDate && modified < call.endDate
+        return status === call.status && inWindow && (requestedSender === 'ALL' || rowSender === requestedSender)
+      })
+      .sort((a, b) => Number(a?.lastModifiedDate ?? 0) - Number(b?.lastModifiedDate ?? 0))
     const content = matching.slice(call.page * call.size, call.page * call.size + call.size)
     const totalPages = behaviour.totalPages ?? Math.ceil(matching.length / call.size)
+    call.totalPages = totalPages
+    call.contentIds = content.map((row) => row?.id ?? null)
     return {
       status: 200,
       headers: {},
@@ -122,6 +138,20 @@ function fakeTransport(dataset, behaviour = {}) {
     }
   }
   return { transport, calls }
+}
+
+/** Doğrudan senkron (seçeneklerle); yazıcı partileri kaydedilir. */
+async function runSync(db, org, accountId, fake, { params = {}, options = {}, batches = [] } = {}) {
+  const loaded = await connection.loadN11Account(db, { organizationId: org, marketplaceAccountId: accountId })
+  return sync.syncN11OrdersForAccount(db, {
+    organizationId: org, marketplaceAccountId: accountId, config: loaded.config,
+    fromMs: NOW - DAY, upperBoundMs: NOW, liveWriteGate: ALLOW,
+    persistCanonical: (orders) => {
+      batches.push(orders.map((order) => order.packageId))
+      return persistence.persistN11Orders(db, { organizationId: org, marketplaceAccountId: accountId, orders })
+    },
+    ...params,
+  }, { transport: fake.transport, ...noSleep, ...options })
 }
 
 async function connectAccount(db, org, over = {}) {
@@ -224,6 +254,7 @@ test('N11-HTTP-1: yalnız kanıtlı host + yol + GET; resmî sorgu parametreleri
   assert.equal(call.status, 'Picking')
   assert.equal(call.orderByField, 'true')
   assert.equal(call.orderByDirection, 'ASC')
+  assert.equal(call.sender, 'ALL', 'n11 depo siparişleri dışlanmaz')
   assert.equal(call.startDate, NOW - DAY, 'epoch ms')
   assert.equal(client.isVerifiedN11Url('https://api.n11.com/rest/delivery/v1/shipmentPackages?page=0'), true)
   for (const bad of [
@@ -321,44 +352,145 @@ test('N11-HTTP-5: zarf yalnız resmî biçim (`content` + `totalPages`); belirsi
   }
 })
 
-/* ═══ C. SAYFALAMA ════════════════════════════════════════════════════════ */
+/* ═══ C. GÖNDERİCİ + UYARLANIR ARALIK BÖLME ═══════════════════════════════ */
 
-test('N11-PAGE-1: page 0\'dan; totalPages izlenir; boş content biter; sayfa tavanı → PARTIAL ve imleç DURUR', async (t) => {
+test('N11-SENDER-1: her okuma isteği sender=ALL taşır; SELLER ve n11 depo kayıtları birlikte gelir', async (t) => {
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
   const org = await makeOrg(db)
   const accountId = await connectAccount(db, org)
-  const loaded = await connection.loadN11Account(db, { organizationId: org, marketplaceAccountId: accountId })
-  const run = (dataset, opts = {}, behaviour = {}) => {
-    const fake = fakeTransport(dataset, behaviour)
-    return sync.syncN11OrdersForAccount(db, {
-      organizationId: org, marketplaceAccountId: accountId, config: loaded.config,
-      fromMs: NOW - DAY, upperBoundMs: NOW, liveWriteGate: ALLOW,
-      persistCanonical: (orders) => persistence.persistN11Orders(db, { organizationId: org, marketplaceAccountId: accountId, orders }),
-    }, { transport: fake.transport, ...noSleep, ...opts }).then((result) => ({ result, calls: fake.calls }))
-  }
+  const depot = pkg(2, { lines: [{ ...pkg(2).lines[0], sender: 'N11' }] })
+  const fake = fakeTransport([pkg(1), depot])
+  const result = await runSync(db, org, accountId, fake)
+  assert.ok(fake.calls.length >= contract.N11_PACKAGE_STATUSES.length)
+  for (const call of fake.calls) assert.equal(call.sender, 'ALL', 'her istek sender=ALL')
+  assert.equal(result.normalizedCount, 2, 'n11 depo kaydı SESSİZCE dışlanmaz')
+  assert.equal(result.checkpointAdvanced, true)
+  const packages = (await db.select().from(schema.orders)).map((row) => row.packageId).sort()
+  assert.deepEqual(packages, [pkg(1).id, depot.id].sort())
 
-  const big = Array.from({ length: 25 }, (_, i) => pkg(i))
-  const { result, calls } = await run(big, { pageSize: 10 })
-  const created = calls.filter((call) => call.status === 'Created')
-  assert.deepEqual(created.map((call) => call.page), [0, 1, 2], 'totalPages=3')
-  assert.equal(calls.filter((call) => call.status === 'Picking').length, 1, 'boş statü tek istek')
-  assert.deepEqual([...new Set(calls.map((call) => call.status))], [...contract.N11_PACKAGE_STATUSES], 'statü başına AYRI istek')
-  assert.equal(result.normalizedCount, 25)
+  // Test Et de aynı resmî gönderici kapsamını kullanır.
+  const probe = fakeTransport([pkg(1), depot])
+  await handlers.handleN11Test({ db, organizationId: org, body: { marketplaceAccountId: accountId }, clientOptions: { transport: probe.transport, ...noSleep }, now: () => NOW })
+  assert.deepEqual(probe.calls.map((call) => call.sender), ['ALL'])
+})
+
+test('N11-SPLIT-1: çok sayfalı aralık YAZILMADAN bölünür; tüm kayıtlar temsil edilir; tek sayfalık aralık bölünmez', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const accountId = await connectAccount(db, org)
+  const dataset = Array.from({ length: 9 }, (_, i) => pkg(i))
+  const fake = fakeTransport(dataset)
+  const batches = []
+  const result = await runSync(db, org, accountId, fake, { options: { pageSize: 2 }, batches })
+  for (const call of fake.calls) assert.equal(call.page, 0, 'YALNIZ page 0 — sayfa yürütme YOK')
+  assert.ok(result.splitCount > 0, 'çok sayfalı aralık bölündü')
+  // Yazılan her parti, totalPages ≤ 1 olan TEK bir yanıtın tamamıdır; çok
+  // sayfalı (geniş) yanıtların içeriği yazıcıya ULAŞMAZ.
+  const singlePage = fake.calls.filter((call) => call.totalPages <= 1).map((call) => JSON.stringify([...call.contentIds].sort()))
+  assert.ok(batches.length > 0)
+  for (const batch of batches) {
+    assert.ok(batch.length <= 2)
+    assert.ok(singlePage.includes(JSON.stringify([...batch].sort())), `parti tek-sayfa yanıttan: ${batch}`)
+  }
+  for (const call of fake.calls) assert.ok(call.endDate - call.startDate <= contract.N11_WINDOW_MS, 'istek ≤ 15 gün')
+  assert.deepEqual((await db.select().from(schema.orders)).map((row) => row.packageId).sort(), dataset.map((row) => row.id).sort())
+  assert.equal(result.duplicateRemovedCount, 0)
   assert.equal(result.checkpointAdvanced, true)
 
-  // totalPages fazla dese de boş content sonlandırır.
-  const { calls: emptyCalls } = await run([pkg(1)], { pageSize: 10 }, { totalPages: 9 })
-  assert.equal(emptyCalls.filter((call) => call.status === 'Created').length, 2, 'boş sayfa SONDUR')
+  // Tek sayfalık aralık: statü başına TEK istek, bölme yok.
+  const { pglite: pglite2, db: db2 } = await makeDb()
+  t.after(() => pglite2.close())
+  const org2 = await makeOrg(db2)
+  const account2 = await connectAccount(db2, org2)
+  const small = fakeTransport([pkg(1), pkg(2), pkg(3)])
+  const simple = await runSync(db2, org2, account2, small)
+  assert.equal(small.calls.length, contract.N11_PACKAGE_STATUSES.length)
+  assert.equal(simple.splitCount, 0)
+  assert.equal(simple.normalizedCount, 3)
+  assert.equal(simple.checkpointAdvanced, true)
+})
 
-  // Hiç bitmeyen dolu sayfalar → tavan.
-  const endless = await run([], { pageSize: 10, maxPagesPerStatusWindow: 3 }, {
-    respond: (call) => ({ status: 200, headers: {}, bodyText: JSON.stringify({ totalPages: 999, page: call.page, size: 10, content: Array.from({ length: 10 }, (_, i) => pkg(call.page * 10 + i + 1000)) }) }),
+test('N11-SPLIT-2: okuma sırasında değişen veri kümesi — sayfa kaymasıyla kaybolacak kayıt YAKALANIR', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const accountId = await connectAccount(db, org)
+  const start = NOW - DAY
+  const A = pkg(101, { lastModifiedDate: start + 1 * HOUR })
+  const B = pkg(102, { lastModifiedDate: start + 2 * HOUR })
+  const C = pkg(103, { lastModifiedDate: start + 20 * HOUR })
+  // İlk yanıttan SONRA A değişir: yeni lastModifiedDate koşunun üst sınırının
+  // ötesine geçer → A sabit aralıktan çıkar, sonraki kayıtlar bir sıra geri
+  // kayar. Eski page 0/1 yürütmesi C'yi hiç görmeden pencereyi tamam sayardı.
+  const fake = fakeTransport([A, B, C], {
+    onCall: (_call, n) => {
+      if (n === 2) A.lastModifiedDate = NOW + 5 * 60_000
+    },
   })
-  assert.equal(endless.calls.length, 3)
-  assert.equal(endless.result.outcome, 'PARTIAL')
-  assert.equal(endless.result.reasonCode, 'N11_PAGE_LIMIT_REACHED')
-  assert.equal(endless.result.checkpointAdvanced, false)
+  const first = await runSync(db, org, accountId, fake, { options: { pageSize: 2 } })
+  const afterFirst = (await db.select().from(schema.orders)).map((row) => row.packageId).sort()
+  assert.deepEqual(afterFirst, [B.id, C.id].sort(), 'kaymış kayıt C YAKALANDI')
+  assert.equal(first.checkpointAdvanced, true, 'pencere kanıtlanmış biçimde tam')
+  assert.equal(first.checkpointMs, NOW)
+
+  // A'nın YENİ hâli imleçten sonraki pencerededir: sonraki koşu onu okur.
+  const later = NOW + 10 * 60_000
+  const second = await runSync(db, org, accountId, fakeTransport([A, B, C]), {
+    params: { fromMs: first.checkpointMs, upperBoundMs: later },
+    options: { pageSize: 2 },
+  })
+  assert.equal(second.checkpointAdvanced, true)
+  assert.deepEqual((await db.select().from(schema.orders)).map((row) => row.packageId).sort(), [A.id, B.id, C.id].sort())
+})
+
+test('N11-SPLIT-3: bölünemeyen yoğun aralık ve istek bütçesi → PARTIAL, imleç İLERLEMEZ, sayfa yürütmeye DÜŞÜLMEZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const accountId = await connectAccount(db, org)
+  const sameInstant = NOW - HOUR
+  const dense = [201, 202, 203].map((i) => pkg(i, { lastModifiedDate: sameInstant }))
+  const fake = fakeTransport(dense)
+  const result = await runSync(db, org, accountId, fake, { options: { pageSize: 2, minSplitIntervalMs: 1_000 } })
+  assert.equal(result.outcome, 'PARTIAL')
+  assert.equal(result.reasonCode, 'N11_DENSE_WINDOW_UNSPLITTABLE')
+  assert.equal(result.checkpointAdvanced, false)
+  for (const call of fake.calls) assert.equal(call.page, 0, 'güvensiz sayfa yürütme YOK')
+  assert.ok(fake.calls.length < 80, 'bölme SINIRLI')
+  assert.equal((await db.select().from(schema.orders)).length, 0, 'çok sayfalı yanıt yazılmadı')
+  let current = await view(db, org, accountId)
+  assert.equal(current.health.state, 'PARTIAL')
+  assert.equal(current.health.reasonCode, 'N11_DENSE_WINDOW_UNSPLITTABLE')
+  assert.equal(current.health.lastSuccessfulSyncAt, null)
+
+  const budget = await runSync(db, org, accountId, fakeTransport(Array.from({ length: 9 }, (_, i) => pkg(i))), {
+    options: { pageSize: 2, maxRequestsPerRun: 3 },
+  })
+  assert.equal(budget.outcome, 'PARTIAL')
+  assert.equal(budget.reasonCode, 'N11_REQUEST_BUDGET_EXHAUSTED')
+  assert.equal(budget.checkpointAdvanced, false)
+  current = await view(db, org, accountId)
+  assert.equal(current.health.lastSuccessfulSyncAt, null)
+})
+
+test('N11-SPLIT-4: sınır anlamı kanıtsız — iki ucu da HARİÇ tutan sağlayıcıda tam sınırdaki kayıt KAYBOLMAZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const accountId = await connectAccount(db, org)
+  const fromMs = NOW - 20 * DAY
+  const plan = sync.planN11Windows({ fromMs, upperBoundMs: NOW })
+  assert.equal(plan.windows.length, 2)
+  const boundary = plan.windows[0].endMs
+  const onBoundary = pkg(301, { lastModifiedDate: boundary })
+  const fake = fakeTransport([pkg(1), onBoundary], { boundary: 'exclusive' })
+  const result = await runSync(db, org, accountId, fake, { params: { fromMs } })
+  assert.equal(result.windowsDurable, 2)
+  const packages = (await db.select().from(schema.orders)).map((row) => row.packageId)
+  assert.ok(packages.includes(onBoundary.id), 'pencere sınırındaki kayıt yakalandı (1 ms örtüşme)')
+  assert.equal(packages.length, 2)
 })
 
 /* ═══ D. PENCERE / İMLEÇ ═══════════════════════════════════════════════════ */
@@ -390,11 +522,13 @@ test('N11-WIN-1: ≤ 15 günlük boşluksuz pencereler, EN ESKİ önce; ileri k�
     persistCanonical: (orders) => persistence.persistN11Orders(db, { organizationId: org, marketplaceAccountId: accountId, orders }),
   }, { transport: fake.transport, ...noSleep })
   for (const call of fake.calls) assert.ok(call.endDate - call.startDate <= contract.N11_WINDOW_MS)
-  assert.equal(Math.min(...fake.calls.map((call) => call.startDate)), NOW - 40 * DAY)
+  // İstekler aralık başından 1 ms önce başlar (kanıtsız sınır anlamına karşı örtüşme).
+  assert.equal(Math.min(...fake.calls.map((call) => call.startDate)), NOW - 40 * DAY - sync.N11_BOUNDARY_OVERLAP_MS)
   assert.equal(run.windowsDurable, 2)
-  assert.equal(run.checkpointMs, NOW - 10 * DAY, 'imleç ikinci pencere sonunda')
+  assert.equal(run.checkpointMs, capped.windows[1].endMs, 'imleç ikinci pencere sonunda')
+  assert.ok(Math.abs(run.checkpointMs - (NOW - 10 * DAY)) <= 2)
   assert.equal(run.moreRemaining, true)
-  assert.equal(Date.parse((await view(db, org, accountId)).health.lastSuccessfulSyncAt), NOW - 10 * DAY)
+  assert.equal(Date.parse((await view(db, org, accountId)).health.lastSuccessfulSyncAt), capped.windows[1].endMs)
   assert.equal((await db.select().from(schema.orders)).length, 2, 'eski iki sipariş yazıldı')
 })
 
@@ -587,7 +721,7 @@ test('N11-GATE-1: gerçek yayın internal_test → okuma çalışır, kanonik ta
   const later = NOW + 3 * HOUR
   const allowed = fakeTransport([pkg(1), pkg(2)])
   const opened = await syncWith(db, org, accountId, allowed, { liveWriteGate: ALLOW, now: () => later })
-  assert.equal(Math.min(...allowed.calls.map((call) => call.startDate)), later - sync.N11_INITIAL_LOOKBACK_MS)
+  assert.equal(Math.min(...allowed.calls.map((call) => call.startDate)), later - sync.N11_INITIAL_LOOKBACK_MS - sync.N11_BOUNDARY_OVERLAP_MS)
   assert.equal(opened.body.checkpointAdvanced, true)
   assert.equal((await db.select().from(schema.orders)).length, 2)
 })

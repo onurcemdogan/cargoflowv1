@@ -18,7 +18,12 @@ import {
   listN11Accounts,
   loadN11Account,
 } from './n11ConnectionService.ts'
-import { N11_PAGE_LIMIT_REACHED, n11HealthLabel, resolveN11Health } from './n11Health.ts'
+import {
+  N11_DENSE_WINDOW_UNSPLITTABLE,
+  N11_REQUEST_BUDGET_EXHAUSTED,
+  n11HealthLabel,
+  resolveN11Health,
+} from './n11Health.ts'
 import { persistN11Orders } from './n11Persistence.ts'
 import { syncN11OrdersForAccount } from './n11OrderSync.ts'
 
@@ -208,6 +213,7 @@ export async function handleN11Sync(params: {
         sellerMismatch: sync.sellerMismatchCount,
         unpersistable: sync.unpersistable,
         pages: sync.pagesFetched,
+        splits: sync.splitCount,
         networkCalls: sync.networkCalls,
         windowsProcessed: sync.windowsProcessed,
         windowsDurable: sync.windowsDurable,
@@ -216,8 +222,10 @@ export async function handleN11Sync(params: {
         persisted: sync.persisted,
         checkpointAdvanced: sync.checkpointAdvanced,
         durabilityReasonCode: sync.durabilityReasonCode,
-        message: sync.reasonCode === N11_PAGE_LIMIT_REACHED
-          ? 'Bir pencerede sayfa tavanına ulaşıldı; imleç o pencerede durdu ve kalan kayıtlar okunmadı.'
+        message: sync.reasonCode === N11_DENSE_WINDOW_UNSPLITTABLE
+          ? 'Bir aralıkta aynı zaman diliminde tek sayfaya sığmayan sayıda kayıt var; aralık güvenle bölünemedi, imleç o pencerede durdu.'
+          : sync.reasonCode === N11_REQUEST_BUDGET_EXHAUSTED
+          ? 'Bu koşunun istek bütçesi doldu; imleç son tamamlanan pencerede durdu. Kalan aralık için yeniden senkronize edin.'
           : sync.errorClass
           ? N11_ERROR_COPY_TR[sync.errorClass]
           : incompleteNote ?? writeNote ?? (sync.moreRemaining
