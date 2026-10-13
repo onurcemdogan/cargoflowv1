@@ -61,17 +61,18 @@ test('IS-2: boş çalışma alanı — üç kavram ayrı alanlarda; yalnız Tren
 
   const live = Object.values(board).filter((entry) => entry.availability === 'live').map((entry) => entry.providerKey)
   assert.deepEqual(live.sort(), ['surat', 'trendyol'])
-  for (const key of ['woocommerce', 'ikas', 'aras']) {
+  // HEPSIBURADA-LIVE-001: Hepsiburada uygulandı → iç test (canlı DEĞİL).
+  for (const key of ['woocommerce', 'ikas', 'aras', 'hepsiburada']) {
     assert.equal(board[key].availability, 'internal_test', key)
     assert.equal(board[key].implementationStage, 'implemented', key)
     assert.equal(board[key].rolloutStage, 'internal_test', key)
   }
-  for (const key of ['hepsiburada', 'n11', 'ticimax']) {
+  for (const key of ['n11', 'ticimax']) {
     assert.equal(board[key].availability, 'in_development', key)
     assert.equal(board[key].health.state, 'not_available', key)
   }
   // Hiçbir şey kurulmamış: sağlık uydurulmaz.
-  for (const key of ['trendyol', 'surat', 'woocommerce', 'ikas', 'aras']) {
+  for (const key of ['trendyol', 'surat', 'woocommerce', 'ikas', 'aras', 'hepsiburada']) {
     assert.equal(board[key].health.state, 'not_configured', key)
     assert.equal(board[key].health.verified, false, key)
   }

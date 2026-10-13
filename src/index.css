@@ -9526,8 +9526,9 @@ button.integration-board-item:hover {
   font-size: 13px;
 }
 
-/* ── Sağlayıcı bölümleri (WooCommerce, ikas, Aras, ücret ödeyeni) ─────── */
-.integration-commerce-sites {
+/* ── Sağlayıcı bölümleri (WooCommerce, ikas, Hepsiburada, Aras, ücret ödeyeni) ─ */
+.integration-commerce-sites,
+.integration-marketplace-sections {
   display: grid;
   gap: 16px;
   margin-top: 16px;
@@ -9603,6 +9604,18 @@ button.integration-board-item:hover {
 
 .integration-section li > button {
   margin-left: auto;
+}
+
+/* Birden çok satır eylemi (Hepsiburada): tek grup olarak sağa yaslanır. */
+.integration-section li > .integration-account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.integration-section .integration-account-actions button {
+  margin-top: 0;
 }
 
 .integration-section > div {

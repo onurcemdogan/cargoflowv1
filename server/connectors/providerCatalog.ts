@@ -54,6 +54,13 @@ const CONTRACT_PACK_PATHS: Record<string, string> = {
  * geçene kadar yayın aşaması `off` kalır. İskelet tek başına `pilot`/`ga`
  * (veya sessizce `internal_test`) YAPMAZ.
  *
+ * Hepsiburada `internal_test`tir (HEPSIBURADA-LIVE-001): resmî sözleşme
+ * (Basic auth, `-sit` host kuralı, offset/limit + begindate/enddate, 429 +
+ * X-RateLimit-*, paket modeli) uygulandı; hesap kapsamlı şifreli kimlik,
+ * yalnız-okuma elle senkron. Uç nokta YOLLARI ve liste zarfı resmî olarak
+ * kanıtlanmadı (yapılandırmadan gelir) ve canlı doğrulama YAPILMADI —
+ * kanonik yazım ve karşılama yan etkileri `liveWriteGate` ile KAPALIDIR.
+ *
  * Bu harita KONFİGÜRASYONDUR; sağlık sonucundan ETKİLENMEZ.
  */
 export const ROLLOUT_STAGE_POLICY: Record<string, CapabilityStage> = {
@@ -61,6 +68,7 @@ export const ROLLOUT_STAGE_POLICY: Record<string, CapabilityStage> = {
   woocommerce: 'internal_test',
   ikas: 'internal_test',
   ticimax: 'off',
+  hepsiburada: 'internal_test',
 }
 
 export function resolveRolloutStage(providerKey: string): CapabilityStage {
@@ -125,10 +133,38 @@ function trendyolDescriptor(): ConnectorDescriptor {
   }
 }
 
+/**
+ * HEPSIBURADA — yalnız-okuma sipariş/paket bağlayıcısı (iç test).
+ *
+ * `orders.read` sözleşmesi resmî kaynakla doğrulandı (yol hariç; yol
+ * yapılandırmadan gelir). Webhook ve pazaryeri yazması SUNULMUYOR.
+ */
+function hepsiburadaDescriptor(): ConnectorDescriptor {
+  return {
+    providerKey: 'hepsiburada',
+    kind: 'marketplace',
+    displayName: 'Hepsiburada',
+    capabilities: [
+      declareCapability('orders.read', { stage: 'internal_test' }),
+      declareCapability('orders.webhook', {
+        supported: false,
+        contractVerified: true,
+        reason: 'Hepsiburada okuması kullanıcı tetiklemeli yoklamadır.',
+      }),
+      declareCapability('orders.status.write', {
+        supported: false,
+        contractVerified: true,
+        reason: 'Pazaryeri yazmaları global olarak kapalıdır.',
+      }),
+    ],
+  }
+}
+
 /** Kayıt defterini kurar. Saf: DB/ağ YOK, yalnız dosya okuma. */
 export function buildProviderCatalog(): ConnectorRegistry {
   const registry = new ConnectorRegistry()
   registry.register(trendyolDescriptor())
+  registry.register(hepsiburadaDescriptor())
   for (const providerKey of Object.keys(CONTRACT_PACK_PATHS)) {
     registry.register(descriptorFromContractPack(providerKey))
   }
@@ -136,5 +172,5 @@ export function buildProviderCatalog(): ConnectorRegistry {
 }
 
 export const HEALTH_SUPPORTED_PROVIDERS = [
-  'trendyol', 'woocommerce', 'ikas', 'ticimax',
+  'trendyol', 'woocommerce', 'ikas', 'ticimax', 'hepsiburada',
 ] as const

@@ -36,4 +36,5 @@ jobs:
       - run: npm run test:product-tour
       - run: npm run test:product-ia
       - run: npm run test:runtime-memory
+      - run: npm run test:hepsiburada
       - run: npm run test:landing
