@@ -421,6 +421,14 @@ test('HB-CURSOR-1: kanonik yazım eksik kalırsa veya yazıcı yoksa imleç İLE
   assert.equal(view.health.reasonCode, 'HB_PERSIST_INCOMPLETE')
   assert.equal(view.health.lastSuccessfulSyncAt, null)
 
+  // Sayım kanıtı: hata/atlama yok ama yazılan < beklenen → imleç durur.
+  const shortCount = await run({ persistCanonical: async () => ({ persisted: 1, inserted: 1, updated: 0, failed: 0, skipped: {} }) })
+  assert.equal(shortCount.checkpointAdvanced, false)
+  assert.equal(shortCount.durabilityReasonCode, 'HB_PERSIST_INCOMPLETE')
+  // Yazıcı sonuç döndürmezse kanıt YOK → imleç durur.
+  const noProof = await run({ persistCanonical: async () => undefined })
+  assert.equal(noProof.checkpointAdvanced, false)
+
   const noWriter = await run({})
   assert.equal(noWriter.checkpointAdvanced, false)
   ;[view] = await connection.listHepsiburadaAccounts(db, org)
@@ -434,6 +442,111 @@ test('HB-CURSOR-1: kanonik yazım eksik kalırsa veya yazıcı yoksa imleç İLE
   assert.equal(view.health.state, 'OK')
 })
 
+test('HB-DURABLE-A: normalizasyon kimliksiz kaydı SAYAR; tekrar kayıp DEĞİLDİR; saf karar matrisi', async () => {
+  const { normalizeHepsiburadaOrders } = await import('./marketplaces/hepsiburada/hepsiburadaOrderSource.ts')
+  const keyless = pkg(9, { packageNumber: '', orderId: '', orderNumber: '' })
+  const result = normalizeHepsiburadaOrders([pkg(1), pkg(1), keyless, pkg(2)])
+  assert.equal(result.orders.length, 2)
+  assert.equal(result.duplicateRemovedCount, 1)
+  assert.equal(result.invalidIdentityCount, 1)
+
+  // Her eksiklik kendi kararlı koduyla imleci durdurur.
+  const persisted2 = { persisted: 2, inserted: 2, updated: 0, failed: 0, skipped: { NO_PACKAGE_NUMBER: 0, NO_ORDER_DATE: 0 } }
+  const base = {
+    completedThroughMs: NOW, merchantMismatchCount: 0, invalidIdentityCount: 0, gateAllowed: true,
+    hasPersister: true, expectedCanonical: 2, persistResult: persisted2,
+  }
+  const decide = (over) => sync.resolveCheckpointDurability({ ...base, ...over })
+  assert.deepEqual(decide({}), { durable: true, reasonCode: null })
+  assert.equal(decide({ completedThroughMs: null }).reasonCode, 'HB_PERSIST_INCOMPLETE')
+  assert.equal(decide({ merchantMismatchCount: 1 }).reasonCode, 'HB_MERCHANT_MISMATCH')
+  assert.equal(decide({ invalidIdentityCount: 1 }).reasonCode, 'HB_RECORD_IDENTITY_MISSING')
+  assert.equal(
+    decide({ invalidIdentityCount: 1, expectedCanonical: 0, persistResult: null }).reasonCode,
+    'HB_RECORD_IDENTITY_MISSING',
+    'yalnız kimliksiz kayıt dönen yanıt BOŞ pencere sayılmaz',
+  )
+  assert.equal(decide({ gateAllowed: false }).reasonCode, 'HB_CANONICAL_WRITE_BLOCKED')
+  assert.equal(decide({ hasPersister: false, persistResult: null }).reasonCode, 'HB_CANONICAL_WRITE_BLOCKED')
+  assert.equal(decide({ persistResult: null }).reasonCode, 'HB_PERSIST_INCOMPLETE')
+  assert.equal(decide({ persistResult: { ...persisted2, skipped: { NO_PACKAGE_NUMBER: 0, NO_ORDER_DATE: 1 } } }).reasonCode, 'HB_PERSIST_SKIPPED')
+  assert.equal(decide({ persistResult: { ...persisted2, failed: 1 } }).reasonCode, 'HB_PERSIST_INCOMPLETE')
+  assert.equal(decide({ persistResult: { ...persisted2, persisted: 1 } }).reasonCode, 'HB_PERSIST_INCOMPLETE', 'sayım kanıtı')
+  assert.deepEqual(decide({ expectedCanonical: 0, persistResult: null }), { durable: true, reasonCode: null }, 'gerçekten boş pencere')
+})
+
+test('HB-DURABLE-B: kararlı kimliği olmayan kayıt dönen yanıt imleci İLERLETMEZ', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const accountId = await connectAccount(db, org)
+  const keyless = pkg(9, { packageNumber: '', orderId: '', orderNumber: '' })
+  const mixed = await syncWith(db, org, accountId, fakeTransport([pkg(1), keyless]), { liveWriteGate: ALLOW })
+  assert.equal(mixed.body.outcome, 'SUCCESS')
+  // İlk koşu 7 × 24 saatlik pencere okur; sahte taşıma her pencerede aynı
+  // satırları döndürür. Anahtarlı kayıt tekilleşir (1), kimliksiz kayıt
+  // tekilleştirilemez → her pencerede ayrı sayılır.
+  assert.equal(mixed.body.fetched, 1 + 7)
+  assert.equal(mixed.body.invalidIdentity, 7)
+  assert.equal(mixed.body.persisted.persisted, 1, 'geçerli kayıt yine yazılır')
+  assert.equal(mixed.body.checkpointAdvanced, false)
+  assert.equal(mixed.body.durabilityReasonCode, 'HB_RECORD_IDENTITY_MISSING')
+  let [view] = await connection.listHepsiburadaAccounts(db, org)
+  assert.equal(view.health.state, 'PARTIAL')
+  assert.equal(view.health.reasonCode, 'HB_RECORD_IDENTITY_MISSING')
+  assert.equal(view.health.lastSuccessfulSyncAt, null)
+
+  // Yalnız kimliksiz kayıt dönen yanıt "boş pencere" SAYILMAZ.
+  const onlyKeyless = await syncWith(db, org, accountId, fakeTransport([keyless]), { liveWriteGate: ALLOW })
+  assert.equal(onlyKeyless.body.checkpointAdvanced, false)
+  ;[view] = await connection.listHepsiburadaAccounts(db, org)
+  assert.equal(view.health.lastSuccessfulSyncAt, null)
+})
+
+test('HB-DURABLE-C: saf tekrarlar (sayfa içi + sayfalar arası) imleci TEK BAŞINA durdurmaz', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const accountId = await connectAccount(db, org)
+  const inPage = await syncWith(db, org, accountId, fakeTransport([pkg(1), pkg(1), pkg(2)]), { liveWriteGate: ALLOW })
+  assert.equal(inPage.body.persisted.persisted, 2)
+  assert.equal(inPage.body.checkpointAdvanced, true)
+  assert.equal(inPage.body.durabilityReasonCode, null)
+
+  // Sayfalar arası tekrar: limit 2 → [1,2] [2,3] [] ; 2 iki kez gelir.
+  const loaded = await connection.loadHepsiburadaAccount(db, { organizationId: org, marketplaceAccountId: accountId })
+  const later = NOW + HOUR
+  const crossPage = await sync.syncHepsiburadaOrdersForAccount(db, {
+    organizationId: org, marketplaceAccountId: accountId, config: loaded.config,
+    fromMs: NOW, upperBoundMs: later, liveWriteGate: ALLOW,
+    persistCanonical: (orders) => persistence.persistHepsiburadaOrders(db, { organizationId: org, marketplaceAccountId: accountId, orders }),
+  }, { transport: fakeTransport([pkg(1), pkg(2), pkg(2), pkg(3)]).transport, pageLimit: 2, ...noSleep })
+  assert.equal(crossPage.pagesFetched, 3)
+  assert.equal(crossPage.normalizedCount, 3)
+  assert.equal(crossPage.checkpointAdvanced, true)
+  assert.equal(Date.parse((await connection.listHepsiburadaAccounts(db, org))[0].health.lastSuccessfulSyncAt), later)
+  assert.equal((await db.select().from(schema.orders)).length, 3)
+})
+
+test('HB-DURABLE-D: tamamen geçerli ve yazılmış veri kümesi ile gerçekten boş pencere imleci İLERLETİR', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const accountId = await connectAccount(db, org)
+  const valid = await syncWith(db, org, accountId, fakeTransport([pkg(1), pkg(2), pkg(3)]), { liveWriteGate: ALLOW })
+  assert.equal(valid.body.persisted.persisted, 3)
+  assert.deepEqual(valid.body.persisted.skipped, { NO_PACKAGE_NUMBER: 0, NO_ORDER_DATE: 0 })
+  assert.equal(valid.body.checkpointAdvanced, true)
+  assert.equal(valid.body.healthState, 'OK')
+  assert.equal(Date.parse((await connection.listHepsiburadaAccounts(db, org))[0].health.lastSuccessfulSyncAt), NOW)
+
+  const later = NOW + 2 * HOUR
+  const empty = await syncWith(db, org, accountId, fakeTransport([]), { liveWriteGate: ALLOW, now: () => later })
+  assert.equal(empty.body.fetched, 0)
+  assert.equal(empty.body.checkpointAdvanced, true, 'gerçekten boş başarılı pencere ilerletebilir')
+  assert.equal(Date.parse((await connection.listHepsiburadaAccounts(db, org))[0].health.lastSuccessfulSyncAt), later)
+})
+
 test('HB-PERSIST-1: kanonik yazım hesap kapsamlı; orderNumber ≠ packageNumber; barkod takip DEĞİL; tekrar idempotent', async (t) => {
   const { pglite, db } = await makeDb()
   t.after(() => pglite.close())
@@ -444,6 +557,13 @@ test('HB-PERSIST-1: kanonik yazım hesap kapsamlı; orderNumber ≠ packageNumbe
   assert.equal(first.body.canonicalWrite, 'ALLOWED')
   assert.equal(first.body.persisted.persisted, 2)
   assert.deepEqual(first.body.persisted.skipped, { NO_PACKAGE_NUMBER: 1, NO_ORDER_DATE: 1 })
+  // (A) Atlanan kayıt (paket no / tarih yok) kanonik depoda YOK → imleç DURUR;
+  // geçerli kayıtlar yine yazılır (complete:false, idempotent).
+  assert.equal(first.body.checkpointAdvanced, false)
+  assert.equal(first.body.durabilityReasonCode, 'HB_PERSIST_SKIPPED')
+  assert.equal(first.body.healthState, 'PARTIAL')
+  assert.match(first.body.message, /eksiksiz yazılamadı/)
+  assert.equal((await connection.listHepsiburadaAccounts(db, org))[0].health.lastSuccessfulSyncAt, null)
   const rows = await db.select().from(schema.orders)
   assert.equal(rows.length, 2)
   for (const row of rows) {
@@ -462,6 +582,8 @@ test('HB-PERSIST-1: kanonik yazım hesap kapsamlı; orderNumber ≠ packageNumbe
   assert.equal((await db.select().from(schema.orders)).length, 2)
   assert.equal((await db.select().from(schema.orderLines)).length, linesBefore)
   assert.equal(linesBefore, 2)
+  assert.equal(again.body.checkpointAdvanced, false, 'tekrar koşu da atlanan kaydı yazamaz → imleç durur')
+  assert.equal((await connection.listHepsiburadaAccounts(db, org))[0].health.lastSuccessfulSyncAt, null)
 })
 
 test('HB-PERSIST-2: NULL marketplaceAccountId ile yazım İMKÂNSIZ', async (t) => {

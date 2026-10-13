@@ -23,8 +23,17 @@ export type HepsiburadaHealthState = (typeof HEPSIBURADA_HEALTH_STATES)[number]
  * `partial` kaydedilir (imleç İLERLEMEZ) ama okuma sağlığı OK'dir.
  */
 export const HB_CANONICAL_WRITE_BLOCKED = 'HB_CANONICAL_WRITE_BLOCKED'
-/** Okuma başarılı, kanonik yazım eksik kaldı — imleç durur, aralık yeniden okunur. */
+/**
+ * Okuma başarılı, kanonik yazım eksik kaldı (hata, yazıcı sonucu yok ya da
+ * yazılan sayı beklenenle eşleşmiyor) — imleç durur, aralık yeniden okunur.
+ */
 export const HB_PERSIST_INCOMPLETE = 'HB_PERSIST_INCOMPLETE'
+/** Kayıt(lar) kanonik eşlemede atlandı (paket no / sipariş tarihi yok) — imleç durur. */
+export const HB_PERSIST_SKIPPED = 'HB_PERSIST_SKIPPED'
+/** Kararlı kimliği (paket / sipariş) olmayan kayıt normalizasyonda düştü — imleç durur. */
+export const HB_RECORD_IDENTITY_MISSING = 'HB_RECORD_IDENTITY_MISSING'
+/** Başka satıcının kaydı döndü (yazılmadı) — imleç durur. */
+export const HB_MERCHANT_MISMATCH = 'HB_MERCHANT_MISMATCH'
 
 export interface HepsiburadaHealthInput {
   hasEndpointPath: boolean

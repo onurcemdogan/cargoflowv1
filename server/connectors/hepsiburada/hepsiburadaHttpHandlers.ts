@@ -261,6 +261,11 @@ export async function handleHepsiburadaSync(params: {
     const writeNote = sync.canonicalWrite === 'ALLOWED'
       ? null
       : 'İç test aşaması: okunan siparişler canlı sipariş, kargo ve etiket akışına aktarılmadı.'
+    // Okuma başarılı ama aralık kanonik depoda EKSİKSİZ değil: "tamamlandı"
+    // DENMEZ; imleç durduğu için aralık sonraki senkronda yeniden okunur.
+    const incompleteNote = sync.durabilityReasonCode && sync.canonicalWrite === 'ALLOWED'
+      ? 'Okuma tamamlandı ancak bazı kayıtlar sisteme eksiksiz yazılamadı; aralık bir sonraki senkronda yeniden okunacak.'
+      : null
     return {
       status: 200,
       body: {
@@ -271,14 +276,17 @@ export async function handleHepsiburadaSync(params: {
         family: sync.family,
         fetched: sync.fetchedCount,
         normalized: sync.normalizedCount,
+        invalidIdentity: sync.invalidIdentityCount,
         pages: sync.pagesFetched,
         networkCalls: sync.networkCalls,
         moreRemaining: sync.moreRemaining,
         canonicalWrite: sync.canonicalWrite,
         persisted: sync.persistResult,
+        checkpointAdvanced: sync.checkpointAdvanced,
+        durabilityReasonCode: sync.durabilityReasonCode,
         message: sync.errorClass
           ? HEPSIBURADA_ERROR_COPY_TR[sync.errorClass]
-          : writeNote ?? 'Hepsiburada okuma senkronu tamamlandı.',
+          : incompleteNote ?? writeNote ?? 'Hepsiburada okuma senkronu tamamlandı.',
         note: writeNote,
       },
     }

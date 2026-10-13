@@ -24,7 +24,13 @@
 // canlı doğrulama + aşama kararı olmadan ÇAĞRILMAZ.
 import { recordSyncState } from '../../onboarding/onboardingRepository.ts'
 import { canPersistCanonicalOrders, type LiveWriteGateResult } from '../liveWriteGate.ts'
-import { HB_CANONICAL_WRITE_BLOCKED, HB_PERSIST_INCOMPLETE } from './hepsiburadaHealth.ts'
+import {
+  HB_CANONICAL_WRITE_BLOCKED,
+  HB_MERCHANT_MISMATCH,
+  HB_PERSIST_INCOMPLETE,
+  HB_PERSIST_SKIPPED,
+  HB_RECORD_IDENTITY_MISSING,
+} from './hepsiburadaHealth.ts'
 import {
   HEPSIBURADA_DEFAULT_ORDER_WINDOW_MS,
   HEPSIBURADA_MAX_LIMIT,
@@ -174,11 +180,60 @@ export interface HepsiburadaSyncResult {
   fetchedCount: number
   normalizedCount: number
   merchantMismatchCount: number
+  /** Kararlı kimliği olmadığı için normalizasyonda düşen kayıt (tekrar DEĞİL). */
+  invalidIdentityCount: number
   canonicalWrite: LiveWriteGateResult['decision']
   canonicalPersisted: boolean
   persistResult: unknown
   checkpointAdvanced: boolean
   checkpointMs: number | null
+  /** Okuma başarılı ama imleç İLERLEMEDİYSE kararlı sebep kodu. */
+  durabilityReasonCode: string | null
+}
+
+/**
+ * İMLEÇ DEĞİŞMEZİ — imleç YALNIZ tamamen işlenen aralık KANONİK depoda
+ * EKSİKSİZ temsil ediliyorsa ilerler. Saf karar; başarılı okumada çağrılır.
+ *
+ * Tekrar (aynı kimlik) kayıp DEĞİLDİR. Kimliksiz kayıt, başka satıcının
+ * kaydı, kapalı yazım kapısı, yazıcının olmaması, atlanan / başarısız kayıt
+ * ve yazılan sayının beklenenle eşleşmemesi EKSİKTİR. Boş sağlayıcı yanıtı
+ * yalnız GERÇEKTEN boşsa (hiçbir ham kayıt düşmediyse) ilerletebilir.
+ */
+export function resolveCheckpointDurability(input: {
+  completedThroughMs: number | null
+  merchantMismatchCount: number
+  invalidIdentityCount: number
+  gateAllowed: boolean
+  hasPersister: boolean
+  /** Kanonik depoda temsil edilmesi gereken (kendi, tekilleştirilmiş) kayıt sayısı. */
+  expectedCanonical: number
+  /** Yazıcının sonucu; yazım çağrılmadıysa null. */
+  persistResult: unknown
+}): { durable: true; reasonCode: null } | { durable: false; reasonCode: string } {
+  const incomplete = (reasonCode: string) => ({ durable: false as const, reasonCode })
+  if (input.completedThroughMs === null) return incomplete(HB_PERSIST_INCOMPLETE)
+  if (input.merchantMismatchCount > 0) return incomplete(HB_MERCHANT_MISMATCH)
+  if (input.invalidIdentityCount > 0) return incomplete(HB_RECORD_IDENTITY_MISSING)
+  if (!input.gateAllowed) return incomplete(HB_CANONICAL_WRITE_BLOCKED)
+  if (input.expectedCanonical === 0) return { durable: true, reasonCode: null }
+  if (!input.hasPersister) return incomplete(HB_CANONICAL_WRITE_BLOCKED)
+  const result = input.persistResult as {
+    persisted?: unknown
+    failed?: unknown
+    skipped?: unknown
+  } | null
+  if (!result || typeof result !== 'object') return incomplete(HB_PERSIST_INCOMPLETE)
+  const skippedTotal = result.skipped && typeof result.skipped === 'object'
+    ? Object.values(result.skipped as Record<string, unknown>).reduce<number>((sum, value) => sum + (Number(value) || 0), 0)
+    : 0
+  if (skippedTotal > 0) return incomplete(HB_PERSIST_SKIPPED)
+  const failed = Number(result.failed ?? 0)
+  if (!Number.isFinite(failed) || failed !== 0) return incomplete(HB_PERSIST_INCOMPLETE)
+  // Sayım KANITI: her beklenen kayıt eklendi ya da güncellendi (değişmeyen
+  // yeniden yazım da `updated` sayılır, idempotent tekrar ilerletebilir).
+  if (Number(result.persisted) !== input.expectedCanonical) return incomplete(HB_PERSIST_INCOMPLETE)
+  return { durable: true, reasonCode: null }
 }
 
 const STATUS: Record<HepsiburadaFetchOutcome, 'success' | 'partial' | 'failed'> = {
@@ -229,11 +284,13 @@ export async function syncHepsiburadaOrdersForAccount(
     fetchedCount: 0,
     normalizedCount: 0,
     merchantMismatchCount: 0,
+    invalidIdentityCount: 0,
     canonicalWrite: gate.decision,
     canonicalPersisted: false,
     persistResult: null as unknown,
     checkpointAdvanced: false,
     checkpointMs: null as number | null,
+    durabilityReasonCode: null as string | null,
   }
 
   // FAIL-CLOSED: yol yoksa İSTEK KURULMAZ.
@@ -270,7 +327,7 @@ export async function syncHepsiburadaOrdersForAccount(
   if (outcome === 'SUCCESS' && merchantMismatchCount > 0) {
     outcome = 'PARTIAL'
     errorClass = 'REQUEST_REJECTED'
-    reasonCode = 'HB_MERCHANT_MISMATCH'
+    reasonCode = HB_MERCHANT_MISMATCH
   }
 
   // Kısmi okumada çekilen kayıtlar da YAZILABİLİR: `complete:false` olduğu
@@ -282,21 +339,25 @@ export async function syncHepsiburadaOrdersForAccount(
     canonicalPersisted = true
   }
 
-  // İmleç yalnız okunan aralık KANONİK depoya eksiksiz yazıldıysa ilerler.
   // `recordSyncState` imleci yalnız `success`te yazar (yoksa `now`!); bu
-  // yüzden yazılmamış başarılı okuma `partial` + sebep koduyla kaydedilir.
-  const persistFailed = Number((persistResult as { failed?: unknown } | null)?.failed ?? 0)
-  const durable =
-    gate.decision === 'ALLOWED' &&
-    fetched.completedThroughMs !== null &&
-    (ownOrders.length === 0 || (canonicalPersisted && persistFailed === 0))
+  // yüzden eksiksiz temsil KANITLANMAYAN başarılı okuma `partial` + kararlı
+  // sebep koduyla kaydedilir — `lastSuccessfulSyncAt` DEĞİŞMEZ.
+  const durability = resolveCheckpointDurability({
+    completedThroughMs: fetched.completedThroughMs,
+    merchantMismatchCount,
+    invalidIdentityCount: normalization.invalidIdentityCount,
+    gateAllowed: gate.decision === 'ALLOWED',
+    hasPersister: Boolean(params.persistCanonical),
+    expectedCanonical: ownOrders.length,
+    persistResult: canonicalPersisted ? persistResult : null,
+  })
   let status = STATUS[outcome]
   let stateErrorCode = reasonCode
-  if (status === 'success' && !durable) {
+  let durabilityReasonCode: string | null = null
+  if (status === 'success' && !durability.durable) {
     status = 'partial'
-    stateErrorCode = gate.decision === 'ALLOWED' && params.persistCanonical
-      ? HB_PERSIST_INCOMPLETE
-      : HB_CANONICAL_WRITE_BLOCKED
+    stateErrorCode = durability.reasonCode
+    durabilityReasonCode = durability.reasonCode
   }
   const checkpointAdvanced = status === 'success'
   await recordSyncState(db, organizationId, {
@@ -321,10 +382,12 @@ export async function syncHepsiburadaOrdersForAccount(
     fetchedCount: fetched.rawRecords.length,
     normalizedCount: ownOrders.length,
     merchantMismatchCount,
+    invalidIdentityCount: normalization.invalidIdentityCount,
     canonicalWrite: gate.decision,
     canonicalPersisted,
     persistResult,
     checkpointAdvanced,
     checkpointMs: checkpointAdvanced ? fetched.completedThroughMs : null,
+    durabilityReasonCode,
   }
 }

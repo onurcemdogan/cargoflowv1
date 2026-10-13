@@ -244,21 +244,32 @@ export function normalizeHepsiburadaOrder(
   }
 }
 
+/**
+ * Toplu normalizasyon. İki düşüş türü AYRI sayılır:
+ *  · `duplicateRemovedCount` — aynı kimliğin tekrarı; veri KAYBI DEĞİLDİR,
+ *  · `invalidIdentityCount` — kararlı kimliği (paket / sipariş) olmayan
+ *    kayıt; YAZILAMAZ, bu yüzden sessizce düşmez — çağıran koşuyu EKSİK
+ *    sayabilsin diye sayılır.
+ */
 export function normalizeHepsiburadaOrders(
   rawOrders: unknown,
-): { orders: NormalizedHepsiburadaOrder[]; duplicateRemovedCount: number } {
+): { orders: NormalizedHepsiburadaOrder[]; duplicateRemovedCount: number; invalidIdentityCount: number } {
   const list = Array.isArray(rawOrders) ? (rawOrders as Record<string, unknown>[]) : []
   const seen = new Map<string, NormalizedHepsiburadaOrder>()
   let duplicateRemovedCount = 0
+  let invalidIdentityCount = 0
   for (const raw of list) {
     const normalized = normalizeHepsiburadaOrder(raw)
     const key = normalized.marketplacePackageId || normalized.externalOrderId
-    if (!key) continue
+    if (!key) {
+      invalidIdentityCount += 1
+      continue
+    }
     if (seen.has(key)) {
       duplicateRemovedCount += 1
       continue
     }
     seen.set(key, normalized)
   }
-  return { orders: [...seen.values()], duplicateRemovedCount }
+  return { orders: [...seen.values()], duplicateRemovedCount, invalidIdentityCount }
 }
