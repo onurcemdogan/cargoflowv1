@@ -262,5 +262,6 @@
   "server/woocommerce-authorization-flow.test.mjs",
   "server/label-perf-hotfix-flow.test.mjs",
   "server/shipping-overview-flow.test.mjs",
-  "server/dashboard-production-dataset-flow.test.mjs"
+  "server/dashboard-production-dataset-flow.test.mjs",
+  "server/trendyol-stream-memory-flow.test.mjs"
 ]

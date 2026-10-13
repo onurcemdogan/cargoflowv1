@@ -4367,6 +4367,15 @@ async function syncTrendyolStreamForOrganization(organizationId) {
       currentFingerprint: fingerprint,
     })
 
+    // SAYFA SAYFA KALICILAŞTIRMA (bellek hotfix'i, 2026-10-13). Eskiden tüm
+    // zincir (varsayılan sınırla 500 sayfa × 200 paket) bellekte toplanıp tur
+    // SONUNDA tek seferde normalize + persist ediliyordu; ham paketler ve
+    // normalize kopyası tur boyunca birlikte yaşıyordu. Artık her sayfa
+    // geldiği anda AYNI kanonik zincirle (normalizeTrendyolOrders →
+    // persistSyncResult, complete:false, aktif hesap kapsamı ZORUNLU) yazılır
+    // ve bırakılır. Upsert idempotent olduğundan yarıda kalan tur, imleçten
+    // yeniden çekildiğinde aynı kayıtları güvenle tekrar yazar.
+    let persistedPackages = 0
     const result = await stream.runTrendyolStream({
       baseUrl: getTrendyolBaseUrl(credentials),
       sellerId: credentials.sellerId,
@@ -4377,17 +4386,21 @@ async function syncTrendyolStreamForOrganization(organizationId) {
         return { ok: response.ok === true, body: response.data }
       },
       delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      onPage: async (page) => {
+        if (page.packages.length === 0) return
+        const normalized = normalizeTrendyolOrders({ content: page.packages })
+        await service.persistSyncResult(db, organizationId, normalized.orders, {
+          // ARŞİVLEME YOK: stream turu "tam liste" olduğunu KANITLAYAMAZ.
+          complete: false,
+          fetchedCount: normalized.orders.length,
+          marketplaceAccountId,
+          requireMarketplaceAccount: true,
+        })
+        persistedPackages += page.packages.length
+      },
     })
 
-    if (result.packages.length > 0) {
-      const normalized = normalizeTrendyolOrders({ content: result.packages })
-      await service.persistSyncResult(db, organizationId, normalized.orders, {
-        // ARŞİVLEME YOK: stream turu "tam liste" olduğunu KANITLAYAMAZ.
-        complete: false,
-        fetchedCount: normalized.orders.length,
-        marketplaceAccountId,
-        requireMarketplaceAccount: true,
-      })
+    if (persistedPackages > 0) {
       // Akışta yeni görülen paketler de kuyruğa alınır (sınır içinde).
       await enqueueAutoLabelAfterSync(db, organizationId)
     }
@@ -4408,7 +4421,7 @@ async function syncTrendyolStreamForOrganization(organizationId) {
     return {
       synced: true,
       pages: result.pages,
-      packages: result.packages.length,
+      packages: result.packageCount,
       stopReason: result.stopReason,
       resumed: resume.resumed,
     }
