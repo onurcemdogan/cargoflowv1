@@ -688,6 +688,44 @@ test('N11-PERSIST-3: kısmi okuma mevcut siparişleri ARŞİVLEMEZ, imleç ARTIK
 
 /* ═══ H. YAYIN KAPISI ═════════════════════════════════════════════════════ */
 
+test('N11-EPOCH-CHECKPOINT: verified accounts and empty reads cannot advance unknown semantics; trusted proven-contract fixture still needs durable persistence', async (t) => {
+  const { pglite, db } = await makeDb()
+  t.after(() => pglite.close())
+  const org = await makeOrg(db)
+  const accountId = await connectAccount(db, org)
+  const { recordSyncState, getSyncState } = await import('./onboarding/onboardingRepository.ts')
+  const before = NOW - DAY
+  await recordSyncState(db, org, { provider: 'n11', resource: 'orders', status: 'success', fetchedCount: 0, errorCode: null, marketplaceAccountId: accountId, successfulSyncAt: new Date(before) })
+  const probe = await handlers.handleN11Test({ db, organizationId: org, body: { marketplaceAccountId: accountId }, clientOptions: { transport: fakeTransport([]).transport }, now: () => NOW })
+  assert.equal(probe.body.verificationStatus, 'verified')
+  for (const dataset of [[], [pkg(1)]]) {
+    const read = fakeTransport(dataset)
+    const result = await syncWith(db, org, accountId, read, {
+      body: { marketplaceAccountId: accountId, epochSemanticsVerified: true, epochVerification: { status: 'VERIFIED' }, checkpointBlocker: null },
+    })
+    assert.equal(result.body.canonicalWrite, 'ALLOWED')
+    assert.equal(result.body.checkpointAdvanced, false)
+    assert.equal(result.body.durabilityReasonCode, 'N11_EPOCH_SEMANTICS_UNVERIFIED')
+    assert.deepEqual(result.body.epochVerification, { status: 'BLOCKED_EXTERNAL', semantics: 'UNKNOWN', reasonCode: 'N11_EPOCH_SEMANTICS_UNVERIFIED' })
+    assert.equal(new Date((await getSyncState(db, org, 'orders', accountId)).lastSuccessfulSyncAt).getTime(), before)
+    assert.ok(read.calls.length > 0)
+    assert.ok(read.calls.every((call) => call.sender === 'ALL' && call.page === 0))
+  }
+  // Server-only existing seam models a future proven contract. This does not
+  // verify N11 and cannot be selected by an HTTP body or account credential.
+  const provenContractFixture = () => ({ ...ALLOW(), reasonCode: 'HERMETIC_PROVEN_CONTRACT_FIXTURE' })
+  const incomplete = await runSync(db, org, accountId, fakeTransport([pkg(1)]), {
+    params: { liveWriteGate: provenContractFixture, persistCanonical: async () => ({ persisted: 0, failed: 0, skipped: {} }) },
+  })
+  assert.equal(incomplete.checkpointAdvanced, false)
+  assert.equal(incomplete.durabilityReasonCode, 'N11_PERSIST_INCOMPLETE')
+  const durable = await runSync(db, org, accountId, fakeTransport([pkg(1)]), { params: { liveWriteGate: provenContractFixture } })
+  assert.equal(durable.checkpointAdvanced, true)
+  assert.equal(durable.checkpointMs, NOW)
+  assert.equal(new Date((await getSyncState(db, org, 'orders', accountId)).lastSuccessfulSyncAt).getTime(), NOW)
+  for (const table of [schema.shipments, schema.labelJobs]) assert.equal((await db.select().from(table)).length, 0)
+})
+
 test('N11-GATE-1: gerçek yayın internal_test → okuma çalışır, kanonik tablolar BOŞ, imleç İLERLEMEZ, sağlık dürüst', async (t) => {
   assert.equal(catalog.resolveRolloutStage('n11'), 'internal_test')
   assert.equal(gate.canPersistCanonicalOrders('n11').decision, 'BLOCKED_BY_ROLLOUT')

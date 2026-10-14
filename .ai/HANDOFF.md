@@ -1,3 +1,42 @@
+# N11-LIVE-002 — epoch verification handoff
+
+2026-10-14. Branch `agent/N11-LIVE-002`; baseline
+`de5c18979deb054f4118dd9d66aae495952281b3` (user already merged PR #19).
+Code/report/tests complete; checkpoint capability remains BLOCKED_EXTERNAL.
+Independent gpt-6-astra review APPROVED. Local delivery commit is branch HEAD.
+No push, merge or deploy requested. No provider calls performed.
+
+Official shipment docs, SOAP-REST comparison and changelog do not disambiguate
+normal epoch versus shifted-wall epoch. Repo fixtures/research contain no
+independent local datetime/live request correlation. Keep the existing
+N11_EPOCH_SEMANTICS_UNVERIFIED blocker; no timezone shift was implemented.
+Immutable n11EpochSemantics metadata reports BLOCKED_EXTERNAL/UNKNOWN in sync.
+
+Known client example: 2026-10-14T12:00:00+03:00 -> UTC09:00 -> 1791968400000;
+the other candidate is 1791979200000 (+10800000). These explain the variants,
+not the provider's proven interpretation. Numeric request serialization and
+adaptive sync/config/persistence/fulfillment gates have no logic changes.
+
+Production discovery confirmed there is currently no N11 marketplace account or N11 connector credential. Live epoch verification is therefore externally blocked until a real N11 account is connected through the normal product flow.
+Operator-reported production counts (2026-10-14): marketplace_accounts N11 = 0;
+connector_credentials provider_key=n11 = 0. No discovery query was rerun for
+this documentation correction. See docs/n11-epoch-verification.md for the
+unexecuted <=10 GET protocol, requiring a connected real account and explicit
+approval before execution: stable known package
+last-modified local time, identity controls, two date-filtered variants without
+packageIds/orderNumber, negative/boundary controls. Refuse inconclusive, unstable
+or multipage results. No API secrets/raw headers/customer payloads in evidence.
+Evidence: .ai/research/N11-LIVE-002/epoch-verification.json.
+
+Validation: full test:n11 now includes contracts (51+27 read+5 UI). Account16,
+contract packs14, kernel15, health53, status9+8 UI, onboarding22+13 UI, auto-label115,
+UI423/44 pass; tsc force/lint/build/diff check pass (6 existing warnings). Two
+mutations (remove unknown gate, guess3h shift) fail assertions with byte-exact
+restoration. Positive fixture models future trusted proof and still requires
+durability. Actual N11 request semantics remain unproven.
+
+## Previous ticket handoff (historical)
+
 # ACCOUNT-LEVEL-LIVE-VERIFICATION-001 — PR #19 review follow-up
 
 2026-10-14. Same branch `feat/account-level-live-verification-001`; follow-up

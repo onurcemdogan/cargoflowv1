@@ -24,6 +24,11 @@
 //   · yanıttaki tarihler epoch ms SAYIDIR; paket statüsü `shipmentPackageStatus`
 //   · `sellerId` paket içinde döner
 //   · "Konuma Özel Teslimat" siparişlerinde paket numarası (`id`) NULL döner
+//
+// N11-LIVE-002, checked 2026-10-14: "GMT +3" alone does not specify whether
+// an ordinary epoch or shifted wall-clock epoch is expected. Numeric response
+// examples do not prove request conversion. See n11EpochSemantics.ts and
+// .ai/research/N11-LIVE-002/epoch-verification.json; checkpoint blocker retained.
 
 /** Resmî yanıt zarfında paket listesini taşıyan alan — kanıtlı. */
 export const N11_LIST_FIELD = 'content'

@@ -12,6 +12,7 @@ import { recordAccountReadProbe } from '../accountReadVerification.ts'
 import { accountOrdersReadPayload } from '../accountOrdersReadGate.ts'
 import { credentialFingerprint } from '../../integrations/credentialService.ts'
 import { N11_WINDOW_MS } from '../../marketplaces/n11/n11Contract.ts'
+import { N11_EPOCH_VERIFICATION } from '../../marketplaces/n11/n11EpochSemantics.ts'
 import type { LiveWriteGateResult } from '../liveWriteGate.ts'
 import { fetchN11Page, N11_ERROR_COPY_TR, type N11ClientOptions } from './n11Client.ts'
 import { N11_CONFIG_ERROR_COPY_TR, configToStoredPayload, N11_PROVIDER_KEY, type N11ConnectorConfig } from './n11Config.ts'
@@ -262,9 +263,10 @@ export async function handleN11Sync(params: {
         ordersReadReasonCode: sync.ordersReadReasonCode,
         persisted: sync.persisted,
         checkpointAdvanced: sync.checkpointAdvanced,
+        epochVerification: N11_EPOCH_VERIFICATION,
         durabilityReasonCode: sync.durabilityReasonCode,
-        message: sync.durabilityReasonCode === 'N11_EPOCH_SEMANTICS_UNVERIFIED'
-          ? 'Siparişler kaydedildi; n11 zaman sınırı henüz doğrulanmadığı için imleç ilerlemedi.'
+        message: sync.durabilityReasonCode === N11_EPOCH_VERIFICATION.reasonCode
+          ? 'Okuma tamamlandı; n11 tarih parametrelerinin saat dönüşümü doğrulanmadığı için imleç ilerlemedi.'
           : sync.reasonCode === N11_DENSE_WINDOW_UNSPLITTABLE
           ? 'Bir aralıkta aynı zaman diliminde tek sayfaya sığmayan sayıda kayıt var; aralık güvenle bölünemedi, imleç o pencerede durdu.'
           : sync.reasonCode === N11_REQUEST_BUDGET_EXHAUSTED
