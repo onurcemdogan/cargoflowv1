@@ -5240,6 +5240,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
 }
 
 async function createSuratShipment(request, response) {
+  if (await blockAccountReadSourceFulfillment(request, response)) return
   const order = request.body?.order
   const normalizedConfig = normalizeSuratConfig(
     request.body?.config?.surat ?? request.body?.config,
@@ -5314,6 +5315,20 @@ async function createSuratShipment(request, response) {
   } finally {
     suratCreateLocks.delete(operation.idempotencyKey)
   }
+}
+
+/** Guard before reservation, lifecycle writes, carrier create and label calls. */
+async function blockAccountReadSourceFulfillment(request, response) {
+  const gate = await import('./shipments/orderSourceFulfillmentGate.ts')
+  const order = request.body?.order ?? {}
+  let allowed = gate.orderSourceFulfillmentAllowed(order.marketplace)
+  if (allowed && isTenantAuthMode()) {
+    const { getDb } = await import('./db/client.ts')
+    allowed = await gate.loadOrderSourceFulfillmentAllowed(getDb(), String(request?.auth?.organizationId ?? ''), order)
+  }
+  if (allowed) return false
+  response.json({ ok: false, source: 'real', errorCode: 'FULFILLMENT_NOT_AVAILABLE', message: 'Bu sipariş kaynağı yalnız okuma için etkin; kargo ve etiket işlemleri kapalı.' })
+  return true
 }
 
 // TRACE V2 KALICILAŞTIRMA — DEBUG-ONLY, BEST-EFFORT.
@@ -5953,6 +5968,7 @@ async function createSuratShipmentCore(request, response) {
 }
 
 async function createSuratLabelForRegisteredShipment(request, response) {
+  if (await blockAccountReadSourceFulfillment(request, response)) return
   const order = request.body?.order
   const fullConfig = request.body?.config ?? {}
   const baseConfig = normalizeSuratConfig(

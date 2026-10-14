@@ -4,7 +4,7 @@ import { and, eq } from 'drizzle-orm'
 import { carrierAccounts, marketplaceAccounts } from '../../db/schema.ts'
 import { ensureAccount } from '../../integrations/marketplaceAccountRepository.ts'
 import { credentialFingerprint } from '../../integrations/credentialService.ts'
-import { arasCredentialRef, upsertCarrierAccount } from '../../carriers/carrierAccounts.ts'
+import { arasCredentialRef, syncMarketplaceAccountFingerprint, upsertCarrierAccount } from '../../carriers/carrierAccounts.ts'
 import {
   deleteConnectorCredential,
   getConnectorCredential,
@@ -91,6 +91,7 @@ export async function connectArasCarrierAccount(
     providerKey: ARAS_PROVIDER_KEY,
     payload: credentialPayload,
   })
+  await syncMarketplaceAccountFingerprint(db, { organizationId, marketplaceAccountId: accountId, payload: credentialPayload })
   // Taşıyıcı hesap modeli (PHASE2-C): canlı probe YOK → doğrulanmamış kalır.
   await upsertCarrierAccount(db, {
     organizationId,

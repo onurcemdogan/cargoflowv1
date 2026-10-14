@@ -13,6 +13,8 @@
 // yapılandırma önce kaydedilebilir; okuma "Test Et" ile ayrıca denenir.
 import { and, eq } from 'drizzle-orm'
 import { marketplaceAccounts } from '../../db/schema.ts'
+import { syncMarketplaceAccountFingerprint } from '../../carriers/carrierAccounts.ts'
+import { accountOrdersReadPayload, getAccountOrdersReadGate } from '../accountOrdersReadGate.ts'
 import {
   ensureAccount,
   listAccounts,
@@ -72,7 +74,7 @@ export async function findOwnedHepsiburadaAccount(
 
 export interface HepsiburadaConnectResult {
   ok: boolean
-  errors: HepsiburadaConfigError[]
+  errors: Array<HepsiburadaConfigError | 'HB_ACCOUNT_NOT_FOUND' | 'HB_MERCHANT_CHANGED'>
   marketplaceAccountId: string | null
 }
 
@@ -82,10 +84,16 @@ export interface HepsiburadaConnectResult {
  */
 export async function connectHepsiburadaAccount(
   db: Db,
-  input: HepsiburadaConfigInput & { organizationId: string },
+  input: HepsiburadaConfigInput & { organizationId: string; marketplaceAccountId?: unknown },
 ): Promise<HepsiburadaConnectResult> {
   const organizationId = requireOrg(input.organizationId)
   const merchantId = String(input.merchantId ?? '').trim()
+  const editId = String(input.marketplaceAccountId ?? '').trim()
+  if (editId) {
+    const owned = await findOwnedHepsiburadaAccount(db, { organizationId, marketplaceAccountId: editId })
+    if (!owned) return { ok: false, errors: ['HB_ACCOUNT_NOT_FOUND'], marketplaceAccountId: null }
+    if (owned.providerAccountId !== merchantId) return { ok: false, errors: ['HB_MERCHANT_CHANGED'], marketplaceAccountId: null }
+  }
   // Parola/kullanıcı adı boşsa ve bu merchant zaten kayıtlıysa kayıtlı değer
   // KORUNUR (arayüz bunları geri göstermez). Yalnız AYNI kiracı + AYNI merchant.
   let storedPassword: string | null = null
@@ -120,11 +128,20 @@ export async function connectHepsiburadaAccount(
         eq(marketplaceAccounts.marketplace, HEPSIBURADA_ACCOUNT_MARKETPLACE),
       ),
     )
-  await saveConnectorCredential(db, {
-    organizationId,
-    marketplaceAccountId: account.id,
-    providerKey: HEPSIBURADA_PROVIDER_KEY,
-    payload: configToStoredPayload(config),
+  await db.transaction(async (tx: Db) => {
+    await tx.select({ id: marketplaceAccounts.id }).from(marketplaceAccounts)
+      .where(and(eq(marketplaceAccounts.organizationId, organizationId), eq(marketplaceAccounts.id, account.id))).for('update')
+    const current = await getConnectorCredential(tx, { organizationId, marketplaceAccountId: account.id, providerKey: HEPSIBURADA_PROVIDER_KEY })
+    const latest = validateHepsiburadaConfig(input, {
+      storedPassword: current ? String(current.payload.password ?? '') : config.password,
+      storedUsername: current ? String(current.payload.username ?? '') : config.username,
+    })
+    if (!latest.ok) throw new Error('HB_CONFIG_INVALID')
+    const payload = configToStoredPayload(latest.config)
+    await saveConnectorCredential(tx, { organizationId, marketplaceAccountId: account.id, providerKey: HEPSIBURADA_PROVIDER_KEY, payload })
+    await syncMarketplaceAccountFingerprint(tx, {
+      organizationId, marketplaceAccountId: account.id, payload: accountOrdersReadPayload(HEPSIBURADA_PROVIDER_KEY, payload),
+    })
   })
   return { ok: true, errors: [], marketplaceAccountId: account.id }
 }
@@ -160,7 +177,7 @@ export async function disconnectHepsiburadaAccount(
   })
   await db
     .update(marketplaceAccounts)
-    .set({ isActive: false, updatedAt: new Date() })
+    .set({ isActive: false, verificationStatus: 'unverified', credentialFingerprint: null, lastVerifiedAt: null, updatedAt: new Date() })
     .where(
       and(
         eq(marketplaceAccounts.organizationId, organizationId),
@@ -178,6 +195,11 @@ export interface HepsiburadaAccountView {
   isActive: boolean
   config: HepsiburadaConfigView | null
   health: HepsiburadaHealth
+  verificationStatus: string
+  lastVerifiedAt: Date | null
+  lastVerificationAttemptAt: Date | null
+  ordersActive: boolean
+  ordersReadReasonCode: string
 }
 
 /** Kiracının Hepsiburada hesapları — SIR ASLA dönmez. */
@@ -191,11 +213,17 @@ export async function listHepsiburadaAccounts(db: Db, organizationId: string): P
     })
     const config = configFromStoredPayload(stored?.payload)
     const syncState = await getSyncState(db, org, 'orders', account.id)
+    const gate = await getAccountOrdersReadGate(db, { organizationId: org, marketplaceAccountId: account.id, providerKey: HEPSIBURADA_PROVIDER_KEY })
     views.push({
       marketplaceAccountId: account.id,
       merchantId: account.providerAccountId,
       displayName: account.displayName ?? null,
       isActive: account.isActive,
+      verificationStatus: gate.decision === 'ALLOWED' ? 'verified' : account.verificationStatus === 'verified' ? 'unverified' : account.verificationStatus ?? 'unverified',
+      lastVerifiedAt: account.lastVerifiedAt ?? null,
+      lastVerificationAttemptAt: account.lastVerificationAttemptAt ?? null,
+      ordersActive: gate.decision === 'ALLOWED',
+      ordersReadReasonCode: gate.reasonCode,
       config: config ? toConfigView(config) : null,
       health: resolveHepsiburadaHealth({
         hasEndpointPath: Boolean(config && resolveReadFamily(config)),

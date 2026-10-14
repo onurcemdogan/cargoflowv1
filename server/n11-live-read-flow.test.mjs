@@ -204,7 +204,7 @@ test('N11-CRED-2: kimlik ŞİFRELİ; hesap kimliği appKey parmak izi; yanıt/li
   for (const level of Object.keys(original)) console[level] = (...args) => logged.push(args.map(String).join(' '))
   t.after(() => Object.assign(console, original))
 
-  const connect = await handlers.handleN11Connect({ db, organizationId: org, body: { appKey: APP_KEY, appSecret: APP_SECRET } })
+  const connect = await handlers.handleN11Connect({ db, organizationId: org, body: { appKey: APP_KEY, appSecret: APP_SECRET }, clientOptions: { transport: fakeTransport([]).transport, ...noSleep } })
   assert.equal(connect.status, 200)
   const accountId = connect.body.marketplaceAccountId
   const [account] = await db.select().from(schema.marketplaceAccounts).where(eq(schema.marketplaceAccounts.id, accountId))
@@ -703,16 +703,17 @@ test('N11-GATE-1: gerçek yayın internal_test → okuma çalışır, kanonik ta
   const accountId = await connectAccount(db, org)
   const result = await syncWith(db, org, accountId, fakeTransport([pkg(1), pkg(2)]))
   assert.equal(result.body.outcome, 'SUCCESS')
-  assert.equal(result.body.canonicalWrite, 'BLOCKED_BY_ROLLOUT')
+  assert.equal(result.body.canonicalWrite, 'BLOCKED_BY_ACCOUNT')
+  assert.equal(result.body.ordersReadReasonCode, 'ACCOUNT_NOT_VERIFIED')
   assert.equal(result.body.fetched, 2)
   assert.equal(result.body.checkpointAdvanced, false)
   assert.equal(result.body.moreRemaining, true, 'yedek aralık dürüstçe KALIR')
-  assert.match(result.body.note, /İç test/)
+  assert.match(result.body.note, /Hesap doğrulanmadı/)
   for (const table of [schema.orders, schema.orderLines, schema.shipments, schema.labelJobs]) {
     assert.equal((await db.select().from(table)).length, 0, 'canlı iş tablosu BOŞ')
   }
   assert.equal(result.body.healthState, 'OK')
-  assert.match(result.body.healthLabel, /iç test: kayıtlar sisteme yazılmadı, imleç ilerlemedi/)
+  assert.match(result.body.healthLabel, /hesap doğrulanmadı: kayıtlar sisteme yazılmadı, imleç ilerlemedi/)
   const health1 = (await view(db, org, accountId)).health
   assert.equal(health1.lastSuccessfulSyncAt, null)
   assert.equal(health1.reasonCode, 'N11_CANONICAL_WRITE_BLOCKED')

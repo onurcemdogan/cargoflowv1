@@ -95,6 +95,14 @@ export interface ConnectorDescriptor {
   kind: ProviderKind
   displayName: string
   capabilities: readonly CapabilityDeclaration[]
+  /** Implemented safe orders.read path that can be enabled for one verified account. */
+  accountOrdersRead?: {
+    fingerprintFields: readonly string[]
+    requiredCredentialFields: readonly string[]
+    requiredEndpointFields?: readonly string[]
+    /** Operational evidence still needed before advancing a production cursor. */
+    checkpointBlocker?: string
+  }
 }
 
 export function declareCapability(
@@ -133,6 +141,11 @@ export function supportsCapability(
 ): boolean {
   const found = findCapability(descriptor, capability)
   return found !== null && found.supported && found.contractVerified
+}
+
+/** Implemented read path with a verified contract and account-scoped activation. */
+export function supportsAccountOrdersRead(descriptor: ConnectorDescriptor | null): boolean {
+  return Boolean(descriptor?.accountOrdersRead && supportsCapability(descriptor, 'orders.read'))
 }
 
 /**

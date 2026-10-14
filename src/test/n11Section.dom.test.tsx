@@ -40,10 +40,11 @@ test('N11-UI-1: iç test rozeti; dürüst metin (canlı doğrulama yok, yazma ka
   responder = () => ({ status: 200, body: { ok: true, accounts: [ACCOUNT] } })
   render(<N11Section />)
   expect(await screen.findByText('n11 • Satıcı 9876543')).toBeTruthy()
-  expect(screen.getByTestId('n11-rollout-badge').textContent).toBe('İÇ TEST')
+  expect(screen.getByTestId('n11-rollout-badge').textContent).toBe('SİPARİŞ OKUMA')
   const section = screen.getByTestId('n11-section').textContent ?? ''
-  expect(section).toMatch(/canlı sipariş, kargo ve etiket akışına aktarılmaz/)
-  expect(section).toMatch(/Canlı doğrulama henüz yapılmadı/)
+  expect(section).toMatch(/hesabınız güvenli bir okuma isteğiyle doğrulanır/)
+  expect(section).toMatch(/Hesap doğrulanmadı/)
+  expect(section).toMatch(/Siparişler pasif/)
   expect(section).toMatch(/Pazaryeri yazmaları .* kapalıdır/)
   expect(section).not.toMatch(/Canlı bağlantı|canlıda|etiket alın|etiket indir/i)
   expect(screen.getByText('API şifresi kayıtlı')).toBeTruthy()
@@ -114,4 +115,33 @@ test('N11-UI-4: durum panosu n11\'i "İç test"te gösterir (Canlı DEĞİL) ve 
   expect(screen.queryByText('Canlı')?.closest('.integration-board-group')?.textContent ?? '').not.toMatch(/n11/)
   fireEvent.click(button)
   expect(onOpen).toHaveBeenCalledWith('n11')
+})
+
+test('N11-UI-VERIFICATION: Test Et reloads persisted evidence; credential save invalidates old verification and keeps retry available', async () => {
+  let account = { ...ACCOUNT, verificationStatus: 'unverified', ordersActive: false }
+  responder = (url, init) => {
+    if (url.endsWith('/accounts/test')) {
+      account = { ...account, verificationStatus: 'verified', ordersActive: true }
+      return { status: 200, body: { ok: true, message: 'Hesap doğrulandı.', recordsRead: 0 } }
+    }
+    if (url.endsWith('/accounts') && init?.method === 'POST') {
+      account = { ...account, verificationStatus: 'provider_unavailable', ordersActive: false }
+      return { status: 200, body: { ok: true, credentialsSaved: true, message: 'Bilgiler kaydedildi; sağlayıcı geçici olarak kullanılamıyor.' } }
+    }
+    return { status: 200, body: { ok: true, accounts: [account] } }
+  }
+  render(<N11Section />)
+  await screen.findByText('Siparişler pasif')
+  expect(screen.queryByText('Bağlı — Hesap doğrulandı')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Test Et' }))
+  await screen.findByText('Siparişler aktif')
+  expect(screen.getByText('Bağlı — Hesap doğrulandı')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: 'Düzenle' }))
+  fireEvent.change(document.getElementById('n11-app-secret') as HTMLInputElement, { target: { value: 'rotated-fixture' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Değişiklikleri Kaydet' }))
+  await screen.findByText('Bilgiler kaydedildi — Sağlayıcı geçici olarak kullanılamıyor')
+  expect(screen.queryByText('Siparişler aktif')).toBeNull()
+  expect(screen.getByText('Siparişler pasif')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Test Et' }).hasAttribute('disabled')).toBe(false)
+  expect((document.getElementById('n11-app-secret') as HTMLInputElement).value).toBe('')
 })

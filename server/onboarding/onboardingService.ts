@@ -20,6 +20,7 @@ import {
   loadIntegrationHealthForOrganization,
 } from '../connectors/integrationHealthService.ts'
 import { buildProviderCatalog, resolveRolloutStage } from '../connectors/providerCatalog.ts'
+import { getAccountOrdersReadGate } from '../connectors/accountOrdersReadGate.ts'
 import {
   evaluateOnboarding,
   resolveOnboardingProviders,
@@ -106,13 +107,21 @@ export async function loadOnboardingSnapshot(
   resources.forEach((resource, index) => {
     healthByResource[resource] = healthLists[index]
   })
+  // For account-verifiable sources, validate the current encrypted credentials too.
+  const verifiedAccounts = await Promise.all(accounts.map(async (account: Record<string, unknown>) => {
+    const providerKey = String(account.marketplace ?? '').toLowerCase()
+    const requiresVerification = providers.find((provider) => provider.providerKey === providerKey)?.requiresAccountVerification
+    if (!requiresVerification) return account
+    const gate = await getAccountOrdersReadGate(db, { organizationId: scopedOrganizationId, marketplaceAccountId: String(account.id), providerKey })
+    return { ...account, verificationStatus: gate.decision === 'ALLOWED' ? 'verified' : 'unverified' }
+  }))
 
   return {
     completed: Boolean(settings.onboardingCompleted),
     completedAt: toIso(settings.onboardingCompletedAt),
     providers,
     healthByResource,
-    accounts: accounts.map((account: Record<string, unknown>) => ({
+    accounts: verifiedAccounts.map((account: Record<string, unknown>) => ({
       id: String(account.id),
       marketplace: String(account.marketplace ?? ''),
       displayName: account.displayName ? String(account.displayName) : null,

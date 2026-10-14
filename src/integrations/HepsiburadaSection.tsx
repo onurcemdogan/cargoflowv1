@@ -2,9 +2,8 @@
 //
 // ═══ DÜRÜST YAYIN DURUMU ═════════════════════════════════════════════════
 //
-// Hepsiburada bağlayıcısı iç testtir: bağlantı ve sipariş/paket OKUMA
-// denenebilir, ama okunan kayıtlar canlı sipariş/kargo/etiket akışına
-// YAZILMAZ. Yüzey "canlı" demez; canlı doğrulama ayrı bir adımdır.
+// Güvenli GET yalnız bu hesabın kimliğini doğrular ve kanonik sipariş
+// okumasını açar. Kargo/etiket ve pazaryeri yazmaları ayrı kapıda kalır.
 //
 // ═══ UYDURMA YOL YOK ═════════════════════════════════════════════════════
 //
@@ -18,6 +17,7 @@
 // kayıtlı değer korunur.
 import { useCallback, useEffect, useState } from 'react'
 import { authenticatedApiRequest } from '../services/authenticatedApiRequest'
+import { AccountReadStatus } from './AccountReadStatus'
 
 export const HEPSIBURADA_ACCOUNTS_ENDPOINT = '/api/integrations/hepsiburada/accounts'
 export const HEPSIBURADA_DISCONNECT_ENDPOINT = '/api/integrations/hepsiburada/accounts/disconnect'
@@ -41,6 +41,8 @@ export interface HepsiburadaAccountRow {
   } | null
   health: { state: string; reasonCode: string | null; lastSuccessfulSyncAt: string | null; lastAttemptAt?: string | null }
   healthLabel?: string
+  verificationStatus?: string
+  ordersActive?: boolean
 }
 
 interface FormFields {
@@ -86,6 +88,7 @@ export function HepsiburadaSection() {
   const [formState, setFormState] = useState<FormState>('idle')
   const [formMessage, setFormMessage] = useState<string | null>(null)
   const [busyAccount, setBusyAccount] = useState<string | null>(null)
+  const [verifyingAccount, setVerifyingAccount] = useState<string | null>(null)
   const [results, setResults] = useState<Record<string, ActionResult>>({})
 
   const load = useCallback(async (): Promise<HepsiburadaAccountRow[] | null> => {
@@ -126,6 +129,7 @@ export function HepsiburadaSection() {
     setForm((current) => ({ ...current, [field]: event.target.value }))
 
   function startEdit(account: HepsiburadaAccountRow) {
+    setResults((current) => { const next = { ...current }; delete next[account.marketplaceAccountId]; return next })
     setEditing(account.marketplaceAccountId)
     setFormState('idle')
     setFormMessage(null)
@@ -142,11 +146,11 @@ export function HepsiburadaSection() {
   }
 
   async function save() {
-    if (formState === 'saving') return
+    if (formState === 'saving' || busyAccount) return
     setFormState('saving')
     setFormMessage(null)
     try {
-      const response = await authenticatedApiRequest(HEPSIBURADA_ACCOUNTS_ENDPOINT, { method: 'POST', json: form })
+      const response = await authenticatedApiRequest(HEPSIBURADA_ACCOUNTS_ENDPOINT, { method: 'POST', json: editing ? { ...form, marketplaceAccountId: editing } : form })
       const body = (await response.json()) as { ok?: boolean; message?: string }
       if (!response.ok || !body?.ok) {
         setFormState('error')
@@ -168,6 +172,7 @@ export function HepsiburadaSection() {
   async function runAction(marketplaceAccountId: string, endpoint: string, summarize: (body: Record<string, unknown>) => string) {
     if (busyAccount) return
     setBusyAccount(marketplaceAccountId)
+    setVerifyingAccount(endpoint === HEPSIBURADA_TEST_ENDPOINT ? marketplaceAccountId : null)
     try {
       const response = await authenticatedApiRequest(endpoint, { method: 'POST', json: { marketplaceAccountId } })
       const body = (await response.json()) as Record<string, unknown>
@@ -181,6 +186,7 @@ export function HepsiburadaSection() {
       setResults((current) => ({ ...current, [marketplaceAccountId]: { ok: false, message: 'İşlem tamamlanamadı.' } }))
     } finally {
       setBusyAccount(null)
+      setVerifyingAccount(null)
     }
   }
 
@@ -204,11 +210,11 @@ export function HepsiburadaSection() {
   return (
     <section className="integration-section" aria-labelledby="hepsiburada-title" data-testid="hepsiburada-section">
       <h3 id="hepsiburada-title">
-        Hepsiburada <span className="ui-badge tone-info" data-testid="hepsiburada-rollout-badge">İÇ TEST</span>
+        Hepsiburada <span className="ui-badge tone-info" data-testid="hepsiburada-rollout-badge">SİPARİŞ OKUMA</span>
       </h3>
       <p>
-        Hepsiburada bağlantısı iç test aşamasındadır: sipariş/paket okuma denenebilir, ancak okunan kayıtlar
-        canlı sipariş, kargo ve etiket akışına aktarılmaz. Canlı doğrulama ayrıca yapılır.
+        API bilgilerinizi kaydedin; hesabınız güvenli bir okuma isteğiyle doğrulanır.
+        Doğrulanan hesabın siparişleri sisteme alınabilir.
       </p>
       <p>
         Uç nokta yolları resmî dokümanda doğrulanmadığı için Hepsiburada&apos;nın size verdiği yolları girin; yol
@@ -234,16 +240,16 @@ export function HepsiburadaSection() {
             {account.health.lastSuccessfulSyncAt ? (
               <span>Kayıtlı siparişler: {formatDateTime(account.health.lastSuccessfulSyncAt)} itibarıyla</span>
             ) : null}
-            <span>{account.isActive ? 'Bağlı' : 'Bağlı değil'}</span>
+            <AccountReadStatus isActive={account.isActive} configured={Boolean(account.config)} verificationStatus={account.verificationStatus} ordersActive={account.ordersActive} verifying={verifyingAccount === account.marketplaceAccountId || (formState === 'saving' && editing === account.marketplaceAccountId)} />
             <span className="integration-account-actions">
-              <button type="button" disabled={busyAccount !== null || !account.isActive} onClick={() => void testAccount(account.marketplaceAccountId)}>
+              <button type="button" disabled={busyAccount !== null || formState === 'saving' || !account.isActive} onClick={() => void testAccount(account.marketplaceAccountId)}>
                 {busyAccount === account.marketplaceAccountId ? 'Çalışıyor…' : 'Test Et'}
               </button>
-              <button type="button" disabled={busyAccount !== null || !account.isActive} onClick={() => void syncAccount(account.marketplaceAccountId)}>
+              <button type="button" disabled={busyAccount !== null || formState === 'saving' || !account.isActive} onClick={() => void syncAccount(account.marketplaceAccountId)}>
                 Senkronize Et
               </button>
-              <button type="button" onClick={() => startEdit(account)}>Düzenle</button>
-              <button type="button" onClick={() => void disconnect(account.marketplaceAccountId)}>Bağlantıyı Kaldır</button>
+              <button type="button" disabled={busyAccount !== null || formState === 'saving'} onClick={() => startEdit(account)}>Düzenle</button>
+              <button type="button" disabled={busyAccount !== null || formState === 'saving'} onClick={() => void disconnect(account.marketplaceAccountId)}>Bağlantıyı Kaldır</button>
             </span>
             {results[account.marketplaceAccountId] ? (
               <span role={results[account.marketplaceAccountId].ok ? 'status' : 'alert'}>{results[account.marketplaceAccountId].message}</span>
@@ -269,13 +275,13 @@ export function HepsiburadaSection() {
         <input id="hb-orders-path" type="text" value={form.ordersPath} autoComplete="off" placeholder="/… ({merchantId} kullanılabilir)" onChange={update('ordersPath')} />
         <label htmlFor="hb-list-field">Liste alanı (yanıt nesne ise)</label>
         <input id="hb-list-field" type="text" value={form.listField} autoComplete="off" onChange={update('listField')} />
-        <button type="button" disabled={formState === 'saving'} onClick={() => void save()}>
+        <button type="button" disabled={formState === 'saving' || busyAccount !== null} onClick={() => void save()}>
           {editing ? 'Değişiklikleri Kaydet' : 'Kaydet ve Bağla'}
         </button>
         {editing ? (
           <button type="button" onClick={() => { setEditing(null); setForm(EMPTY_FORM) }}>Vazgeç</button>
         ) : null}
-        {formState === 'saving' ? <span role="status">Kaydediliyor…</span> : null}
+        {formState === 'saving' ? <span role="status">Doğrulanıyor…</span> : null}
         {formState === 'saved' && formMessage ? <span role="status">{formMessage}</span> : null}
         {formState === 'error' && formMessage ? <span role="alert">{formMessage}</span> : null}
       </div>

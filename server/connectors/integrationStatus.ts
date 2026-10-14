@@ -15,10 +15,11 @@
 // Paneldeki grup ("Canlı / İç test / Geliştiriliyor") yalnız ilk ikisinden,
 // rozet yalnız sonuncusundan türer. "Canlı" ancak üretimde kanıtlanmış VE
 // yayın aşaması canlı davranışa izin veren bağlayıcıya verilir.
-import { stageAffectsLiveBehavior, type CapabilityStage } from './connectorKernel.ts'
+import { stageAffectsLiveBehavior, supportsAccountOrdersRead, type CapabilityStage } from './connectorKernel.ts'
 import type { IntegrationHealth } from './integrationHealth.ts'
 import { loadIntegrationHealthForOrganization } from './integrationHealthService.ts'
-import { resolveRolloutStage } from './providerCatalog.ts'
+import { buildProviderCatalog, resolveRolloutStage } from './providerCatalog.ts'
+import { getAccountOrdersReadGate } from './accountOrdersReadGate.ts'
 import { ARAS_ROLLOUT_STAGE } from '../carriers/aras/arasRollout.ts'
 import { listCarrierAccounts } from '../carriers/carrierAccounts.ts'
 import type { CarrierAccountRecord } from '../carriers/carrierResolution.ts'
@@ -111,6 +112,7 @@ function latest(values: Array<string | null>): string | null {
 export function connectionHealthFromIntegrationHealth(
   entries: readonly IntegrationHealth[],
   accounts: ReadonlyArray<{ isActive: boolean; verificationStatus?: string | null; lastVerifiedAt?: unknown }>,
+  requiresAccountVerification = false,
 ): ConnectionHealthView {
   const configuredEntries = entries.filter((entry) => entry.connection !== 'NOT_CONFIGURED')
   const lastSuccessfulSyncAt = latest(configuredEntries.map((entry) => entry.lastSuccessfulSyncAt))
@@ -137,7 +139,7 @@ export function connectionHealthFromIntegrationHealth(
   if (failedClasses.includes('PROVIDER_5XX') || failedClasses.includes('NETWORK') || statuses.includes('provider_unavailable')) {
     return view('provider_unavailable')
   }
-  return view(statuses.includes('verified') || lastSuccessfulSyncAt !== null ? 'verified' : 'configured')
+  return view(statuses.includes('verified') || (!requiresAccountVerification && lastSuccessfulSyncAt !== null) ? 'verified' : 'configured')
 }
 
 /** Taşıyıcı bağlantısı: kargo hesabının kalıcı doğrulama kaydı. */
@@ -197,7 +199,8 @@ export async function loadIntegrationStatusBoard(
     listOrganizationMarketplaceAccounts(db, organizationId),
     listCarrierAccounts(db, organizationId),
   ])
-  return DEFINITIONS.map((definition) => {
+  const catalog = buildProviderCatalog()
+  return Promise.all(DEFINITIONS.map(async (definition) => {
     const rolloutStage = definition.rolloutStage()
     const availability = resolveAvailability(definition.implementationStage, rolloutStage)
     let healthView: ConnectionHealthView = NOT_AVAILABLE
@@ -207,15 +210,20 @@ export async function loadIntegrationStatusBoard(
           carrierAccounts.filter((account) => account.provider.toLowerCase() === definition.providerKey),
         )
       } else {
+        const requiresAccountVerification = supportsAccountOrdersRead(catalog.get(definition.providerKey))
+        const scopedAccounts = await Promise.all(marketplaceRows
+          .filter((row: Record<string, unknown>) => String(row.marketplace ?? '').toLowerCase() === definition.providerKey)
+          .map(async (row: Record<string, unknown>) => {
+            const gate = requiresAccountVerification ? await getAccountOrdersReadGate(db, { organizationId, marketplaceAccountId: String(row.id), providerKey: definition.providerKey }) : null
+            return {
+              isActive: row.isActive === true,
+              verificationStatus: gate?.decision === 'ALLOWED' ? 'verified' : gate && row.verificationStatus === 'verified' ? 'unverified' : row.verificationStatus == null ? null : String(row.verificationStatus),
+              lastVerifiedAt: row.lastVerifiedAt ?? null,
+            }
+          }))
         healthView = connectionHealthFromIntegrationHealth(
           health.filter((entry) => entry.providerKey.toLowerCase() === definition.providerKey),
-          marketplaceRows
-            .filter((row: Record<string, unknown>) => String(row.marketplace ?? '').toLowerCase() === definition.providerKey)
-            .map((row: Record<string, unknown>) => ({
-              isActive: row.isActive === true,
-              verificationStatus: row.verificationStatus == null ? null : String(row.verificationStatus),
-              lastVerifiedAt: row.lastVerifiedAt ?? null,
-            })),
+          scopedAccounts, requiresAccountVerification,
         )
       }
     }
@@ -228,5 +236,5 @@ export async function loadIntegrationStatusBoard(
       availability,
       health: healthView,
     }
-  })
+  }))
 }

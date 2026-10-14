@@ -1,3 +1,47 @@
+# ACCOUNT-LEVEL-LIVE-VERIFICATION-001 handoff
+
+2026-10-14. Branch `feat/account-level-live-verification-001`; base `6287450`.
+IMPLEMENTATION_COMPLETE. Independent gpt-6-astra review: APPROVED.
+The local completion commit is the branch HEAD. Do not push or deploy.
+
+No Claude WIP existed at takeover. Reused existing credentials, fingerprint/
+verification helpers and columns, provider read clients, normalizers/persisters,
+N11 adaptive page-0 splitting and cursor durability. No migration.
+
+New small descriptor-driven accountOrdersRead gate loads exact tenant/account
+DB evidence and compares currently encrypted credential/config fingerprints.
+Save/Test Et persist one bounded safe GET result; failures retain credentials.
+Concurrent/stale N11 seller binding is transaction-protected. HB malformed list
+members fail closed with HB_RESPONSE_SHAPE_UNVERIFIED.
+
+Canonical order ingestion is separate from external writes. Existing
+canTriggerFulfillmentSideEffects is unchanged and now enforced at actual
+create/label boundaries against canonical DB identity; spoofed source or edited
+identity cannot bypass it. Trendyol single-field collisions are covered.
+Onboarding needs verification and first sync on the same active account.
+The account UI offers persisted verification/error states and retry.
+Aras saves align marketplace/carrier fingerprints; no SetOrder/probe added.
+
+Validation: N11 26 server + 5 UI; HB 23 + 4; Aras 95; integration-health 53;
+integration-status 9 + 8; onboarding 22 + 13; connector-kernel 15; carriers/
+preflight 16 + 3; tenant/Sürat fulfillment 99; contract-packs 14; account
+verification 12; full UI 423. tsc/build pass; lint 0 errors, 6 existing warnings.
+A-E mutations all fail assertions and restore modified files byte-exact.
+Full test:surat was not run; focused shared-boundary regressions passed.
+
+Production blockers remain honestly scoped: N11 id:null and GMT+3 cursor
+advancement (N11_EPOCH_SEMANTICS_UNVERIFIED); HB missing account endpoint/list
+configuration; Aras production endpoint, PayorTypeCode/COD and real write proof.
+A real user Aras write must retain one SetOrder, persistent idempotency and
+GetOrderWithIntegrationCode confirmation of the same IntegrationCode;
+UNKNOWN_AFTER_NETWORK must never automatically retry.
+
+No real credentials/provider calls were used in tests. Account verification and
+write verification are operational evidence, not inferred from hermetic success.
+No secret leakage, automatic external writes, scheduler/deploy changes or rollout
+promotion. NOT PUSHED / NOT DEPLOYED.
+
+## Previous handoff (historical)
 # DevFactory handoff
 
 Last ticket: ARAS-EXPANSION — MERGED into `integration/roadmap` (PR #8, head `8cd50475f95a72916fb798cc47e61ef96c523507`).

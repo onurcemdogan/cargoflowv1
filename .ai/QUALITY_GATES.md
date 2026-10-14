@@ -36,9 +36,11 @@ capability that depends on that evidence stays blocked.**
 
 Verification is tracked per capability (`orders.read`, `label.fetch`,
 `shipment.create`, `orders.status.write`, ...), never per provider or per
-roadmap. The runtime switch stays the existing rollout stage
-(`ROLLOUT_STAGE_POLICY` + `liveWriteGate`); the statuses below are evidence
-labels and add no new runtime gate. They are not a mandatory sequence.
+roadmap. Fulfillment and external writes keep the existing rollout stage
+(`ROLLOUT_STAGE_POLICY` + `liveWriteGate`). ACCOUNT-LEVEL-LIVE-VERIFICATION-001
+separates implemented safe `orders.read` ingestion: only a DB-verified exact
+account with matching current credentials can activate that read path.
+The labels below are evidence, not a mandatory sequence.
 
 | Status | Real credentials | Meaning |
 |---|---|---|
@@ -104,8 +106,8 @@ Hepsiburada (HEPSIBURADA-LIVE-001):
 - Marketplace-managed label retrieval is `BLOCKED_EXTERNAL` (no verified
   label endpoint). Order sync is unaffected.
 - Missing credentials block only `LIVE_VERIFIED`.
-- The connector stays `internal_test` (canonical writes off via
-  `liveWriteGate`) until `orders.read` is `LIVE_VERIFIED`.
+- The connector stays `internal_test`; an account's authenticated safe GET
+  can activate canonical reads for that account only. Fulfillment stays off.
 
 N11 (N11-LIVE-001):
 - Build `orders.read` from the verified official contract
@@ -113,3 +115,19 @@ N11 (N11-LIVE-001):
 - A real N11 account is not required to call it `IMPLEMENTATION_COMPLETE`.
 - Status updates / marketplace writes stay disabled until a later,
   human-approved `LIVE_WRITE_VERIFIED`.
+
+### Account evidence (ACCOUNT-LEVEL-LIVE-VERIFICATION-001)
+
+- `IMPLEMENTATION_COMPLETE`: contract, code and hermetic tests; no real account needed.
+- `ACCOUNT_VERIFIED`: current credentials for one organization + account passed
+  a bounded safe provider interaction. Presence, sibling evidence and historic
+  sync after a credential change cannot stand in for this result.
+- `WRITE_VERIFIED`: a real user-requested operation and provider-side confirmation;
+  read verification cannot produce it. Aras must keep persistent idempotency,
+  one SetOrder and confirmation of the same IntegrationCode. UNKNOWN_AFTER_NETWORK
+  must never automatically retry.
+- N11 read authentication does not settle GMT+3 epoch semantics; canonical rows
+  may be persisted, but production cursor advancement remains blocked by
+  `N11_EPOCH_SEMANTICS_UNVERIFIED`. `id:null` remains fail-closed independently.
+- HB endpoint/config evidence is per-account. Missing paths or an unexpected
+  list envelope leave only that account unverified, without blocking other work.

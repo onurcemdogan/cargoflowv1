@@ -18,12 +18,12 @@
 //
 // ═══ CANLI YAZMA KAPISI ══════════════════════════════════════════════════
 //
-// Kanonik yazım `liveWriteGate` ile YAYIN AŞAMASINDAN karar verilir.
-// Hepsiburada `internal_test`tir: okuma, normalizasyon ve sağlık çalışır;
-// kanonik sipariş yazımı ve karşılama yan etkileri (etiket/taşıyıcı/baskı)
-// canlı doğrulama + aşama kararı olmadan ÇAĞRILMAZ.
+// Kanonik yazım DB'den yüklenen HESAP doğrulamasıyla açılır. Karşılama
+// yan etkileri ayrı rollout kapısında kalır; okuma doğrulaması onları açmaz.
 import { recordSyncState } from '../../onboarding/onboardingRepository.ts'
-import { canPersistCanonicalOrders, type LiveWriteGateResult } from '../liveWriteGate.ts'
+import { type LiveWriteGateResult } from '../liveWriteGate.ts'
+import { accountOrdersReadPayload, getAccountOrdersReadGate, type OrdersReadGateResult } from '../accountOrdersReadGate.ts'
+import { credentialFingerprint } from '../../integrations/credentialService.ts'
 import {
   HB_CANONICAL_WRITE_BLOCKED,
   HB_MERCHANT_MISMATCH,
@@ -46,6 +46,7 @@ import {
 } from './hepsiburadaClient.ts'
 import {
   HEPSIBURADA_PROVIDER_KEY,
+  configToStoredPayload,
   resolveReadFamily,
   type HepsiburadaConnectorConfig,
   type HepsiburadaFamily,
@@ -182,7 +183,8 @@ export interface HepsiburadaSyncResult {
   merchantMismatchCount: number
   /** Kararlı kimliği olmadığı için normalizasyonda düşen kayıt (tekrar DEĞİL). */
   invalidIdentityCount: number
-  canonicalWrite: LiveWriteGateResult['decision']
+  canonicalWrite: OrdersReadGateResult['decision']
+  ordersReadReasonCode: string
   canonicalPersisted: boolean
   persistResult: unknown
   checkpointAdvanced: boolean
@@ -257,7 +259,7 @@ export async function syncHepsiburadaOrdersForAccount(
     fromMs: number | null
     upperBoundMs: number
     persistCanonical?: HepsiburadaCanonicalPersister
-    /** Test/aşama enjeksiyonu; varsayılan yayın aşaması kapısı. */
+    /** Trusted hermetic test seam; HTTP never accepts this from a request body. */
     liveWriteGate?: (providerKey: string) => LiveWriteGateResult
     maxWindows?: number
   },
@@ -271,8 +273,14 @@ export async function syncHepsiburadaOrdersForAccount(
   if (!Number.isSafeInteger(params.upperBoundMs) || params.upperBoundMs <= 0) {
     throw new Error('upperBoundMs geçerli bir epoch milisaniye olmalıdır.')
   }
-  const gateFn = params.liveWriteGate ?? canPersistCanonicalOrders
-  const gate = gateFn(HEPSIBURADA_PROVIDER_KEY)
+  const scope = {
+    organizationId, marketplaceAccountId, providerKey: HEPSIBURADA_PROVIDER_KEY,
+    expectedFingerprint: credentialFingerprint(accountOrdersReadPayload(HEPSIBURADA_PROVIDER_KEY, configToStoredPayload(params.config))),
+  }
+  const readGate = (): Promise<OrdersReadGateResult> => params.liveWriteGate
+    ? Promise.resolve(params.liveWriteGate(HEPSIBURADA_PROVIDER_KEY))
+    : getAccountOrdersReadGate(db, scope)
+  let gate = await readGate()
   const family = resolveReadFamily(params.config)
 
   const base = {
@@ -286,6 +294,7 @@ export async function syncHepsiburadaOrdersForAccount(
     merchantMismatchCount: 0,
     invalidIdentityCount: 0,
     canonicalWrite: gate.decision,
+    ordersReadReasonCode: gate.reasonCode,
     canonicalPersisted: false,
     persistResult: null as unknown,
     checkpointAdvanced: false,
@@ -334,6 +343,7 @@ export async function syncHepsiburadaOrdersForAccount(
   // için hiçbir mevcut sipariş arşivlenmez; upsert idempotenttir.
   let canonicalPersisted = false
   let persistResult: unknown = null
+  gate = await readGate()
   if (gate.decision === 'ALLOWED' && params.persistCanonical && ownOrders.length > 0 && outcome !== 'FAILED') {
     persistResult = await params.persistCanonical(ownOrders)
     canonicalPersisted = true
@@ -342,6 +352,7 @@ export async function syncHepsiburadaOrdersForAccount(
   // `recordSyncState` imleci yalnız `success`te yazar (yoksa `now`!); bu
   // yüzden eksiksiz temsil KANITLANMAYAN başarılı okuma `partial` + kararlı
   // sebep koduyla kaydedilir — `lastSuccessfulSyncAt` DEĞİŞMEZ.
+  gate = await readGate()
   const durability = resolveCheckpointDurability({
     completedThroughMs: fetched.completedThroughMs,
     merchantMismatchCount,
@@ -384,6 +395,7 @@ export async function syncHepsiburadaOrdersForAccount(
     merchantMismatchCount,
     invalidIdentityCount: normalization.invalidIdentityCount,
     canonicalWrite: gate.decision,
+    ordersReadReasonCode: gate.reasonCode,
     canonicalPersisted,
     persistResult,
     checkpointAdvanced,

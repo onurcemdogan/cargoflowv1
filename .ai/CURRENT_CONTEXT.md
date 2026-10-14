@@ -1,48 +1,31 @@
-# Generated shift context
+# Current context
 
-Generated: 2026-09-28T06:35:00.000000+00:00
-Project: cargoflow
-Ticket: ARAS-EXPANSION
-Status: IN_PROGRESS
-Phase: REVIEW_FEEDBACK
-Branch: agent/ARAS-EXPANSION
-Baseline: 7754fcb109c4d8990d97065710e1189121fb58b7
-HEAD: e9da19d655c9b58d737e2e3d88acb03f4eb17f7f
-Last implementation worker: claude
-Reviewer: None
-Next action: CODEX-MERGE-ea44b55bd1bac7b9 repaired (commit e9da19d655c9b58d737e2e3d88acb03f4eb17f7f, code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against e9da19d655c9b58d737e2e3d88acb03f4eb17f7f. Do not push/merge master/integration/roadmap.
+Date: 2026-10-14 (Europe/Istanbul)
+Ticket: ACCOUNT-LEVEL-LIVE-VERIFICATION-001
+Branch: feat/account-level-live-verification-001
+Base: 6287450
+Evidence: IMPLEMENTATION_COMPLETE; independent gpt-6-astra review approved.
 
-## Git status
-```
-M .ai/CURRENT_TASK.json
-M .ai/HANDOFF.md
-```
+Takeover was clean: no Claude partial diff or commits beyond base existed.
+Existing encrypted credentials, verification columns, read clients, persistence
+and durability rules were reused. No migration or rollout promotion.
 
-## Recent commits
-```
-e9da19d wip(ARAS-EXPANSION): reject processing instructions with invalid targets before stripping (CODEX-MERGE-ea44b55bd1bac7b9)
-f72adbd wip(ARAS-EXPANSION): checkpoint review-feedback-claude
-2cd0f71 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-d2ab3ac1667901e1 xml-declaration-syntax fix
-1715c11 wip(ARAS-EXPANSION): validate XML declaration syntax at index 0 before stripping (CODEX-MERGE-d2ab3ac1667901e1)
-a437229 wip(ARAS-EXPANSION): checkpoint review-feedback-claude
-1adad88 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-12ebf594361555c1 xml-declaration-outside-document fix
-ee2215b wip(ARAS-EXPANSION): reject XML declaration spliced into element content before stripping (CODEX-MERGE-12ebf594361555c1)
-c06976a wip(ARAS-EXPANSION): checkpoint review-feedback-claude
-2a8f025 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-838f748d5ec4cde4 doctype-outside-prolog fix
-b6324e3 wip(ARAS-EXPANSION): reject DOCTYPE spliced outside prolog before stripping (CODEX-MERGE-838f748d5ec4cde4)
-```
+N11/HB save and Test Et persist exact-account safe GET evidence. Canonical read
+activation loads current credentials and verification from DB. Credential
+rotation invalidates evidence; stale probes cannot verify or mutate seller
+binding; concurrent N11 sibling seller claims serialize within the tenant.
 
-## Diff stat
-```
-server/carrier-aras-client-flow.test.mjs | 12 ++++++++++++
-server/carriers/aras/arasClient.ts       | 79 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-2 files changed, 91 insertions(+)
-```
+Production create/label boundaries use the unchanged fulfillment rollout gate
+and persisted order identity. Read proof never grants shipment, label,
+marketplace write, billing or automation permission. Aras stays TEST/internal_test
+with no automatic SOAP calls. UNKNOWN_AFTER_NETWORK/idempotency remain unchanged.
 
-## Required reading
-AGENTS.md
-.ai/PROJECT_SPEC.md
-.ai/ACCEPTED_FOUNDATION.md
-.ai/ROADMAP.md
-.ai/HANDOFF.md
-.ai/tickets/ARAS-EXPANSION.md
+All requested targeted suites, tsc, lint (0 errors, 6 existing warnings), build,
+and full UI (423) passed. Account proof suite: 12/12. Mutations A-E: 5/5 killed,
+files restored byte-exact. Focused tenant/Sürat fulfillment regressions: 99/99.
+Full enormous test:surat was not run, per the task's requested scope.
+
+Open operational blockers: N11 GMT+3 cursor semantics and id:null, per-account HB
+endpoint/list configuration, Aras production endpoint and payer/COD/write proof.
+No real provider account was verified by this validation; no external write,
+push or deploy occurred. The local completion commit is the branch HEAD.

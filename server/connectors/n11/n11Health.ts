@@ -101,7 +101,8 @@ export const N11_HEALTH_COPY_TR: Record<N11HealthState, string> = {
 /** Görünen etiket: iç testte başarılı okuma, yazılmadığını ve imlecin durduğunu AÇIKÇA söyler. */
 export function n11HealthLabel(health: Pick<N11Health, 'state' | 'reasonCode'>): string {
   if (health.state === 'OK' && health.reasonCode === N11_CANONICAL_WRITE_BLOCKED) {
-    return 'Son okuma başarılı (iç test: kayıtlar sisteme yazılmadı, imleç ilerlemedi)'
+    return 'Son okuma başarılı (hesap doğrulanmadı: kayıtlar sisteme yazılmadı, imleç ilerlemedi)'
   }
+  if (health.reasonCode === 'N11_EPOCH_SEMANTICS_UNVERIFIED') return 'Siparişler kaydedildi; zaman sınırı doğrulanana kadar imleç ilerlemez'
   return N11_HEALTH_COPY_TR[health.state]
 }

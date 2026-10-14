@@ -8,6 +8,8 @@
 // Sekme bir GÖRÜNÜM filtresidir; taşıyıcıya gönderi yaratmak geri alınamaz
 // bir işlemdir. Bu yüzden uygunluk KANITA dayanır ve belirsizlikte KAPANIR.
 
+import { orderSourceFulfillmentAllowed } from './orderSourceFulfillmentGate.ts'
+
 /** Kimlik rolleri — biri diğerinin yerine GEÇEMEZ. */
 export interface SuratCreateIdentity {
   /** Trendyol sipariş kimliği (115…). `WebSiparisKodu` budur. */
@@ -26,6 +28,7 @@ export const CREATE_INELIGIBLE_REASONS = [
   'LABEL_ALREADY_CREATED',
   'IDENTITY_INCOMPLETE',
   'IDENTITY_INCONSISTENT',
+  'FULFILLMENT_NOT_AVAILABLE',
 ] as const
 
 export interface SuratCreateEligibility {
@@ -54,6 +57,7 @@ export function resolveSuratCreateEligibility(params: {
   const order = params.order ?? {}
   const shipment = (order.shipment ?? {}) as Record<string, unknown>
   const reasons: string[] = []
+  if (!orderSourceFulfillmentAllowed(order.marketplace)) reasons.push('FULFILLMENT_NOT_AVAILABLE')
 
   const identity: SuratCreateIdentity = {
     orderNumber: text(order.orderNumber),
