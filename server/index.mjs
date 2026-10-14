@@ -435,6 +435,7 @@ const TENANT_AUTH_PATHS = [
   // arkasında durur. (Bu listeye eklenmeyen org-kapsamlı uç `request.auth`
   // boş kalır ve 404 döner — bu hata daha önce iki kez yaşandı.)
   '/api/dashboard',
+  '/api/picking',
   '/api/products',
   '/api/onboarding',
   '/api/shipments/surat',
@@ -1109,15 +1110,31 @@ app.get('/api/orders/workspace', async (request, response) => {
   }
 })
 
-// GET /api/dashboard/operational — Dashboard operasyon anlık görüntüsü.
-//
-// Dashboard'ın operasyon sayaçları TÜM tenant siparişlerini ister. Eskiden
-// bunun için tarayıcı sipariş tablosunun TAMAMINI indiriyordu. Burada AYNI
-// `buildDashboardViewModel` sunucuda çalışır ve yalnız operasyon alanları
-// (birkaç KB) döner. SATIŞ metrikleri bu endpoint'te YOKTUR; onlar mevcut
-// analitik yolundan gelmeye DEVAM EDER (semantik değişmedi).
-//
-// SALT OKUNUR: satır yazmaz, pazaryeri/taşıyıcı çağrısı YAPMAZ.
+// GET /api/picking/products — canonical toplama listesi, aile bazlı filtre ve sayfalama.
+// Yalnız oturumun org/aktif hesap kapsamındaki DB kayıtlarını okur.
+app.get('/api/picking/products', async (request, response) => {
+  const context = await requireOrderPersistenceContext(request, response)
+  if (!context) return
+  try {
+    const { loadPickingWorkspace } = await import('./dashboard/dashboardOperationalService.ts')
+    const result = await loadPickingWorkspace(
+      context.db,
+      context.organizationId,
+      context.marketplaceAccountId,
+      {
+        search: strOrUndef(request.query?.search),
+        stage: strOrUndef(request.query?.stage),
+        page: Number(request.query?.page) || 0,
+      },
+    )
+    response.json({ ok: true, result })
+  } catch {
+    response.status(500).json({ ok: false, message: 'Toplama listesi yüklenemedi.' })
+  }
+})
+
+// GET /api/dashboard/operational — sunucuda hesaplanmış satış ve operasyon modeli.
+// Ham satış satırlarını tarayıcıya indirmez. DB okuması; provider/yazma çağrısı yok.
 app.get('/api/dashboard/operational', async (request, response) => {
   const context = await requireOrderPersistenceContext(request, response)
   if (!context) return

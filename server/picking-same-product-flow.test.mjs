@@ -689,6 +689,17 @@ test('PICKING-UX-PURE: sunum bileşeni İŞ KURALI içermez', async () => {
   assert.ok(!card.includes('products.filter('), 'yeni ürün taraması yok')
 })
 
+test('UI-IA-THEME: compact Home and picking workspace use responsive shared theme tokens', async () => {
+  const { readFileSync } = await import('node:fs')
+  const css = readFileSync('src/index.css', 'utf8')
+  const start = css.indexOf('.home-statistics { margin-top: 24px; }')
+  assert.ok(start > 0)
+  const styles = css.slice(start, css.indexOf('.home-side {', start))
+  for (const token of ['surface', 'text', 'border', 'radius']) assert.match(styles, new RegExp(`var\\(--${token}`))
+  assert.match(styles, /max-width: 640px/)
+  assert.doesNotMatch(styles, /#[\da-f]{3,8}\b|rgba?\(/i)
+})
+
 // ═══ BEDEN ÇÖZÜMLEME (SUNUM) ══════════════════════════════════════════════
 //
 // ÜRETİM HATASI: tüm beden chip'leri "Bedensiz" görünüyordu. Ürün ailesi

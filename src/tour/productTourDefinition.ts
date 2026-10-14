@@ -49,7 +49,7 @@ export const PRODUCT_TOUR_V1: readonly ProductTourStep[] = [
     id: 'dashboard',
     page: 'dashboard',
     target: 'dashboard-overview',
-    title: 'Dashboard',
+    title: 'Ana Sayfa',
     body: 'Operasyon yoğunluğunu, bekleyen işlemleri ve bağlantı durumunu buradan takip edersiniz.',
   },
   {
@@ -58,6 +58,13 @@ export const PRODUCT_TOUR_V1: readonly ProductTourStep[] = [
     target: 'orders-workspace',
     title: 'Siparişler',
     body: 'Siparişlerin kargo, etiket ve işlem durumlarını yönettiğiniz ana çalışma alanıdır.',
+  },
+  {
+    id: 'picking',
+    page: 'picking',
+    target: 'picking-workspace',
+    title: 'Toplanacak Ürünler',
+    body: 'Bekleyen siparişlerde hangi üründen kaç adet kaldığını görür, beden ve sipariş kırılımını açarsınız. Görüntülemek operasyon durumunu değiştirmez.',
   },
   {
     id: 'cargo',

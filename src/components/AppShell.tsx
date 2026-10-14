@@ -1,5 +1,6 @@
 import {
   ClipboardList,
+  ListChecks,
   Compass,
   House,
   LogOut,
@@ -48,10 +49,11 @@ const navItems: Array<{
   label: string
   icon: NavIcon
 }> = [
-  // Ürün akışı: ne satıldı → kargo hattında ne oluyor → kargoya çıktıktan
+  // Ürün akışı: ne satıldı → ne toplanacak → kargo hattında ne oluyor → kargoya çıktıktan
   // sonra ne oldu → katalog → bağlantılar.
   { key: 'dashboard', label: 'Ana Sayfa', icon: House },
   { key: 'orders', label: 'Siparişler', icon: ClipboardList },
+  { key: 'picking', label: 'Toplanacak Ürünler', icon: ListChecks },
   { key: 'cargo', label: 'Kargo Operasyonları', icon: Truck },
   { key: 'shipments', label: 'Gönderiler', icon: Route },
   { key: 'products', label: 'Ürünler', icon: PackageSearch },

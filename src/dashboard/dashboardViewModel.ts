@@ -182,6 +182,8 @@ export interface DashboardPickingVariant {
   quantity: number
   orderCount: number
   orderIds: string[]
+  skus?: string[]
+  barcodes?: string[]
 }
 
 export interface DashboardPickingOrderRef {
@@ -1351,11 +1353,12 @@ const PICKING_DISPLAY_LIMIT = 50
  * Karmaşıklık: sipariş × kalem üzerinde TEK geçiş (eski kod ürün × sipariş ×
  * kalem iç içe tarıyordu).
  */
-function buildPickingLists(
+export function buildPickingLists(
   orders: CargoOrder[],
   products: CargoProduct[],
+  displayLimit = PICKING_DISPLAY_LIMIT,
 ): DashboardViewModel['pickingLists'] {
-  const eligible = orders.filter(isPickingEligible)
+  const eligible = dedupeDashboardOrders(orders).filter(isPickingEligible)
   const families = buildProductFamilyIndex(eligible, resolvePickingStage)
   const orderLookup = new Map<string, CargoOrder>()
   for (const order of eligible) {
@@ -1368,7 +1371,7 @@ function buildPickingLists(
     for (const orderId of family.orderIds) pickingOrderIds.add(orderId)
   }
   const visible = families
-    .slice(0, PICKING_DISPLAY_LIMIT)
+    .slice(0, displayLimit)
     .map((family) => toPickingProduct(family, orderLookup, products))
   return {
     mode: 'readonly-products',
@@ -1447,6 +1450,8 @@ function toPickingProduct(
       quantity: variant.quantity,
       orderCount: variant.orderIds.length,
       orderIds: variant.orderIds,
+      skus: variant.skus,
+      barcodes: variant.barcodes,
     })),
     stageBreakdown,
     orders: orderRefs,

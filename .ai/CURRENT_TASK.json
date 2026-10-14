@@ -1,66 +1,52 @@
 {
   "schemaVersion": 1,
   "project": "cargoflow",
-  "ticket": "N11-LIVE-002",
-  "status": "BLOCKED_EXTERNAL",
+  "ticket": "UI-IA-001",
+  "status": "READY_FOR_USER_REVIEW",
   "implementationStatus": "COMPLETE",
-  "phase": "EPOCH_VERIFICATION_INCONCLUSIVE",
-  "ticketBranch": "agent/N11-LIVE-002",
-  "baselineCommit": "de5c18979deb054f4118dd9d66aae495952281b3",
-  "specPath": ".ai/tickets/N11-LIVE-002.md",
-  "evidencePath": ".ai/research/N11-LIVE-002/epoch-verification.json",
-  "reportPath": "docs/n11-epoch-verification.md",
+  "phase": "LOCAL_COMMIT_DELIVERY",
+  "ticketBranch": "feat/ui-ia-001-home-picking",
+  "baselineCommit": "b1e12532fe3bcf07d1a982ff4a1c3dc1e2037e6b",
+  "specPath": ".ai/tickets/UI-IA-001.md",
+  "reportPath": "docs/ui-ia-001-home-picking.md",
   "activeWorker": null,
   "lastImplementationWorker": "codex",
   "reviewer": "gpt-6-astra",
   "reviewStatus": "APPROVED",
-  "previousTicket": "ACCOUNT-LEVEL-LIVE-VERIFICATION-001",
+  "previousTicket": "N11-LIVE-002",
   "completedCriteria": [
-    "Official N11 shipment documentation, SOAP-REST comparison and changelog reviewed",
-    "Existing client/config/sync/contracts/fixtures/research inspected; no independent live timestamp correlation found",
-    "Immutable BLOCKED_EXTERNAL/UNKNOWN epoch verification exposed in sync response; existing checkpoint blocker retained",
-    "Current wire values preserved; no guessed timezone shift, new runtime proof toggle or migration",
-    "Explicit +03 examples, winter/summer, four host timezones and exact millisecond boundary tests pass",
-    "Verified account and empty-read checkpoint denial pass; body claims cannot clear proof",
-    "Positive server-only trusted fixture models future proof and still enforces strict persistence",
-    "Unexecuted bounded GET comparison protocol and numeric variants documented; zero provider requests",
-    "Relevant local CI checks and independent review pass",
-    "Operator-reported production discovery confirms zero N11 marketplace accounts and zero N11 connector credentials"
+    "Home has independent compact sales statistics; six canonical operational counters retained",
+    "Detailed analytics stay in Reports; Home and Dashboard expose compact picking navigation",
+    "Picking PageKey, sidebar order, App render and product tour updated",
+    "Dedicated picking workspace uses shared canonical eligibility/dedupe/family grouping",
+    "Full-list SKU/barcode/order search, family stage filter, 30-family pagination, variants and related-order navigation",
+    "Tenant-auth GET reads persisted org/active-account projection; no writes or provider calls",
+    "Unknown financial metrics remain unavailable; no invented collection completion state",
+    "Light/dark desktop and mobile screenshots verified with synthetic local data",
+    "Requested checks and independent different-model review passed"
   ],
-  "failingTests": [],
-  "blockedCapability": "N11 orders.read checkpoint advancement only",
-  "blockers": [
-    "N11_EPOCH_SEMANTICS_UNVERIFIED: official GMT+3 wording does not prove numeric request conversion",
-    "Need explicit official numeric datetime mapping or stable known package last-modified read evidence",
-    "Production discovery confirmed there is currently no N11 marketplace account or N11 connector credential. Live epoch verification is therefore externally blocked until a real N11 account is connected through the normal product flow."
-  ],
-  "productionDiscovery": {
-    "reportedOn": "2026-10-14",
-    "source": "Operator-reported production discovery supplied by the user",
-    "marketplaceAccountsN11Rows": 0,
-    "connectorCredentialsProviderN11Rows": 0
-  },
   "qualityGates": {
-    "localChecksPassed": true,
-    "n11ContractTests": 51,
-    "n11ReadTests": 27,
-    "n11UiTests": 5,
-    "accountVerificationTests": 16,
-    "autoLabelAcceptanceTests": 115,
+    "uiTests": 431,
+    "uiFiles": 45,
+    "dashboardTests": 11,
+    "productIaTests": 12,
+    "pickingCanonicalTests": 45,
+    "dashboardOperationalParityTests": 16,
+    "tenantAuthCoverageTests": 3,
     "tsc": true,
-    "build": true,
-    "uiTests": 423,
-    "uiFiles": 44,
     "lintErrors": 0,
     "preExistingLintWarnings": 6,
+    "build": true,
     "diffCheck": true
   },
-  "mutationProof": {
-    "killedByAssertion": [
-      "remove-unknown-epoch-gate",
-      "guess-three-hour-shift"
-    ],
-    "byteExactRestored": true
+  "failingTests": [],
+  "constraints": {
+    "providerCallsPerformed": false,
+    "productionAccessPerformed": false,
+    "dbMigrationAdded": false,
+    "n11EpochLogicChanged": false,
+    "pushPerformed": false,
+    "deployPerformed": false
   },
-  "nextAction": "Keep checkpoint blocker and BLOCKED_EXTERNAL. A real N11 account must first be connected through the normal product flow. Any subsequent live epoch probe requires explicit approval and stable package evidence per docs/n11-epoch-verification.md. No live calls, push, merge or deploy requested. Local delivery commit is branch HEAD."
+  "nextAction": "User reviews the local commit and screenshots. Do not push, merge or deploy without authorization. N11_EPOCH_SEMANTICS_UNVERIFIED and prior N11 BLOCKED_EXTERNAL result remain unchanged."
 }
