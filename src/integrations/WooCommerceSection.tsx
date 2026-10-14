@@ -16,6 +16,14 @@
 //
 // Her mağaza bağımsızdır. `consumer_secret` ve webhook secret kaydedildikten
 // sonra HİÇBİR ZAMAN okunmaz; yalnız VARLIĞI bildirilir.
+import { Alert, Badge, Field } from '../ui/primitives'
+import {
+  IntegrationConnectionCard,
+  IntegrationAccountCard,
+  IntegrationFormSection,
+  IntegrationFormActions,
+  IntegrationLoading,
+} from './IntegrationConnection'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { authenticatedApiRequest } from '../services/authenticatedApiRequest'
 import { formatDisplayDate } from '../utils/formatters'
@@ -260,151 +268,212 @@ export function WooCommerceSection() {
 
   if (loading) {
     return (
-      <section className="integration-section" aria-labelledby="woocommerce-title">
-        <h3 id="woocommerce-title">WooCommerce</h3>
-        <p role="status">Yükleniyor…</p>
-      </section>
+      <IntegrationConnectionCard
+        provider="woocommerce"
+        title="WooCommerce"
+        kind="commerce"
+        description="Mağaza yetkilendirmesi ve okuma bağlantısı"
+        badges={<Badge tone="warning">İç test</Badge>}
+      >
+        <IntegrationLoading />
+      </IntegrationConnectionCard>
     )
   }
-
   return (
-    <section className="integration-section woo-wizard" aria-labelledby="woocommerce-title">
-      <h3 id="woocommerce-title">
-        WooCommerce <span className="ui-badge tone-info">İç test</span>
-      </h3>
-      <p>
-        Mağazanızı WooCommerce'in kendi onay ekranıyla bağlayın. CargoFlow yalnız okuma izni ister;
-        birden çok mağaza bağlayabilirsiniz.
-      </p>
-
-      {loadError ? <p role="alert">{loadError}</p> : null}
-
-      <ul aria-label="Bağlı WooCommerce mağazaları">
+    <IntegrationConnectionCard
+      provider="woocommerce"
+      title="WooCommerce"
+      kind="commerce"
+      description="Mağazanızı WooCommerce'in kendi onay ekranıyla bağlayın. CargoFlow yalnız okuma izni ister; birden çok mağaza bağlayabilirsiniz."
+      badges={
+        <>
+          <Badge tone="warning">İç test</Badge>
+          <Badge tone="neutral">Salt okunur</Badge>
+        </>
+      }
+    >
+      {loadError ? (
+        <Alert tone="danger" role="alert">
+          {loadError}
+        </Alert>
+      ) : null}
+      <ul
+        className="integration-connection-accounts"
+        aria-label="Bağlı WooCommerce mağazaları"
+      >
         {stores.map((store) => (
-          <li key={store.marketplaceAccountId}>
-            <span>{store.displayName ?? store.providerAccountId}</span>
-            <span>{store.storeUrl ?? store.providerAccountId}</span>
-            <span>
-              {store.consumerKeyMasked
-                ? `Anahtar: ${store.consumerKeyMasked}`
-                : 'Anahtar yok'}
-            </span>
-            {/* SIR DEĞERİ DEĞİL, YALNIZ VARLIĞI. */}
-            <span>{store.hasConsumerSecret ? 'Sır kayıtlı' : 'Sır yok'}</span>
-            <span>
-              {store.hasWebhookSecret ? 'Webhook sırrı kayıtlı' : 'Webhook sırrı yok'}
-            </span>
-            <span data-verification={store.verificationStatus ?? 'unverified'}>{verificationLabel(store)}</span>
-            <button
-              type="button"
-              onClick={() => void disconnect(store.marketplaceAccountId)}
-            >
-              Bağlantıyı Kaldır
-            </button>
-          </li>
+          <IntegrationAccountCard
+            key={store.marketplaceAccountId}
+            title={store.displayName ?? store.providerAccountId}
+            state={
+              <span
+                className={`ui-badge tone-${store.isActive && store.verificationStatus === 'verified' ? 'success' : 'neutral'}`}
+                data-verification={store.verificationStatus ?? 'unverified'}
+              >
+                {verificationLabel(store)}
+              </span>
+            }
+            facts={[
+              ['Mağaza adresi', store.storeUrl ?? store.providerAccountId],
+              [
+                'Consumer Key',
+                store.consumerKeyMasked
+                  ? `Anahtar: ${store.consumerKeyMasked}`
+                  : 'Anahtar yok',
+              ],
+              [
+                'Consumer Secret',
+                store.hasConsumerSecret ? 'Sır kayıtlı' : 'Sır yok',
+              ],
+              [
+                'Webhook',
+                store.hasWebhookSecret
+                  ? 'Webhook sırrı kayıtlı'
+                  : 'Webhook sırrı yok',
+              ],
+            ]}
+            actions={
+              <button
+                type="button"
+                className="ui-btn ui-btn-ghost ui-btn-sm"
+                onClick={() => void disconnect(store.marketplaceAccountId)}
+              >
+                Bağlantıyı Kaldır
+              </button>
+            }
+          />
         ))}
       </ul>
-
-      {stores.length === 0 && !loadError ? <p>Bağlı mağaza yok.</p> : null}
-
+      {stores.length === 0 && !loadError ? (
+        <p className="integration-connection-empty">Bağlı mağaza yok.</p>
+      ) : null}
       <ol className="woo-steps" aria-label="Bağlantı adımları">
         {STEPS.map((step, index) => {
           const state = stepState(index, wizard)
           return (
-            <li key={step.key} className={`is-${state}`} aria-current={state === 'current' ? 'step' : undefined}>
+            <li
+              key={step.key}
+              className={`is-${state}`}
+              aria-current={state === 'current' ? 'step' : undefined}
+            >
               <span aria-hidden="true">{index + 1}</span>
               {step.label}
             </li>
           )
         })}
       </ol>
-
       {wizard.message ? (
-        <p role={wizard.status === 'failed' ? 'alert' : 'status'} className="woo-wizard-message">
+        <Alert
+          tone={wizard.status === 'failed' ? 'danger' : 'info'}
+          role={wizard.status === 'failed' ? 'alert' : 'status'}
+        >
           {wizard.message}
-        </p>
+        </Alert>
       ) : null}
-
       {authorizationAvailable ? (
-        <div>
-          <label htmlFor="woo-wizard-store-url">Mağaza adresi</label>
-          <input
-            id="woo-wizard-store-url"
-            type="url"
-            value={wizardStoreUrl}
-            placeholder="https://magaza.example.com"
-            onChange={(event) => setWizardStoreUrl(event.target.value)}
-          />
-          <button
-            type="button"
-            disabled={wizardBusy || wizardStoreUrl.trim() === ''}
-            onClick={() => void startAuthorization()}
+        <>
+          <IntegrationFormSection
+            title="WooCommerce ile yetkilendir"
+            description="Önerilen bağlantı: mağaza adresini girin, mağazanızın onay ekranında okuma erişimi verin."
           >
-            Mağazaya bağlan
-          </button>
-        </div>
+            <Field label="Mağaza adresi" htmlFor="woo-wizard-store-url">
+              <input
+                id="woo-wizard-store-url"
+                type="url"
+                value={wizardStoreUrl}
+                placeholder="https://magaza.example.com"
+                onChange={(event) => setWizardStoreUrl(event.target.value)}
+              />
+            </Field>
+          </IntegrationFormSection>
+          <IntegrationFormActions>
+            <button
+              type="button"
+              className="ui-btn ui-btn-primary"
+              disabled={wizardBusy || wizardStoreUrl.trim() === ''}
+              onClick={() => void startAuthorization()}
+            >
+              Mağazaya bağlan
+            </button>
+          </IntegrationFormActions>
+        </>
       ) : (
-        <p className="woo-wizard-note">
-          Otomatik bağlantı bu ortamda kapalı (HTTPS uygulama adresi gerekli). Gelişmiş bölümden REST
-          anahtarıyla bağlanabilirsiniz.
+        <p className="integration-connection-note">
+          Otomatik bağlantı bu ortamda kapalı (HTTPS uygulama adresi gerekli).
+          Gelişmiş bölümden REST anahtarıyla bağlanabilirsiniz.
         </p>
       )}
-
-      <details className="woo-advanced">
+      <details className="integration-connection-advanced">
         <summary>Gelişmiş: REST anahtarıyla bağlan</summary>
-        <div>
-          <label htmlFor="woo-store-url">Mağaza Adresi</label>
-          <input
-            id="woo-store-url"
-            type="url"
-            value={storeUrl}
-            placeholder="https://magaza.example.com"
-            onChange={(event) => setStoreUrl(event.target.value)}
-          />
-
-          <label htmlFor="woo-consumer-key">Consumer Key</label>
-          <input
-            id="woo-consumer-key"
-            type="text"
-            value={consumerKey}
-            onChange={(event) => setConsumerKey(event.target.value)}
-          />
-
-          <label htmlFor="woo-consumer-secret">Consumer Secret</label>
-          <input
-            id="woo-consumer-secret"
-            type="password"
-            autoComplete="off"
-            value={consumerSecret}
-            onChange={(event) => setConsumerSecret(event.target.value)}
-          />
-
-          <label htmlFor="woo-webhook-secret">Webhook Secret (opsiyonel)</label>
-          <input
-            id="woo-webhook-secret"
-            type="password"
-            autoComplete="off"
-            value={webhookSecret}
-            onChange={(event) => setWebhookSecret(event.target.value)}
-          />
-
+        <IntegrationFormSection
+          title="REST anahtarı"
+          description="Yedek bağlantı yöntemi. Bağlantı doğrulanmadan mağaza eklenmez; kayıtlı sırlar geri gösterilmez."
+        >
+          <Field label="Mağaza Adresi" htmlFor="woo-store-url">
+            <input
+              id="woo-store-url"
+              type="url"
+              value={storeUrl}
+              placeholder="https://magaza.example.com"
+              onChange={(event) => setStoreUrl(event.target.value)}
+            />
+          </Field>
+          <Field label="Consumer Key" htmlFor="woo-consumer-key">
+            <input
+              id="woo-consumer-key"
+              type="text"
+              value={consumerKey}
+              onChange={(event) => setConsumerKey(event.target.value)}
+            />
+          </Field>
+          <Field label="Consumer Secret" htmlFor="woo-consumer-secret">
+            <input
+              id="woo-consumer-secret"
+              type="password"
+              autoComplete="off"
+              value={consumerSecret}
+              onChange={(event) => setConsumerSecret(event.target.value)}
+            />
+          </Field>
+          <Field
+            label="Webhook Secret (opsiyonel)"
+            htmlFor="woo-webhook-secret"
+          >
+            <input
+              id="woo-webhook-secret"
+              type="password"
+              autoComplete="off"
+              value={webhookSecret}
+              onChange={(event) => setWebhookSecret(event.target.value)}
+            />
+          </Field>
+        </IntegrationFormSection>
+        <IntegrationFormActions>
           <button
             type="button"
+            className="ui-btn ui-btn-secondary"
             disabled={formState === 'testing'}
             onClick={() => void testAndSave()}
           >
             Bağlantıyı Test Et ve Kaydet
           </button>
-
-          {formState === 'testing' ? <span role="status">Test ediliyor…</span> : null}
-          {formState === 'saved' && formMessage ? (
-            <span role="status">{formMessage}</span>
-          ) : null}
-          {formState === 'error' && formMessage ? (
-            <span role="alert">{formMessage}</span>
-          ) : null}
-        </div>
+        </IntegrationFormActions>
+        {formState === 'testing' ? (
+          <Alert tone="info" role="status">
+            Test ediliyor…
+          </Alert>
+        ) : null}
+        {formState === 'saved' && formMessage ? (
+          <Alert tone="info" role="status">
+            {formMessage}
+          </Alert>
+        ) : null}
+        {formState === 'error' && formMessage ? (
+          <Alert tone="danger" role="alert">
+            {formMessage}
+          </Alert>
+        ) : null}
       </details>
-    </section>
+    </IntegrationConnectionCard>
   )
 }

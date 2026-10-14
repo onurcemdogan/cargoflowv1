@@ -14,6 +14,8 @@
 //
 // Trendyol'da ödeyen SİPARİŞ SÖZLEŞMESİNDEN okunur. Alan burada kilitlidir;
 // sunucu tarafında da yazma REDDEDİLİR (yalnız UI gizlemek yetmez).
+import { Alert, Badge, Card, Field } from '../ui/primitives'
+import { IntegrationLoading } from './IntegrationConnection'
 import { useCallback, useEffect, useState } from 'react'
 import { authenticatedApiRequest } from '../services/authenticatedApiRequest'
 import { PAYER_OPTIONS, type ShippingPayerValue } from '../shipping/shippingPayerCopy'
@@ -107,25 +109,33 @@ export function ShippingPayerSection() {
 
   if (loading) {
     return (
-      <section className="integration-section" aria-labelledby="shipping-payer-title">
-        <h3 id="shipping-payer-title">Kargo ücreti ödeyeni</h3>
-        <p role="status">Yükleniyor…</p>
-      </section>
+      <Card
+        title="Kargo ücreti ödeyeni"
+        labelledBy="shipping-payer-title"
+        className="integration-shared-card"
+      >
+        <IntegrationLoading />
+      </Card>
     )
   }
-
   return (
-    <section className="integration-section" aria-labelledby="shipping-payer-title">
-      <h3 id="shipping-payer-title">Kargo ücreti ödeyeni</h3>
-      <p>Etiket ve kargo oluşturma yöntemi bu sözleşme tipine göre değişebilir.</p>
-
-      {loadError ? <p role="alert">{loadError}</p> : null}
-
-      {!loadError && rows.length === 0 ? (
-        <p>Bağlı pazaryeri hesabı yok.</p>
+    <Card
+      title="Kargo ücreti ödeyeni"
+      labelledBy="shipping-payer-title"
+      className="integration-shared-card"
+      subtitle="Etiket ve kargo oluşturma yöntemi bu sözleşme tipine göre değişebilir. Bu ayar CargoFlow aboneliğinden bağımsızdır."
+    >
+      {loadError ? (
+        <Alert tone="danger" role="alert">
+          {loadError}
+        </Alert>
       ) : null}
-
-      <ul>
+      {!loadError && rows.length === 0 ? (
+        <p className="integration-connection-empty">
+          Bağlı pazaryeri hesabı yok.
+        </p>
+      ) : null}
+      <ul className="integration-setting-rows">
         {rows.map((row) => {
           const status = rowStatus[row.marketplaceAccountId] ?? 'idle'
           const label = row.displayName
@@ -133,36 +143,54 @@ export function ShippingPayerSection() {
             : `${row.marketplace} · ${row.marketplaceAccountId.slice(0, 8)}`
           const selectId = `payer-${row.marketplaceAccountId}`
           return (
-            <li key={row.marketplaceAccountId}>
-              <span>{label}</span>
+            <li
+              key={row.marketplaceAccountId}
+              className="integration-setting-row"
+            >
+              <h3>{label}</h3>
               {row.configurable ? (
                 <>
-                  <label htmlFor={selectId}>Kargo ücretini kim ödüyor?</label>
-                  <select
-                    id={selectId}
-                    value={row.payer}
-                    disabled={status === 'saving'}
-                    onChange={(event) =>
-                      void save(row, event.target.value as ShippingPayerValue)
-                    }
-                  >
-                    {PAYER_OPTIONS.map((option) => (
-                      <option key={option.value} value={option.value}>
-                        {option.label}
-                      </option>
-                    ))}
-                  </select>
-                  {status === 'saving' ? <span role="status">Kaydediliyor…</span> : null}
-                  {status === 'saved' ? <span role="status">Kaydedildi</span> : null}
-                  {status === 'error' ? <span role="alert">Kaydedilemedi</span> : null}
+                  <Field label="Kargo ücretini kim ödüyor?" htmlFor={selectId}>
+                    <select
+                      id={selectId}
+                      value={row.payer}
+                      disabled={status === 'saving'}
+                      onChange={(event) =>
+                        void save(row, event.target.value as ShippingPayerValue)
+                      }
+                    >
+                      {PAYER_OPTIONS.map((option) => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                  {status === 'saving' ? (
+                    <span role="status">
+                      <Badge tone="info">Kaydediliyor…</Badge>
+                    </span>
+                  ) : null}
+                  {status === 'saved' ? (
+                    <span role="status">
+                      <Badge tone="info">Kaydedildi</Badge>
+                    </span>
+                  ) : null}
+                  {status === 'error' ? (
+                    <Alert tone="danger" role="alert">
+                      Kaydedilemedi
+                    </Alert>
+                  ) : null}
                 </>
               ) : (
-                <span>Sipariş verisinden okunuyor — elle ayarlanamaz</span>
+                <Badge tone="neutral">
+                  Sipariş verisinden okunuyor — elle ayarlanamaz
+                </Badge>
               )}
             </li>
           )
         })}
       </ul>
-    </section>
+    </Card>
   )
 }

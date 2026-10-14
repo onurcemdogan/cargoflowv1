@@ -10,6 +10,14 @@
 //
 // Client Secret kaydedildikten sonra HİÇBİR ZAMAN geri okunmaz; yalnız
 // "kayıtlı" rozeti gösterilir ve alan boşaltılır.
+import { Alert, Badge, Field } from '../ui/primitives'
+import {
+  IntegrationConnectionCard,
+  IntegrationAccountCard,
+  IntegrationFormSection,
+  IntegrationFormActions,
+  IntegrationLoading,
+} from './IntegrationConnection'
 import { useCallback, useEffect, useState } from 'react'
 import { authenticatedApiRequest } from '../services/authenticatedApiRequest'
 
@@ -155,85 +163,166 @@ export function IkasSection() {
   }
 
   return (
-    <section className="integration-section" aria-labelledby="ikas-title" data-testid="ikas-section">
-      <h3 id="ikas-title">
-        ikas <span data-testid="ikas-rollout-badge">İÇ TEST</span>
-      </h3>
-      <p>
-        ikas bağlantısı iç test aşamasındadır: bağlantı ve sipariş okuma denenebilir, ancak
-        okunan siparişler canlı sipariş, kargo ve etiket akışına aktarılmaz.
-      </p>
-
-      {loading ? <p role="status">Yükleniyor…</p> : null}
-      {loadError ? <p role="alert">{loadError}</p> : null}
-
-      <ul>
+    <IntegrationConnectionCard
+      provider="ikas"
+      title="ikas"
+      kind="commerce"
+      testId="ikas-section"
+      description="ikas bağlantısı iç test aşamasındadır: bağlantı ve sipariş okuma denenebilir, ancak okunan siparişler canlı sipariş, kargo ve etiket akışına aktarılmaz."
+      badges={
+        <>
+          <span
+            className="ui-badge tone-warning"
+            data-testid="ikas-rollout-badge"
+          >
+            İÇ TEST
+          </span>
+          <Badge tone="neutral">Okuma testi</Badge>
+        </>
+      }
+    >
+      {loading ? <IntegrationLoading /> : null}
+      {loadError ? (
+        <Alert tone="danger" role="alert">
+          {loadError}
+        </Alert>
+      ) : null}
+      <ul
+        className="integration-connection-accounts"
+        aria-label="ikas mağazaları"
+      >
         {stores.map((store) => (
-          <li key={store.marketplaceAccountId} data-ikas-store={store.marketplaceAccountId}>
-            <span>{store.displayName ?? store.storeName ?? store.providerAccountId}</span>
-            <span>{store.storeName ? `${store.storeName}.myikas.com` : 'Mağaza adı yok'}</span>
-            <span>
-              {store.clientIdMasked ? `Client ID: ${store.clientIdMasked}` : 'Client ID yok'}
-            </span>
-            {/* SIR DEĞERİ DEĞİL, YALNIZ VARLIĞI. */}
-            <span>{store.hasClientSecret ? 'Client Secret kayıtlı' : 'Client Secret yok'}</span>
-            <span>{store.isActive ? 'Bağlı' : 'Bağlı değil'}</span>
-            <button
-              type="button"
-              disabled={busyAccount !== null || !store.isActive}
-              onClick={() => void readTest(store.marketplaceAccountId)}
-            >
-              {busyAccount === store.marketplaceAccountId
-                ? 'Okunuyor…'
-                : 'Sipariş Okumasını Test Et'}
-            </button>
-            <button type="button" onClick={() => void disconnect(store.marketplaceAccountId)}>
-              Bağlantıyı Kaldır
-            </button>
+          <IntegrationAccountCard
+            key={store.marketplaceAccountId}
+            data-ikas-store={store.marketplaceAccountId}
+            title={
+              store.displayName ?? store.storeName ?? store.providerAccountId
+            }
+            state={
+              <Badge tone="neutral">
+                {store.isActive ? 'Bağlı' : 'Bağlı değil'}
+              </Badge>
+            }
+            facts={[
+              [
+                'Mağaza',
+                store.storeName
+                  ? `${store.storeName}.myikas.com`
+                  : 'Mağaza adı yok',
+              ],
+              [
+                'Client ID',
+                store.clientIdMasked
+                  ? `Client ID: ${store.clientIdMasked}`
+                  : 'Client ID yok',
+              ],
+              [
+                'Client Secret',
+                store.hasClientSecret
+                  ? 'Client Secret kayıtlı'
+                  : 'Client Secret yok',
+              ],
+            ]}
+            actions={
+              <>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-secondary ui-btn-sm"
+                  disabled={busyAccount !== null || !store.isActive}
+                  onClick={() => void readTest(store.marketplaceAccountId)}
+                >
+                  {busyAccount === store.marketplaceAccountId
+                    ? 'Okunuyor…'
+                    : 'Sipariş Okumasını Test Et'}
+                </button>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-ghost ui-btn-sm"
+                  onClick={() => void disconnect(store.marketplaceAccountId)}
+                >
+                  Bağlantıyı Kaldır
+                </button>
+              </>
+            }
+          >
             {readResults[store.marketplaceAccountId] ? (
-              <span role={readResults[store.marketplaceAccountId].ok ? 'status' : 'alert'}>
+              <Alert
+                tone={
+                  readResults[store.marketplaceAccountId].ok ? 'info' : 'danger'
+                }
+                role={
+                  readResults[store.marketplaceAccountId].ok
+                    ? 'status'
+                    : 'alert'
+                }
+              >
                 {readResults[store.marketplaceAccountId].message}
-              </span>
+              </Alert>
             ) : null}
-          </li>
+          </IntegrationAccountCard>
         ))}
       </ul>
-
-      {!loading && stores.length === 0 && !loadError ? <p>Bağlı ikas mağazası yok.</p> : null}
-
-      <div>
-        <label htmlFor="ikas-store-name">ikas mağaza adı</label>
-        <input
-          id="ikas-store-name"
-          type="text"
-          value={storeName}
-          placeholder="magazam"
-          autoComplete="off"
-          onChange={(event) => setStoreName(event.target.value)}
-        />
-        <label htmlFor="ikas-client-id">Client ID</label>
-        <input
-          id="ikas-client-id"
-          type="text"
-          value={clientId}
-          autoComplete="off"
-          onChange={(event) => setClientId(event.target.value)}
-        />
-        <label htmlFor="ikas-client-secret">Client Secret</label>
-        <input
-          id="ikas-client-secret"
-          type="password"
-          value={clientSecret}
-          autoComplete="new-password"
-          onChange={(event) => setClientSecret(event.target.value)}
-        />
-        <button type="button" disabled={formState === 'testing'} onClick={() => void connect()}>
+      {!loading && stores.length === 0 && !loadError ? (
+        <p className="integration-connection-empty">Bağlı ikas mağazası yok.</p>
+      ) : null}
+      <IntegrationFormSection
+        title="Yeni mağaza bağla"
+        description="Client Secret saklanır ve geri gösterilmez. Okuma testi canlı sipariş akışını açmaz."
+      >
+        <Field label="ikas mağaza adı" htmlFor="ikas-store-name">
+          <input
+            id="ikas-store-name"
+            type="text"
+            value={storeName}
+            placeholder="magazam"
+            autoComplete="off"
+            onChange={(event) => setStoreName(event.target.value)}
+          />
+        </Field>
+        <Field label="Client ID" htmlFor="ikas-client-id">
+          <input
+            id="ikas-client-id"
+            type="text"
+            value={clientId}
+            autoComplete="off"
+            onChange={(event) => setClientId(event.target.value)}
+          />
+        </Field>
+        <Field label="Client Secret" htmlFor="ikas-client-secret">
+          <input
+            id="ikas-client-secret"
+            type="password"
+            value={clientSecret}
+            autoComplete="new-password"
+            onChange={(event) => setClientSecret(event.target.value)}
+          />
+        </Field>
+      </IntegrationFormSection>
+      <IntegrationFormActions>
+        <button
+          type="button"
+          className="ui-btn ui-btn-primary"
+          disabled={formState === 'testing'}
+          onClick={() => void connect()}
+        >
           Bağlantıyı Test Et ve Bağla
         </button>
-        {formState === 'testing' ? <span role="status">Test ediliyor…</span> : null}
-        {formState === 'saved' && formMessage ? <span role="status">{formMessage}</span> : null}
-        {formState === 'error' && formMessage ? <span role="alert">{formMessage}</span> : null}
-      </div>
-    </section>
+      </IntegrationFormActions>
+      {formState === 'testing' ? (
+        <Alert tone="info" role="status">
+          Test ediliyor…
+        </Alert>
+      ) : null}
+      {formState === 'saved' && formMessage ? (
+        <Alert tone="info" role="status">
+          {formMessage}
+        </Alert>
+      ) : null}
+      {formState === 'error' && formMessage ? (
+        <Alert tone="danger" role="alert">
+          {formMessage}
+        </Alert>
+      ) : null}
+    </IntegrationConnectionCard>
   )
 }

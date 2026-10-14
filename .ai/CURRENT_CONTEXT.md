@@ -1,5 +1,41 @@
 # Current context
 
+2026-10-14, Europe/Istanbul. Supervisor-selected INTEGRATIONS-UI-001, implemented
+on `feat/integrations-ui-001-standardize-connections` from current `origin/master`
+`891e8f9ef83e47cef56aa14bcf2e72780a55fb7d` (user merged UI-IA-001 via PR #21).
+READY_FOR_USER_REVIEW; local delivery commit is branch HEAD. No push/deploy.
+
+Five provider modules use a shared presentation shell/account/form hierarchy:
+Hepsiburada, n11, WooCommerce, ikas and Aras. Carrier account routing and shipping
+payer use current-theme cards while retaining separate business concepts.
+AccountReadStatus preserves configured/verified/read-capability predicates.
+Trendyol/Sürat handlers are unchanged; board navigation now focuses all seven
+actual management surfaces. Aras's own form sits outside the general settings
+form, preventing accidental submission of general settings from Aras fields.
+
+Backend runtime, endpoints, encryption, tenant/verification/capability gates,
+schedulers and provider business handlers are unchanged. Seven provider/settings
+component business statement prefixes are byte-identical to baseline. HB unknown
+paths still fail closed. N11_EPOCH_SEMANTICS_UNVERIFIED/BLOCKED_EXTERNAL remain;
+Aras internal_test production shipment/label restrictions remain. No migration.
+
+Checks passed: UI 442/46 files; health 53; onboarding 22+13 UI; HB 23+4 UI;
+n11 78+5 UI; Woo 105+5 UI; ikas 32+3 UI; Aras 95; product IA 12;
+status 9+8 UI; carriers 16+3 UI; billing-party 43; new presentation 2;
+new connection DOM 11 (included in full UI). tsc --force, lint (0 errors/6
+existing warnings), build and diff check passed. Different-model gpt-6-astra
+review APPROVED. Synthetic local browser verification covered desktop light/dark,
+1024px and 375px mobile; no horizontal page overflow after category-tab wrapping.
+Temporary preview files, server and browser tab removed.
+
+No production access or provider calls were performed. Full changed-file inventory,
+provider before/after structure and verification: docs/integrations-ui-001-connections.md.
+
+## Previous task context (UI-IA-001, merged through PR #21)
+
+Historical local-delivery state below; user subsequently merged commit
+`1ec901d41d82f79a4bc399e90cf7e22819725710` via PR #21 into the current baseline.
+
 2026-10-14, Europe/Istanbul. Supervisor-selected UI-IA-001, implemented on
 `feat/ui-ia-001-home-picking` from current `origin/master`
 `b1e12532fe3bcf07d1a982ff4a1c3dc1e2037e6b`. Local commit delivery only.
