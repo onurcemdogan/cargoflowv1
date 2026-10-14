@@ -1,4 +1,12 @@
 // ARAS KARGO — İÇ TEST taşıyıcı kimlik yüzeyi (UserName/Password; sır geri okunmaz).
+import { Alert, Badge, Field } from '../ui/primitives'
+import {
+  IntegrationConnectionCard,
+  IntegrationAccountCard,
+  IntegrationFormSection,
+  IntegrationFormActions,
+  IntegrationLoading,
+} from './IntegrationConnection'
 import { useCallback, useEffect, useState } from 'react'
 import { authenticatedApiRequest } from '../services/authenticatedApiRequest'
 
@@ -78,50 +86,102 @@ export function ArasSection() {
 
   if (loading) {
     return (
-      <section className="integration-section" aria-labelledby="aras-title">
-        <h3 id="aras-title">Aras Kargo</h3>
-        <p role="status">Aras hesapları yükleniyor…</p>
-      </section>
+      <IntegrationConnectionCard
+        provider="aras"
+        title="Aras Kargo"
+        kind="carrier"
+        description="Aras test hesabı yapılandırması"
+        badges={<Badge tone="warning">İç test</Badge>}
+      >
+        <IntegrationLoading>Aras hesapları yükleniyor…</IntegrationLoading>
+      </IntegrationConnectionCard>
     )
   }
-
   return (
-    <section className="integration-section" aria-labelledby="aras-title">
-      <h3 id="aras-title">
-        Aras Kargo <span className="ui-badge tone-info">İç test</span>
-      </h3>
-      <p>
-        Bağlantı Aras test servisine yapılır; canlı gönderi ve etiket kapalıdır. Kimlik bilgileri
-        doğrulanana kadar Aras ile gönderi oluşturulmaz.
-      </p>
-      {stores.length > 0 ? (
-        <ul aria-label="Aras hesapları">
-          {stores.map((s) => (
-            <li key={s.marketplaceAccountId}>
-              <span>{s.displayName ?? 'Aras Kargo'}</span>
-              <span data-verification={s.verificationStatus ?? 'unverified'}>{verificationText(s)}</span>
-            </li>
-          ))}
-        </ul>
+    <IntegrationConnectionCard
+      provider="aras"
+      title="Aras Kargo"
+      kind="carrier"
+      description="Bağlantı Aras test servisine yapılır; canlı gönderi ve etiket kapalıdır. Kimlik bilgileri doğrulanana kadar Aras ile gönderi oluşturulmaz."
+      badges={
+        <>
+          <Badge tone="warning">İç test</Badge>
+          <Badge tone="neutral">Canlı gönderi kapalı</Badge>
+        </>
+      }
+    >
+      <ul
+        className="integration-connection-accounts"
+        aria-label="Aras hesapları"
+      >
+        {stores.map((s) => (
+          <IntegrationAccountCard
+            key={s.marketplaceAccountId}
+            title={s.displayName ?? 'Aras Kargo'}
+            state={
+              <span
+                className={`ui-badge tone-${s.isActive && s.verificationStatus === 'verified' ? 'info' : 'neutral'}`}
+                data-verification={s.verificationStatus ?? 'unverified'}
+              >
+                {verificationText(s)}
+              </span>
+            }
+            facts={[
+              ['Canlı gönderi / etiket', 'Kullanılamaz — iç test'],
+              ...(s.lastVerifiedAt
+                ? [['Son doğrulama', s.lastVerifiedAt] as [string, string]]
+                : []),
+            ]}
+          />
+        ))}
+      </ul>
+      {stores.length === 0 ? (
+        <p className="integration-connection-empty">Bağlı Aras hesabı yok.</p>
       ) : null}
-      <div>
-        <label htmlFor="aras-display-name">Görünen ad</label>
-        <input id="aras-display-name" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-        <label htmlFor="aras-user-name">Kullanıcı adı</label>
-        <input id="aras-user-name" value={userName} onChange={(e) => setUserName(e.target.value)} autoComplete="off" />
-        <label htmlFor="aras-password">Şifre</label>
-        <input
-          id="aras-password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoComplete="new-password"
-        />
-        <button type="button" disabled={busy} onClick={() => void connect()}>
+      <IntegrationFormSection
+        title="Aras test hesabını kaydet"
+        description="Kayıt, hesabın üretimde gönderi oluşturabileceği anlamına gelmez. Kayıtlı şifre geri gösterilmez."
+      >
+        <Field label="Görünen ad" htmlFor="aras-display-name">
+          <input
+            id="aras-display-name"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+          />
+        </Field>
+        <Field label="Kullanıcı adı" htmlFor="aras-user-name">
+          <input
+            id="aras-user-name"
+            value={userName}
+            onChange={(e) => setUserName(e.target.value)}
+            autoComplete="off"
+          />
+        </Field>
+        <Field label="Şifre" htmlFor="aras-password">
+          <input
+            id="aras-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoComplete="new-password"
+          />
+        </Field>
+      </IntegrationFormSection>
+      <IntegrationFormActions>
+        <button
+          type="button"
+          className="ui-btn ui-btn-primary"
+          disabled={busy}
+          onClick={() => void connect()}
+        >
           {busy ? 'Kaydediliyor…' : 'Kaydet'}
         </button>
-        {message ? <span role="status">{message}</span> : null}
-      </div>
-    </section>
+      </IntegrationFormActions>
+      {message ? (
+        <Alert tone="info" role="status">
+          {message}
+        </Alert>
+      ) : null}
+    </IntegrationConnectionCard>
   )
 }

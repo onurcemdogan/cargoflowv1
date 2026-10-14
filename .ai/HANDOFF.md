@@ -1,4 +1,41 @@
-# UI-IA-001 — local delivery handoff
+# INTEGRATIONS-UI-001 — local delivery handoff
+
+2026-10-14. Branch `feat/integrations-ui-001-standardize-connections`, baseline
+`891e8f9ef83e47cef56aa14bcf2e72780a55fb7d` (current master after user-merged PR #21).
+Implementation COMPLETE; READY_FOR_USER_REVIEW. Local delivery commit is branch
+HEAD. No push, merge or deploy. Different-model gpt-6-astra review APPROVED.
+
+Shared pure presentation components provide provider headers, account metadata,
+grouped forms, wrapping actions and loading states. HB/n11/Woo/ikas/Aras use them;
+routing/payer settings remain separate current-theme cards. Board selection
+focuses the actual management surface for all seven providers. Aras's form is
+outside the general settings form, so Enter cannot submit unrelated settings.
+
+Backend runtime and provider business handlers are unchanged. Seven modules'
+business statement prefixes compare byte-identical to baseline. Verification,
+secrets, endpoints, tenant authority and rollout/read/write gates are preserved.
+HB unknown paths remain fail-closed; N11_EPOCH_SEMANTICS_UNVERIFIED and
+BLOCKED_EXTERNAL remain unchanged; Aras production writes/labels remain closed.
+No migration, scheduler changes, production access or provider calls.
+
+All requested gates passed: UI 442/46 files; integration-health 53;
+onboarding 22+13 UI; HB 23+4 UI; n11 78+5 UI; Woo 105+5 UI; ikas 32+3 UI;
+Aras 95; product IA 12; integration-status 9+8 UI; carriers 16+3 UI;
+billing-party 43; presentation 2; new DOM 11 (included in UI442).
+tsc -b --force, lint (0 errors/6 baseline warnings), build and diff check passed.
+Synthetic browser checks cover light/dark desktop, 1024px and 375px mobile;
+no horizontal page overflow. Temporary harness files/server/tab removed.
+
+Full file inventory, per-provider structure, test counts and synthetic screenshot
+names: docs/integrations-ui-001-connections.md. User review is next; do not push
+until authorized. Prior N11 production absence/external block is unchanged.
+
+---
+
+# UI-IA-001 — historical local delivery handoff
+
+User subsequently merged local commit `1ec901d41d82f79a4bc399e90cf7e22819725710`
+via PR #21 (merge `891e8f9ef83e47cef56aa14bcf2e72780a55fb7d`).
 
 2026-10-14. Branch `feat/ui-ia-001-home-picking`, baseline
 `b1e12532fe3bcf07d1a982ff4a1c3dc1e2037e6b` (current master fetched before work).

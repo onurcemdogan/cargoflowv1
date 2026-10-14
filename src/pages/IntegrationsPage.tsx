@@ -168,7 +168,10 @@ export function IntegrationsPage({
       setActiveIntegration(null)
     }
     requestAnimationFrame(() => {
-      detailRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+      const target = detailRef.current?.querySelector<HTMLElement>(`[data-provider-management="${key}"]`)
+      const scrollTarget = target ?? detailRef.current
+      scrollTarget?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+      target?.focus({ preventScroll: true })
     })
   }
 
@@ -322,10 +325,11 @@ export function IntegrationsPage({
           />
         ) : null}
 
-        {activeCategory === 'carriers' && activeIntegration === 'aras' ? (
-          <ArasSection />
-        ) : null}
       </form>
+
+      {activeCategory === 'carriers' && activeIntegration === 'aras' ? (
+        <ArasSection />
+      ) : null}
 
       {/*
         PAZARYERİ — Hepsiburada + n11 (İÇ TEST, YALNIZ OKUMA). Formun DIŞINDA durur:
@@ -655,7 +659,7 @@ function TrendyolSettingsPanel({
   }
 
   return (
-    <section className="integration-detail-panel" aria-label="Trendyol ayarları">
+    <section className="integration-detail-panel" aria-label="Trendyol ayarları" data-provider-management="trendyol" tabIndex={-1}>
       <div className="integration-detail-heading">
         <div className="integration-provider-icon marketplace">
           <ShoppingBag size={22} />
@@ -923,7 +927,7 @@ function SuratSettingsPanel({
   }
 
   return (
-    <section className="integration-detail-panel" aria-label="Sürat Kargo ayarları">
+    <section className="integration-detail-panel" aria-label="Sürat Kargo ayarları" data-provider-management="surat" tabIndex={-1}>
       <div className="integration-detail-heading">
         <div className="integration-provider-icon carrier">
           <Truck size={22} />

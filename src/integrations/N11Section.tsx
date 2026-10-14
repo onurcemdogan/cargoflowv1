@@ -15,6 +15,14 @@
 // appSecret ve tam appKey kaydedildikten sonra HİÇBİR ZAMAN geri okunmaz;
 // yalnız maskeli appKey sonu ve "şifre kayıtlı" bilgisi gösterilir.
 // Düzenlemede alanlar boş bırakılırsa kayıtlı değerler korunur.
+import { Alert, Badge, Field } from '../ui/primitives'
+import {
+  IntegrationConnectionCard,
+  IntegrationAccountCard,
+  IntegrationFormSection,
+  IntegrationFormActions,
+  IntegrationLoading,
+} from './IntegrationConnection'
 import { useCallback, useEffect, useState } from 'react'
 import { authenticatedApiRequest } from '../services/authenticatedApiRequest'
 import { AccountReadStatus } from './AccountReadStatus'
@@ -177,81 +185,241 @@ export function N11Section() {
   }
 
   return (
-    <section className="integration-section" aria-labelledby="n11-title" data-testid="n11-section">
-      <h3 id="n11-title">
-        n11 <span className="ui-badge tone-info" data-testid="n11-rollout-badge">SİPARİŞ OKUMA</span>
-      </h3>
-      <p>
-        API bilgilerinizi kaydedin; hesabınız güvenli bir okuma isteğiyle doğrulanır.
-        Doğrulanan hesabın siparişleri sisteme alınabilir.
+    <IntegrationConnectionCard
+      provider="n11"
+      title="n11"
+      kind="marketplace"
+      testId="n11-section"
+      description="API bilgilerinizi kaydedin; hesabınız güvenli bir okuma isteğiyle doğrulanır. Doğrulanan hesabın siparişleri sisteme alınabilir."
+      badges={
+        <>
+          <span className="ui-badge tone-info" data-testid="n11-rollout-badge">
+            SİPARİŞ OKUMA
+          </span>
+          <Badge tone="warning">İç test · salt okunur</Badge>
+        </>
+      }
+    >
+      <p className="integration-connection-note">
+        Pazaryeri yazmaları (sipariş statüsü güncelleme) kapalıdır. Yalnız n11
+        API bilgileriniz istenir. Kargo ve etiket işlemleri açılmaz.
       </p>
-      <p>Pazaryeri yazmaları (sipariş statüsü güncelleme) kapalıdır. Yalnız n11 API bilgileriniz istenir.</p>
-
-      {loading ? <p role="status">Yükleniyor…</p> : null}
-      {loadError ? <p role="alert">{loadError}</p> : null}
-
-      <ul>
+      <details className="integration-connection-advanced integration-capability-warning">
+        <summary>
+          Senkronizasyon imleci engelli · tarih doğrulaması bekleniyor
+        </summary>
+        <Alert tone="warning">
+          Hesabın okuma doğrulaması tarih parametrelerinin anlamını kanıtlamaz.
+          Tarih semantiği doğrulanana kadar kontrol noktası ilerlemez.
+          <br />
+          <code>N11_EPOCH_SEMANTICS_UNVERIFIED · BLOCKED_EXTERNAL</code>
+        </Alert>
+      </details>
+      {loading ? <IntegrationLoading /> : null}
+      {loadError ? (
+        <Alert tone="danger" role="alert">
+          {loadError}
+        </Alert>
+      ) : null}
+      <ul
+        className="integration-connection-accounts"
+        aria-label="n11 hesapları"
+      >
         {accounts.map((account) => (
-          <li key={account.marketplaceAccountId} data-n11-account={account.marketplaceAccountId}>
-            <span>{account.displayName ?? 'n11 hesabı'}</span>
-            <span>{account.config ? `API anahtarı: ${account.config.appKeyMasked}` : 'Kimlik yok'}</span>
-            {/* SIR DEĞERİ DEĞİL, YALNIZ VARLIĞI. */}
-            <span>{account.config?.hasAppSecret ? 'API şifresi kayıtlı' : 'API şifresi yok'}</span>
-            <span>{account.config?.sellerId ? `Satıcı: ${account.config.sellerId}` : 'Satıcı henüz okunmadı'}</span>
-            <span data-health-state={account.health.state}>{account.healthLabel ?? account.health.state}</span>
-            <span>Son okuma denemesi: {formatDateTime(account.health.lastAttemptAt ?? null)}</span>
-            {account.health.lastSuccessfulSyncAt ? (
-              <span>Kayıtlı siparişler: {formatDateTime(account.health.lastSuccessfulSyncAt)} itibarıyla</span>
-            ) : null}
-            <AccountReadStatus isActive={account.isActive} configured={Boolean(account.config)} verificationStatus={account.verificationStatus} ordersActive={account.ordersActive} verifying={verifyingAccount === account.marketplaceAccountId || (formState === 'saving' && editing?.marketplaceAccountId === account.marketplaceAccountId)} />
-            <span className="integration-account-actions">
-              <button type="button" disabled={busyAccount !== null || formState === 'saving' || !account.isActive} onClick={() => void testAccount(account.marketplaceAccountId)}>
-                {busyAccount === account.marketplaceAccountId ? 'Çalışıyor…' : 'Test Et'}
-              </button>
-              <button type="button" disabled={busyAccount !== null || formState === 'saving' || !account.isActive} onClick={() => void syncAccount(account.marketplaceAccountId)}>
-                Senkronize Et
-              </button>
-              <button type="button" disabled={busyAccount !== null || formState === 'saving'} onClick={() => startEdit(account)}>Düzenle</button>
-              <button type="button" disabled={busyAccount !== null || formState === 'saving'} onClick={() => void disconnect(account.marketplaceAccountId)}>Bağlantıyı Kaldır</button>
-            </span>
+          <IntegrationAccountCard
+            key={account.marketplaceAccountId}
+            data-n11-account={account.marketplaceAccountId}
+            title={account.displayName ?? 'n11 hesabı'}
+            state={
+              <Badge tone="neutral">
+                {!account.isActive
+                  ? 'Pasif'
+                  : account.config
+                    ? 'Kayıtlı'
+                    : 'Kimlik yok'}
+              </Badge>
+            }
+            facts={[
+              [
+                'API anahtarı',
+                account.config
+                  ? `API anahtarı: ${account.config.appKeyMasked}`
+                  : 'Kimlik yok',
+              ],
+              [
+                'API şifresi',
+                account.config?.hasAppSecret
+                  ? 'API şifresi kayıtlı'
+                  : 'API şifresi yok',
+              ],
+              [
+                'Satıcı',
+                account.config?.sellerId
+                  ? `Satıcı: ${account.config.sellerId}`
+                  : 'Satıcı henüz okunmadı',
+              ],
+              [
+                'Okuma durumu',
+                <span data-health-state={account.health.state}>
+                  {account.healthLabel ?? account.health.state}
+                </span>,
+              ],
+              [
+                'Son okuma denemesi',
+                formatDateTime(account.health.lastAttemptAt ?? null),
+              ],
+              ...(account.health.lastSuccessfulSyncAt
+                ? [
+                    [
+                      'Kayıtlı siparişler',
+                      `${formatDateTime(account.health.lastSuccessfulSyncAt)} itibarıyla`,
+                    ] as [string, string],
+                  ]
+                : []),
+            ]}
+            actions={
+              <>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-secondary ui-btn-sm"
+                  disabled={
+                    busyAccount !== null ||
+                    formState === 'saving' ||
+                    !account.isActive
+                  }
+                  onClick={() => void testAccount(account.marketplaceAccountId)}
+                >
+                  {busyAccount === account.marketplaceAccountId
+                    ? 'Çalışıyor…'
+                    : 'Test Et'}
+                </button>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-secondary ui-btn-sm"
+                  disabled={
+                    busyAccount !== null ||
+                    formState === 'saving' ||
+                    !account.isActive
+                  }
+                  onClick={() => void syncAccount(account.marketplaceAccountId)}
+                >
+                  Senkronize Et
+                </button>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-ghost ui-btn-sm"
+                  disabled={busyAccount !== null || formState === 'saving'}
+                  onClick={() => startEdit(account)}
+                >
+                  Düzenle
+                </button>
+                <button
+                  type="button"
+                  className="ui-btn ui-btn-ghost ui-btn-sm"
+                  disabled={busyAccount !== null || formState === 'saving'}
+                  onClick={() => void disconnect(account.marketplaceAccountId)}
+                >
+                  Bağlantıyı Kaldır
+                </button>
+              </>
+            }
+          >
+            <AccountReadStatus
+              isActive={account.isActive}
+              configured={Boolean(account.config)}
+              verificationStatus={account.verificationStatus}
+              ordersActive={account.ordersActive}
+              verifying={
+                verifyingAccount === account.marketplaceAccountId ||
+                (formState === 'saving' &&
+                  editing?.marketplaceAccountId ===
+                    account.marketplaceAccountId)
+              }
+            />
             {results[account.marketplaceAccountId] ? (
-              <span role={results[account.marketplaceAccountId].ok ? 'status' : 'alert'}>{results[account.marketplaceAccountId].message}</span>
+              <Alert
+                tone={
+                  results[account.marketplaceAccountId].ok ? 'info' : 'danger'
+                }
+                role={
+                  results[account.marketplaceAccountId].ok ? 'status' : 'alert'
+                }
+              >
+                {results[account.marketplaceAccountId].message}
+              </Alert>
             ) : null}
-          </li>
+          </IntegrationAccountCard>
         ))}
       </ul>
-
-      {!loading && accounts.length === 0 && !loadError ? <p>Bağlı n11 hesabı yok.</p> : null}
-
-      <div>
-        <label htmlFor="n11-app-key">API anahtarı (appKey)</label>
-        <input
-          id="n11-app-key"
-          type="text"
-          value={form.appKey}
-          autoComplete="off"
-          placeholder={editing?.config ? `Kayıtlı: ${editing.config.appKeyMasked} — değiştirmek için yeni hesap bağlayın` : ''}
-          onChange={update('appKey')}
-        />
-        <label htmlFor="n11-app-secret">API şifresi (appSecret)</label>
-        <input
-          id="n11-app-secret"
-          type="password"
-          value={form.appSecret}
-          autoComplete="new-password"
-          placeholder={editing ? 'Değiştirmek için girin' : ''}
-          onChange={update('appSecret')}
-        />
-        <button type="button" disabled={formState === 'saving' || busyAccount !== null} onClick={() => void save()}>
+      {!loading && accounts.length === 0 && !loadError ? (
+        <p className="integration-connection-empty">Bağlı n11 hesabı yok.</p>
+      ) : null}
+      <IntegrationFormSection
+        title={editing ? 'Hesabı düzenle' : 'Yeni hesap bağla'}
+        description="Kayıtlı anahtar ve şifre geri gösterilmez. Düzenlerken boş bıraktığınız değerler korunur."
+      >
+        <Field label="API anahtarı (appKey)" htmlFor="n11-app-key">
+          <input
+            id="n11-app-key"
+            type="text"
+            value={form.appKey}
+            autoComplete="off"
+            placeholder={
+              editing?.config
+                ? `Kayıtlı: ${editing.config.appKeyMasked} — değiştirmek için yeni hesap bağlayın`
+                : ''
+            }
+            onChange={update('appKey')}
+          />
+        </Field>
+        <Field label="API şifresi (appSecret)" htmlFor="n11-app-secret">
+          <input
+            id="n11-app-secret"
+            type="password"
+            value={form.appSecret}
+            autoComplete="new-password"
+            placeholder={editing ? 'Değiştirmek için girin' : ''}
+            onChange={update('appSecret')}
+          />
+        </Field>
+      </IntegrationFormSection>
+      <IntegrationFormActions>
+        <button
+          type="button"
+          className="ui-btn ui-btn-primary"
+          disabled={formState === 'saving' || busyAccount !== null}
+          onClick={() => void save()}
+        >
           {editing ? 'Değişiklikleri Kaydet' : 'Kaydet ve Bağla'}
         </button>
         {editing ? (
-          <button type="button" onClick={() => { setEditing(null); setForm(EMPTY_FORM) }}>Vazgeç</button>
+          <button
+            type="button"
+            className="ui-btn ui-btn-secondary"
+            onClick={() => {
+              setEditing(null)
+              setForm(EMPTY_FORM)
+            }}
+          >
+            Vazgeç
+          </button>
         ) : null}
-        {formState === 'saving' ? <span role="status">Doğrulanıyor…</span> : null}
-        {formState === 'saved' && formMessage ? <span role="status">{formMessage}</span> : null}
-        {formState === 'error' && formMessage ? <span role="alert">{formMessage}</span> : null}
-      </div>
-    </section>
+      </IntegrationFormActions>
+      {formState === 'saving' ? (
+        <Alert tone="info" role="status">
+          Doğrulanıyor…
+        </Alert>
+      ) : null}
+      {formState === 'saved' && formMessage ? (
+        <Alert tone="info" role="status">
+          {formMessage}
+        </Alert>
+      ) : null}
+      {formState === 'error' && formMessage ? (
+        <Alert tone="danger" role="alert">
+          {formMessage}
+        </Alert>
+      ) : null}
+    </IntegrationConnectionCard>
   )
 }
