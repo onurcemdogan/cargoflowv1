@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import test from 'node:test'
 
 // P4 — HEPSIBURADA + N11 TEMEL SÖZLEŞMESİ.
@@ -13,6 +14,8 @@ const HBO = await import('./marketplaces/hepsiburada/hepsiburadaOrderSource.ts')
 const HBL = await import('./marketplaces/hepsiburada/hepsiburadaLabelCapability.ts')
 const N11 = await import('./marketplaces/n11/n11Contract.ts')
 const N11O = await import('./marketplaces/n11/n11OrderSource.ts')
+const N11C = await import('./connectors/n11/n11Client.ts')
+const { N11_EPOCH_VERIFICATION } = await import('./marketplaces/n11/n11EpochSemantics.ts')
 const SEAM = await import('./marketplaces/marketplaceOrderSource.ts')
 
 const NOW = Date.parse('2026-08-19T12:00:00Z')
@@ -352,6 +355,56 @@ test('N11-3: resmi uc nokta ve servis limiti sabitleri', () => {
   assert.equal(N11.N11_RATE_LIMIT_PER_MINUTE, 1000)
   assert.equal(N11.N11_MAX_PAGE_SIZE, 100)
   assert.equal(N11.N11_FIRST_PAGE, 0)
+})
+
+// These pin current client behavior, NOT the provider's undocumented encoding.
+test('N11-EPOCH-1: known Türkiye-local instant is sent unchanged; no guessed GMT+3 epoch shift', () => {
+  const instant = Date.parse('2026-10-14T12:00:00.000+03:00')
+  assert.equal(instant, 1791968400000)
+  assert.equal(new Date(instant).toISOString(), '2026-10-14T09:00:00.000Z')
+  const url = new URL(N11C.buildN11RequestUrl({ startMs: instant, endMs: instant + 1000, status: 'Created', page: 0, size: 100 }))
+  assert.equal(url.searchParams.get('startDate'), '1791968400000')
+  assert.equal(url.searchParams.get('endDate'), '1791968401000')
+  assert.notEqual(url.searchParams.get('startDate'), '1791979200000', 'shifted local-wall variant is unproven')
+})
+
+test('N11-EPOCH-2: explicit Türkiye +03 winter/summer encoding is independent of host timezone/DST', () => {
+  const samples = [
+    ['2026-01-15T12:00:00.000+03:00', 1768467600000],
+    ['2026-07-15T12:00:00.000+03:00', 1784106000000],
+  ]
+  const moduleUrl = new URL('./connectors/n11/n11Client.ts', import.meta.url).href
+  const program = `import { buildN11RequestUrl } from ${JSON.stringify(moduleUrl)};
+    console.log(JSON.stringify(${JSON.stringify(samples)}.map(([local]) => {
+      const epoch = Date.parse(local);
+      const url = new URL(buildN11RequestUrl({startMs:epoch,endMs:epoch+1,status:'Created',page:0,size:100}));
+      return [epoch, url.searchParams.get('startDate'), url.searchParams.get('endDate')];
+    })));`
+  for (const TZ of ['UTC', 'Europe/Istanbul', 'America/New_York', 'Pacific/Auckland']) {
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', program], { env: { ...process.env, TZ }, encoding: 'utf8', timeout: 10_000 })
+    assert.equal(result.status, 0, `${TZ}: ${result.stderr}`)
+    assert.deepEqual(JSON.parse(result.stdout), samples.map(([, epoch]) => [epoch, String(epoch), String(epoch + 1)]), TZ)
+  }
+})
+
+test('N11-EPOCH-3: exact millisecond split bounds and 1ms overlap survive request encoding', () => {
+  const start = 1791968400000, middle = start + 500, end = start + 1000
+  const intervals = [[start - 1, middle], [middle - 1, end]]
+  for (const [startMs, endMs] of intervals) {
+    const url = new URL(N11C.buildN11RequestUrl({ startMs, endMs, status: 'Created', page: 0, size: 100 }))
+    assert.equal(Number(url.searchParams.get('startDate')), startMs)
+    assert.equal(Number(url.searchParams.get('endDate')), endMs)
+    assert.equal(url.searchParams.get('sender'), 'ALL')
+    assert.equal(url.searchParams.get('orderByField'), 'true')
+  }
+  assert.equal(intervals[0][1] - intervals[1][0], 1)
+})
+
+test('N11-EPOCH-4: official GMT+3 wording and synthetic fixtures cannot promote epoch evidence', async () => {
+  assert.deepEqual(N11_EPOCH_VERIFICATION, { status: 'BLOCKED_EXTERNAL', semantics: 'UNKNOWN', reasonCode: 'N11_EPOCH_SEMANTICS_UNVERIFIED' })
+  assert.ok(Object.isFrozen(N11_EPOCH_VERIFICATION))
+  const { buildProviderCatalog } = await import('./connectors/providerCatalog.ts')
+  assert.equal(buildProviderCatalog().get('n11').accountOrdersRead.checkpointBlocker, 'N11_EPOCH_SEMANTICS_UNVERIFIED')
 })
 
 /* ═══════════════ N11 — SAYFALAMA / PENCERE ═════════════════════════ */

@@ -12,6 +12,7 @@
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { N11_EPOCH_VERIFICATION } from '../marketplaces/n11/n11EpochSemantics.ts'
 import {
   declareCapability,
   ConnectorRegistry,
@@ -190,7 +191,7 @@ function n11Descriptor(): ConnectorDescriptor {
       // Learned seller metadata is not a credential change.
       fingerprintFields: ['appKey', 'appSecret'],
       requiredCredentialFields: ['appKey', 'appSecret'],
-      checkpointBlocker: 'N11_EPOCH_SEMANTICS_UNVERIFIED',
+      checkpointBlocker: N11_EPOCH_VERIFICATION.reasonCode,
     },
     capabilities: [
       declareCapability('orders.read', { stage: 'internal_test' }),

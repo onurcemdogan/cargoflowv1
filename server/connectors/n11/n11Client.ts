@@ -136,6 +136,9 @@ export type N11PageResult =
 export function buildN11RequestUrl(query: N11PageQuery): string {
   const request = buildN11PageRequest({ page: query.page, size: query.size, status: query.status, incremental: true })
   const url = new URL(N11_SHIPMENT_PACKAGES_URL)
+  // Preserve the existing wire encoding. A Date epoch has no local timezone;
+  // do not add/subtract 3h without provider evidence. The independent epoch
+  // checkpoint blocker remains in force (N11-LIVE-002 evidence record).
   url.searchParams.set('startDate', String(Math.trunc(query.startMs)))
   url.searchParams.set('endDate', String(Math.trunc(query.endMs)))
   url.searchParams.set('page', String(request.page))

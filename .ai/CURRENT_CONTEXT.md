@@ -1,49 +1,36 @@
 # Current context
 
-Date: 2026-10-14 (Europe/Istanbul)
-Ticket: ACCOUNT-LEVEL-LIVE-VERIFICATION-001
-Branch: feat/account-level-live-verification-001
-Base: 6287450
-Follow-up baseline: f2ff13cfbd19bc438845271103bdadcf64a385ed (PR #19)
-Evidence: IMPLEMENTATION_COMPLETE; independent gpt-6-astra follow-up review approved.
+2026-10-14, Europe/Istanbul. Supervisor-selected N11-LIVE-002.
+Branch `agent/N11-LIVE-002`, baseline `de5c18979deb054f4118dd9d66aae495952281b3`.
+PR #19 was merged by the user before takeover; master was clean. No push, merge
+or deployment requested on this ticket.
 
-Takeover was clean: no Claude partial diff or commits beyond base existed.
-Existing encrypted credentials, verification columns, read clients, persistence
-and durability rules were reused. No migration or rollout promotion.
+Result: BLOCKED_EXTERNAL for N11 checkpoint advancement only. Code, report and
+tests complete; independent gpt-6-astra review APPROVED. Official shipment docs
+say milliseconds/GMT+3 but provide no numeric request/local-time pair or
+conversion algorithm. SOAP-REST comparison/changelog and repo fixtures/research
+do not resolve it. User declines live account/package sharing now. Zero provider calls.
 
-N11/HB save and Test Et persist exact-account safe GET evidence. Canonical read
-activation loads current credentials and verification from DB. Credential
-rotation invalidates evidence; stale probes cannot verify or mutate seller
-binding; concurrent N11 sibling seller claims serialize within the tenant.
+Keep N11_EPOCH_SEMANTICS_UNVERIFIED. Current numeric encoding is unchanged.
+Local 2026-10-14 12:00 +03 = UTC 09:00 = 1791968400000; alternative shifted-wall
+epoch is 1791979200000. Which N11 expects remains UNKNOWN. No conversion guess
+or account/body/env proof override. Immutable n11EpochSemantics metadata is
+BLOCKED_EXTERNAL/UNKNOWN and sync returns epochVerification. Empty reads and
+verified accounts cannot clear it. Existing server-only trusted fixture models
+future proof but still requires strict durability; it is not provider evidence.
 
-Production create/label boundaries use the unchanged fulfillment rollout gate
-and persisted order identity. Read proof never grants shipment, label,
-marketplace write, billing or automation permission. Aras stays TEST/internal_test
-with no automatic SOAP calls. UNKNOWN_AFTER_NETWORK/idempotency remain unchanged.
+Evidence: `.ai/research/N11-LIVE-002/epoch-verification.json`.
+Report and unexecuted <=10 GET protocol: `docs/n11-epoch-verification.md`.
+Needs a stable package last-modified local-time anchor, two numeric variants
+and negative/boundary controls. Do not use packageIds/orderNumber in date-filter
+comparison queries. No keys/secrets/raw headers/customer payloads in evidence.
 
-PR #19 review fixes: HB verification needs the selected path's merchantId
-placeholder or a nonempty response with every merchant matching. Unbound empty
-reads remain unverified with HB_ACCOUNT_BINDING_UNPROVEN. HB sync uses offset 0,
-discards full pages and splits oldest-first, with 1ms overlap/dedupe, 1s minimum
-split interval and 350-request hard cap (<35,000 retained records). Eight planned
-slices cover the seven-day initial lookback while respecting 24h/7d request caps.
-Dense/budget partial runs never checkpoint. Merchant conflicts are checked before
-normalization can erase duplicate identities.
+Tests: test:n11 now includes foundation contracts in CI (51+27 read+5 UI).
+Account16, contract-packs14, kernel15, health53, status9+8 UI, onboarding22+13 UI,
+auto-label115, full UI423/44 pass; tsc force/lint/build/diff check pass (6 existing
+lint warnings). Two mutations killed by assertions; files restored byte-exact.
+Hosted CI/live provider verification are not claimed.
 
-Producer/catchup use canonical marketplace and the shared source gate before
-enqueue. Descriptor-derived producer exclusions precede LIMIT, preserving
-Trendyol throughput. Preparation rejects persisted sources before settings,
-desi, lifecycle, billing or carrier credentials. No provider-name branches.
-
-All requested suites passed: account verification 16; HB 23+4 UI; N11 26+5 UI;
-auto-label acceptance 115; onboarding 22+13 UI; health 53; status 9+8 UI; kernel 15;
-Aras 95; focused shipment/Sürat/label tests 78. tsc force, build, full UI 423/44
-and diff check passed; lint 0 errors, 6 existing warnings. Mutations A-E, F, G,
-H-P/H-C/H-L all failed assertions and restored files byte-exact. The account
-suite is registered in test:surat; the full enormous suite was not requested.
-
-Open operational blockers: N11 GMT+3 cursor semantics and id:null, per-account HB
-endpoint/list configuration, Aras production endpoint and payer/COD/write proof.
-No real provider account was verified and no provider write occurred. User's
-follow-up authorizes commit and ordinary push to the same branch to update PR #19.
-The completion commit is branch HEAD. No merge, deploy or new branch.
+Adaptive splitting/oldest-first/1ms overlap/dedupe/budgets/dense handling/seller
+ownership/persistence are unchanged. sender=ALL remains read-only; warehouse
+packages gain no fulfillment. id:null remains unpersistable. No migration.

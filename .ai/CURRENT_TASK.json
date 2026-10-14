@@ -1,67 +1,59 @@
 {
   "schemaVersion": 1,
   "project": "cargoflow",
-  "ticket": "ACCOUNT-LEVEL-LIVE-VERIFICATION-001",
-  "status": "IMPLEMENTATION_COMPLETE",
-  "phase": "VALIDATED_AND_REVIEWED",
-  "ticketBranch": "feat/account-level-live-verification-001",
-  "baselineCommit": "6287450",
-  "followupBaselineCommit": "f2ff13cfbd19bc438845271103bdadcf64a385ed",
-  "pullRequest": "https://github.com/onurcemdogan/cargoflowv1/pull/19",
-  "specPath": ".ai/tickets/ACCOUNT-LEVEL-LIVE-VERIFICATION-001.md",
+  "ticket": "N11-LIVE-002",
+  "status": "BLOCKED_EXTERNAL",
+  "implementationStatus": "COMPLETE",
+  "phase": "EPOCH_VERIFICATION_INCONCLUSIVE",
+  "ticketBranch": "agent/N11-LIVE-002",
+  "baselineCommit": "de5c18979deb054f4118dd9d66aae495952281b3",
+  "specPath": ".ai/tickets/N11-LIVE-002.md",
+  "evidencePath": ".ai/research/N11-LIVE-002/epoch-verification.json",
+  "reportPath": "docs/n11-epoch-verification.md",
   "activeWorker": null,
   "lastImplementationWorker": "codex",
   "reviewer": "gpt-6-astra",
   "reviewStatus": "APPROVED",
-  "contributors": [
-    "codex"
-  ],
-  "previousTicket": "ARAS-EXPANSION",
+  "previousTicket": "ACCOUNT-LEVEL-LIVE-VERIFICATION-001",
   "completedCriteria": [
-    "Exact-account safe N11/HB save and Test Et probes persist verification",
-    "Current credential fingerprint required for canonical orders.read; changed credentials reset evidence",
-    "Tenant and sibling isolation, stale-probe and concurrent-seller protection",
-    "Existing fulfillment gate enforced before production create/label boundaries",
-    "Onboarding uses same-account verification and first sync; UI shows persisted evidence",
-    "Aras TEST save aligns fingerprints with no automatic provider write",
-    "No migrations, rollout promotion, provider endpoint invention, scheduler or deploy changes",
-    "HB selected-path or every-row merchant proof is required for verification",
-    "HB offset-zero adaptive splitting bounds requests/memory; incomplete runs never checkpoint",
-    "Shared source gate blocks producer/catchup/preparation before fulfillment processing; restricted sources cannot starve Trendyol batches",
-    "All requested suites and ten byte-exact-restored mutations pass"
+    "Official N11 shipment documentation, SOAP-REST comparison and changelog reviewed",
+    "Existing client/config/sync/contracts/fixtures/research inspected; no independent live timestamp correlation found",
+    "Immutable BLOCKED_EXTERNAL/UNKNOWN epoch verification exposed in sync response; existing checkpoint blocker retained",
+    "Current wire values preserved; no guessed timezone shift, new runtime proof toggle or migration",
+    "Explicit +03 examples, winter/summer, four host timezones and exact millisecond boundary tests pass",
+    "Verified account and empty-read checkpoint denial pass; body claims cannot clear proof",
+    "Positive server-only trusted fixture models future proof and still enforces strict persistence",
+    "Unexecuted bounded GET comparison protocol and numeric variants documented; zero provider requests",
+    "Relevant local CI checks and independent review pass"
   ],
   "failingTests": [],
+  "blockedCapability": "N11 orders.read checkpoint advancement only",
   "blockers": [
-    "N11 production cursor: GMT+3 epoch semantics remain unverified",
-    "N11 id:null remains unpersistable and pins cursor",
-    "HB endpoint/list configuration required per account",
-    "Aras production endpoint and PayorTypeCode/COD/write evidence remain external blockers"
+    "N11_EPOCH_SEMANTICS_UNVERIFIED: official GMT+3 wording does not prove numeric request conversion",
+    "Need explicit official numeric datetime mapping or stable known package last-modified read evidence",
+    "User is not providing account/package information now; no live requests performed"
   ],
   "qualityGates": {
-    "passed": true,
-    "accountVerificationPassed": 16,
-    "autoLabelAcceptancePassed": 115,
-    "focusedShipmentLabelPassed": 78,
-    "build": true,
-    "uiPassed": 423,
+    "localChecksPassed": true,
+    "n11ContractTests": 51,
+    "n11ReadTests": 27,
+    "n11UiTests": 5,
+    "accountVerificationTests": 16,
+    "autoLabelAcceptanceTests": 115,
     "tsc": true,
+    "build": true,
+    "uiTests": 423,
+    "uiFiles": 44,
+    "lintErrors": 0,
     "preExistingLintWarnings": 6,
-    "lintErrors": 0
+    "diffCheck": true
   },
   "mutationProof": {
-    "byteExactRestored": true,
-    "killed": [
-      "A",
-      "B",
-      "C",
-      "D",
-      "E",
-      "F",
-      "G",
-      "H-P",
-      "H-C",
-      "H-L"
-    ]
+    "killedByAssertion": [
+      "remove-unknown-epoch-gate",
+      "guess-three-hour-shift"
+    ],
+    "byteExactRestored": true
   },
-  "nextAction": "PR #19 manual-review blockers complete and independently approved. User authorizes commit and ordinary push only to feat/account-level-live-verification-001. Delivery commit is branch HEAD; verify remote head after push. No merge or deploy. No live provider account was exercised during validation."
+  "nextAction": "Keep checkpoint blocker. Obtain precise official mapping or named-account stable package evidence per docs/n11-epoch-verification.md before gate removal. No live calls, push, merge or deploy requested. Local delivery commit is branch HEAD."
 }

@@ -1,0 +1,44 @@
+{
+  "ticket": "N11-LIVE-002",
+  "checkedOn": "2026-10-14",
+  "status": "BLOCKED_EXTERNAL",
+  "semantics": "UNKNOWN",
+  "checkpointBlocker": "N11_EPOCH_SEMANTICS_UNVERIFIED",
+  "sources": [
+    {
+      "url": "https://developer.n11.com/documentation/n11-siparis-entegrasyonu/siparis-listeleme-servisi/",
+      "sections": ["startDate/endDate parameter table", "Example Request", "Example Response"],
+      "exactExcerpt": "Timestamp (milliseconds) ve GMT +3 olarak gönderilmelidir.",
+      "finding": "Request dates are placeholders. Numeric response dates have no paired local datetime or explicit request conversion algorithm."
+    },
+    {
+      "url": "https://developer.n11.com/documentation/bilgilendirme/soap-restapi-siparis-servisi-karsilastirmasi/",
+      "finding": "Response field mapping/example does not establish request epoch interpretation."
+    },
+    {
+      "url": "https://developer.n11.com/documentation/changelog/",
+      "finding": "Reviewed changelog has no clarification of the request epoch conversion."
+    }
+  ],
+  "repositoryEvidence": [
+    { "path": "server/marketplaces/n11/n11Contract.ts", "kind": "official contract summary", "provesRequestEpochMapping": false },
+    { "path": "server/connectors/n11/n11Client.ts", "kind": "current unshifted numeric serialization", "provesRequestEpochMapping": false },
+    { "path": "server/n11-live-read-flow.test.mjs", "kind": "synthetic injected transport fixtures", "provesRequestEpochMapping": false },
+    { "path": "server/marketplaces-hepsiburada-n11-flow.test.mjs", "kind": "hermetic contract fixtures", "provesRequestEpochMapping": false },
+    { "path": "server/account-level-verification-flow.test.mjs", "kind": "hermetic account verification fixtures", "provesRequestEpochMapping": false },
+    { "path": "docs/cargoflow-roadmap/STATE.json", "kind": "public contract research summary, no epoch conversion proof", "provesRequestEpochMapping": false },
+    { "path": ".ai/research", "kind": "existing research records cover Aras/Ticimax; no N11 live request/time correlation found", "provesRequestEpochMapping": false }
+  ],
+  "knownExample": {
+    "turkiyeLocal": "2026-10-14T12:00:00.000+03:00",
+    "utcInstant": "2026-10-14T09:00:00.000Z",
+    "currentWireEpochMs": 1791968400000,
+    "alternativeWallClockShiftedEpochMs": 1791979200000,
+    "differenceMs": 10800000,
+    "providerExpectedVariant": "UNKNOWN"
+  },
+  "decision": "Preserve current wire values and checkpoint blocker. Do not implement a guessed timezone conversion or claim synthetic fixtures verify N11.",
+  "missingEvidence": "An explicit official request conversion rule/numeric local-time pair, or stable package last-modified local time correlated with bounded controlled read results.",
+  "liveProviderRequestsPerformed": 0,
+  "providerWritesPerformed": 0
+}
