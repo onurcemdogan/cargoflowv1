@@ -33,6 +33,7 @@ const PrintPreviewModal = lazy(async () => ({
 // gorunur bir bosluk yaratirdi). Geri kalan rotalar TALEP UZERINE gelir.
 import { DashboardPage } from './pages/DashboardPage'
 import { HomePage } from './pages/HomePage'
+import { PickingProductsPage } from './pages/PickingProductsPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { OrdersPage, type OrdersFetchOptions } from './pages/OrdersPage'
 import type {
@@ -1918,41 +1919,21 @@ function App() {
           onRefresh={handleReloadOrders}
           onNavigatePage={handleNavigate}
           onNavigateOrders={handleDashboardNavigateOrders}
-          renderStatistics={(refreshHome) => (
-            <DashboardPage
-              orders={orders}
-              useServerOperationalSnapshot={
-                integrationHydrated && integrationConfigService.isAuthMode()
-              }
-              dataSourceResolved={integrationHydrated}
-              products={products}
-              integrationConfig={integrationConfig}
-              maskedIntegrationStatus={maskedIntegrationStatus}
-              printerSettings={printerSettings}
-              apiDebugLogs={apiDebugLogs}
-              loading={ordersState.ordersLoading || !integrationHydrated}
-              error={ordersState.ordersError}
-              lastSyncedAt={resolvedLastSyncedAt}
-              onNavigatePage={handleNavigate}
-              onNavigateOrders={handleDashboardNavigateOrders}
-              onDownloadOrder={handleDownloadZplForOrder}
-              onPrintOrder={handleMarkPrintedForOrder}
-              onCreateAndPrintLabelForOrder={
-                handleCreateAndPrintCarrierLabelForOrder
-              }
-              isCarrierLabelActionBusy={isCarrierLabelActionBusy}
-              carrierLabelPhaseText={carrierLabelPhaseText}
-              onCreateShipment={handleCreateShipmentForOrder}
-              onTrackShipment={handleTrackShipmentForOrder}
-              onDesiChange={handleOrderDesiChange}
-              desiConfig={integrationConfig.desi}
-              onRefresh={refreshHome}
-            />
-          )}
         />
       ) : null}
 
-      {/* Raporlar: menüde gösterilmeyen pasif route (ayrıntılı raporlama için ayrıldı). */}
+      {effectivePage === 'picking' ? (
+        <PickingProductsPage
+          orders={orders}
+          products={products}
+          useServerState={integrationHydrated && integrationConfigService.isAuthMode()}
+          dataSourceResolved={integrationHydrated}
+          lastSyncedAt={resolvedLastSyncedAt}
+          onOpenOrder={(orderId) => void requestOrderAction('open', orderId)}
+        />
+      ) : null}
+
+      {/* Ayrıntılı analiz Home'dan ayrı, Raporlar çalışma alanında kalır. */}
       {effectivePage === 'reports' ? (
         <DashboardPage
           variant="page"
@@ -2060,7 +2041,7 @@ function App() {
         </Suspense>
       ) : null}
 
-      {orderActionError && (activePage === 'cargo' || activePage === 'shipments') ? (
+      {orderActionError && (activePage === 'cargo' || activePage === 'shipments' || activePage === 'picking') ? (
         <p className="page-inline-error" role="alert">{orderActionError}</p>
       ) : orderActionFeedbackPage === activePage && ordersState.ordersMessage ? (
         <div className="page-action-result" role="status">

@@ -1,14 +1,16 @@
 // ANA SAYFA — önce bugünün operasyonu, ardından istatistikler.
 //
 // Üstte bugün yapılması gerekenler, kontrol gereken işlemler ve bağlantı
-// sağlığı; altında satış ve kargo istatistikleri (DashboardPage) TAM haliyle
-// durur. İstatistik paneli Ana Sayfa'nın parçasıdır, ayrı bir ekrana taşınmaz.
+// sağlığı; altında yalnız kompakt satış özeti bulunur. Ayrıntılı analiz
+// Raporlar'da, ürün toplama kendi çalışma alanındadır.
 //
 // Bütün sayılar GERÇEK kaynaktan gelir: auth modunda sunucunun operasyon
 // anlık görüntüsü, legacy modda aynı `buildDashboardViewModel` fonksiyonu.
 // Bağlantı sağlığı yalnız saklanmış durumdan okunur; sağlayıcı yoklanmaz.
-import { useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ArrowRight } from 'lucide-react'
+import { useContext, useEffect, useMemo, useState } from 'react'
+import { ArrowRight, RefreshCcw } from 'lucide-react'
+import { HomeStatistics } from '../components/HomeStatistics'
+import { PickingSummary } from '../components/PickingSummary'
 import { AuthContext } from '../auth/AuthProvider'
 import { PageHeader } from '../components/PageHeader'
 import {
@@ -39,8 +41,6 @@ interface HomePageProps {
   onRefresh: () => void
   onNavigatePage: (page: PageKey) => void
   onNavigateOrders: (tab?: QuickTab, orderId?: string, filters?: OrdersNavigationFilters) => void
-  /** İstatistik paneli; `refresh` hem siparişleri hem bu sayfanın özetlerini yeniler. */
-  renderStatistics?: (refresh: () => void) => ReactNode
 }
 
 const TODAY: DashboardPeriodSelection = { key: 'today' }
@@ -87,7 +87,6 @@ export function HomePage({
   onRefresh,
   onNavigatePage,
   onNavigateOrders,
-  renderStatistics,
 }: HomePageProps) {
   const auth = useContext(AuthContext)
   const username = auth?.user?.username
@@ -100,7 +99,7 @@ export function HomePage({
   } | null>(null)
   const [serverError, setServerError] = useState<string>()
   useEffect(() => {
-    if (!useServerOperationalSnapshot) return
+    if (!dataSourceResolved || !useServerOperationalSnapshot) return
     let active = true
     fetchDashboardOperationalSnapshot(TODAY, { refresh: refreshTick > 0, latestSyncAt: lastSyncedAt })
       .then((result) => {
@@ -115,7 +114,7 @@ export function HomePage({
     return () => {
       active = false
     }
-  }, [lastSyncedAt, refreshTick, useServerOperationalSnapshot])
+  }, [dataSourceResolved, lastSyncedAt, refreshTick, useServerOperationalSnapshot])
 
   const localViewModel = useMemo(
     () =>
@@ -138,7 +137,7 @@ export function HomePage({
   // ── Bağlantı sağlığı (yalnız auth modunda uç vardır) ──────────────────
   const [health, setHealth] = useState<{ items: PresentedHealth[]; error?: string } | null>(null)
   useEffect(() => {
-    if (!useServerOperationalSnapshot) return
+    if (!dataSourceResolved || !useServerOperationalSnapshot) return
     let active = true
     fetchIntegrationHealth()
       .then((items) => {
@@ -150,7 +149,7 @@ export function HomePage({
     return () => {
       active = false
     }
-  }, [refreshTick, useServerOperationalSnapshot])
+  }, [dataSourceResolved, refreshTick, useServerOperationalSnapshot])
 
   const summary = viewModel.operationalSummary
   const operations: Array<{
@@ -223,10 +222,10 @@ export function HomePage({
         tourId="dashboard-overview"
         title={username ? `${greeting(new Date())}, ${username}` : 'Ana Sayfa'}
         description="Bugünün operasyonu, bağlantılarınız ve satış istatistikleriniz tek ekranda."
+        actions={<button type="button" className="ui-btn ui-btn-secondary" disabled={waitingForData || loading} onClick={refresh}><RefreshCcw size={15} /> Yenile</button>}
       />
 
-      {/* İstatistik paneli aynı hatayı kendi başlığında gösterir. */}
-      {error && !renderStatistics ? (
+      {error ? (
         <Alert tone="danger" title="Siparişler yenilenemedi" role="alert">
           {error}
         </Alert>
@@ -257,6 +256,8 @@ export function HomePage({
           </button>
         ))}
       </section>
+
+      <PickingSummary quantity={valuesHidden ? undefined : viewModel.pickingLists.totalQuantity} orderCount={valuesHidden ? undefined : viewModel.pickingLists.orderCount} onOpen={() => onNavigatePage('picking')} />
 
       <div className="home-grid">
           <Card title="Kontrol gereken işlemler" labelledBy="home-attention" className="home-attention">
@@ -374,11 +375,7 @@ export function HomePage({
           </Card>
       </div>
 
-      {renderStatistics ? (
-        <section className="home-statistics" aria-label="İstatistikler">
-          {renderStatistics(refresh)}
-        </section>
-      ) : null}
+      <HomeStatistics model={viewModel} hidden={valuesHidden} onReports={() => onNavigatePage('reports')} />
     </div>
   )
 }

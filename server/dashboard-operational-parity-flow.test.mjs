@@ -403,6 +403,49 @@ test('DASH-9: SUNUCU görünüm modeli, eski istemci yoluyla BİREBİR aynıdır
   assert.deepEqual(server.viewModel, legacy, 'tam görünüm modeli birebir aynı')
 })
 
+test('UI-IA-PICKING: persisted workspace is canonical, tenant scoped, read-only and provider-free', async (t) => {
+  const { pglite, db, schema, org, deps } = await setup(140)
+  t.after(() => pglite.close())
+  await seed(db, schema, 15, 'other-tenant')
+  const before = await db.select().from(schema.orders)
+  const beforeLines = await db.select().from(schema.orderLines)
+  const beforeSettings = await db.select().from(schema.organizationSettings)
+  const tenantIds = new Set(before.filter((row) => row.organizationId === org.organizationId).map((row) => row.id))
+  const realFetch = globalThis.fetch
+  globalThis.fetch = () => { throw new Error('Provider calls forbidden on workspace reads') }
+  try {
+    const result = await deps.operational.loadPickingWorkspace(db, org.organizationId, undefined, {})
+    const canonical = await legacyClientViewModel(deps, db, org.organizationId)
+    assert.equal(result.totalQuantity, canonical.pickingLists.totalQuantity)
+    assert.equal(result.orderCount, canonical.pickingLists.orderCount)
+    assert.ok(result.products.length > 0)
+    for (const product of result.products) {
+      for (const order of product.orders) assert.ok(tenantIds.has(order.orderId), 'cross-tenant order leaked')
+    }
+    const search = await deps.operational.loadPickingWorkspace(db, org.organizationId, undefined, { search: 'does-not-exist' })
+    assert.equal(search.filteredFamilyCount, 0)
+    assert.deepEqual(await db.select().from(schema.orders), before)
+    assert.deepEqual(await db.select().from(schema.orderLines), beforeLines)
+    assert.deepEqual(await db.select().from(schema.organizationSettings), beforeSettings)
+  } finally {
+    globalThis.fetch = realFetch
+  }
+})
+
+test('UI-IA-PICKING-AUTH: workspace GET is behind tenant auth and derives scope on server', () => {
+  const index = readFileSync(join(here, 'index.mjs'), 'utf8')
+  const authStart = index.indexOf('const TENANT_AUTH_PATHS = [')
+  const paths = index.slice(authStart, index.indexOf(']', authStart))
+  assert.match(paths, /'\/api\/picking'/)
+  const start = index.indexOf("app.get('/api/picking/products'")
+  const route = index.slice(start, index.indexOf("app.get('/api/dashboard/operational'", start))
+  assert.match(route, /requireOrderPersistenceContext\(request, response\)/)
+  assert.match(route, /context\.organizationId/)
+  assert.match(route, /context\.marketplaceAccountId/)
+  assert.doesNotMatch(route, /request\.(query|body)\??\.organizationId|request\.(query|body)\??\.marketplaceAccountId/)
+  assert.doesNotMatch(route, /persist|createShipment|createLabel|syncOrders/)
+})
+
 test('DASH-10: SATIŞ alanları alan alan doğrulanır (yuvarlama/sıra dahil)', async (t) => {
   const { pglite, db, org, deps } = await setup(140)
   t.after(() => pglite.close())

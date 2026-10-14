@@ -1,3 +1,34 @@
+# UI-IA-001 — local delivery handoff
+
+2026-10-14. Branch `feat/ui-ia-001-home-picking`, baseline
+`b1e12532fe3bcf07d1a982ff4a1c3dc1e2037e6b` (current master fetched before work).
+Implementation complete; local delivery commit is branch HEAD. User review is
+pending. No push, merge or deploy.
+
+Home has an independent compact statistics section and picking summary link.
+Dashboard retains detailed reports and replaces the picking card with a summary.
+The new picking workspace reuses canonical grouping/eligibility over persisted
+orders; its tenant-auth GET supports search and 30-family pages across the entire
+list. Filters select product families; quantities remain whole-family outstanding
+quantities. Header totals remain unfiltered. No manual completion flag exists.
+
+All requested gates passed: test:ui 431 (45 files), test:dashboard 11,
+test:product-ia 12, picking canonical 45, dashboard operational parity 16,
+tenant-auth coverage 3, tsc -b --force, lint (0 errors, 6 baseline warnings), build,
+git diff --check. Synthetic browser checks: desktop light/dark, 1024px, mobile
+390px viewport; no horizontal overflow. Screenshots are conversation artifacts.
+
+Different-model gpt-6-astra review APPROVED. Corrected findings: register new GET
+in tenantAuth, accurately label hourly chart timezone, surface picking order-open
+errors. Preview files/server/tab removed after verification. Full changed-file
+inventory and test details: docs/ui-ia-001-home-picking.md.
+
+N11 epoch logic, N11_EPOCH_SEMANTICS_UNVERIFIED and N11 BLOCKED_EXTERNAL are
+unchanged. No provider/production calls, mutations, shipment/label creation,
+scheduler changes, migrations, push or deploy in this UI task.
+
+---
+
 # N11-LIVE-002 — epoch verification handoff
 
 2026-10-14. Branch `agent/N11-LIVE-002`; baseline

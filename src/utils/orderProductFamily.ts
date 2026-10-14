@@ -38,6 +38,8 @@ export interface ProductFamilyVariant {
   sizeKey: string
   quantity: number
   orderIds: string[]
+  skus: string[]
+  barcodes: string[]
 }
 
 export interface ProductFamilyOrderRef {
@@ -159,7 +161,7 @@ export function buildProductFamilyIndex(
       orderIds: Set<string>
       variants: Map<
         string,
-        { size: string; quantity: number; orderIds: Set<string> }
+        { size: string; quantity: number; orderIds: Set<string>; skus: Set<string>; barcodes: Set<string> }
       >
     }
   >()
@@ -203,9 +205,15 @@ export function buildProductFamilyIndex(
         size: size || 'Bedensiz',
         quantity: 0,
         orderIds: new Set<string>(),
+        skus: new Set<string>(),
+        barcodes: new Set<string>(),
       }
       variant.quantity += quantity
       variant.orderIds.add(orderId)
+      const sku = firstToken(item.merchantSku, item.sku, item.stockCode)
+      const barcode = firstToken(item.barcode)
+      if (sku) variant.skus.add(sku)
+      if (barcode) variant.barcodes.add(barcode)
       group.variants.set(sizeKey, variant)
       group.orderRefs.push({ orderId, size: size || 'Bedensiz', quantity })
       if (!stageCountedFamilies.has(identity.key)) {
@@ -232,6 +240,8 @@ export function buildProductFamilyIndex(
           size: variant.size,
           quantity: variant.quantity,
           orderIds: Array.from(variant.orderIds),
+          skus: Array.from(variant.skus),
+          barcodes: Array.from(variant.barcodes),
         }))
         // Stabil sıralama: adet çok olan üstte, eşitlikte beden adı.
         .sort(

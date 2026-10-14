@@ -36,6 +36,7 @@ import {
   projectedWorkspaceOrders,
 } from '../orders/ordersWorkspaceService.ts'
 import { getExternalProcessing } from '../orders/externalProcessingRepository.ts'
+import { buildPickingWorkspace, type PickingQuery } from '../../src/dashboard/pickingWorkspace.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -46,6 +47,20 @@ interface ProductCacheEntry {
 }
 
 let productCache: ProductCacheEntry | null = null
+
+/** Read-only workspace over the SAME persisted order projection used by Orders/Home. */
+export async function loadPickingWorkspace(
+  db: Db,
+  organizationId: string,
+  marketplaceAccountId: string | null | undefined,
+  query: PickingQuery,
+) {
+  const load = await loadWorkspaceOrders(db, organizationId, marketplaceAccountId)
+  const externalProcessing = await getExternalProcessing(db, organizationId)
+  const orders = projectedWorkspaceOrders(organizationId, marketplaceAccountId, load, externalProcessing)
+  const products = await loadProducts(db, organizationId, marketplaceAccountId, load.revision)
+  return buildPickingWorkspace(orders as never, products as never, query)
+}
 
 /**
  * DÖNEMSEL SATIŞ SATIRLARI — REVİZYON ALTINDA ÖNBELLEKLENİR.

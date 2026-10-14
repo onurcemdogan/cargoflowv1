@@ -38,6 +38,7 @@ const KEY = productTourStorageKey(SCOPE)
 const PAGE_TOUR_IDS: Partial<Record<PageKey, string>> = {
   dashboard: 'dashboard-overview',
   orders: 'orders-workspace',
+  picking: 'picking-workspace',
   products: 'products-catalog',
   cargo: 'cargo-operations',
   shipments: 'shipments-ledger',
@@ -171,7 +172,7 @@ test('TOUR-1: kapsamlı kullanıcı, v1 işareti yok → tur BİR KEZ otomatik a
   render(<Harness scope={SCOPE} spies={makeSpies()} />)
   expect(screen.getAllByTestId('product-tour-card')).toHaveLength(1)
   expect(card()?.textContent).toContain("CargoFlow'a hoş geldiniz")
-  expect(card()?.textContent).toContain('1 / 7')
+  expect(card()?.textContent).toContain('1 / 8')
 })
 
 test('TOUR-2/3: tamamlanmış veya kapatılmış işaret → otomatik AÇILMAZ', () => {
@@ -193,7 +194,7 @@ test('TOUR-4: "Ürün Turunu Başlat" tamamlanmış/kapatılmış olsa da 1. ad�
   expect(card()).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: /Ürün Turunu Başlat/ }))
   await stepTo('welcome')
-  expect(card()?.textContent).toContain('1 / 7')
+  expect(card()?.textContent).toContain('1 / 8')
 })
 
 test('TOUR-5/6: anahtar organizasyon + kullanıcı kapsamlı; başkasının işareti bastırmaz', () => {
@@ -252,9 +253,14 @@ test('TOUR-10/11: İleri mevcut PageKey ile gezer; Geri önceki sayfanın hedefi
   expect(activeNav()).toBe('nav-orders')
   await waitFor(() => expect(card()?.getAttribute('data-target-status')).toBe('found'))
   next()
-  // Tur sırası sidebar sırasını izler: Siparişler → Kargo Operasyonları.
+  // Tur sırası sidebar sırasını izler: Siparişler → Toplanacak Ürünler → Kargo.
+  await stepTo('picking')
+  expect(activeNav()).toBe('nav-picking')
+  next()
   await stepTo('cargo')
   expect(activeNav()).toBe('nav-cargo')
+  fireEvent.click(screen.getByRole('button', { name: 'Geri' }))
+  await stepTo('picking')
   fireEvent.click(screen.getByRole('button', { name: 'Geri' }))
   await stepTo('orders')
   expect(activeNav()).toBe('nav-orders')
@@ -278,6 +284,8 @@ test('TOUR-13: hedef yoksa yumuşak başarısızlık; İleri ve Atla çalışır
   await waitFor(() => expect(card()?.getAttribute('data-target-status')).toBe('missing'))
   expect(screen.getByRole('note').textContent).toMatch(/görüntülenemiyor/)
   expect(card()?.getAttribute('data-placement')).toBe('center')
+  next()
+  await stepTo('picking')
   next()
   await stepTo('cargo')
   fireEvent.click(screen.getByRole('button', { name: 'Turu Atla' }))
@@ -570,7 +578,7 @@ test('TOUR-TARGET-3/4: Debug/Log yok; yayınlanmamış sağlayıcı ve abartı �
   expect(pages).not.toContain('debug')
   expect(pages).not.toContain('logs')
   expect(pages).not.toContain('printers')
-  expect(PRODUCT_TOUR_V1.length).toBeLessThanOrEqual(7)
+  expect(PRODUCT_TOUR_V1.length).toBe(8)
   const copy = PRODUCT_TOUR_V1.map((step) => `${step.title} ${step.body}`).join(' ')
   expect(copy).not.toMatch(/WooCommerce|ikas|Ticimax|Aras|yapay zeka|\bAI\b|tam otomatik/i)
 })

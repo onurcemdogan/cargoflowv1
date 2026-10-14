@@ -11,6 +11,7 @@ import { resolveReportingRange } from '../dashboard/reportingRange'
 import { CargoOperationsPage } from '../pages/CargoOperationsPage'
 import { DashboardPage } from '../pages/DashboardPage'
 import { HomePage } from '../pages/HomePage'
+import { HomeStatistics } from '../components/HomeStatistics'
 import { SettingsPage } from '../pages/SettingsPage'
 import { ShipmentsPage } from '../pages/ShipmentsPage'
 import { defaultIntegrationConfig, defaultPrinterSettings } from '../services/integrationConfigService'
@@ -93,6 +94,7 @@ test('IA-NAV-1: sidebar sırası ürün akışını izler; Etiket Şablonları a
   expect(within(main).getAllByRole('button').map((button) => button.textContent)).toEqual([
     'Ana Sayfa',
     'Siparişler',
+    'Toplanacak Ürünler',
     'Kargo Operasyonları',
     'Gönderiler',
     'Ürünler',
@@ -114,6 +116,8 @@ test('IA-NAV-2: Gönderiler gerçek shipments sayfasına gider; Siparişler AYRI
   expect(onNavigate).toHaveBeenLastCalledWith('shipments')
   fireEvent.click(screen.getByRole('button', { name: 'Siparişler' }))
   expect(onNavigate).toHaveBeenLastCalledWith('orders')
+  fireEvent.click(screen.getByRole('button', { name: 'Toplanacak Ürünler' }))
+  expect(onNavigate).toHaveBeenLastCalledWith('picking')
   rerender(
     <AppShell activePage="shipments" onNavigate={onNavigate}>
       <div />
@@ -494,4 +498,70 @@ test('IA-HOME-2: "Kontrol gereken" göstergesi kontrol kartındaki kritik satır
   expect(expected).toBeGreaterThan(0)
   fireEvent.click(attention)
   expect(onNavigateOrders).toHaveBeenCalledWith('all', undefined, { actionFilter: 'critical' })
+})
+
+test('UI-IA-HOME: compact sales and picking use complete canonical snapshot; detailed workspace is absent', async () => {
+  const fetchSpy = vi.fn()
+  vi.stubGlobal('fetch', fetchSpy)
+  const start = resolveReportingRange('today', new Date(), 'UTC').start.getTime()
+  dashboardService.orders = [
+    order('sale', new Date(start + 60_000), 120),
+    order('return', new Date(start + 120_000), 30, { marketplaceStatus: 'Returned' }),
+    order('cancel', new Date(start + 180_000), 25, { marketplaceStatus: 'Cancelled' }),
+    order('delivered', new Date(start + 240_000), 80, { marketplaceStatus: 'Delivered', operationStatus: 'DELIVERED' }),
+    order('shipped', new Date(start + 300_000), 60, { marketplaceStatus: 'Shipped', operationStatus: 'HANDED_TO_CARGO' }),
+  ]
+  const expected = buildDashboardViewModel({ orders: dashboardService.orders, selectedPeriod: { key: 'today' } })
+  const onNavigatePage = vi.fn()
+  render(<HomePage orders={[]} useServerOperationalSnapshot dataSourceResolved loading={false} onRefresh={vi.fn()} onNavigatePage={onNavigatePage} onNavigateOrders={vi.fn()} />)
+  const summary = screen.getByTestId('picking-compact-summary')
+  await waitFor(() => expect(summary.textContent).toContain(`Toplanacak ${expected.pickingLists.totalQuantity} ürün`))
+  fireEvent.click(within(summary).getByRole('button', { name: 'Görüntüle' }))
+  expect(onNavigatePage).toHaveBeenLastCalledWith('picking')
+  const sales = screen.getByRole('region', { name: 'Satış özeti' })
+  const metric = (label: string) => within(sales).getByText(label).closest('.ui-card')?.querySelector('strong')?.textContent
+  expect(metric('Net satış')).toMatch(/260/)
+  expect(metric('İade tutarı')).toMatch(/30/)
+  expect(metric('İptal tutarı')).toMatch(/25/)
+  expect(metric('Ortalama sipariş')).toMatch(/86,67/)
+  expect(within(sales).queryByText('Bugün gelen')).toBeNull()
+  expect(within(sales).queryByText('Kargoya verildi')).toBeNull()
+  expect(screen.queryByTestId('dashboard-analytics')).toBeNull()
+  expect(screen.queryByTestId('picking-card')).toBeNull()
+  fireEvent.click(within(sales).getByRole('button', { name: 'Ayrıntılı raporlar' }))
+  expect(onNavigatePage).toHaveBeenLastCalledWith('reports')
+  const values = Array.from(screen.getByRole('region', { name: 'Operasyon durumu' }).querySelectorAll('strong')).map((node) => node.textContent)
+  const ops = expected.operationalSummary
+  expect(values).toEqual([ops.receivedToday, ops.barcodeWaiting, ops.labelReady, expected.actionRequired.find((item) => item.key === 'critical-data')?.count ?? ops.errors, ops.handedToCargo, ops.delivered].map(String))
+  expect(fetchSpy).not.toHaveBeenCalled()
+  vi.unstubAllGlobals()
+})
+
+test('UI-IA-DASH: detailed analytics links to picking without mounting the picking workspace', async () => {
+  const props = dashboardProps()
+  render(<DashboardPage {...props} />)
+  await screen.findByTestId('dashboard-period-summary')
+  const summary = screen.getByTestId('picking-compact-summary')
+  fireEvent.click(within(summary).getByRole('button', { name: 'Görüntüle' }))
+  expect(props.onNavigatePage).toHaveBeenCalledWith('picking')
+  expect(screen.queryByTestId('picking-card')).toBeNull()
+})
+
+test('UI-IA-SALES: unknown amounts/refund source stay unavailable in both themes', () => {
+  const model = buildDashboardViewModel({ orders: [], selectedPeriod: { key: 'today' } })
+  model.salesSummary.salesAmount.available = false
+  model.salesSummary.averageOrderAmount.available = false
+  model.salesSummary.cancelAmount.available = false
+  model.salesSummary.refundDataSource = 'unavailable'
+  const { rerender } = render(<HomeStatistics model={model} hidden={false} onReports={vi.fn()} />)
+  for (const theme of ['light', 'dark']) {
+    document.documentElement.dataset.theme = theme
+    rerender(<HomeStatistics model={model} hidden={false} onReports={vi.fn()} />)
+    expect(Array.from(document.querySelectorAll('.home-sales-metric strong')).map((node) => node.textContent)).toEqual(['—', '—', '—', '—'])
+    expect(screen.getByText('İade verisi yok')).toBeTruthy()
+    expect(screen.getByText('Satış tutarı eksik')).toBeTruthy()
+    expect(screen.getByText(/UTC rapor günü/)).toBeTruthy()
+    expect(screen.getByText(/Türkiye saati/)).toBeTruthy()
+  }
+  delete document.documentElement.dataset.theme
 })

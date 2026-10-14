@@ -16,7 +16,7 @@ import {
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ProductImageThumb } from '../components/ProductImageThumb'
 import { OrderDetailDrawer } from '../components/OrderDetailDrawer'
-import { PickingProductsCard } from '../components/PickingProductsCard'
+import { PickingSummary } from '../components/PickingSummary'
 import {
   buildDashboardProviderHealth,
   type DashboardProviderCounts,
@@ -107,7 +107,7 @@ interface DashboardPageProps {
     desiSource: CargoOrder['desiSource'],
   ) => void
   desiConfig?: TenantDesiConfig
-  /** 'section': Ana Sayfa altındaki istatistik bölümü; 'page': Raporlar route'u. */
+  /** Ayrıntılı rapor görünümü; Home kendi kompakt özetini kullanır. */
   variant?: 'section' | 'page'
 }
 
@@ -146,7 +146,7 @@ export function DashboardPage({
   onTrackShipment,
   onDesiChange,
   desiConfig,
-  variant = 'section',
+  variant = 'page',
 }: DashboardPageProps) {
   const todayInput = formatInputDate(new Date())
   const [periodKey, setPeriodKey] = useState<DashboardPeriodKey>('today')
@@ -155,9 +155,6 @@ export function DashboardPage({
   const [activeDashboardOperationId, setActiveDashboardOperationId] =
     useState<string>()
   const [dashboardDetailError, setDashboardDetailError] = useState<string>()
-  // Toplanacak Ürünler: yalnız AÇILIP-KAPANMA (görsel) durumu. Operasyonel
-  // gerçeklik burada TUTULMAZ; kaynak canonical order state'idir.
-  const [expandedPickingKey, setExpandedPickingKey] = useState<string>()
   const selectedPeriod = useMemo<DashboardPeriodSelection>(
     () => ({
       key: periodKey,
@@ -932,18 +929,15 @@ export function DashboardPage({
 
       </section>
 
-      {/* TOPLANACAK ÜRÜNLER: Operasyon Akışı'nın HEMEN ALTINDA, TAM GENİŞLİK.
-          Eski dar sağ kolon kaldırıldı. Operasyon Akışı davranışı DEĞİŞMEDİ. */}
+      {/* Toplama ayrıntıları kendi çalışma alanında; burada yalnız özet ve geçiş. */}
       <section
         className="dashboard-analytics-grid dashboard-picking-row"
         aria-label="Toplanacak Ürünler"
       >
-        <PickingProductsCard
-          picking={viewModel.pickingLists}
-          expandedKey={expandedPickingKey}
-          onToggleExpand={(key) =>
-            setExpandedPickingKey((current) => (current === key ? undefined : key))
-          }
+        <PickingSummary
+          quantity={statsBlocked ? undefined : viewModel.pickingLists.totalQuantity}
+          orderCount={statsBlocked ? undefined : viewModel.pickingLists.orderCount}
+          onOpen={() => onNavigatePage('picking')}
         />
       </section>
 

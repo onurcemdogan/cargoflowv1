@@ -1,5 +1,35 @@
 # Current context
 
+2026-10-14, Europe/Istanbul. Supervisor-selected UI-IA-001, implemented on
+`feat/ui-ia-001-home-picking` from current `origin/master`
+`b1e12532fe3bcf07d1a982ff4a1c3dc1e2037e6b`. Local commit delivery only.
+
+Home no longer mounts DashboardPage. Its six operational counters retain their
+canonical semantics; compact net sales, average order, returns/cancellations,
+hourly sales and channel distribution use the existing view model. Sales cohort
+is the UTC reporting day; hourly display labels are Türkiye time. Unknown values
+are shown as unavailable. Full analytics remain under Reports.
+
+Toplanacak Ürünler is a first-class picking PageKey after Orders. Its read-only
+workspace shares canonical eligibility, package dedupe, product families and
+persisted order projection with Home/Orders. It supports full-list search,
+30-family paging, family-stage filtering, variant SKU/barcodes and order opening.
+Printed/closed orders leave the queue by the existing canonical rules. No separate
+collection-completion source was invented. Summary counts cover all dates/filters.
+The new GET /api/picking/products uses tenantAuth and server-resolved account scope.
+
+Checks passed: UI 431/45 files; dashboard 11; product IA 12; picking canonical 45;
+operational parity 16; tenant-auth coverage 3; tsc --force, lint (0 errors/6 existing
+warnings), build, diff check. Independent gpt-6-astra review APPROVED after three
+findings were corrected. Browser verification used only a temporary synthetic
+local preview (removed), with light/dark desktop and mobile screenshots.
+
+No production access, provider calls, writes, label/shipment creation, scheduler
+changes or migrations. No push/merge/deploy. User review is next. Full file/test
+list and behavioral limits: docs/ui-ia-001-home-picking.md.
+
+## Previous task context (N11-LIVE-002, unchanged outcome)
+
 2026-10-14, Europe/Istanbul. Supervisor-selected N11-LIVE-002.
 Branch `agent/N11-LIVE-002`, baseline `de5c18979deb054f4118dd9d66aae495952281b3`.
 PR #19 was merged by the user before takeover; master was clean. No push, merge
