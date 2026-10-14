@@ -1,8 +1,19 @@
 # N11-LIVE-002 — epoch verification
 
 Result (2026-10-14): **BLOCKED_EXTERNAL for checkpoint advancement only**.
-`N11_EPOCH_SEMANTICS_UNVERIFIED` is intentionally retained. Account-verified
-canonical reads remain available. No live provider requests were performed.
+`N11_EPOCH_SEMANTICS_UNVERIFIED` is intentionally retained. The account-scoped
+read implementation remains available. No live provider requests were performed.
+
+Production discovery confirmed there is currently no N11 marketplace account or N11 connector credential. Live epoch verification is therefore externally blocked until a real N11 account is connected through the normal product flow.
+
+Operator-reported production discovery (2026-10-14):
+
+- `marketplace_accounts` N11: **0 rows**.
+- `connector_credentials` with `provider_key=n11`: **0 rows**.
+
+These counts were supplied by the operator; no production discovery query was
+rerun for this documentation correction. No fake credential or test account is
+to be created. A future live probe still requires explicit approval.
 
 ## Evidence and conclusion
 

@@ -9,7 +9,11 @@ Result: BLOCKED_EXTERNAL for N11 checkpoint advancement only. Code, report and
 tests complete; independent gpt-6-astra review APPROVED. Official shipment docs
 say milliseconds/GMT+3 but provide no numeric request/local-time pair or
 conversion algorithm. SOAP-REST comparison/changelog and repo fixtures/research
-do not resolve it. User declines live account/package sharing now. Zero provider calls.
+do not resolve it. Zero provider API calls.
+
+Production discovery confirmed there is currently no N11 marketplace account or N11 connector credential. Live epoch verification is therefore externally blocked until a real N11 account is connected through the normal product flow.
+Operator-reported production counts: marketplace_accounts N11 = 0 rows;
+connector_credentials provider_key=n11 = 0 rows (2026-10-14).
 
 Keep N11_EPOCH_SEMANTICS_UNVERIFIED. Current numeric encoding is unchanged.
 Local 2026-10-14 12:00 +03 = UTC 09:00 = 1791968400000; alternative shifted-wall

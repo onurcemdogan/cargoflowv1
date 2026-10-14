@@ -17,8 +17,12 @@ the other candidate is 1791979200000 (+10800000). These explain the variants,
 not the provider's proven interpretation. Numeric request serialization and
 adaptive sync/config/persistence/fulfillment gates have no logic changes.
 
-User will not share live account/package now. See docs/n11-epoch-verification.md
-for missing evidence and unexecuted <=10 GET protocol: stable known package
+Production discovery confirmed there is currently no N11 marketplace account or N11 connector credential. Live epoch verification is therefore externally blocked until a real N11 account is connected through the normal product flow.
+Operator-reported production counts (2026-10-14): marketplace_accounts N11 = 0;
+connector_credentials provider_key=n11 = 0. No discovery query was rerun for
+this documentation correction. See docs/n11-epoch-verification.md for the
+unexecuted <=10 GET protocol, requiring a connected real account and explicit
+approval before execution: stable known package
 last-modified local time, identity controls, two date-filtered variants without
 packageIds/orderNumber, negative/boundary controls. Refuse inconclusive, unstable
 or multipage results. No API secrets/raw headers/customer payloads in evidence.

@@ -4,6 +4,13 @@
   "status": "BLOCKED_EXTERNAL",
   "semantics": "UNKNOWN",
   "checkpointBlocker": "N11_EPOCH_SEMANTICS_UNVERIFIED",
+  "productionDiscovery": {
+    "reportedOn": "2026-10-14",
+    "source": "Operator-reported production discovery supplied by the user; not rerun for this documentation correction",
+    "marketplaceAccountsN11Rows": 0,
+    "connectorCredentialsProviderN11Rows": 0,
+    "conclusion": "Production discovery confirmed there is currently no N11 marketplace account or N11 connector credential. Live epoch verification is therefore externally blocked until a real N11 account is connected through the normal product flow."
+  },
   "sources": [
     {
       "url": "https://developer.n11.com/documentation/n11-siparis-entegrasyonu/siparis-listeleme-servisi/",
@@ -38,7 +45,7 @@
     "providerExpectedVariant": "UNKNOWN"
   },
   "decision": "Preserve current wire values and checkpoint blocker. Do not implement a guessed timezone conversion or claim synthetic fixtures verify N11.",
-  "missingEvidence": "An explicit official request conversion rule/numeric local-time pair, or stable package last-modified local time correlated with bounded controlled read results.",
+  "missingEvidence": "Live verification first requires a real N11 account connected through the normal product flow; production discovery found zero N11 accounts and credentials. A subsequent approved probe needs stable package last-modified local time correlated with bounded controlled read results. The official numeric request conversion rule remains unproven.",
   "liveProviderRequestsPerformed": 0,
   "providerWritesPerformed": 0
 }

@@ -24,15 +24,22 @@
     "Verified account and empty-read checkpoint denial pass; body claims cannot clear proof",
     "Positive server-only trusted fixture models future proof and still enforces strict persistence",
     "Unexecuted bounded GET comparison protocol and numeric variants documented; zero provider requests",
-    "Relevant local CI checks and independent review pass"
+    "Relevant local CI checks and independent review pass",
+    "Operator-reported production discovery confirms zero N11 marketplace accounts and zero N11 connector credentials"
   ],
   "failingTests": [],
   "blockedCapability": "N11 orders.read checkpoint advancement only",
   "blockers": [
     "N11_EPOCH_SEMANTICS_UNVERIFIED: official GMT+3 wording does not prove numeric request conversion",
     "Need explicit official numeric datetime mapping or stable known package last-modified read evidence",
-    "User is not providing account/package information now; no live requests performed"
+    "Production discovery confirmed there is currently no N11 marketplace account or N11 connector credential. Live epoch verification is therefore externally blocked until a real N11 account is connected through the normal product flow."
   ],
+  "productionDiscovery": {
+    "reportedOn": "2026-10-14",
+    "source": "Operator-reported production discovery supplied by the user",
+    "marketplaceAccountsN11Rows": 0,
+    "connectorCredentialsProviderN11Rows": 0
+  },
   "qualityGates": {
     "localChecksPassed": true,
     "n11ContractTests": 51,
@@ -55,5 +62,5 @@
     ],
     "byteExactRestored": true
   },
-  "nextAction": "Keep checkpoint blocker. Obtain precise official mapping or named-account stable package evidence per docs/n11-epoch-verification.md before gate removal. No live calls, push, merge or deploy requested. Local delivery commit is branch HEAD."
+  "nextAction": "Keep checkpoint blocker and BLOCKED_EXTERNAL. A real N11 account must first be connected through the normal product flow. Any subsequent live epoch probe requires explicit approval and stable package evidence per docs/n11-epoch-verification.md. No live calls, push, merge or deploy requested. Local delivery commit is branch HEAD."
 }
