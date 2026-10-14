@@ -45,6 +45,7 @@
 
 import { and, eq } from 'drizzle-orm'
 import { labelJobs, shipments } from '../db/schema.ts'
+import { orderSourceFulfillmentAllowed } from './orderSourceFulfillmentGate.ts'
 import {
   buildTrendyolShipmentEligibility,
   resolveBackgroundPreparationGate,
@@ -57,6 +58,7 @@ type Db = any
 
 /** AĞDAN ÖNCEKİ kesin kodlar — yenisi uydurulmaz. */
 export const PREPARATION_BLOCKER_CODES = {
+  SOURCE: 'FULFILLMENT_NOT_AVAILABLE',
   DESI_MISSING: 'SURAT_PREFLIGHT_DESI_MISSING',
   NOT_ELIGIBLE: TRENDYOL_NOT_ELIGIBLE_CODE,
   CREDENTIAL: 'SURAT_CREDENTIAL_CONFIG_INVALID',
@@ -124,6 +126,7 @@ const BLOCKER_PRIORITY: readonly string[] = [
   PREPARATION_BLOCKER_CODES.ENCRYPTION_KEY,
   PREPARATION_BLOCKER_CODES.EXCEPTION,
   PREPARATION_BLOCKER_CODES.ORDER_MISSING,
+  PREPARATION_BLOCKER_CODES.SOURCE,
   PREPARATION_BLOCKER_CODES.ARTIFACT,
   PREPARATION_BLOCKER_CODES.NOT_ELIGIBLE,
   PREPARATION_BLOCKER_CODES.DESI_MISSING,
@@ -143,6 +146,8 @@ export function summarizeBlocker(
   eligibility?: TrendyolShipmentEligibility | null,
 ): string {
   switch (code) {
+    case PREPARATION_BLOCKER_CODES.SOURCE:
+      return 'Bu sipariş kaynağı için gönderi oluşturma açık değil.'
     case PREPARATION_BLOCKER_CODES.DESI_MISSING:
       return 'Sürat gönderisi oluşturmadan önce Desi bilgisi çözülemedi.'
     case PREPARATION_BLOCKER_CODES.NOT_ELIGIBLE:
@@ -375,6 +380,9 @@ export async function prepareLabelJob(
     firstSeenAtMs = loaded.firstSeenAtMs
     if (!order) {
       blockers.push(PREPARATION_BLOCKER_CODES.ORDER_MISSING)
+    } else if (!orderSourceFulfillmentAllowed(order.marketplace)) {
+      eligibleForCreate = false
+      blockers.push(PREPARATION_BLOCKER_CODES.SOURCE)
     } else {
       orderNumber = String(order.orderNumber ?? '') || null
       orderLinesCount = Array.isArray(order.items) ? order.items.length : 0

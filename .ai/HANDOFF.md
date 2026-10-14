@@ -1,3 +1,39 @@
+# ACCOUNT-LEVEL-LIVE-VERIFICATION-001 — PR #19 review follow-up
+
+2026-10-14. Same branch `feat/account-level-live-verification-001`; follow-up
+baseline `f2ff13cfbd19bc438845271103bdadcf64a385ed`. IMPLEMENTATION_COMPLETE.
+Independent gpt-6-astra review APPROVED after two findings were fixed (merchant
+conflicts erased by normalization, restricted-source producer starvation).
+User explicitly authorizes commit and ordinary push to origin on this branch.
+Completion SHA is branch HEAD; verify origin/PR head after push. No merge/deploy.
+
+- HB verification requires selected-family path binding or every nonempty
+  returned merchant matching. Empty unbound sibling accounts stay unverified;
+  credentials survive with HB_ACCOUNT_BINDING_UNPROVEN.
+- HB reads offset 0 only; full pages are discarded and intervals split oldest
+  first. Minimum 1s, budget 350, retained records <35,000, 1ms overlap/dedupe.
+  Package requests <=24h, order requests <=7d; eight planned slices cover the
+  initial seven days including overlap headroom. Dense/budget runs are PARTIAL
+  with no checkpoint. Raw merchant conflicts remain visible before normalization.
+- Producer/catchup forward canonical marketplace and gate the source early;
+  descriptor-derived SQL exclusions precede batch LIMIT. Preparation gates the
+  persisted source before settings/desi/lifecycle/billing. Trendyol still enqueues.
+
+Validation: account 16; HB 23+4 UI; N11 26+5 UI; auto-label acceptance 115;
+onboarding 22+13 UI; health 53; integration status 9+8 UI; connector kernel 15;
+Aras 95; focused shipment preflight/Sürat eligibility/label queue, preparation,
+catchup and single runner 78. tsc force/build/full UI 423 (44 files) pass;
+lint 0 errors/6 existing warnings; diff check passes. A-E plus F (binding),
+G (offset walking), H-P/H-C/H-L (pipeline gates) all killed by assertions with
+byte-exact restoration. Account suite added to main Sürat test registry.
+
+N11 sender=ALL/adaptive splitting/epoch blocker/id:null, rotation/stale-probe
+protection, fulfillment rollout, marketplace writes, Aras unverified production
+and UNKNOWN_AFTER_NETWORK retry prohibition remain intact. No live provider
+calls, migrations, rollout promotion, new branch, merge or deploy.
+
+## Initial implementation handoff (historical; its no-push instruction is superseded)
+
 # ACCOUNT-LEVEL-LIVE-VERIFICATION-001 handoff
 
 2026-10-14. Branch `feat/account-level-live-verification-001`; base `6287450`.

@@ -79,7 +79,7 @@ function pkg(i, over = {}) {
   }
 }
 
-/** Sahte taşıma: offset/limit'e göre veri kümesini dilimler; çağrıları kaydeder. */
+/** Time-aware provider fixture; unknown dates remain visible for durability tests. */
 function fakeTransport(dataset, behaviour = {}) {
   const calls = []
   const transport = async (request) => {
@@ -97,7 +97,10 @@ function fakeTransport(dataset, behaviour = {}) {
     calls.push(call)
     const scripted = behaviour.respond?.(call, calls.length)
     if (scripted) return scripted
-    const rows = dataset.slice(call.offset, call.offset + call.limit)
+    const rows = dataset.filter((row) => {
+      const time = Date.parse(row.orderDate)
+      return !Number.isFinite(time) || (time >= Date.parse(call.begindate) && time <= Date.parse(call.enddate))
+    }).slice(call.offset, call.offset + call.limit)
     return { status: 200, headers: {}, bodyText: JSON.stringify(behaviour.envelope ? { [behaviour.envelope]: rows } : rows) }
   }
   return { transport, calls }
@@ -205,20 +208,21 @@ test('HB-NET-0b: kimlik eksik/ayrılmış hesapta ağ çağrısı 0', async (t) 
 
 /* ═══ SAYFALAMA + PENCERE ══════════════════════════════════════════════ */
 
-test('HB-PAGE-1: offset/limit sayfalama SINIRLI; dolu sayfalar sürerse tavan → PARTIAL', async () => {
+test('HB-PAGE-1: full pages split; every request uses offset zero; request budget is bounded', async () => {
   const cfg = config.validateHepsiburadaConfig(baseInput()).config
-  const dataset = Array.from({ length: 250 }, (_, i) => pkg(i))
+  const dataset = Array.from({ length: 250 }, (_, i) => pkg(i, { orderDate: new Date(NOW - HOUR + i * 10_000).toISOString() }))
   const fake = fakeTransport(dataset)
   const done = await sync.fetchAllHepsiburadaRecords(cfg, 'PACKAGES', [{ startMs: NOW - HOUR, endMs: NOW }], { transport: fake.transport, pageLimit: 100 })
   assert.equal(done.outcome, 'SUCCESS')
-  assert.deepEqual(fake.calls.map((c) => [c.offset, c.limit]), [[0, 100], [100, 100], [200, 100]])
+  assert.ok(fake.calls.length > 3)
+  assert.ok(fake.calls.every((c) => c.offset === 0 && c.limit === 100))
   assert.equal(done.rawRecords.length, 250)
 
   // Sunucu sonsuza kadar dolu sayfa dönerse: tavan, sonsuz döngü YOK.
   const endless = fakeTransport([], { respond: (call) => ({ status: 200, headers: {}, bodyText: JSON.stringify(Array.from({ length: call.limit }, (_, i) => pkg(call.offset + i))) }) })
-  const capped = await sync.fetchAllHepsiburadaRecords(cfg, 'PACKAGES', [{ startMs: NOW - HOUR, endMs: NOW }], { transport: endless.transport, pageLimit: 10, maxPagesPerWindow: 4 })
+  const capped = await sync.fetchAllHepsiburadaRecords(cfg, 'PACKAGES', [{ startMs: NOW - HOUR, endMs: NOW }], { transport: endless.transport, pageLimit: 10, maxRequestsPerRun: 4 })
   assert.equal(capped.outcome, 'PARTIAL')
-  assert.equal(capped.reasonCode, 'HB_PAGE_LIMIT_REACHED')
+  assert.equal(capped.reasonCode, 'HB_REQUEST_BUDGET_EXHAUSTED')
   assert.equal(endless.calls.length, 4)
   // Sayfa boyutu sözleşme tavanını AŞAMAZ.
   const big = fakeTransport([])
@@ -228,7 +232,7 @@ test('HB-PAGE-1: offset/limit sayfalama SINIRLI; dolu sayfalar sürerse tavan �
 
 test('HB-WIN-1: paket penceresi ≤ 24 saat; koşu başına dilim tavanı; imleç tamamlanan dilim sonuna', async (t) => {
   const plan = sync.planHepsiburadaWindows({ family: 'PACKAGES', fromMs: NOW - 10 * 24 * HOUR, upperBoundMs: NOW })
-  assert.equal(plan.windows.length, 7)
+  assert.equal(plan.windows.length, sync.HEPSIBURADA_MAX_WINDOWS_PER_RUN)
   assert.equal(plan.moreRemaining, true)
   for (const w of plan.windows) assert.ok(w.endMs - w.startMs <= 24 * HOUR)
   for (let i = 1; i < plan.windows.length; i += 1) assert.equal(plan.windows[i].startMs, plan.windows[i - 1].endMs, 'boşluksuz ardışık')
@@ -396,7 +400,7 @@ test('HB-GATE-1: internal_test → okuma çalışır ama kanonik sipariş YAZILM
   const allowed = fakeTransport([pkg(1), pkg(2)])
   const opened = await syncWith(db, org, accountId, allowed, { liveWriteGate: ALLOW, now: () => later })
   assert.equal(opened.body.canonicalWrite, 'ALLOWED')
-  assert.equal(Date.parse(allowed.calls[0].begindate), later - sync.HEPSIBURADA_INITIAL_LOOKBACK_MS, 'iç test imleci kullanılmadı')
+  assert.equal(Date.parse(allowed.calls[0].begindate), later - sync.HEPSIBURADA_INITIAL_LOOKBACK_MS - sync.HEPSIBURADA_BOUNDARY_OVERLAP_MS, 'initial lookback plus boundary overlap, no test cursor')
   assert.equal((await db.select().from(schema.orders)).length, 2)
   const [afterOpen] = await connection.listHepsiburadaAccounts(db, org)
   assert.equal(Date.parse(afterOpen.health.lastSuccessfulSyncAt), later)
@@ -484,11 +488,9 @@ test('HB-DURABLE-B: kararlı kimliği olmayan kayıt dönen yanıt imleci İLERL
   const keyless = pkg(9, { packageNumber: '', orderId: '', orderNumber: '' })
   const mixed = await syncWith(db, org, accountId, fakeTransport([pkg(1), keyless]), { liveWriteGate: ALLOW })
   assert.equal(mixed.body.outcome, 'SUCCESS')
-  // İlk koşu 7 × 24 saatlik pencere okur; sahte taşıma her pencerede aynı
-  // satırları döndürür. Anahtarlı kayıt tekilleşir (1), kimliksiz kayıt
-  // tekilleştirilemez → her pencerede ayrı sayılır.
-  assert.equal(mixed.body.fetched, 1 + 7)
-  assert.equal(mixed.body.invalidIdentity, 7)
+  // The time-aware provider returns each fixture only in its matching interval.
+  assert.equal(mixed.body.fetched, 2)
+  assert.equal(mixed.body.invalidIdentity, 1)
   assert.equal(mixed.body.persisted.persisted, 1, 'geçerli kayıt yine yazılır')
   assert.equal(mixed.body.checkpointAdvanced, false)
   assert.equal(mixed.body.durabilityReasonCode, 'HB_RECORD_IDENTITY_MISSING')
@@ -514,14 +516,14 @@ test('HB-DURABLE-C: saf tekrarlar (sayfa içi + sayfalar arası) imleci TEK BAŞ
   assert.equal(inPage.body.checkpointAdvanced, true)
   assert.equal(inPage.body.durabilityReasonCode, null)
 
-  // Sayfalar arası tekrar: limit 2 → [1,2] [2,3] [] ; 2 iki kez gelir.
+  // Boundary overlap repeats package 2 in adjacent complete leaves.
   const loaded = await connection.loadHepsiburadaAccount(db, { organizationId: org, marketplaceAccountId: accountId })
   const later = NOW + HOUR
   const crossPage = await sync.syncHepsiburadaOrdersForAccount(db, {
     organizationId: org, marketplaceAccountId: accountId, config: loaded.config,
     fromMs: NOW, upperBoundMs: later, liveWriteGate: ALLOW,
     persistCanonical: (orders) => persistence.persistHepsiburadaOrders(db, { organizationId: org, marketplaceAccountId: accountId, orders }),
-  }, { transport: fakeTransport([pkg(1), pkg(2), pkg(2), pkg(3)]).transport, pageLimit: 2, ...noSleep })
+  }, { transport: fakeTransport([pkg(1, { orderDate: new Date(NOW + 1000).toISOString() }), pkg(2, { orderDate: new Date(NOW + HOUR / 2).toISOString() }), pkg(3, { orderDate: new Date(later - 1000).toISOString() })]).transport, pageLimit: 3, ...noSleep })
   assert.equal(crossPage.pagesFetched, 3)
   assert.equal(crossPage.normalizedCount, 3)
   assert.equal(crossPage.checkpointAdvanced, true)
@@ -616,9 +618,9 @@ test('HB-PARTIAL-1: kısmi okuma mevcut siparişleri ARŞİVLEMEZ ve imleci İLE
   assert.equal(before.length, 150)
   const stateBefore = (await connection.listHepsiburadaAccounts(db, org))[0].health.lastSuccessfulSyncAt
 
-  // İkinci koşu: yalnız ilk sayfa gelir, 2. sayfa 503.
-  const flaky = fakeTransport(big.slice(0, 120), { respond: (call) => (call.offset >= 100 ? { status: 503, headers: {}, bodyText: '' } : null) })
-  const partial = await syncWith(db, org, accountId, flaky, { liveWriteGate: ALLOW, now: () => NOW + 2 * HOUR })
+  // A completed first interval followed by a provider failure cannot checkpoint.
+  const flaky = fakeTransport(big.slice(0, 120), { respond: (_call, index) => (index >= 2 ? { status: 503, headers: {}, bodyText: '' } : null) })
+  const partial = await syncWith(db, org, accountId, flaky, { liveWriteGate: ALLOW, now: () => NOW + 26 * HOUR })
   assert.equal(partial.body.outcome, 'PARTIAL')
   assert.equal(partial.body.healthState, 'PARTIAL')
   const after = await db.select().from(schema.orders)

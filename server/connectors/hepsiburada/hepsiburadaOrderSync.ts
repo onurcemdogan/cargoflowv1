@@ -9,7 +9,7 @@
 //     HEPSIBURADA_MAX_WINDOWS_PER_RUN dilim; kalan aralık sonraki koşuda
 //     işlenir. Başlangıç ASLA ileri kırpılmaz — kırpma imleç ile kırpılmış
 //     başlangıç arasını kalıcı olarak atlardı.
-//   Her pencerede offset/limit, pencere başına SINIRLI sayfa.
+//   Yalnız offset=0; dolu yanıt işlenmeden aralık ikiye bölünür.
 //
 // İmleç "bu ana kadar KANONİK depoda" demektir: YALNIZ tam okuma + kanonik
 // yazım tamamlandığında ilerler. Kısmi/başarısız koşu ve kanonik yazımın
@@ -35,7 +35,6 @@ import {
   HEPSIBURADA_DEFAULT_ORDER_WINDOW_MS,
   HEPSIBURADA_MAX_LIMIT,
   HEPSIBURADA_PACKAGE_WINDOW_MAX_MS,
-  hasNextHepsiburadaPage,
   normalizeHepsiburadaOrders,
   type NormalizedHepsiburadaOrder,
 } from '../../marketplaces/hepsiburada/hepsiburadaOrderSource.ts'
@@ -56,10 +55,12 @@ import {
 type Db = any
 
 export const HEPSIBURADA_SYNC_PAGE_LIMIT = HEPSIBURADA_MAX_LIMIT
-/** Pencere başına sayfa tavanı: 50 × 100 = 5.000 kayıt/pencere. */
-export const HEPSIBURADA_MAX_PAGES_PER_WINDOW = 50
+export const HEPSIBURADA_MAX_REQUESTS_PER_RUN = 350
+export const HEPSIBURADA_MIN_SPLIT_INTERVAL_MS = 1_000
+export const HEPSIBURADA_BOUNDARY_OVERLAP_MS = 1
 /** Koşu başına 24 saatlik dilim tavanı (paket ailesi). */
-export const HEPSIBURADA_MAX_WINDOWS_PER_RUN = 7
+// Eight slices cover the seven-day initial lookback including overlap headroom.
+export const HEPSIBURADA_MAX_WINDOWS_PER_RUN = 8
 /** İlk koşu (imleç yokken) geriye bakış. */
 export const HEPSIBURADA_INITIAL_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000
 
@@ -84,11 +85,11 @@ export function planHepsiburadaWindows(params: {
   const sliceMs = params.family === 'PACKAGES'
     ? HEPSIBURADA_PACKAGE_WINDOW_MAX_MS
     : HEPSIBURADA_DEFAULT_ORDER_WINDOW_MS
-  const maxWindows = Math.max(1, params.maxWindows ?? HEPSIBURADA_MAX_WINDOWS_PER_RUN)
+  const maxWindows = Math.min(HEPSIBURADA_MAX_WINDOWS_PER_RUN, Math.max(1, params.maxWindows ?? HEPSIBURADA_MAX_WINDOWS_PER_RUN))
   const windows: HepsiburadaWindow[] = []
   let start = Math.min(from, upper)
   while (start < upper && windows.length < maxWindows) {
-    const end = Math.min(start + sliceMs, upper)
+    const end = Math.min(start + sliceMs - HEPSIBURADA_BOUNDARY_OVERLAP_MS, upper)
     windows.push({ startMs: start, endMs: end })
     start = end
   }
@@ -114,14 +115,23 @@ export interface HepsiburadaFetchAllResult {
   completedThroughMs: number | null
 }
 
+export type HepsiburadaSyncOptions = HepsiburadaClientOptions & {
+  pageLimit?: number
+  minSplitIntervalMs?: number
+  maxRequestsPerRun?: number
+}
+
 export async function fetchAllHepsiburadaRecords(
   config: HepsiburadaConnectorConfig,
   family: HepsiburadaFamily,
   windows: HepsiburadaWindow[],
-  options: HepsiburadaClientOptions & { pageLimit?: number; maxPagesPerWindow?: number },
+  options: HepsiburadaSyncOptions,
 ): Promise<HepsiburadaFetchAllResult> {
   const limit = Math.min(HEPSIBURADA_MAX_LIMIT, Math.max(1, options.pageLimit ?? HEPSIBURADA_SYNC_PAGE_LIMIT))
-  const maxPages = Math.max(1, options.maxPagesPerWindow ?? HEPSIBURADA_MAX_PAGES_PER_WINDOW)
+  const maxRequests = Math.min(HEPSIBURADA_MAX_REQUESTS_PER_RUN, Math.max(1, options.maxRequestsPerRun ?? HEPSIBURADA_MAX_REQUESTS_PER_RUN))
+  const minSplitMs = Math.max(HEPSIBURADA_MIN_SPLIT_INTERVAL_MS, options.minSplitIntervalMs ?? HEPSIBURADA_MIN_SPLIT_INTERVAL_MS)
+  // Hard request and page-size caps bound retained rows/keys to < 35,000.
+  // Broad full pages are discarded; only complete leaves enter this buffer.
   const rawRecords: Record<string, unknown>[] = []
   const seen = new Set<string>()
   let pagesFetched = 0
@@ -139,25 +149,36 @@ export async function fetchAllHepsiburadaRecords(
   })
 
   for (const window of windows) {
-    let offset = 0
-    for (let page = 0; ; page += 1) {
-      if (page >= maxPages) return stop('PROVIDER_UNAVAILABLE', 'HB_PAGE_LIMIT_REACHED')
+    const pending = [window]
+    while (pending.length > 0) {
+      if (pagesFetched >= maxRequests) return stop('PROVIDER_UNAVAILABLE', 'HB_REQUEST_BUDGET_EXHAUSTED')
+      const interval = pending.pop()!
       const result = await fetchHepsiburadaPage(
         config,
-        { family, offset, limit, startMs: window.startMs, endMs: window.endMs },
+        { family, offset: 0, limit, startMs: interval.startMs - HEPSIBURADA_BOUNDARY_OVERLAP_MS, endMs: interval.endMs },
         options,
       )
       networkCalls += result.networkCalls
       if (!result.ok) return stop(result.errorClass, result.reasonCode)
       pagesFetched += 1
+      if (result.rows.length >= limit) {
+        if (result.rows.some((row) => String(row.merchantId ?? '').trim() !== '' && String(row.merchantId).trim() !== config.merchantId)) {
+          return stop('REQUEST_REJECTED', HB_MERCHANT_MISMATCH)
+        }
+        if (interval.endMs - interval.startMs <= minSplitMs) return stop('PROVIDER_UNAVAILABLE', 'HB_DENSE_WINDOW_UNSPLITTABLE')
+        const middle = interval.startMs + Math.floor((interval.endMs - interval.startMs) / 2)
+        // Stack: older half is read first. No offset walking, even when dense.
+        pending.push({ startMs: middle, endMs: interval.endMs }, { startMs: interval.startMs, endMs: middle })
+        continue
+      }
       for (const row of result.rows) {
-        const key = recordKey(row)
+        // A conflicting merchant sharing a package key must remain observable.
+        const identity = recordKey(row)
+        const key = identity === '' ? '' : `${String(row.merchantId ?? '').trim()}:${identity}`
         if (key !== '' && seen.has(key)) continue
         if (key !== '') seen.add(key)
         rawRecords.push(row)
       }
-      if (!hasNextHepsiburadaPage({ returnedCount: result.rows.length, limit })) break
-      offset += limit
     }
     completedThroughMs = window.endMs
   }
@@ -263,7 +284,7 @@ export async function syncHepsiburadaOrdersForAccount(
     liveWriteGate?: (providerKey: string) => LiveWriteGateResult
     maxWindows?: number
   },
-  options: HepsiburadaClientOptions & { pageLimit?: number; maxPagesPerWindow?: number },
+  options: HepsiburadaSyncOptions,
 ): Promise<HepsiburadaSyncResult> {
   const organizationId = String(params.organizationId ?? '').trim()
   const marketplaceAccountId = String(params.marketplaceAccountId ?? '').trim()
@@ -323,13 +344,15 @@ export async function syncHepsiburadaOrdersForAccount(
     maxWindows: params.maxWindows,
   })
   const fetched = await fetchAllHepsiburadaRecords(params.config, family, plan.windows, options)
-  const normalization = normalizeHepsiburadaOrders(fetched.rawRecords)
+  // Inspect ownership before normalization can collapse duplicate identities.
+  const ownRows = fetched.rawRecords.filter((row) => String(row.merchantId ?? '').trim() === '' || String(row.merchantId).trim() === params.config.merchantId)
+  const merchantMismatchCount = fetched.rawRecords.length - ownRows.length
+  const normalization = normalizeHepsiburadaOrders(ownRows)
 
   // Başka satıcının kaydı dönmüşse YAZILMAZ ve koşu başarılı SAYILMAZ.
   const ownOrders = normalization.orders.filter(
     (order) => order.merchantId === '' || order.merchantId === params.config.merchantId,
   )
-  const merchantMismatchCount = normalization.orders.length - ownOrders.length
   let outcome: HepsiburadaFetchOutcome = fetched.outcome
   let errorClass = fetched.errorClass
   let reasonCode = fetched.reasonCode

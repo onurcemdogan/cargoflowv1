@@ -21,6 +21,7 @@ import { recordAccountReadProbe } from '../accountReadVerification.ts'
 import {
   HEPSIBURADA_CONFIG_ERROR_COPY_TR,
   resolveReadFamily,
+  isHepsiburadaReadMerchantBound,
   configToStoredPayload,
   HEPSIBURADA_PROVIDER_KEY,
   type HepsiburadaConnectorConfig,
@@ -192,12 +193,16 @@ export async function handleHepsiburadaTest(params: {
       { ...params.clientOptions, retryDelaysMs: [] },
     )
     const merchantMismatch = page.ok && page.rows.some((row) => row.merchantId != null && String(row.merchantId).trim() !== '' && String(row.merchantId).trim() !== config.merchantId)
-    const probe = merchantMismatch ? { ok: false, errorClass: 'REQUEST_REJECTED' } : page
+    const bindingProven = page.ok && (isHepsiburadaReadMerchantBound(config)
+      || (page.rows.length > 0 && page.rows.every((row) => String(row.merchantId ?? '').trim() === config.merchantId)))
+    const bindingUnproven = page.ok && !bindingProven
+    const probe = merchantMismatch || bindingUnproven ? { ok: false, errorClass: 'REQUEST_REJECTED' } : page
     const verification = await recordAccountReadProbe(params.db, {
       organizationId: params.organizationId, marketplaceAccountId, providerKey: HEPSIBURADA_PROVIDER_KEY,
     }, configToStoredPayload(config), probe, new Date(nowMs))
     if (!verification.recorded) return { status: 200, body: { ok: false, verificationStatus: 'unverified', reasonCode: 'ACCOUNT_CREDENTIALS_CHANGED', message: 'API bilgileri değişti; yeniden test edin.', networkCalls: page.networkCalls } }
     if (merchantMismatch) return { status: 200, body: { ok: false, ...verification, reasonCode: 'HB_MERCHANT_MISMATCH', message: 'Yanıt farklı bir satıcıya ait; hesap doğrulanmadı.', networkCalls: page.networkCalls } }
+    if (bindingUnproven) return { status: 200, body: { ok: false, ...verification, reasonCode: 'HB_ACCOUNT_BINDING_UNPROVEN', message: 'Okuma bu Merchant ID ile ilişkilendirilemedi; hesap doğrulanmadı.', networkCalls: page.networkCalls } }
     if (!page.ok) {
       return {
         status: 200,
@@ -279,6 +284,7 @@ export async function handleHepsiburadaSync(params: {
       body: {
         ok: sync.outcome !== 'FAILED',
         outcome: sync.outcome,
+        reasonCode: sync.reasonCode,
         healthState: health.state,
         healthLabel: hepsiburadaHealthLabel(health),
         family: sync.family,

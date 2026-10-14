@@ -291,6 +291,154 @@ test('AV-HB-READ/ONBOARDING: verified HB persists canonical orders; first sync a
   assert.equal((await onboarding.deriveOnboardingStatus(db, organizationId)).steps.find((s) => s.key === 'MARKETPLACE').done, false)
 })
 
+test('AV-REVIEW-HB-BIND: only selected-path identity or every returned merchant can verify; empty fake siblings stay unverified', async () => {
+  const organizationId = await org()
+  const cases = [
+    { path: '/fixture/{merchantId}', rows: () => [], verified: true },
+    { path: '/fixture', rows: () => [], verified: false },
+    { path: '/fixture', rows: (id) => [{ merchantId: id }, { merchantId: id }], verified: true },
+    { path: '/fixture', rows: (id) => [{ merchantId: id }, { merchantId: 'other' }], verified: false, reason: 'HB_MERCHANT_MISMATCH' },
+    { path: '/fixture/{merchantId}', rows: () => [{ merchantId: 'other' }], verified: false, reason: 'HB_MERCHANT_MISMATCH' },
+    { path: '/fixture', rows: (id) => [{ merchantId: id }, {}], verified: false },
+    { path: '/fixture', rows: () => [{ merchantId: ' ' }], verified: false },
+    { path: '/fixture', rows: () => [], verified: false },
+  ]
+  for (const example of cases) {
+    // ordersPath is bound, but PACKAGES is the selected family: it cannot lend identity.
+    const input = hCred({ packagesPath: example.path, ordersPath: '/orders/{merchantId}' })
+    const saved = await hb.handleHepsiburadaConnect({ db, organizationId, body: input, clientOptions: transport(example.rows(input.merchantId)).options, now: () => NOW })
+    const account = await row(saved.body.marketplaceAccountId)
+    assert.equal(account.verificationStatus, example.verified ? 'verified' : 'unverified')
+    if (!example.verified) {
+      assert.equal(saved.body.reasonCode, example.reason ?? 'HB_ACCOUNT_BINDING_UNPROVEN')
+      assert.equal(account.lastVerifiedAt, null)
+      assert.equal((await readGate(organizationId, account.id, 'hepsiburada')).decision, 'BLOCKED_BY_ACCOUNT')
+    }
+    assert.ok((await hc.loadHepsiburadaAccount(db, { organizationId, marketplaceAccountId: account.id })).config, 'credentials remain saved')
+  }
+  for (const table of [schema.orders, schema.labelJobs, schema.shipments]) assert.equal((await db.select().from(table).where(eq(table.organizationId, organizationId))).length, 0)
+})
+
+test('AV-REVIEW-SOURCE: verified canonical read sources cannot produce, catch up, or prepare label jobs; Trendyol still enqueues', async () => {
+  const organizationId = await org()
+  const producer = await import('./shipments/autoLabelProducer.ts')
+  const catchup = await import('./shipments/autoLabelCatchup.ts')
+  const preparation = await import('./shipments/labelJobPreparation.ts')
+  const encryption = await import('./orders/orderEncryption.ts')
+  const hi = hCred()
+  const h = await hc.connectHepsiburadaAccount(db, { organizationId, ...hi })
+  const n = await nc.connectN11Account(db, { organizationId, ...nCred() })
+  await probeH(organizationId, h.marketplaceAccountId)
+  await probeN(organizationId, n.marketplaceAccountId)
+  await hb.handleHepsiburadaSync({ db, organizationId, body: { marketplaceAccountId: h.marketplaceAccountId }, clientOptions: transport([hPackage(hi.merchantId)]).options, now: () => NOW })
+  await n11.handleN11Sync({ db, organizationId, body: { marketplaceAccountId: n.marketplaceAccountId }, clientOptions: transport({ content: [nPackage()], totalPages: 1 }).options, now: () => NOW })
+  const canonical = await db.select().from(schema.orders).where(eq(schema.orders.organizationId, organizationId))
+  assert.equal(canonical.length, 2)
+  const fresh = new Date()
+  await producer.activateAutoLabel(db, organizationId, { marketplaces: ['trendyol', 'n11', 'hepsiburada'], carriers: ['surat'], now: new Date(fresh.getTime() - 60_000).toISOString() })
+  // Make all other pipeline conditions eligible so source is the deciding gate.
+  await db.update(schema.orders).set({ firstSeenAt: fresh, operationStatus: 'NEW', marketplaceStatus: 'Picking', cargoProviderName: 'Surat Kargo', cargoTrackingNumber: '727001234567', rawPayloadEncrypted: encryption.encryptOrderPayload({ whoPays: 1 }) }).where(eq(schema.orders.organizationId, organizationId))
+  const produced = await producer.enqueueEligibleAutoLabelJobs(db, organizationId)
+  assert.equal(produced.examined, 0)
+  assert.equal(produced.enqueued, 0)
+  assert.equal(produced.blocked.FULFILLMENT_NOT_AVAILABLE, 2)
+  for (const order of canonical) {
+    assert.equal((await row(order.marketplaceAccountId)).verificationStatus, 'verified')
+    const params = { organizationId, organizationName: 'fixture', marketplace: order.marketplace, carrier: 'surat' }
+    const result = await catchup.enqueueCatchupJobs(db, params)
+    assert.equal(result.enqueued, 0)
+    assert.equal(result.report.blocked, 1)
+    assert.match(result.report.candidates[0].reason, /FULFILLMENT_NOT_AVAILABLE/)
+    const prepared = await preparation.prepareLabelJob(db, { organizationId, packageId: order.packageId, marketplace: order.marketplace })
+    assert.equal(prepared.blockerCode, 'FULFILLMENT_NOT_AVAILABLE')
+    assert.equal(prepared.eligibleForCreate, false)
+    assert.equal(prepared.tenantSettingsLoaded, false)
+    assert.equal(prepared.resolverCalled, false)
+    assert.equal(prepared.eligibility, null)
+    assert.equal(prepared.billingParty, null)
+    assert.equal(prepared.credentialSnapshot.resolved, false)
+    assert.equal(prepared.carrierCalls + prepared.networkCalls + prepared.dbWrites, 0)
+  }
+  assert.equal((await db.select().from(schema.labelJobs).where(eq(schema.labelJobs.organizationId, organizationId))).length, 0)
+  await db.insert(schema.orders).values({ organizationId, marketplace: 'Trendyol', packageId: 'TY-positive', orderNumber: 'TY-order', cargoProviderName: 'Surat Kargo', cargoTrackingNumber: '727999123', orderDate: fresh, firstSeenAt: new Date(fresh.getTime() - 1000), marketplaceStatus: 'Picking', operationStatus: 'NEW' })
+  const tyResult = await producer.enqueueEligibleAutoLabelJobs(db, organizationId, { limit: 1 })
+  assert.equal(tyResult.enqueued, 1, `newer restricted rows cannot consume the Trendyol batch: ${JSON.stringify(tyResult)}`)
+  const jobs = await db.select().from(schema.labelJobs).where(eq(schema.labelJobs.organizationId, organizationId))
+  assert.deepEqual(jobs.map((job) => job.marketplace), ['Trendyol'])
+})
+
+test('AV-REVIEW-HB-SPLIT: production reads offset zero, discards broad pages, captures shifted records and persists each complete identity once', async () => {
+  const organizationId = await org()
+  const input = hCred()
+  const account = await hc.connectHepsiburadaAccount(db, { organizationId, ...input })
+  await probeH(organizationId, account.marketplaceAccountId)
+  const config = (await hc.loadHepsiburadaAccount(db, { organizationId, marketplaceAccountId: account.marketplaceAccountId })).config
+  const { syncHepsiburadaOrdersForAccount } = await import('./connectors/hepsiburada/hepsiburadaOrderSync.ts')
+  const { persistHepsiburadaOrders } = await import('./connectors/hepsiburada/hepsiburadaPersistence.ts')
+  const start = NOW - 3_600_000
+  let dataset = Array.from({ length: 201 }, (_, i) => hPackage(input.merchantId, { packageNumber: `SPLIT-${i}`, orderNumber: `ORDER-${i}`, orderDate: new Date(start + 1000 + i * 15_000).toISOString() }))
+  // An exact split-boundary record is returned by both adjacent complete leaves.
+  dataset[120].orderDate = new Date(start + 1_800_000).toISOString()
+  const calls = [], persistedIds = []
+  const transport = async (request) => {
+    const url = new URL(request.url)
+    const from = Date.parse(url.searchParams.get('begindate')), to = Date.parse(url.searchParams.get('enddate'))
+    const offset = Number(url.searchParams.get('offset')), limit = Number(url.searchParams.get('limit'))
+    const rows = dataset.filter((row) => Date.parse(row.orderDate) >= from && Date.parse(row.orderDate) <= to).slice(offset, offset + limit)
+    calls.push({ from, to, offset, limit, count: rows.length })
+    if (calls.length === 1) dataset = dataset.slice(1) // the old offset-100 read would lose SPLIT-100
+    return { status: 200, headers: {}, bodyText: JSON.stringify(rows) }
+  }
+  const result = await syncHepsiburadaOrdersForAccount(db, {
+    organizationId, marketplaceAccountId: account.marketplaceAccountId, config, fromMs: start, upperBoundMs: NOW,
+    persistCanonical: async (orders) => {
+      assert.ok(calls.length > 1, 'full broad response must split before persistence')
+      persistedIds.push(...orders.map((order) => order.packageId))
+      return persistHepsiburadaOrders(db, { organizationId, marketplaceAccountId: account.marketplaceAccountId, orders })
+    },
+  }, { transport, retryDelaysMs: [] })
+  assert.equal(result.outcome, 'SUCCESS')
+  assert.equal(result.checkpointAdvanced, true)
+  assert.equal(result.checkpointMs, NOW)
+  assert.ok(calls.every((call) => call.offset === 0 && call.to - call.from <= 86_400_000))
+  assert.equal(calls[0].count, 100)
+  assert.ok(calls[1].to < calls[0].to, 'older half is visited first')
+  assert.equal(persistedIds.length, 200)
+  assert.equal(new Set(persistedIds).size, 200, 'overlapping leaves persist each package once')
+  assert.ok(persistedIds.includes('SPLIT-100'), 'shifted boundary record is captured')
+  assert.ok(!persistedIds.includes('SPLIT-0'), 'discarded broad response cannot leak into persistence')
+  assert.deepEqual(new Set(persistedIds), new Set(dataset.map((row) => row.packageNumber)))
+  assert.equal((await db.select().from(schema.orders).where(eq(schema.orders.organizationId, organizationId))).length, 200)
+})
+
+test('AV-REVIEW-HB-BOUNDS: dense intervals and exhausted budgets stay partial without checkpoint or persistence; conflicting duplicate merchants block checkpoints', async () => {
+  const { syncHepsiburadaOrdersForAccount } = await import('./connectors/hepsiburada/hepsiburadaOrderSync.ts')
+  for (const [reason, options] of [
+    ['HB_DENSE_WINDOW_UNSPLITTABLE', { minSplitIntervalMs: 3_600_000 }],
+    ['HB_REQUEST_BUDGET_EXHAUSTED', { maxRequestsPerRun: 2 }],
+  ]) {
+    const organizationId = await org(), input = hCred()
+    const { marketplaceAccountId } = await hc.connectHepsiburadaAccount(db, { organizationId, ...input })
+    await probeH(organizationId, marketplaceAccountId)
+    const config = (await hc.loadHepsiburadaAccount(db, { organizationId, marketplaceAccountId })).config
+    const fake = transport(Array.from({ length: 100 }, (_, i) => hPackage(input.merchantId, { packageNumber: `DENSE-${i}` })))
+    let persists = 0
+    const result = await syncHepsiburadaOrdersForAccount(db, { organizationId, marketplaceAccountId, config, fromMs: NOW - 3_600_000, upperBoundMs: NOW, persistCanonical: async () => { persists++; return { persisted: 100, failed: 0 } } }, { ...fake.options, ...options })
+    assert.equal(result.outcome, 'PARTIAL')
+    assert.equal(result.reasonCode, reason)
+    assert.equal(result.checkpointAdvanced, false)
+    assert.equal(persists, 0)
+    assert.ok(fake.calls.every((call) => new URL(call.url).searchParams.get('offset') === '0'))
+    assert.equal((await syncRepo.getSyncState(db, organizationId, 'orders', marketplaceAccountId)).lastSuccessfulSyncAt, null)
+  }
+  const organizationId = await org(), input = hCred()
+  const { marketplaceAccountId } = await hc.connectHepsiburadaAccount(db, { organizationId, ...input })
+  await probeH(organizationId, marketplaceAccountId)
+  const result = await hb.handleHepsiburadaSync({ db, organizationId, body: { marketplaceAccountId }, clientOptions: transport([hPackage(input.merchantId), hPackage('foreign')]).options, now: () => NOW })
+  assert.equal(result.body.checkpointAdvanced, false)
+  assert.equal((await syncRepo.getSyncState(db, organizationId, 'orders', marketplaceAccountId)).lastErrorCode, 'HB_MERCHANT_MISMATCH')
+})
+
 test('AV-16/17: existing Trendyol rollout and Sürat carrier verification remain unchanged', async () => {
   const organizationId = await org()
   const { saveIntegrationCredential } = await import('./integrations/credentialService.ts')

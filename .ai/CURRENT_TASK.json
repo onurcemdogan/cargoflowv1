@@ -6,6 +6,8 @@
   "phase": "VALIDATED_AND_REVIEWED",
   "ticketBranch": "feat/account-level-live-verification-001",
   "baselineCommit": "6287450",
+  "followupBaselineCommit": "f2ff13cfbd19bc438845271103bdadcf64a385ed",
+  "pullRequest": "https://github.com/onurcemdogan/cargoflowv1/pull/19",
   "specPath": ".ai/tickets/ACCOUNT-LEVEL-LIVE-VERIFICATION-001.md",
   "activeWorker": null,
   "lastImplementationWorker": "codex",
@@ -23,7 +25,10 @@
     "Onboarding uses same-account verification and first sync; UI shows persisted evidence",
     "Aras TEST save aligns fingerprints with no automatic provider write",
     "No migrations, rollout promotion, provider endpoint invention, scheduler or deploy changes",
-    "All requested suites and five byte-exact-restored mutations pass"
+    "HB selected-path or every-row merchant proof is required for verification",
+    "HB offset-zero adaptive splitting bounds requests/memory; incomplete runs never checkpoint",
+    "Shared source gate blocks producer/catchup/preparation before fulfillment processing; restricted sources cannot starve Trendyol batches",
+    "All requested suites and ten byte-exact-restored mutations pass"
   ],
   "failingTests": [],
   "blockers": [
@@ -34,7 +39,9 @@
   ],
   "qualityGates": {
     "passed": true,
-    "accountVerificationPassed": 12,
+    "accountVerificationPassed": 16,
+    "autoLabelAcceptancePassed": 115,
+    "focusedShipmentLabelPassed": 78,
     "build": true,
     "uiPassed": 423,
     "tsc": true,
@@ -48,8 +55,13 @@
       "B",
       "C",
       "D",
-      "E"
+      "E",
+      "F",
+      "G",
+      "H-P",
+      "H-C",
+      "H-L"
     ]
   },
-  "nextAction": "Local implementation complete. Customer account verification is performed only by that account safe read. No live provider account was exercised during validation. Do not push or deploy."
+  "nextAction": "PR #19 manual-review blockers complete and independently approved. User authorizes commit and ordinary push only to feat/account-level-live-verification-001. Delivery commit is branch HEAD; verify remote head after push. No merge or deploy. No live provider account was exercised during validation."
 }

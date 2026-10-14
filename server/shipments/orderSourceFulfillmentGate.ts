@@ -12,6 +12,11 @@ export function orderSourceFulfillmentAllowed(marketplace: unknown): boolean {
   return !supportsAccountOrdersRead(descriptor) || canTriggerFulfillmentSideEffects(key).decision === 'ALLOWED'
 }
 
+/** Same descriptor decision, available to candidate queries before batch limits. */
+export function orderSourcesWithoutFulfillment(): string[] {
+  return catalog.list().map((descriptor) => descriptor.providerKey).filter((key) => !orderSourceFulfillmentAllowed(key))
+}
+
 /** DB identity takes precedence over caller-supplied marketplace names. */
 export async function loadOrderSourceFulfillmentAllowed(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

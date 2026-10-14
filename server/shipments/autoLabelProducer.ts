@@ -29,6 +29,7 @@ import {
   type AutoLabelSettings,
 } from './suratAutoLabelPolicy.ts'
 import { resolveSuratCreateEligibility } from './suratCreateEligibility.ts'
+import { orderSourceFulfillmentAllowed, orderSourcesWithoutFulfillment } from './orderSourceFulfillmentGate.ts'
 import {
   DEPENDENCY_BLOCKED_CODES,
   enqueueLabelJob,
@@ -235,15 +236,19 @@ export async function enqueueEligibleAutoLabelJobs(
       AND so."package_id" = "orders"."package_id"
       AND so."carrier_create_called" = true)`
   const isTerminal = sql`COALESCE("orders"."marketplace_status" IN (${terminalStatuses}), false)`
+  const restrictedSources = orderSourcesWithoutFulfillment()
+  const sourceAllowed = restrictedSources.length === 0 ? sql`true`
+    : sql`lower(trim("orders"."marketplace")) NOT IN (${sql.join(restrictedSources.map((source) => sql`${source}`), sql`, `)})`
 
   // GÖZLEMLENEBİLİRLİK KORUNUR: SQL'de dışlanan paketler, eski tek tek
   // değerlendirmeyle AYNI öncelik ve AYNI sebep kodlarıyla sayılır
   // (terminal → artefakt → kuyrukta → ağ sınırı geçilmiş). Tek toplu sorgu.
   const excluded = (await db.execute(sql`SELECT
-      count(*) FILTER (WHERE ${isTerminal})::int AS terminal,
-      count(*) FILTER (WHERE NOT ${isTerminal} AND ${hasShipment})::int AS artifact,
-      count(*) FILTER (WHERE NOT ${isTerminal} AND NOT ${hasShipment} AND ${hasSettledJob})::int AS queued,
-      count(*) FILTER (WHERE NOT ${isTerminal} AND NOT ${hasShipment} AND NOT ${hasSettledJob}
+      count(*) FILTER (WHERE NOT ${sourceAllowed})::int AS source,
+      count(*) FILTER (WHERE ${sourceAllowed} AND ${isTerminal})::int AS terminal,
+      count(*) FILTER (WHERE ${sourceAllowed} AND NOT ${isTerminal} AND ${hasShipment})::int AS artifact,
+      count(*) FILTER (WHERE ${sourceAllowed} AND NOT ${isTerminal} AND NOT ${hasShipment} AND ${hasSettledJob})::int AS queued,
+      count(*) FILTER (WHERE ${sourceAllowed} AND NOT ${isTerminal} AND NOT ${hasShipment} AND NOT ${hasSettledJob}
         AND ${hasCrossedOperation})::int AS crossed
     FROM "orders"
     WHERE "orders"."organization_id" = ${organizationId}
@@ -256,6 +261,7 @@ export async function enqueueEligibleAutoLabelJobs(
     if (count > 0) blocked[reason] = (blocked[reason] ?? 0) + count
   }
   addExcluded('MARKETPLACE_LIFECYCLE_TERMINAL', excludedRow.terminal)
+  addExcluded('FULFILLMENT_NOT_AVAILABLE', excludedRow.source)
   addExcluded('LABEL_ALREADY_PRESENT', excludedRow.artifact)
   addExcluded('ALREADY_QUEUED', excludedRow.queued)
   addExcluded('CARRIER_NETWORK_CROSSED', excludedRow.crossed)
@@ -267,6 +273,7 @@ export async function enqueueEligibleAutoLabelJobs(
       and(
         eq(orders.organizationId, organizationId),
         gte(orders.firstSeenAt, new Date(windowStartMs)),
+        sourceAllowed,
         isNull(orders.archivedAt),
         or(
           isNull(orders.marketplaceStatus),
@@ -282,6 +289,10 @@ export async function enqueueEligibleAutoLabelJobs(
 
   let enqueued = 0
   for (const row of candidates as Record<string, unknown>[]) {
+    if (!orderSourceFulfillmentAllowed(row.marketplace)) {
+      bump('FULFILLMENT_NOT_AVAILABLE')
+      continue
+    }
     const scope: AutoLabelScope = {
       organizationId,
       marketplace: String(row.marketplace ?? ''),
@@ -338,6 +349,7 @@ export async function enqueueEligibleAutoLabelJobs(
     // "uygun değil" der; burada 0 VARSAYILMAZ.
     const eligibility = resolveSuratCreateEligibility({
       order: {
+        marketplace: String(row.marketplace ?? ''),
         orderNumber: String(row.orderNumber ?? ''),
         packageId,
         cargoTrackingNumber: String(row.cargoTrackingNumber ?? ''),
