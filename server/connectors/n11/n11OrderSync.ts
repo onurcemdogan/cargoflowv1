@@ -49,11 +49,12 @@
 //
 // ═══ CANLI YAZMA KAPISI ═════════════════════════════════════════════════
 //
-// Kanonik yazım `liveWriteGate` ile yayın aşamasından karar verilir. n11
-// `internal_test`tir: okuma/normalizasyon/sağlık çalışır, kanonik yazım
-// KAPALIDIR ve imleç İLERLEMEZ.
+// Kanonik yazım DB'den yüklenen HESAP doğrulamasıyla açılır. Karşılama
+// rollout kapısı ayrı kalır; GMT+3 kanıtı yokken üretim imleci ilerlemez.
 import { recordSyncState } from '../../onboarding/onboardingRepository.ts'
-import { canPersistCanonicalOrders, type LiveWriteGateResult } from '../liveWriteGate.ts'
+import { type LiveWriteGateResult } from '../liveWriteGate.ts'
+import { accountOrdersReadPayload, getAccountOrdersReadGate, type OrdersReadGateResult } from '../accountOrdersReadGate.ts'
+import { credentialFingerprint } from '../../integrations/credentialService.ts'
 import {
   N11_MAX_PAGE_SIZE,
   N11_PACKAGE_STATUSES,
@@ -61,7 +62,7 @@ import {
 } from '../../marketplaces/n11/n11Contract.ts'
 import { normalizeN11Orders, type NormalizedN11Order } from '../../marketplaces/n11/n11OrderSource.ts'
 import { fetchN11Page, type N11ClientOptions, type N11ErrorClass } from './n11Client.ts'
-import { N11_PROVIDER_KEY, type N11ConnectorConfig } from './n11Config.ts'
+import { N11_PROVIDER_KEY, configToStoredPayload, type N11ConnectorConfig } from './n11Config.ts'
 import { bindN11Seller, findN11SellerConflict } from './n11ConnectionService.ts'
 import {
   N11_CANONICAL_WRITE_BLOCKED,
@@ -222,7 +223,8 @@ export interface N11SyncResult {
   unpersistable: { NO_PACKAGE_ID: number; NO_ORDER_DATE: number }
   sellerId: string | null
   sellerConflict: boolean
-  canonicalWrite: LiveWriteGateResult['decision']
+  canonicalWrite: OrdersReadGateResult['decision']
+  ordersReadReasonCode: string
   canonicalPersisted: boolean
   persisted: { persisted: number; failed: number; skippedTotal: number }
   checkpointAdvanced: boolean
@@ -244,7 +246,7 @@ export async function syncN11OrdersForAccount(
     fromMs: number | null
     upperBoundMs: number
     persistCanonical?: N11CanonicalPersister
-    /** Test/aşama enjeksiyonu; varsayılan yayın aşaması kapısı. */
+    /** Trusted hermetic test seam; HTTP never accepts this from a request body. */
     liveWriteGate?: (providerKey: string) => LiveWriteGateResult
     maxWindows?: number
   },
@@ -258,9 +260,20 @@ export async function syncN11OrdersForAccount(
   if (!Number.isSafeInteger(params.upperBoundMs) || params.upperBoundMs <= 0) {
     throw new Error('upperBoundMs geçerli bir epoch milisaniye olmalıdır.')
   }
-  const gate = (params.liveWriteGate ?? canPersistCanonicalOrders)(N11_PROVIDER_KEY)
+  const scope = {
+    organizationId, marketplaceAccountId, providerKey: N11_PROVIDER_KEY,
+    expectedFingerprint: credentialFingerprint(accountOrdersReadPayload(N11_PROVIDER_KEY, configToStoredPayload(params.config))),
+  }
+  const readGate = (): Promise<OrdersReadGateResult> => params.liveWriteGate
+    ? Promise.resolve(params.liveWriteGate(N11_PROVIDER_KEY))
+    : getAccountOrdersReadGate(db, scope)
+  let gate = await readGate()
   const gateAllowed = gate.decision === 'ALLOWED'
-  const persister = gateAllowed ? params.persistCanonical : undefined
+  const persister = gateAllowed && params.persistCanonical ? async (orders: NormalizedN11Order[]) => {
+    gate = await readGate()
+    if (gate.decision !== 'ALLOWED') return { persisted: 0, failed: orders.length, skipped: {} }
+    return params.persistCanonical!(orders)
+  } : undefined
   const plan = planN11Windows({ fromMs: params.fromMs, upperBoundMs: params.upperBoundMs, maxWindows: params.maxWindows })
   const pageSize = Math.min(N11_MAX_PAGE_SIZE, Math.max(1, options.pageSize ?? N11_SYNC_PAGE_SIZE))
   const minSplitMs = Math.max(1, options.minSplitIntervalMs ?? N11_MIN_SPLIT_INTERVAL_MS)
@@ -274,6 +287,7 @@ export async function syncN11OrdersForAccount(
     fetchedCount: 0, normalizedCount: 0, duplicateRemovedCount: 0, invalidIdentityCount: 0,
     sellerMismatchCount: 0, unpersistable: { NO_PACKAGE_ID: 0, NO_ORDER_DATE: 0 },
     sellerId: seller.bound, sellerConflict: false, canonicalWrite: gate.decision, canonicalPersisted: false,
+    ordersReadReasonCode: gate.reasonCode,
     persisted: { persisted: 0, failed: 0, skippedTotal: 0 },
     checkpointAdvanced: false, checkpointMs: null, durabilityReasonCode: null,
   }
@@ -284,6 +298,9 @@ export async function syncN11OrdersForAccount(
   /** Bir sayfanın kayıtlarından bu hesaba ait olanlar (satıcı denetimi). */
   const ownOrdersOf = async (orders: NormalizedN11Order[], stats: WindowStats): Promise<NormalizedN11Order[]> => {
     const own: NormalizedN11Order[] = []
+    if (seller.bound !== null) {
+      seller.conflict ||= await findN11SellerConflict(db, { organizationId, marketplaceAccountId, sellerId: seller.bound })
+    }
     for (const order of orders) {
       const sellerId = order.sellerId
       if (sellerId === '') {
@@ -305,8 +322,16 @@ export async function syncN11OrdersForAccount(
         seller.ambiguous = true
       }
     }
+    if (seller.bound === null && seller.candidate !== null && !seller.conflict && !seller.ambiguous) {
+      // Claim the seller atomically before any canonical write; concurrent
+      // sibling reads cannot both pass a separate check-then-bind sequence.
+      const binding = await bindN11Seller(db, { organizationId, marketplaceAccountId, sellerId: seller.candidate, expectedFingerprint: scope.expectedFingerprint })
+      seller.conflict = binding.reasonCode === N11_SELLER_ALREADY_CONNECTED
+      if (binding.ok) seller.bound = seller.candidate
+      else return []
+    }
     // Aynı satıcı başka etkin hesaba bağlıysa HİÇBİR kayıt yazılmaz (mükerrer risk).
-    return seller.conflict ? [] : own
+    return seller.conflict || (seller.bound === null && seller.ambiguous) ? [] : own
   }
 
   let prefixIntact = true
@@ -412,7 +437,10 @@ export async function syncN11OrdersForAccount(
       result.persisted.skippedTotal += stats.persist.skippedTotal
     }
 
-    const decision = stats.outcome !== 'SUCCESS'
+    gate = await readGate()
+    result.canonicalWrite = gate.decision
+    result.ordersReadReasonCode = gate.reasonCode
+    let decision = stats.outcome !== 'SUCCESS'
       ? { durable: false as const, reasonCode: stats.reasonCode ?? N11_PERSIST_INCOMPLETE }
       : resolveN11CheckpointDurability({
         windowCompleted: true,
@@ -420,11 +448,15 @@ export async function syncN11OrdersForAccount(
         sellerMismatchCount: stats.sellerMismatchCount,
         invalidIdentityCount: stats.invalidIdentityCount,
         unpersistableCount: stats.unpersistable.NO_PACKAGE_ID + stats.unpersistable.NO_ORDER_DATE,
-        gateAllowed,
+        gateAllowed: gate.decision === 'ALLOWED',
         hasPersister: Boolean(persister),
         expectedCanonical: stats.expectedCanonical,
         persist: stats.persist,
       })
+    // Read authentication does not prove the provider's timezone/boundary semantics.
+    if (decision.durable && 'checkpointBlocker' in gate && gate.checkpointBlocker) {
+      decision = { durable: false, reasonCode: gate.checkpointBlocker }
+    }
 
     if (decision.durable && prefixIntact) {
       // Dayanıklı ön ek bu pencereyle uzar: imleç pencere sonuna (kalıcı ilerleme).
@@ -469,7 +501,7 @@ export async function syncN11OrdersForAccount(
 
   // Satıcı kimliği bağlanır: yalnız tek ve çakışmasız satıcı gözlendiyse.
   if (seller.bound === null && seller.candidate !== null && !seller.conflict && !seller.ambiguous) {
-    await bindN11Seller(db, { organizationId, marketplaceAccountId, sellerId: seller.candidate })
+    await bindN11Seller(db, { organizationId, marketplaceAccountId, sellerId: seller.candidate, expectedFingerprint: scope.expectedFingerprint })
   }
   result.sellerId = seller.bound ?? seller.candidate
   result.sellerConflict = seller.conflict

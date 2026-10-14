@@ -285,7 +285,7 @@ export async function syncMarketplaceAccountFingerprint(
   if (!rows[0] || rows[0].credentialFingerprint === fingerprint) return
   await db
     .update(marketplaceAccounts)
-    .set({ credentialFingerprint: fingerprint, verificationStatus: 'unverified', lastVerifiedAt: null, updatedAt: new Date() })
+    .set({ credentialFingerprint: fingerprint, verificationStatus: 'unverified', lastVerifiedAt: null, lastVerificationAttemptAt: null, updatedAt: new Date() })
     .where(
       and(
         eq(marketplaceAccounts.organizationId, params.organizationId),
@@ -296,10 +296,10 @@ export async function syncMarketplaceAccountFingerprint(
 
 export async function recordMarketplaceVerification(
   db: Db,
-  params: { organizationId: string; marketplaceAccountId: string; status: VerificationStatus; now?: Date },
-): Promise<void> {
+  params: { organizationId: string; marketplaceAccountId: string; status: VerificationStatus; now?: Date; expectedFingerprint?: string },
+): Promise<boolean> {
   const now = params.now ?? new Date()
-  await db
+  const rows = await db
     .update(marketplaceAccounts)
     .set({
       verificationStatus: params.status,
@@ -311,8 +311,11 @@ export async function recordMarketplaceVerification(
       and(
         eq(marketplaceAccounts.organizationId, requireOrg(params.organizationId)),
         eq(marketplaceAccounts.id, params.marketplaceAccountId),
+        ...(params.expectedFingerprint === undefined ? [] : [eq(marketplaceAccounts.credentialFingerprint, params.expectedFingerprint)]),
       ),
     )
+    .returning({ id: marketplaceAccounts.id })
+  return rows.length > 0
 }
 
 /* ─── Eşleme ─────────────────────────────────────────────────────────── */

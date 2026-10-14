@@ -141,6 +141,34 @@ afterEach(() => {
 const heading = () => screen.getByRole('heading', { level: 2 }).textContent
 const button = (name: RegExp) => screen.getByRole('button', { name })
 
+test('ONB-UI-ACCOUNT-READ: first sync targets the verified HB account; unverified sibling cannot start sync', async () => {
+  const status = statusOf({ marketplace: { configured: true, verified: true }, carrierConfigured: true })
+  status.resumeStep = 'FIRST_SYNC'
+  status.marketplaces = [{
+    providerKey: 'hepsiburada', displayName: 'Hepsiburada', rolloutStage: 'internal_test', bootstrapResources: ['orders'],
+    configured: true, verified: true, credentialsRejected: false, bootstrapReady: false, requiresAccountVerification: true,
+    accounts: [true, false].map((verified, index) => ({ marketplaceAccountId: `hb-${index}`, displayName: `HB hesap ${index}`, isActive: true, credentials: 'PRESENT', connection: 'CONNECTED', credentialsRejected: false, sync: [], bootstrapReady: false, verified })),
+  }]
+  let posted: unknown
+  responder = (url, init) => {
+    if (url.endsWith('/hepsiburada/accounts/sync')) {
+      posted = JSON.parse(String(init?.body))
+      return { status: 200, body: { ok: true, message: 'HB hesabının ilk senkronu tamamlandı.' } }
+    }
+    return { status: 200, body: status }
+  }
+  renderPage(status)
+  expect(screen.getByRole('button', { name: 'HB hesap 1: Siparişleri Senkronize Et' }).hasAttribute('disabled')).toBe(true)
+  fireEvent.click(screen.getByRole('button', { name: 'HB hesap 0: Siparişleri Senkronize Et' }))
+  await screen.findByText('HB hesabının ilk senkronu tamamlandı.')
+  expect(posted).toEqual({ marketplaceAccountId: 'hb-0' })
+  responder = (url) => url.endsWith('/hepsiburada/accounts/sync')
+    ? { status: 503, body: { ok: false } } : { status: 200, body: status }
+  await waitFor(() => expect(screen.getByRole('button', { name: 'HB hesap 0: Siparişleri Senkronize Et' }).hasAttribute('disabled')).toBe(false))
+  fireEvent.click(screen.getByRole('button', { name: 'HB hesap 0: Siparişleri Senkronize Et' }))
+  await screen.findByText('İşlem tamamlanamadı.')
+})
+
 function renderPage(status: OnboardingStatus, onCompleted = vi.fn()) {
   render(withAuth(<OnboardingPage initialStatus={status} onCompleted={onCompleted} />))
   return { onCompleted }

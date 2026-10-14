@@ -14,3 +14,8 @@ None auto-selectable from `ROADMAP.json`; the queued items below wait on a human
 
 ## Verification policy
 LIVE-PROVIDER-VERIFICATION is operational verification, not an implementation prerequisite: it blocks only `LIVE_VERIFIED` status and the pilot capabilities that depend on it, and its scope is the capabilities the pilot actually uses. See `.ai/QUALITY_GATES.md` → Provider verification standard.
+
+ACCOUNT-LEVEL-LIVE-VERIFICATION-001 lets customers verify their exact current
+N11/HB credentials with a safe read. CargoFlow-owned provider test accounts are
+not required for implementation or for customer read activation. Account read
+evidence does not advance rollout or authorize fulfillment/external writes.

@@ -21,6 +21,7 @@
 // katman onun YERİNE geçmez, ÜSTÜNE eklenir ve her taşıyıcıya uygulanır.
 import { and, eq } from 'drizzle-orm'
 import { marketplaceAccounts, orders } from '../db/schema.ts'
+import { orderSourceFulfillmentAllowed } from './orderSourceFulfillmentGate.ts'
 import {
   resolveCarrierAccountFromRecords,
   type CarrierAccountRecord,
@@ -35,6 +36,7 @@ export type PayerSource = 'ORDER_CONTRACT' | 'ACCOUNT_CONFIG' | 'TENANT_CONFIG' 
 
 export const PREFLIGHT_BLOCKERS = {
   TENANT_SCOPE_MISSING: 'Çalışma alanı belirlenemedi.',
+  FULFILLMENT_NOT_AVAILABLE: 'Sipariş kaynağının kargo ve etiket işlemleri kapalı.',
   MARKETPLACE_ACCOUNT_AMBIGUOUS: 'Siparişin hangi satış hesabına ait olduğu belirlenemedi.',
   MARKETPLACE_ACCOUNT_NOT_FOUND: 'Siparişin satış hesabı bu çalışma alanında bulunamadı.',
   CARRIER_ACCOUNT_NOT_CONFIGURED: 'Bu sipariş için bağlı bir kargo hesabı yok.',
@@ -133,6 +135,7 @@ function resolveMarketplaceAccount(
 export function evaluateShipmentPreflight(input: PreflightInput): PreflightResult {
   const blockers: PreflightBlocker[] = []
   if (!filled(input.organizationId)) blockers.push('TENANT_SCOPE_MISSING')
+  if (!orderSourceFulfillmentAllowed(input.order.marketplace)) blockers.push('FULFILLMENT_NOT_AVAILABLE')
 
   const marketplaceAccount = resolveMarketplaceAccount(input.order, input.marketplaceAccounts)
   if (!marketplaceAccount.ok) blockers.push(marketplaceAccount.code)

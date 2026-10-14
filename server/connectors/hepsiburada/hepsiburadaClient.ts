@@ -165,8 +165,9 @@ export function extractHepsiburadaRows(
   body: unknown,
   listField: string | null,
 ): Record<string, unknown>[] | null {
-  const pickObjects = (list: unknown[]) =>
-    list.filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null && !Array.isArray(row))
+  const pickObjects = (list: unknown[]): Record<string, unknown>[] | null =>
+    list.every((row) => typeof row === 'object' && row !== null && !Array.isArray(row))
+      ? list as Record<string, unknown>[] : null
   if (Array.isArray(body)) return pickObjects(body)
   if (body && typeof body === 'object' && listField) {
     const value = (body as Record<string, unknown>)[listField]

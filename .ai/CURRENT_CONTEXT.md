@@ -1,48 +1,49 @@
-# Generated shift context
+# Current context
 
-Generated: 2026-09-28T06:35:00.000000+00:00
-Project: cargoflow
-Ticket: ARAS-EXPANSION
-Status: IN_PROGRESS
-Phase: REVIEW_FEEDBACK
-Branch: agent/ARAS-EXPANSION
-Baseline: 7754fcb109c4d8990d97065710e1189121fb58b7
-HEAD: e9da19d655c9b58d737e2e3d88acb03f4eb17f7f
-Last implementation worker: claude
-Reviewer: None
-Next action: CODEX-MERGE-ea44b55bd1bac7b9 repaired (commit e9da19d655c9b58d737e2e3d88acb03f4eb17f7f, code + test only). Not yet done: push to origin/agent/ARAS-EXPANSION, wait for GitHub CI and Cursor Bugbot to reach a terminal state, then request a fresh Codex merge decision against e9da19d655c9b58d737e2e3d88acb03f4eb17f7f. Do not push/merge master/integration/roadmap.
+Date: 2026-10-14 (Europe/Istanbul)
+Ticket: ACCOUNT-LEVEL-LIVE-VERIFICATION-001
+Branch: feat/account-level-live-verification-001
+Base: 6287450
+Follow-up baseline: f2ff13cfbd19bc438845271103bdadcf64a385ed (PR #19)
+Evidence: IMPLEMENTATION_COMPLETE; independent gpt-6-astra follow-up review approved.
 
-## Git status
-```
-M .ai/CURRENT_TASK.json
-M .ai/HANDOFF.md
-```
+Takeover was clean: no Claude partial diff or commits beyond base existed.
+Existing encrypted credentials, verification columns, read clients, persistence
+and durability rules were reused. No migration or rollout promotion.
 
-## Recent commits
-```
-e9da19d wip(ARAS-EXPANSION): reject processing instructions with invalid targets before stripping (CODEX-MERGE-ea44b55bd1bac7b9)
-f72adbd wip(ARAS-EXPANSION): checkpoint review-feedback-claude
-2cd0f71 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-d2ab3ac1667901e1 xml-declaration-syntax fix
-1715c11 wip(ARAS-EXPANSION): validate XML declaration syntax at index 0 before stripping (CODEX-MERGE-d2ab3ac1667901e1)
-a437229 wip(ARAS-EXPANSION): checkpoint review-feedback-claude
-1adad88 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-12ebf594361555c1 xml-declaration-outside-document fix
-ee2215b wip(ARAS-EXPANSION): reject XML declaration spliced into element content before stripping (CODEX-MERGE-12ebf594361555c1)
-c06976a wip(ARAS-EXPANSION): checkpoint review-feedback-claude
-2a8f025 docs(ARAS-EXPANSION): handoff for CODEX-MERGE-838f748d5ec4cde4 doctype-outside-prolog fix
-b6324e3 wip(ARAS-EXPANSION): reject DOCTYPE spliced outside prolog before stripping (CODEX-MERGE-838f748d5ec4cde4)
-```
+N11/HB save and Test Et persist exact-account safe GET evidence. Canonical read
+activation loads current credentials and verification from DB. Credential
+rotation invalidates evidence; stale probes cannot verify or mutate seller
+binding; concurrent N11 sibling seller claims serialize within the tenant.
 
-## Diff stat
-```
-server/carrier-aras-client-flow.test.mjs | 12 ++++++++++++
-server/carriers/aras/arasClient.ts       | 79 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-2 files changed, 91 insertions(+)
-```
+Production create/label boundaries use the unchanged fulfillment rollout gate
+and persisted order identity. Read proof never grants shipment, label,
+marketplace write, billing or automation permission. Aras stays TEST/internal_test
+with no automatic SOAP calls. UNKNOWN_AFTER_NETWORK/idempotency remain unchanged.
 
-## Required reading
-AGENTS.md
-.ai/PROJECT_SPEC.md
-.ai/ACCEPTED_FOUNDATION.md
-.ai/ROADMAP.md
-.ai/HANDOFF.md
-.ai/tickets/ARAS-EXPANSION.md
+PR #19 review fixes: HB verification needs the selected path's merchantId
+placeholder or a nonempty response with every merchant matching. Unbound empty
+reads remain unverified with HB_ACCOUNT_BINDING_UNPROVEN. HB sync uses offset 0,
+discards full pages and splits oldest-first, with 1ms overlap/dedupe, 1s minimum
+split interval and 350-request hard cap (<35,000 retained records). Eight planned
+slices cover the seven-day initial lookback while respecting 24h/7d request caps.
+Dense/budget partial runs never checkpoint. Merchant conflicts are checked before
+normalization can erase duplicate identities.
+
+Producer/catchup use canonical marketplace and the shared source gate before
+enqueue. Descriptor-derived producer exclusions precede LIMIT, preserving
+Trendyol throughput. Preparation rejects persisted sources before settings,
+desi, lifecycle, billing or carrier credentials. No provider-name branches.
+
+All requested suites passed: account verification 16; HB 23+4 UI; N11 26+5 UI;
+auto-label acceptance 115; onboarding 22+13 UI; health 53; status 9+8 UI; kernel 15;
+Aras 95; focused shipment/Sürat/label tests 78. tsc force, build, full UI 423/44
+and diff check passed; lint 0 errors, 6 existing warnings. Mutations A-E, F, G,
+H-P/H-C/H-L all failed assertions and restored files byte-exact. The account
+suite is registered in test:surat; the full enormous suite was not requested.
+
+Open operational blockers: N11 GMT+3 cursor semantics and id:null, per-account HB
+endpoint/list configuration, Aras production endpoint and payer/COD/write proof.
+No real provider account was verified and no provider write occurred. User's
+follow-up authorizes commit and ordinary push to the same branch to update PR #19.
+The completion commit is branch HEAD. No merge, deploy or new branch.

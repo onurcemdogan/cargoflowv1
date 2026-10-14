@@ -22,6 +22,10 @@ export interface MarketplaceAccount {
   isActive: boolean
   lastSuccessfulSyncAt: Date | null
   lastSyncStatus: string | null
+  verificationStatus?: string
+  credentialFingerprint?: string | null
+  lastVerifiedAt?: Date | null
+  lastVerificationAttemptAt?: Date | null
 }
 
 // Provider credential'ından KALICI, gizli olmayan hesap kimliğini çözer.

@@ -2,9 +2,8 @@
 //
 // ═══ DÜRÜST YAYIN DURUMU ═════════════════════════════════════════════════
 //
-// n11 bağlayıcısı iç testtir: bağlantı ve paket OKUMA denenebilir, ama okunan
-// kayıtlar canlı sipariş/kargo/etiket akışına YAZILMAZ. Canlı doğrulama
-// yapılmadı; pazaryeri yazmaları (statü güncelleme vb.) kapalıdır.
+// Güvenli GET yalnız bu hesabın kimliğini doğrular ve kanonik sipariş
+// okumasını açar. Kargo/etiket ve pazaryeri yazmaları ayrı kapıda kalır.
 //
 // ═══ YAPILANDIRMA ═══════════════════════════════════════════════════════
 //
@@ -18,6 +17,7 @@
 // Düzenlemede alanlar boş bırakılırsa kayıtlı değerler korunur.
 import { useCallback, useEffect, useState } from 'react'
 import { authenticatedApiRequest } from '../services/authenticatedApiRequest'
+import { AccountReadStatus } from './AccountReadStatus'
 
 export const N11_ACCOUNTS_ENDPOINT = '/api/integrations/n11/accounts'
 export const N11_DISCONNECT_ENDPOINT = '/api/integrations/n11/accounts/disconnect'
@@ -31,6 +31,8 @@ export interface N11AccountRow {
   config: { appKeyMasked: string; hasAppSecret: boolean; sellerId: string | null } | null
   health: { state: string; reasonCode: string | null; lastSuccessfulSyncAt: string | null; lastAttemptAt?: string | null }
   healthLabel?: string
+  verificationStatus?: string
+  ordersActive?: boolean
 }
 
 interface FormFields {
@@ -63,6 +65,7 @@ export function N11Section() {
   const [formState, setFormState] = useState<FormState>('idle')
   const [formMessage, setFormMessage] = useState<string | null>(null)
   const [busyAccount, setBusyAccount] = useState<string | null>(null)
+  const [verifyingAccount, setVerifyingAccount] = useState<string | null>(null)
   const [results, setResults] = useState<Record<string, ActionResult>>({})
 
   const load = useCallback(async (): Promise<N11AccountRow[] | null> => {
@@ -103,6 +106,7 @@ export function N11Section() {
     setForm((current) => ({ ...current, [field]: event.target.value }))
 
   function startEdit(account: N11AccountRow) {
+    setResults((current) => { const next = { ...current }; delete next[account.marketplaceAccountId]; return next })
     // appKey ve appSecret GERİ DOLDURULMAZ; boş bırakılırsa kayıtlı değer korunur.
     setEditing(account)
     setFormState('idle')
@@ -111,7 +115,7 @@ export function N11Section() {
   }
 
   async function save() {
-    if (formState === 'saving') return
+    if (formState === 'saving' || busyAccount) return
     setFormState('saving')
     setFormMessage(null)
     try {
@@ -138,6 +142,7 @@ export function N11Section() {
   async function runAction(marketplaceAccountId: string, endpoint: string, summarize: (body: Record<string, unknown>) => string) {
     if (busyAccount) return
     setBusyAccount(marketplaceAccountId)
+    setVerifyingAccount(endpoint === N11_TEST_ENDPOINT ? marketplaceAccountId : null)
     try {
       const response = await authenticatedApiRequest(endpoint, { method: 'POST', json: { marketplaceAccountId } })
       const body = (await response.json()) as Record<string, unknown>
@@ -151,6 +156,7 @@ export function N11Section() {
       setResults((current) => ({ ...current, [marketplaceAccountId]: { ok: false, message: 'İşlem tamamlanamadı.' } }))
     } finally {
       setBusyAccount(null)
+      setVerifyingAccount(null)
     }
   }
 
@@ -173,11 +179,11 @@ export function N11Section() {
   return (
     <section className="integration-section" aria-labelledby="n11-title" data-testid="n11-section">
       <h3 id="n11-title">
-        n11 <span className="ui-badge tone-info" data-testid="n11-rollout-badge">İÇ TEST</span>
+        n11 <span className="ui-badge tone-info" data-testid="n11-rollout-badge">SİPARİŞ OKUMA</span>
       </h3>
       <p>
-        n11 bağlantısı iç test aşamasındadır: paket okuma denenebilir, ancak okunan kayıtlar canlı sipariş,
-        kargo ve etiket akışına aktarılmaz. Canlı doğrulama henüz yapılmadı.
+        API bilgilerinizi kaydedin; hesabınız güvenli bir okuma isteğiyle doğrulanır.
+        Doğrulanan hesabın siparişleri sisteme alınabilir.
       </p>
       <p>Pazaryeri yazmaları (sipariş statüsü güncelleme) kapalıdır. Yalnız n11 API bilgileriniz istenir.</p>
 
@@ -197,16 +203,16 @@ export function N11Section() {
             {account.health.lastSuccessfulSyncAt ? (
               <span>Kayıtlı siparişler: {formatDateTime(account.health.lastSuccessfulSyncAt)} itibarıyla</span>
             ) : null}
-            <span>{account.isActive ? 'Bağlı' : 'Bağlı değil'}</span>
+            <AccountReadStatus isActive={account.isActive} configured={Boolean(account.config)} verificationStatus={account.verificationStatus} ordersActive={account.ordersActive} verifying={verifyingAccount === account.marketplaceAccountId || (formState === 'saving' && editing?.marketplaceAccountId === account.marketplaceAccountId)} />
             <span className="integration-account-actions">
-              <button type="button" disabled={busyAccount !== null || !account.isActive} onClick={() => void testAccount(account.marketplaceAccountId)}>
+              <button type="button" disabled={busyAccount !== null || formState === 'saving' || !account.isActive} onClick={() => void testAccount(account.marketplaceAccountId)}>
                 {busyAccount === account.marketplaceAccountId ? 'Çalışıyor…' : 'Test Et'}
               </button>
-              <button type="button" disabled={busyAccount !== null || !account.isActive} onClick={() => void syncAccount(account.marketplaceAccountId)}>
+              <button type="button" disabled={busyAccount !== null || formState === 'saving' || !account.isActive} onClick={() => void syncAccount(account.marketplaceAccountId)}>
                 Senkronize Et
               </button>
-              <button type="button" onClick={() => startEdit(account)}>Düzenle</button>
-              <button type="button" onClick={() => void disconnect(account.marketplaceAccountId)}>Bağlantıyı Kaldır</button>
+              <button type="button" disabled={busyAccount !== null || formState === 'saving'} onClick={() => startEdit(account)}>Düzenle</button>
+              <button type="button" disabled={busyAccount !== null || formState === 'saving'} onClick={() => void disconnect(account.marketplaceAccountId)}>Bağlantıyı Kaldır</button>
             </span>
             {results[account.marketplaceAccountId] ? (
               <span role={results[account.marketplaceAccountId].ok ? 'status' : 'alert'}>{results[account.marketplaceAccountId].message}</span>
@@ -236,13 +242,13 @@ export function N11Section() {
           placeholder={editing ? 'Değiştirmek için girin' : ''}
           onChange={update('appSecret')}
         />
-        <button type="button" disabled={formState === 'saving'} onClick={() => void save()}>
+        <button type="button" disabled={formState === 'saving' || busyAccount !== null} onClick={() => void save()}>
           {editing ? 'Değişiklikleri Kaydet' : 'Kaydet ve Bağla'}
         </button>
         {editing ? (
           <button type="button" onClick={() => { setEditing(null); setForm(EMPTY_FORM) }}>Vazgeç</button>
         ) : null}
-        {formState === 'saving' ? <span role="status">Kaydediliyor…</span> : null}
+        {formState === 'saving' ? <span role="status">Doğrulanıyor…</span> : null}
         {formState === 'saved' && formMessage ? <span role="status">{formMessage}</span> : null}
         {formState === 'error' && formMessage ? <span role="alert">{formMessage}</span> : null}
       </div>

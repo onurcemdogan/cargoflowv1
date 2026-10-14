@@ -4,19 +4,24 @@
 //   · Tek uçuş: (kiracı, hesap) anahtarı; `finally`de HER yolda bırakılır.
 //   · Sahiplik/kimlik ağdan ÖNCE: yabancı hesap → 404, kimlik yok → 409;
 //     her ikisinde de n11'e çağrı 0.
-//   · Test Et: tek GET (Created statüsü, page 0, size 1, son 15 gün); YAZMAZ.
-//   · Senkronize Et: sınırlı okuma; kanonik yazım `liveWriteGate` kararıyla.
+//   · Save/Test Et: tek GET (Created, page 0, size 1), kalıcı hesap doğrulaması.
+//   · Senkronize Et: sınırlı okuma; kanonik yazım DB hesap kanıtıyla.
 //   · Yanıtlarda appSecret ve tam appKey YOKTUR.
 import { getSyncState } from '../../onboarding/onboardingRepository.ts'
+import { recordAccountReadProbe } from '../accountReadVerification.ts'
+import { accountOrdersReadPayload } from '../accountOrdersReadGate.ts'
+import { credentialFingerprint } from '../../integrations/credentialService.ts'
 import { N11_WINDOW_MS } from '../../marketplaces/n11/n11Contract.ts'
 import type { LiveWriteGateResult } from '../liveWriteGate.ts'
 import { fetchN11Page, N11_ERROR_COPY_TR, type N11ClientOptions } from './n11Client.ts'
-import { N11_CONFIG_ERROR_COPY_TR, type N11ConnectorConfig } from './n11Config.ts'
+import { N11_CONFIG_ERROR_COPY_TR, configToStoredPayload, N11_PROVIDER_KEY, type N11ConnectorConfig } from './n11Config.ts'
 import {
   connectN11Account,
   disconnectN11Account,
   listN11Accounts,
   loadN11Account,
+  bindN11Seller,
+  findN11SellerConflict,
 } from './n11ConnectionService.ts'
 import {
   N11_DENSE_WINDOW_UNSPLITTABLE,
@@ -71,7 +76,7 @@ export async function handleN11ListAccounts(params: { db: Db; organizationId: st
   }
 }
 
-export async function handleN11Connect(params: { db: Db; organizationId: string; body: unknown }): Promise<N11HandlerResponse> {
+export async function handleN11Connect(params: { db: Db; organizationId: string; body: unknown; clientOptions: N11ClientOptions; now?: () => number }): Promise<N11HandlerResponse> {
   const body = (params.body ?? {}) as Record<string, unknown>
   const result = await connectN11Account(params.db, {
     organizationId: params.organizationId,
@@ -88,9 +93,14 @@ export async function handleN11Connect(params: { db: Db; organizationId: string;
       .map((code) => N11_CONFIG_ERROR_COPY_TR[code])
     return { status: 400, body: { ok: false, code: 'N11_CONFIG_INVALID', errors: result.errors, message: messages.join(' ') } }
   }
+  const probe = await handleN11Test({ ...params, body: { marketplaceAccountId: result.marketplaceAccountId } })
   return {
     status: 200,
-    body: { ok: true, marketplaceAccountId: result.marketplaceAccountId, message: 'n11 API bilgileri kaydedildi. Okumayı "Test Et" ile deneyin.' },
+    body: {
+      ...probe.body, ok: true, credentialsSaved: true, verificationOk: probe.body.ok === true,
+      marketplaceAccountId: result.marketplaceAccountId,
+      message: `n11 API bilgileri kaydedildi. ${String(probe.body.message ?? '')}`.trim(),
+    },
   }
 }
 
@@ -123,7 +133,7 @@ async function loadForRead(db: Db, organizationId: string, marketplaceAccountId:
   return { ok: true, account: loaded.account, config: loaded.config }
 }
 
-/** Bağlantı testi: tek GET, YAZMAZ, imleç/durum değiştirmez. */
+/** One bounded GET; persists only account verification, never the order cursor. */
 export async function handleN11Test(params: {
   db: Db
   organizationId: string
@@ -136,24 +146,54 @@ export async function handleN11Test(params: {
     const loaded = await loadForRead(params.db, params.organizationId, marketplaceAccountId)
     if (!loaded.ok) return loaded.response
     const nowMs = (params.now ?? Date.now)()
-    const page = await fetchN11Page(
+    let page = await fetchN11Page(
       loaded.config,
       { status: 'Created', page: 0, size: 1, startMs: nowMs - N11_WINDOW_MS, endMs: nowMs },
-      params.clientOptions,
+      { ...params.clientOptions, retryDelaysMs: [] },
     )
+    let sellerToBind: string | null = null
+    if (page.ok && !page.entries.every((entry) => typeof entry === 'object' && entry !== null && !Array.isArray(entry))) {
+      page = { ok: false, errorClass: 'RESPONSE_SHAPE_UNVERIFIED', reasonCode: 'N11_RESPONSE_SHAPE_UNVERIFIED', httpStatus: page.httpStatus, networkCalls: page.networkCalls }
+    }
+    if (page.ok) {
+      const sellers = [...new Set(page.entries.flatMap((entry) => {
+        const seller = (entry as { sellerId?: unknown } | null)?.sellerId
+        return seller == null || String(seller).trim() === '' ? [] : [String(seller).trim()]
+      }))]
+      const sellerId = sellers[0]
+      const mismatch = sellers.length > 1 || (sellerId && loaded.config.boundSellerId && sellerId !== loaded.config.boundSellerId)
+      const conflict = sellerId && await findN11SellerConflict(params.db, { organizationId: params.organizationId, marketplaceAccountId, sellerId })
+      if (mismatch || conflict) {
+        page = { ok: false, errorClass: 'REQUEST_REJECTED', reasonCode: conflict ? 'N11_SELLER_ALREADY_CONNECTED' : 'N11_SELLER_MISMATCH', httpStatus: page.httpStatus, networkCalls: page.networkCalls }
+      } else if (sellerId) {
+        sellerToBind = sellerId
+      }
+    }
+    const verification = await recordAccountReadProbe(params.db, {
+      organizationId: params.organizationId, marketplaceAccountId, providerKey: N11_PROVIDER_KEY,
+    }, configToStoredPayload(loaded.config), page, new Date(nowMs))
+    if (!verification.recorded) return { status: 200, body: { ok: false, verificationStatus: 'unverified', reasonCode: 'ACCOUNT_CREDENTIALS_CHANGED', message: 'API bilgileri değişti; yeniden test edin.', networkCalls: page.networkCalls } }
+    if (sellerToBind) {
+      const binding = await bindN11Seller(params.db, {
+        organizationId: params.organizationId, marketplaceAccountId, sellerId: sellerToBind,
+        expectedFingerprint: credentialFingerprint(accountOrdersReadPayload(N11_PROVIDER_KEY, configToStoredPayload(loaded.config))),
+      })
+      if (!binding.ok) return { status: 200, body: { ok: false, verificationStatus: 'unverified', reasonCode: binding.reasonCode, message: binding.reasonCode === 'N11_SELLER_ALREADY_CONNECTED' ? 'Bu satıcı başka bir n11 hesabına bağlı.' : 'API bilgileri değişti; yeniden test edin.', networkCalls: page.networkCalls } }
+    }
     if (!page.ok) {
       return {
         status: 200,
-        body: { ok: false, code: `N11_${page.errorClass}`, reasonCode: page.reasonCode, message: N11_ERROR_COPY_TR[page.errorClass], networkCalls: page.networkCalls },
+        body: { ok: false, ...verification, code: `N11_${page.errorClass}`, reasonCode: page.reasonCode, message: N11_ERROR_COPY_TR[page.errorClass], networkCalls: page.networkCalls },
       }
     }
     return {
       status: 200,
       body: {
         ok: true,
+        ...verification,
         recordsRead: page.entries.length,
         networkCalls: page.networkCalls,
-        message: 'n11 okuma isteği yanıt verdi. Bu iç test aşamasıdır; canlı doğrulama ayrıca yapılmalıdır.',
+        message: 'Hesap doğrulandı. Sipariş okuma aktif.',
       },
     }
   })
@@ -195,7 +235,7 @@ export async function handleN11Sync(params: {
     })
     const writeNote = sync.canonicalWrite === 'ALLOWED'
       ? null
-      : 'İç test aşaması: okunan siparişler canlı sipariş, kargo ve etiket akışına aktarılmadı; imleç ilerlemedi.'
+      : 'Hesap doğrulanmadı; siparişler sisteme yazılmadı, imleç ilerlemedi.'
     const incompleteNote = sync.durabilityReasonCode && sync.canonicalWrite === 'ALLOWED' && !sync.errorClass
       ? 'Okuma tamamlandı ancak bazı kayıtlar sisteme eksiksiz yazılamadı; aralık bir sonraki senkronda yeniden okunacak.'
       : null
@@ -219,10 +259,13 @@ export async function handleN11Sync(params: {
         windowsDurable: sync.windowsDurable,
         moreRemaining: sync.moreRemaining,
         canonicalWrite: sync.canonicalWrite,
+        ordersReadReasonCode: sync.ordersReadReasonCode,
         persisted: sync.persisted,
         checkpointAdvanced: sync.checkpointAdvanced,
         durabilityReasonCode: sync.durabilityReasonCode,
-        message: sync.reasonCode === N11_DENSE_WINDOW_UNSPLITTABLE
+        message: sync.durabilityReasonCode === 'N11_EPOCH_SEMANTICS_UNVERIFIED'
+          ? 'Siparişler kaydedildi; n11 zaman sınırı henüz doğrulanmadığı için imleç ilerlemedi.'
+          : sync.reasonCode === N11_DENSE_WINDOW_UNSPLITTABLE
           ? 'Bir aralıkta aynı zaman diliminde tek sayfaya sığmayan sayıda kayıt var; aralık güvenle bölünemedi, imleç o pencerede durdu.'
           : sync.reasonCode === N11_REQUEST_BUDGET_EXHAUSTED
           ? 'Bu koşunun istek bütçesi doldu; imleç son tamamlanan pencerede durdu. Kalan aralık için yeniden senkronize edin.'

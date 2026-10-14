@@ -59,13 +59,15 @@ const CONTRACT_PACK_PATHS: Record<string, string> = {
  * X-RateLimit-*, paket modeli) uygulandı; hesap kapsamlı şifreli kimlik,
  * yalnız-okuma elle senkron. Uç nokta YOLLARI ve liste zarfı resmî olarak
  * kanıtlanmadı (yapılandırmadan gelir) ve canlı doğrulama YAPILMADI —
- * kanonik yazım ve karşılama yan etkileri `liveWriteGate` ile KAPALIDIR.
+ * karşılama yan etkileri `liveWriteGate` ile KAPALIDIR. Hesap doğrulaması
+ * yalnız accountOrdersRead beyanı üzerinden kanonik okumayı açabilir.
  *
  * n11 `internal_test`tir (N11-LIVE-001): resmî sözleşme (shipmentPackages,
  * appkey/appsecret başlıkları, 0-tabanlı page + size ≤ 100 + totalPages,
  * 15 günlük pencere, `content` zarfı) uygulandı; hesap kapsamlı şifreli kimlik,
  * yalnız-okuma elle senkron. Canlı doğrulama YAPILMADI (gerçek hesap yok) —
- * kanonik yazım `liveWriteGate` ile KAPALIDIR; pazaryeri yazması YOK.
+ * karşılama `liveWriteGate` ile KAPALIDIR; pazaryeri yazması YOK. Hesap
+ * doğrulaması yalnız kanonik okumayı açar; üretim zaman sınırı ayrı engeldir.
  *
  * Bu harita KONFİGÜRASYONDUR; sağlık sonucundan ETKİLENMEZ.
  */
@@ -151,6 +153,11 @@ function hepsiburadaDescriptor(): ConnectorDescriptor {
     providerKey: 'hepsiburada',
     kind: 'marketplace',
     displayName: 'Hepsiburada',
+    accountOrdersRead: {
+      fingerprintFields: ['merchantId', 'username', 'password', 'host', 'ordersPath', 'packagesPath', 'listField'],
+      requiredCredentialFields: ['merchantId', 'username', 'password', 'host'],
+      requiredEndpointFields: ['ordersPath', 'packagesPath'],
+    },
     capabilities: [
       declareCapability('orders.read', { stage: 'internal_test' }),
       declareCapability('orders.webhook', {
@@ -179,6 +186,12 @@ function n11Descriptor(): ConnectorDescriptor {
     providerKey: 'n11',
     kind: 'marketplace',
     displayName: 'n11',
+    accountOrdersRead: {
+      // Learned seller metadata is not a credential change.
+      fingerprintFields: ['appKey', 'appSecret'],
+      requiredCredentialFields: ['appKey', 'appSecret'],
+      checkpointBlocker: 'N11_EPOCH_SEMANTICS_UNVERIFIED',
+    },
     capabilities: [
       declareCapability('orders.read', { stage: 'internal_test' }),
       declareCapability('orders.status.write', {

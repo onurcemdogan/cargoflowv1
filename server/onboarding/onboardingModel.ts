@@ -38,6 +38,7 @@ import {
   type ProviderKind,
 } from '../connectors/connectorKernel.ts'
 import type { IntegrationHealth } from '../connectors/integrationHealth.ts'
+import { supportsAccountOrdersRead } from '../connectors/connectorKernel.ts'
 import {
   resolveCarrierAccountFromRecords,
   type CarrierAccountRecord,
@@ -135,6 +136,7 @@ export interface OnboardingProviderEligibility {
   eligibleForOnboarding: boolean
   /** Canlı bootstrap kaynakları (canlı olmayan kaynak İSTENMEZ). */
   bootstrapResources: BootstrapResource[]
+  requiresAccountVerification?: boolean
 }
 
 export function liveBootstrapResources(descriptor: ConnectorDescriptor): BootstrapResource[] {
@@ -162,14 +164,16 @@ export function resolveOnboardingProviders(
     .filter((descriptor) => ORDER_SOURCE_KINDS.includes(descriptor.kind))
     .map((descriptor) => {
       const rolloutStage = resolveStage(descriptor.providerKey)
-      const bootstrapResources = liveBootstrapResources(descriptor)
+      const requiresAccountVerification = supportsAccountOrdersRead(descriptor)
+      const bootstrapResources = requiresAccountVerification ? ['orders'] as BootstrapResource[] : liveBootstrapResources(descriptor)
       return {
         providerKey: descriptor.providerKey,
         displayName: descriptor.displayName,
         rolloutStage,
         eligibleForOnboarding:
-          stageAffectsLiveBehavior(rolloutStage) && bootstrapResources.length > 0,
+          requiresAccountVerification || (stageAffectsLiveBehavior(rolloutStage) && bootstrapResources.length > 0),
         bootstrapResources,
+        requiresAccountVerification,
       }
     })
 }
@@ -259,6 +263,7 @@ export interface OnboardingMarketplaceView {
   verified: boolean
   accounts: OnboardingAccountView[]
   legacyConnection: OnboardingLegacyConnectionView | null
+  requiresAccountVerification?: boolean
 }
 
 export type CarrierVerificationState = 'NOT_CONFIGURED' | 'UNVERIFIED' | 'VERIFIED' | 'FAILED'
@@ -342,7 +347,8 @@ function syncFor(
  * ikinci bir tamamlanma algoritması YOKTUR.
  */
 export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStatus {
-  const eligible = snapshot.providers.filter((provider) => provider.eligibleForOnboarding)
+  const eligible = snapshot.providers.filter((provider) => provider.eligibleForOnboarding &&
+    (!provider.requiresAccountVerification || snapshot.accounts.some((account) => account.marketplace.toLowerCase() === provider.providerKey)))
   const accountScoped = new Set(
     snapshot.accountScopedCredentialProviders.map((key) => key.toLowerCase()),
   )
@@ -393,11 +399,13 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
           : credentialsRejected
             ? 'DISCONNECTED'
             : 'CONNECTED'
+        const verificationStatus = String(account.verificationStatus ?? 'unverified')
+        const accountVerified = account.isActive && verificationStatus === 'verified'
         const bootstrapReady =
           credentials === 'PRESENT' &&
           !credentialsRejected &&
+          (!provider.requiresAccountVerification || accountVerified) &&
           sync.some((entry) => entry.lastSuccessfulSyncAt !== null)
-        const verificationStatus = String(account.verificationStatus ?? 'unverified')
         return {
           marketplaceAccountId: account.id,
           displayName: account.displayName || provider.displayName,
@@ -411,7 +419,7 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
           verified:
             credentials === 'PRESENT' &&
             !credentialsRejected &&
-            (bootstrapReady || verificationStatus === 'verified'),
+            (provider.requiresAccountVerification ? accountVerified : (bootstrapReady || verificationStatus === 'verified')),
         }
       })
 
@@ -465,6 +473,7 @@ export function evaluateOnboarding(snapshot: OnboardingSnapshot): OnboardingStat
       verified,
       accounts,
       legacyConnection,
+      requiresAccountVerification: provider.requiresAccountVerification,
     }
   })
 

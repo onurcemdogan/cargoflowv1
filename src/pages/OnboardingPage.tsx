@@ -28,6 +28,14 @@ import { useAuth } from '../auth/useAuth'
 import { ProgressBar, SetupItem } from '../ui/primitives'
 import { BusinessProfileStep } from '../onboarding/BusinessProfileStep'
 import { OperationsStep } from '../onboarding/OperationsStep'
+import { authenticatedApiRequest } from '../services/authenticatedApiRequest'
+import { N11_TEST_ENDPOINT, N11_SYNC_ENDPOINT } from '../integrations/N11Section'
+import { HEPSIBURADA_TEST_ENDPOINT, HEPSIBURADA_SYNC_ENDPOINT } from '../integrations/HepsiburadaSection'
+
+const ACCOUNT_READ_ENDPOINTS: Record<string, { test: string; sync: string }> = {
+  n11: { test: N11_TEST_ENDPOINT, sync: N11_SYNC_ENDPOINT },
+  hepsiburada: { test: HEPSIBURADA_TEST_ENDPOINT, sync: HEPSIBURADA_SYNC_ENDPOINT },
+}
 
 const BLOCKER_LABELS: Record<string, string> = {
   BUSINESS_PROFILE_INCOMPLETE: 'İşletme bilgileri tamamlanmalı',
@@ -186,6 +194,26 @@ export function OnboardingPage({
       if (!mounted.current) return
       setSyncMessages((current) => ({ ...current, [key]: message }))
       await refreshStatus()
+    })
+  }
+
+  function accountReadActions(marketplace: OnboardingMarketplaceView, action: 'test' | 'sync') {
+    const endpoint = marketplace.requiresAccountVerification && ACCOUNT_READ_ENDPOINTS[marketplace.providerKey]?.[action]
+    if (!endpoint) return null
+    return marketplace.accounts.filter((account) => account.isActive && account.credentials === 'PRESENT').map((account) => {
+      const key = `${action}:${marketplace.providerKey}:${account.marketplaceAccountId}`
+      return <div key={key}>
+        <button type="button" disabled={busy[key] || (action === 'sync' && !account.verified)} onClick={() => void withBusy(key, async () => {
+          const response = await authenticatedApiRequest(endpoint, { method: 'POST', json: { marketplaceAccountId: account.marketplaceAccountId } })
+          const body = await response.json() as { ok?: boolean; message?: string }
+          if (!mounted.current) return
+          setSyncMessages((current) => ({ ...current, [key]: body.message ?? (response.ok && body.ok ? 'İşlem tamamlandı.' : 'İşlem tamamlanamadı.') }))
+          await refreshStatus()
+        })}>
+          {account.displayName}: {busy[key] ? (action === 'test' ? 'Doğrulanıyor…' : 'Senkronize ediliyor…') : action === 'test' ? 'Test Et' : 'Siparişleri Senkronize Et'}
+        </button>
+        {syncMessages[key] ? <p role="status">{syncMessages[key]}</p> : null}
+      </div>
     })
   }
 
@@ -372,6 +400,7 @@ export function OnboardingPage({
               {status.marketplaces.map((marketplace) => (
                 <div key={marketplace.providerKey} data-provider={marketplace.providerKey}>
                   <MarketplaceChips marketplace={marketplace} />
+                  {accountReadActions(marketplace, 'test')}
                   {marketplace.providerKey === 'trendyol' && (
                     <>
                       <label>
@@ -523,6 +552,7 @@ export function OnboardingPage({
                       : `${marketplace.displayName}: henüz başarılı bir ilk senkron yok.`}
                   </p>
                   <div className="onboarding-actions">
+                    {accountReadActions(marketplace, 'sync')}
                     {marketplace.bootstrapResources
                       .filter((resource) => SYNC_ACTIONS[marketplace.providerKey]?.[resource])
                       .map((resource) => {

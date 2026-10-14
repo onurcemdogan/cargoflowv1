@@ -48,9 +48,11 @@ test('HB-UI-1: iç test rozeti, dürüst metin ("canlı" iddiası yok); parola D
   responder = () => ({ status: 200, body: { ok: true, accounts: [ACCOUNT] } })
   render(<HepsiburadaSection />)
   expect(await screen.findByText('Hepsiburada • m-1001')).toBeTruthy()
-  expect(screen.getByTestId('hepsiburada-rollout-badge').textContent).toBe('İÇ TEST')
+  expect(screen.getByTestId('hepsiburada-rollout-badge').textContent).toBe('SİPARİŞ OKUMA')
   const section = screen.getByTestId('hepsiburada-section').textContent ?? ''
-  expect(section).toMatch(/canlı sipariş, kargo ve etiket akışına aktarılmaz/)
+  expect(section).toMatch(/hesabınız güvenli bir okuma isteğiyle doğrulanır/)
+  expect(section).toMatch(/Hesap doğrulanmadı/)
+  expect(section).toMatch(/Siparişler pasif/)
   expect(section).toMatch(/yol girilmezse istek gönderilmez/)
   expect(section).not.toMatch(/Canlı bağlantı|canlıda/)
   expect(screen.getByText('Parola kayıtlı')).toBeTruthy()
@@ -103,4 +105,22 @@ test('HB-UI-3: Test Et / Senkronize Et hesap kimliğiyle çağrılır; iç test 
 
   fireEvent.click(screen.getByRole('button', { name: 'Test Et' }))
   expect(await screen.findByText(/Okuma isteği yanıt verdi \(1 kayıt\)/)).toBeTruthy()
+})
+
+test('HB-UI-VERIFICATION: saved credentials remain inactive until exact account is verified; auth failure offers retry', async () => {
+  let account = { ...ACCOUNT, verificationStatus: 'unverified', ordersActive: false }
+  responder = (url) => {
+    if (url.endsWith('/accounts/test')) {
+      account = { ...account, verificationStatus: 'auth_failed', ordersActive: false }
+      return { status: 200, body: { ok: false, message: 'Kimlik bilgileri reddedildi.' } }
+    }
+    return { status: 200, body: { ok: true, accounts: [account] } }
+  }
+  render(<HepsiburadaSection />)
+  await screen.findByText('Siparişler pasif')
+  expect(screen.queryByText('Bağlı — Hesap doğrulandı')).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Test Et' }))
+  await screen.findByText('Doğrulama başarısız')
+  expect(screen.getByText('Siparişler pasif')).toBeTruthy()
+  expect(screen.getByRole('button', { name: 'Test Et' }).hasAttribute('disabled')).toBe(false)
 })

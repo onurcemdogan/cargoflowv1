@@ -51,6 +51,7 @@ import {
   type AutoLabelSettings,
 } from './suratAutoLabelPolicy.ts'
 import { resolveSuratCreateEligibility } from './suratCreateEligibility.ts'
+import { orderSourceFulfillmentAllowed } from './orderSourceFulfillmentGate.ts'
 import { resolveBillingPartyV2 } from './suratRoutingModel.ts'
 import { enqueueLabelJob, LABEL_JOB_TYPE } from './labelJobQueue.ts'
 import { loadAutoLabelSettings } from './autoLabelProducer.ts'
@@ -93,6 +94,7 @@ export const CATCHUP_EXCLUDED_MARKETPLACE_STATUSES: readonly string[] = [
 ]
 
 export type CatchupBlockReason =
+  | 'FULFILLMENT_NOT_AVAILABLE'
   | 'NOT_OPEN_STATUS'
   | 'TERMINAL_MARKETPLACE_STATUS'
   /** Paket `Created`: Sürat öncesi Picking geçişi gerekiyor. */
@@ -244,6 +246,10 @@ export function evaluateCatchupCandidate(params: {
     reason: string,
   ) => ({ eligible: false, reason, blockReason })
 
+  if (!orderSourceFulfillmentAllowed(row.marketplace)) {
+    return deny('FULFILLMENT_NOT_AVAILABLE', 'FULFILLMENT_NOT_AVAILABLE: Bu sipariş kaynağı için gönderi oluşturma açık değil.')
+  }
+
   if (!CATCHUP_OPEN_OPERATION_STATUSES.includes(localStatus)) {
     return deny('NOT_OPEN_STATUS', `Açık/barkod bekleyen durum değil (${localStatus}).`)
   }
@@ -322,6 +328,7 @@ export function evaluateCatchupCandidate(params: {
   // ── UYGUNLUK: ÜRETİMDEKİ GERÇEK KAPI ────────────────────────────────
   const eligibility = resolveSuratCreateEligibility({
     order: {
+      marketplace: String(row.marketplace ?? ''),
       orderNumber: String(row.orderNumber ?? ''),
       packageId,
       cargoTrackingNumber: String(row.cargoTrackingNumber ?? ''),

@@ -57,6 +57,7 @@ export interface OnboardingMarketplaceView {
   /** Kimlik bilgisi gerçek bir kontrolle doğrulandı mı (sunucu). */
   verified: boolean
   accounts: OnboardingAccountView[]
+  requiresAccountVerification?: boolean
 }
 
 export type OnboardingCarrierVerification = 'NOT_CONFIGURED' | 'UNVERIFIED' | 'VERIFIED' | 'FAILED'

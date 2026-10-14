@@ -100,7 +100,7 @@ export function resolveHepsiburadaHealth(input: HepsiburadaHealthInput): Hepsibu
 /** Görünen etiket: iç testte başarılı okuma, yazılmadığını AÇIKÇA söyler. */
 export function hepsiburadaHealthLabel(health: Pick<HepsiburadaHealth, 'state' | 'reasonCode'>): string {
   if (health.state === 'OK' && health.reasonCode === HB_CANONICAL_WRITE_BLOCKED) {
-    return 'Son okuma başarılı (iç test: kayıtlar sisteme yazılmadı)'
+    return 'Son okuma başarılı (hesap doğrulanmadı: kayıtlar sisteme yazılmadı)'
   }
   return HEPSIBURADA_HEALTH_COPY_TR[health.state]
 }

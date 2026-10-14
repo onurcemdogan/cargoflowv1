@@ -178,6 +178,13 @@ export function resolveEndpointPath(config: HepsiburadaConnectorConfig, family: 
   return template.split(MERCHANT_ID_PLACEHOLDER).join(encodeURIComponent(config.merchantId))
 }
 
+/** Only the selected read family's template can prove request-side identity. */
+export function isHepsiburadaReadMerchantBound(config: HepsiburadaConnectorConfig): boolean {
+  const family = resolveReadFamily(config)
+  const template = family === 'PACKAGES' ? config.packagesPath : family === 'ORDERS' ? config.ordersPath : null
+  return Boolean(template?.includes(MERCHANT_ID_PLACEHOLDER))
+}
+
 const maskTail = (value: string, keep = 3): string =>
   value === '' ? '' : value.length <= keep ? '•••' : `•••${value.slice(-keep)}`
 
