@@ -2,6 +2,7 @@
 // organizationId ZORUNLU ilk parametredir. onboarding_completed kaynak-of-truth
 // PostgreSQL'dedir; frontend'te SAKLANMAZ. Secret/credential DÖNMEZ.
 import { and, eq, isNull, lt, ne, or } from 'drizzle-orm'
+import { isCurrentMarketplaceAccount, marketplaceAccountLabel } from '../../src/integrations/marketplaceAccountVisibility.ts'
 import {
   integrationSyncState,
   marketplaceAccounts,
@@ -62,24 +63,33 @@ export async function getSettings(
   return rows[0] ?? null
 }
 
-// Organizasyonun TÜM pazaryeri hesapları (onboarding projeksiyonu için).
+// Organizasyonun güncel ayar hesapları (onboarding/catalog/carrier mapping).
+// Geçmiş okuma için marketplaceAccountRepository.listAccounts kullanılmalıdır.
 // Yalnız GÜVENLİ kolonlar okunur: kimlik bilgisi/sır bu tabloda YOKTUR ve
 // sorgu kiracı sınırını HER ZAMAN taşır.
 export async function listOrganizationMarketplaceAccounts(
   db: Db,
   organizationId: string,
 ): Promise<Record<string, unknown>[]> {
-  return db
+  const rows = await db
     .select({
       id: marketplaceAccounts.id,
       marketplace: marketplaceAccounts.marketplace,
       displayName: marketplaceAccounts.displayName,
+      providerAccountId: marketplaceAccounts.providerAccountId,
       isActive: marketplaceAccounts.isActive,
       verificationStatus: marketplaceAccounts.verificationStatus,
       lastVerifiedAt: marketplaceAccounts.lastVerifiedAt,
     })
     .from(marketplaceAccounts)
     .where(eq(marketplaceAccounts.organizationId, organizationId))
+  return rows.filter(isCurrentMarketplaceAccount).map(({ providerAccountId, ...row }: {
+    providerAccountId: string; marketplace: string; displayName: string | null
+  }) => ({
+    ...row,
+    displayName: row.marketplace.trim().toLowerCase() === 'trendyol'
+      ? marketplaceAccountLabel({ ...row, providerAccountId }) : row.displayName,
+  }))
 }
 
 export async function setOnboardingCompleted(

@@ -19,6 +19,7 @@ import { IntegrationLoading } from './IntegrationConnection'
 import { useCallback, useEffect, useState } from 'react'
 import { authenticatedApiRequest } from '../services/authenticatedApiRequest'
 import { PAYER_OPTIONS, type ShippingPayerValue } from '../shipping/shippingPayerCopy'
+import { isCurrentMarketplaceAccount, marketplaceAccountLabel } from './marketplaceAccountVisibility'
 
 export const SHIPPING_PAYER_ENDPOINT = '/api/shipping/payer'
 
@@ -66,7 +67,7 @@ export function ShippingPayerSection() {
         return
       }
       setLoadError(null)
-      setRows(accounts)
+      setRows(accounts.filter(isCurrentMarketplaceAccount))
     },
     [],
   )
@@ -138,9 +139,9 @@ export function ShippingPayerSection() {
       <ul className="integration-setting-rows">
         {rows.map((row) => {
           const status = rowStatus[row.marketplaceAccountId] ?? 'idle'
-          const label = row.displayName
-            ? `${row.marketplace} · ${row.displayName}`
-            : `${row.marketplace} · ${row.marketplaceAccountId.slice(0, 8)}`
+          const label = marketplaceAccountLabel({
+            ...row, displayName: row.displayName ?? row.marketplaceAccountId.slice(0, 8),
+          })
           const selectId = `payer-${row.marketplaceAccountId}`
           return (
             <li

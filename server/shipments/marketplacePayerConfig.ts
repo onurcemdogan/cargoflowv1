@@ -19,6 +19,7 @@
 // kendi değerini taşır ve biri diğerini ezemez.
 import { and, eq } from 'drizzle-orm'
 import { marketplaceAccounts, organizationSettings } from '../db/schema.ts'
+import { isCurrentMarketplaceAccount, marketplaceAccountLabel } from '../../src/integrations/marketplaceAccountVisibility.ts'
 import {
   payerEvidenceClass,
   SHIPPING_PAYERS,
@@ -160,7 +161,8 @@ export interface AccountPayerRow {
 }
 
 /**
- * Kiracının TÜM pazaryeri hesapları + mevcut ödeyen ayarı.
+ * Kiracının güncel ayar hesapları + mevcut ödeyen ayarı.
+ * Pasif Trendyol geçmişi saklanır; diğer sağlayıcıların davranışı korunur.
  *
  * Tek okuma noktası burasıdır; rota katmanı DB'ye dokunmaz.
  */
@@ -175,6 +177,7 @@ export async function loadAccountPayerView(
         id: marketplaceAccounts.id,
         marketplace: marketplaceAccounts.marketplace,
         displayName: marketplaceAccounts.displayName,
+        providerAccountId: marketplaceAccounts.providerAccountId,
         isActive: marketplaceAccounts.isActive,
       })
       .from(marketplaceAccounts)
@@ -182,14 +185,16 @@ export async function loadAccountPayerView(
       .where(eq(marketplaceAccounts.organizationId, scoped)),
     loadAccountPayerConfigs(db, scoped),
   ])
-  return (accounts as Record<string, unknown>[]).map((account) => {
+  return (accounts as Record<string, unknown>[]).filter(isCurrentMarketplaceAccount).map((account) => {
     const marketplace = String(account.marketplace ?? '')
     const evidenceClass = payerEvidenceClass(marketplace)
     const id = String(account.id)
     return {
       marketplaceAccountId: id,
       marketplace,
-      displayName: account.displayName ? String(account.displayName) : null,
+      displayName: marketplace.trim().toLowerCase() === 'trendyol'
+        ? marketplaceAccountLabel({ marketplace, displayName: account.displayName ? String(account.displayName) : null, providerAccountId: String(account.providerAccountId) })
+        : account.displayName ? String(account.displayName) : null,
       isActive: Boolean(account.isActive),
       evidenceClass,
       configurable: evidenceClass !== 'CAN_DERIVE_FROM_ORDER',

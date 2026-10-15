@@ -1,69 +1,48 @@
 {
   "schemaVersion": 1,
   "project": "cargoflow",
-  "ticket": "UI-UX-FIX-001",
+  "ticket": "SINGLE-MARKETPLACE-ACCOUNT-001",
   "status": "READY_FOR_USER_REVIEW",
   "implementationStatus": "COMPLETE",
   "phase": "LOCAL_COMMIT_DELIVERY",
-  "ticketBranch": "feat/ui-ux-fix-001-operational-polish",
-  "baselineCommit": "c499611d26e76add3d8332662a08a1e73434149c",
-  "specPath": ".ai/tickets/UI-UX-FIX-001.md",
-  "reportPath": "docs/ui-ux-fix-001-operational-polish.md",
+  "ticketBranch": "feat/single-marketplace-account-001-trendyol",
+  "baselineCommit": "6bb4d2e3ccfd663e4e2e880f7abb538f327db7a0",
+  "specPath": ".ai/tickets/SINGLE-MARKETPLACE-ACCOUNT-001.md",
+  "reportPath": "docs/single-marketplace-account-001-trendyol.md",
   "activeWorker": null,
   "lastImplementationWorker": "codex",
   "reviewer": "gpt-6-astra",
   "reviewStatus": "APPROVED",
-  "previousTicket": "INTEGRATIONS-UI-001",
+  "previousTicket": "UI-UX-FIX-001",
   "completedCriteria": [
-    "Reports is a standalone sidebar destination with analytics only and unchanged period/financial semantics",
-    "Picking inspection reuses existing projection/images, exposes variants/orders and supports close/Escape/focus restoration",
-    "Real App cargo-to-Orders regression reproduced and fixed via scoped canonical memory retention; exact identity and account-generation guards added",
-    "Background label preparation is secondary, collapsed and read-only with accurate worker status",
-    "All seven provider cards share default-collapsed disclosure; metadata/status/blockers remain visible; proven Woo OAuth return intent opens only Woo",
-    "Aras metadata failures are visibly unavailable rather than falsely empty",
-    "Required suites, affected regressions, type/lint/build and synthetic visual checks passed",
-    "New server test registry orphans are zero; no migration, provider/backend/scheduler changes, push, merge or deploy"
+    "Current payer, carrier settings, health/catalog and onboarding expose only active Trendyol; other providers retain visibility",
+    "Backend mapping mutation rejects retired Trendyol targets; historical routing still uses persisted full mappings",
+    "Current views show actual seller identity with no repeated provider; missing display name falls back to seller ID",
+    "Historical rows and original order marketplaceAccountId/detail reads remain intact",
+    "Supported Trendyol activation remains idempotent and is transactionally serialized with tenant organization row lock",
+    "Required and affected local gates passed; new server suite registered; no migration or live provider/production access"
   ],
   "qualityGates": {
-    "uiTests": 453,
-    "uiFiles": 48,
-    "dashboardTests": 11,
-    "productIaTests": 12,
-    "runtimeMemoryTests": 24,
+    "uiTests": 457,
+    "uiFiles": 49,
     "integrationStatus": {
       "backend": 9,
       "ui": 8
+    },
+    "billingParty": 43,
+    "carriers": {
+      "backend": 16,
+      "ui": 4
     },
     "onboarding": {
       "backend": 22,
       "ui": 13
     },
-    "hepsiburada": {
-      "backend": 23,
-      "ui": 4
-    },
-    "n11": {
-      "backend": 78,
-      "ui": 5
-    },
-    "woocommerce": {
-      "backend": 105,
-      "ui": 5
-    },
-    "ikas": {
-      "backend": 32,
-      "ui": 3
-    },
-    "aras": 95,
-    "carriers": {
-      "backend": 16,
-      "ui": 3
-    },
-    "billingParty": 43,
-    "affectedNodeTests": 131,
-    "newCargoNavigationTests": 5,
-    "newPickingAndAutomationTests": 4,
-    "integrationPresentationDomTests": 13,
+    "runtimeMemory": 24,
+    "integrationHealth": 53,
+    "focusedAccountRegressions": 48,
+    "newBackendTests": 7,
+    "newUiTests": 4,
     "serverTestRegistryOrphans": 0,
     "tsc": true,
     "lintErrors": 0,
@@ -72,11 +51,18 @@
     "diffCheck": true
   },
   "failingTests": [],
+  "validationNotes": [
+    "Initial local API startup timed out under parallel load; only owned child stopped; isolated and final sequential integration-status runs passed",
+    "Subscription marketplace connection usage remains stored-row metering and still counts retained history",
+    "PGlite parallel-call and SQL-lock assertions are not a multi-process production Postgres stress test"
+  ],
   "constraints": {
     "providerCallsPerformed": false,
     "productionAccessPerformed": false,
-    "backendRuntimeChanged": false,
+    "historicalOrdersChanged": false,
     "schedulerBehaviorChanged": false,
+    "shipmentOrLabelCreationChanged": false,
+    "shippingPayerDerivationChanged": false,
     "dbMigrationAdded": false,
     "n11EpochLogicChanged": false,
     "arasLiveWritesOpened": false,
@@ -85,5 +71,5 @@
     "mergePerformed": false,
     "deployPerformed": false
   },
-  "nextAction": "User reviews local branch HEAD and delivery report. Do not push, merge or deploy. N11 blocker, Aras restrictions and UNKNOWN shipment safety remain unchanged."
+  "nextAction": "Review local branch HEAD and delivery report. Stop here; no push, merge or deploy without user authorization."
 }

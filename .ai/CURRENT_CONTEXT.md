@@ -1,5 +1,44 @@
 # Current context
 
+2026-10-15, Europe/Istanbul. SINGLE-MARKETPLACE-ACCOUNT-001 is COMPLETE /
+READY_FOR_USER_REVIEW on feat/single-marketplace-account-001-trendyol.
+Exact baseline: 6bb4d2e3ccfd663e4e2e880f7abb538f327db7a0 (fresh origin/master).
+Local delivery commit is branch HEAD. No push, merge or deploy.
+
+Product rule: one CargoFlow organization has one current Trendyol seller.
+Historical account rows remain stored and retain historical order links.
+Only literal isActive === true Trendyol rows enter current payer/carrier
+settings, integration health/catalog and onboarding. Other providers retain
+visibility. Direct mapping calls reject inactive Trendyol targets; full historic
+mapping/routing and listAccounts/getAccountById/order detail reads are unchanged.
+Shared labels show the provider once and actual seller ID, including when the
+stored name is missing; persisted names are not rewritten for presentation.
+Existing Trendyol config remains a single account without selectors/toggles.
+
+The global single-active DB index had already been removed by 0013 for Woo.
+Supported Trendyol transitions now serialize on an organization row lock inside
+one transaction (idempotent upsert, sibling deactivation, target activation).
+Failures roll back. No migration; schema edits are comments only. PGlite tests
+exercise parallel calls and assert scoped FOR UPDATE SQL, not production stress.
+Subscription connection usage remains stored-row metering, including history.
+
+Checks: UI457/49 files; integration-status9+8 UI; billing43; carriers16+4 UI;
+onboarding22+13 UI; runtime-memory24; health53; focused account suites48
+(includes 7 new backend); 4 new UI/pure cases are included in UI457. Registry
+orphans0; tsc force/build/diff check passed; lint0 errors/6 baseline warnings.
+An initial local API startup timeout under load passed on isolated/final reruns.
+Independent gpt-6-astra review APPROVED, including final identity fallback.
+
+No provider/production calls, scheduler/fulfillment/label changes or migration.
+N11 blocker/BLOCKED_EXTERNAL, Aras live-write and UNKNOWN_AFTER_NETWORK remain.
+Known ambiguous production shipment never accessed/retried. Full changed files,
+behavior and validation: docs/single-marketplace-account-001-trendyol.md.
+User review is next. Do not push, merge or deploy.
+
+---
+
+# Previous context — UI-UX-FIX-001
+
 2026-10-15, Europe/Istanbul. Active ticket UI-UX-FIX-001, COMPLETE and
 READY_FOR_USER_REVIEW on `feat/ui-ux-fix-001-operational-polish`. Exact baseline:
 `c499611d26e76add3d8332662a08a1e73434149c` (current origin/master at startup).

@@ -68,10 +68,10 @@ async function makeOrg(db, slug) {
   return org.id
 }
 
-async function makeAccount(db, organizationId, marketplace, providerAccountId) {
+async function makeAccount(db, organizationId, marketplace, providerAccountId, isActive = false) {
   const [account] = await db
     .insert(schema.marketplaceAccounts)
-    .values({ organizationId, marketplace, providerAccountId })
+    .values({ organizationId, marketplace, providerAccountId, isActive })
     .returning()
   return account.id
 }
@@ -159,10 +159,12 @@ test('BPX-4: hesap gorunumu yuklenir, secim KALICI olur ve GERI OKUNUR', async (
   t.after(() => pglite.close())
   const org = await makeOrg(db, 'bpx-4')
   const n11Account = await makeAccount(db, org, 'n11', 'n11-1')
-  const trendyolAccount = await makeAccount(db, org, 'trendyol', '277221')
+  const trendyolAccount = await makeAccount(db, org, 'trendyol', '277221', true)
+  const retiredTrendyol = await makeAccount(db, org, 'trendyol', 'retired-seller')
 
   const before = await accountConfig.loadAccountPayerView(db, org)
   assert.equal(before.length, 2)
+  assert.ok(!before.some((row) => row.marketplaceAccountId === retiredTrendyol))
   const n11Before = before.find((row) => row.marketplaceAccountId === n11Account)
   const tyBefore = before.find((row) => row.marketplaceAccountId === trendyolAccount)
 

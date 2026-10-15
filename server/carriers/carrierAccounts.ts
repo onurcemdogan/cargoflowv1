@@ -15,6 +15,8 @@
 // `unverified`a döner: eski doğrulama YENİ kimliği kanıtlamaz.
 import { and, asc, eq, isNull } from 'drizzle-orm'
 import { carrierAccounts, marketplaceAccounts, marketplaceCarrierMappings } from '../db/schema.ts'
+import { isCurrentMarketplaceAccount } from '../../src/integrations/marketplaceAccountVisibility.ts'
+import { listOrganizationMarketplaceAccounts } from '../onboarding/onboardingRepository.ts'
 import {
   credentialFingerprint,
   getIntegrationCredential,
@@ -335,11 +337,13 @@ export async function setCarrierMapping(
 ): Promise<void> {
   const organizationId = requireOrg(params.organizationId)
   const marketplace = await db
-    .select({ id: marketplaceAccounts.id })
+    .select({ id: marketplaceAccounts.id, marketplace: marketplaceAccounts.marketplace, isActive: marketplaceAccounts.isActive })
     .from(marketplaceAccounts)
     .where(and(eq(marketplaceAccounts.organizationId, organizationId), eq(marketplaceAccounts.id, params.marketplaceAccountId)))
     .limit(1)
-  if (!marketplace[0]) throw new CarrierMappingError('MARKETPLACE_ACCOUNT_NOT_FOUND')
+  if (!marketplace[0] || !isCurrentMarketplaceAccount(marketplace[0])) {
+    throw new CarrierMappingError('MARKETPLACE_ACCOUNT_NOT_FOUND')
+  }
   if (params.carrierAccountId == null) {
     await db
       .delete(marketplaceCarrierMappings)
@@ -376,5 +380,31 @@ export async function resolveCarrierAccount(
     listCarrierMappings(db, params.organizationId),
   ])
   return resolveCarrierAccountFromRecords(accounts, mappings, params)
+}
+
+/** Current settings projection only; historical mappings and routing stay intact. */
+export async function loadCarrierAccountSettings(db: Db, organizationId: string) {
+  const scoped = requireOrg(organizationId)
+  const [accounts, allMappings, rows] = await Promise.all([
+    listCarrierAccounts(db, scoped),
+    listCarrierMappings(db, scoped),
+    listOrganizationMarketplaceAccounts(db, scoped),
+  ])
+  const marketplaceRows = rows.filter((row) => String(row.marketplace ?? '').toLowerCase() !== 'aras')
+  const currentIds = new Set(marketplaceRows.map((row) => String(row.id)))
+  const mappings = allMappings.filter((mapping) => currentIds.has(mapping.marketplaceAccountId))
+  return {
+    accounts,
+    mappings,
+    marketplaceAccounts: marketplaceRows.map((row) => ({
+      id: String(row.id),
+      marketplace: String(row.marketplace ?? ''),
+      displayName: row.displayName ? String(row.displayName) : null,
+      isActive: row.isActive === true,
+      resolution: resolveCarrierAccountFromRecords(accounts, mappings, {
+        provider: 'surat', marketplaceAccountId: String(row.id),
+      }),
+    })),
+  }
 }
 
