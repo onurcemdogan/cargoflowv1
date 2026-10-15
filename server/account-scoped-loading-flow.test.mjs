@@ -64,7 +64,9 @@ test('PERF-2: mount/reload/account-switch nesil ile stale sonucu DISCARD eder', 
   // Servis tarafında nesil damgası GERÇEKTEN üretiliyor mu?
   const svc = readSrc('src/services/orderWorkflowService.ts')
   assert.match(svc, /this\.ordersWorkspaceGeneration \+= 1/)
-  assert.match(svc, /stale: generation !== this\.ordersWorkspaceGeneration/)
+  assert.match(svc, /const stale = generation !== this\.ordersWorkspaceGeneration/)
+  assert.match(svc, /accountGeneration !== this\.getMarketplaceAccountGeneration\(\)/)
+  assert.match(svc, /for \(const order of stale \? \[\] : workspace\.items\)/)
 })
 
 // ── 3: workflowService — account-scoped SWR cache + TTL + nesil + clear ─────

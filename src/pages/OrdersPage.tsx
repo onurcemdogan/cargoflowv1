@@ -6,7 +6,7 @@ import {
   Filter,
   RefreshCcw,
 } from 'lucide-react'
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useId, useMemo, useState } from 'react'
 import { ActionResult } from '../components/ActionResult'
 import { OrderDetailDrawer } from '../components/OrderDetailDrawer'
 import { OrdersTable } from '../components/OrdersTable'
@@ -81,8 +81,11 @@ interface OrdersPageProps {
    * tarayıcıya inmez; verilmezse (legacy) aynı projeksiyon yerelde çalışır.
    */
   workspace?: OrdersWorkspaceResult
+  useServerWorkspace?: boolean
+  workspaceKey?: string
+  workspaceError?: string
   /** Filtre/sıralama/sayfa değiştiğinde sunucu sorgusunu bildirir. */
-  onWorkspaceQueryChange?: (query: OrdersWorkspaceQuery) => void
+  onWorkspaceQueryChange?: (query: OrdersWorkspaceQuery, consumerId: string) => void
   products: CargoProduct[]
   selectedIds: string[]
   onSuratCreateAndPrint?: () => void
@@ -193,6 +196,9 @@ const dateRangeOptions: Array<{ key: OrdersDatePreset; label: string }> = [
 export function OrdersPage({
   orders,
   workspace,
+  useServerWorkspace = false,
+  workspaceKey,
+  workspaceError,
   onWorkspaceQueryChange,
   products,
   selectedIds,
@@ -358,7 +364,11 @@ export function OrdersPage({
       dateRange.endTime,
       dateRange.startTime,
       dateRange.timezone,
-      debouncedText,
+      debouncedText.query,
+      debouncedText.customerQuery,
+      debouncedText.productQuery,
+      debouncedText.orderNumberQuery,
+      debouncedText.cargoSlipQuery,
       marketplace,
       district,
       multiProductFilter,
@@ -372,17 +382,23 @@ export function OrdersPage({
 
   // Sunucu modunda sorgu YUKARI bildirilir; App sayfayı çeker ve `workspace`
   // prop'u olarak geri verir. Tam koleksiyon tarayıcıya İNMEZ.
+  const consumerId = useId()
+  const expectedWorkspaceKey = `${consumerId}|${JSON.stringify(workspaceQuery)}`
+  const authoritativeWorkspace = useServerWorkspace
+    ? workspaceKey === expectedWorkspaceKey ? workspace : undefined
+    : workspace
   useEffect(() => {
-    onWorkspaceQueryChange?.(workspaceQuery)
-  }, [onWorkspaceQueryChange, workspaceQuery])
+    onWorkspaceQueryChange?.(workspaceQuery, consumerId)
+  }, [consumerId, onWorkspaceQueryChange, workspaceQuery])
 
   // Legacy (localStorage) modunda AYNI saf projeksiyon yerelde çalışır.
   // Sunucu sonucu varken yerel hesap YAPILMAZ (çift iş yok).
+  const workspacePending = useServerWorkspace && !authoritativeWorkspace
   const localWorkspace = useMemo(
-    () => (workspace ? null : buildOrdersWorkspaceResult(orders, workspaceQuery)),
-    [orders, workspace, workspaceQuery],
+    () => (authoritativeWorkspace ? null : buildOrdersWorkspaceResult(useServerWorkspace ? [] : orders, workspaceQuery)),
+    [orders, authoritativeWorkspace, useServerWorkspace, workspaceQuery],
   )
-  const view: OrdersWorkspaceResult = workspace ?? localWorkspace!
+  const view: OrdersWorkspaceResult = authoritativeWorkspace ?? localWorkspace!
   const pagination = view
   const tabCounts = view.tabCounts
   const cityOptions = view.cityOptions
@@ -552,7 +568,7 @@ export function OrdersPage({
             onClick={() => refreshForTab(tab.key)}
             disabled={busy && activeQuickTab === tab.key}
           >
-            {tab.label} ({tabCounts[tab.key]})
+            {tab.label} ({workspacePending ? '—' : tabCounts[tab.key]})
             {busy && activeQuickTab === tab.key ? ' · yenileniyor' : ''}
           </button>
         ))}
@@ -825,7 +841,7 @@ export function OrdersPage({
         </button>
       ) : null}
 
-      <SuratCreatePrintControls
+      {!workspacePending && <SuratCreatePrintControls
         orders={orders}
         visibleOrders={view.items}
         selectedIds={selectedIds}
@@ -865,11 +881,13 @@ export function OrdersPage({
         createDisabledReason={createDisabledReason}
         zplDisabledReason={zplDisabledReason}
         handedDisabledReason={handedDisabledReason}
-      />
+      />}
 
       <ActionResult result={lastResult} />
 
-      <OrdersTable
+      {workspacePending ? (
+        <div className="empty-state" role={workspaceError ? 'alert' : 'status'} aria-busy={!workspaceError}>{workspaceError ?? 'Güncel siparişler yükleniyor…'}</div>
+      ) : <OrdersTable
         orders={pagination.items}
         products={products}
         selectedIds={selectedIds}
@@ -904,9 +922,9 @@ export function OrdersPage({
               ]
             : []
         }
-      />
+      />}
 
-      <footer className="orders-pagination" aria-label="Sipariş sayfalama">
+      {!workspacePending && <footer className="orders-pagination" aria-label="Sipariş sayfalama">
         <span>
           {pagination.totalItems === 0
             ? '0 paket'
@@ -985,7 +1003,7 @@ export function OrdersPage({
             <ChevronRight size={17} />
           </button>
         </div>
-      </footer>
+      </footer>}
 
       {activeOrder ? (
         <OrderDetailDrawer

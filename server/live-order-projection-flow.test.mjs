@@ -212,7 +212,8 @@ test('Dashboard Yenile: sync yok, indirekt useEffect sync yok, analytics local',
   // kullanır; hiçbir effect handleFetchOrders/sync tetiklemez.
   const reloadIdx = appSrc.indexOf('async function handleReloadOrders')
   const reloadWindow = appSrc.slice(reloadIdx, reloadIdx + 1500)
-  assert.match(reloadWindow, /loadOrdersWorkspace\(/)
+  assert.match(reloadWindow, /requestOrdersWorkspaceRevalidation\(/)
+  assert.match(appSrc, /if \(query && mounted.current\) await loadOrdersWorkspace\(query\)/)
   assert.equal(/orders\/sync/.test(reloadWindow), false)
   // handleFetchOrders (sync) yalnız config-save ve OrdersPage onFetchOrders'ta.
   assert.match(appSrc, /onFetchOrders=\{\(options\) => handleFetchOrders/)

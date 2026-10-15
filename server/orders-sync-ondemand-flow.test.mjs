@@ -246,7 +246,8 @@ test('1-3) App.tsx: sayfa açılışı/route/dashboard geçişi DB okur, Trendyo
   // sunucu tarafı çalışma alanı sorgusu, legacy modda localStorage.
   // Pazaryerine (sync) HİÇBİR koşulda çıkmaz.
   const reloadBlock = sliceBlock(app, 'async function handleReloadOrders() {', 2000)
-  assert.match(reloadBlock, /loadOrdersWorkspace\(/, 'reload DB\'den okur')
+  assert.match(reloadBlock, /requestOrdersWorkspaceRevalidation\(/, 'reload ortak DB-only coalescer kullanır')
+  assert.match(app, /if \(query && mounted\.current\) await loadOrdersWorkspace\(query\)/, 'coalescer yalnız çalışma alanı okur')
   assert.match(reloadBlock, /workflowService\.loadOrders\(\)/, 'legacy yol korunur')
   assert.doesNotMatch(reloadBlock, /\/api\/orders\/sync/, 'reload sync endpoint\'i çağırmaz')
   assert.doesNotMatch(reloadBlock, /handleFetchOrders/, 'reload sync tetiklemez')

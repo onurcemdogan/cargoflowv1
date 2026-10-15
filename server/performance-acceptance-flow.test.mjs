@@ -383,8 +383,10 @@ test('PERF-8: Siparisler ekrani sunucu sayfasini KULLANIR (istemci tam dizi sayf
     'OrdersPage hala istemci tarafinda tam diziyi sayfaliyor',
   )
   // Sunucu sonucu ONCELIKLIDIR; yerel projeksiyon yalniz legacy yedegidir.
-  assert.match(source, /workspace \?\? localWorkspace/)
-  assert.match(source, /onWorkspaceQueryChange\?\.\(workspaceQuery\)/)
+  assert.match(source, /authoritativeWorkspace \?\? localWorkspace/)
+  assert.match(source, /workspaceKey === expectedWorkspaceKey/)
+  assert.match(source, /useServerWorkspace \? \[\] : orders/)
+  assert.match(source, /onWorkspaceQueryChange\?\.\(workspaceQuery, consumerId\)/)
 })
 
 test('PERF-9: Siparisler yolu TAM koleksiyon CEKMEZ', async () => {

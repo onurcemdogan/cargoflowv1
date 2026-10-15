@@ -117,7 +117,8 @@ test('RES-7: Dashboard Yenile /api/orders/sync ÇAĞIRMAZ (yalnız yerel reload)
   // sorgusu (`loadOrdersWorkspace`), legacy modda localStorage (`loadOrders`).
   // Eskiden burada `loadOrdersFromServer()` (TÜM tabloyu indiren yol) vardı;
   // o yol kaldırıldı, DEĞİŞMEZ aynı kaldı: yalnız yerel DB okunur.
-  assert.match(block, /loadOrdersWorkspace\(/)
+  assert.match(block, /requestOrdersWorkspaceRevalidation\(/)
+  assert.match(app, /if \(query && mounted.current\) await loadOrdersWorkspace\(query\)/)
   assert.match(block, /workflowService\.loadOrders\(\)/)
 })
 
