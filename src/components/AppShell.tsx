@@ -1,5 +1,6 @@
 import {
   ClipboardList,
+  ChartNoAxesCombined,
   ListChecks,
   Compass,
   House,
@@ -56,6 +57,7 @@ const navItems: Array<{
   { key: 'picking', label: 'Toplanacak Ürünler', icon: ListChecks },
   { key: 'cargo', label: 'Kargo Operasyonları', icon: Truck },
   { key: 'shipments', label: 'Gönderiler', icon: Route },
+  { key: 'reports', label: 'Raporlar', icon: ChartNoAxesCombined },
   { key: 'products', label: 'Ürünler', icon: PackageSearch },
   { key: 'integrations', label: 'Entegrasyonlar', icon: Plug },
 ]

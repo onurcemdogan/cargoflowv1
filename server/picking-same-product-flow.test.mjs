@@ -648,19 +648,14 @@ test('PICKING-UX-LAYOUT: Toplanacak Ürünler TAM GENİŞLİK, dar sağ kolon YO
     !css.includes('max-height: 340px'),
     'küçük iç scroll penceresi kaldırılmalı',
   )
-  // Operasyon Akışı korunur ve kendi satırında tam genişliktir.
-  assert.ok(css.includes('.dashboard-operation-flow-card { grid-column: span 12; }'))
-
-  const page = readFileSync('src/pages/DashboardPage.tsx', 'utf8')
-  const opsIndex = page.indexOf('dashboard-analytics-row-ops')
-  const pickingIndex = page.indexOf('dashboard-picking-row')
-  assert.ok(opsIndex > 0 && pickingIndex > 0, 'iki bölüm de bulunmalı')
-  assert.ok(
-    opsIndex < pickingIndex,
-    "Toplanacak Ürünler, Operasyon Akışının ALTINDA olmalı",
-  )
-  // Operasyon Akışı kaldırılmadı.
-  assert.ok(page.includes('title="Operasyon Akışı"'))
+  // Reports is analytics; the canonical picking workspace and Home summary stay separate.
+  const reports = readFileSync('src/pages/DashboardPage.tsx', 'utf8')
+  assert.doesNotMatch(reports, /dashboard-picking-row|title="Operasyon Akışı"|title="Son Operasyonlar"/)
+  const picking = readFileSync('src/pages/PickingProductsPage.tsx', 'utf8')
+  assert.match(picking, /buildPickingWorkspace/)
+  assert.match(picking, /PickingProductDetail/)
+  const home = readFileSync('src/pages/HomePage.tsx', 'utf8')
+  assert.match(home, /PickingSummary/)
 })
 
 test('PICKING-UX-PURE: sunum bileşeni İŞ KURALI içermez', async () => {

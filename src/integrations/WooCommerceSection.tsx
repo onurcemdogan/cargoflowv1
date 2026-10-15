@@ -19,6 +19,7 @@
 import { Alert, Badge, Field } from '../ui/primitives'
 import {
   IntegrationConnectionCard,
+  type IntegrationDisclosureProps,
   IntegrationAccountCard,
   IntegrationFormSection,
   IntegrationFormActions,
@@ -92,7 +93,8 @@ function verificationLabel(store: WooStoreRow): string {
   return 'Doğrulanmadı'
 }
 
-export function WooCommerceSection() {
+export function WooCommerceSection(disclosure: IntegrationDisclosureProps = {}) {
+  const [authReturnIntent] = useState(() => Boolean(readWooAuthReturn()))
   const [stores, setStores] = useState<WooStoreRow[]>([])
   const [authorizationAvailable, setAuthorizationAvailable] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -268,7 +270,9 @@ export function WooCommerceSection() {
 
   if (loading) {
     return (
-      <IntegrationConnectionCard
+      <IntegrationConnectionCard {...disclosure}
+        defaultExpanded={authReturnIntent}
+        summary={<IntegrationLoading>Mağazalar yükleniyor…</IntegrationLoading>}
         provider="woocommerce"
         title="WooCommerce"
         kind="commerce"
@@ -280,7 +284,9 @@ export function WooCommerceSection() {
     )
   }
   return (
-    <IntegrationConnectionCard
+    <IntegrationConnectionCard {...disclosure}
+      summary={<>{loadError ? <Alert tone="danger" role="alert">{loadError}</Alert> : <p>{loading ? 'Mağazalar yükleniyor…' : stores.length ? stores.length + ' mağaza kayıtlı' : 'Bağlı mağaza yok'}</p>}{stores.map((store) => <div key={store.marketplaceAccountId} className="integration-summary-account"><strong>{store.displayName ?? store.providerAccountId}</strong><span>{verificationLabel(store)}</span><small>{store.storeUrl || '—'}</small></div>)}</>}
+      defaultExpanded={authReturnIntent}
       provider="woocommerce"
       title="WooCommerce"
       kind="commerce"

@@ -97,6 +97,7 @@ test('IA-NAV-1: sidebar sırası ürün akışını izler; Etiket Şablonları a
     'Toplanacak Ürünler',
     'Kargo Operasyonları',
     'Gönderiler',
+    'Raporlar',
     'Ürünler',
     'Entegrasyonlar',
   ])
@@ -537,14 +538,13 @@ test('UI-IA-HOME: compact sales and picking use complete canonical snapshot; det
   vi.unstubAllGlobals()
 })
 
-test('UI-IA-DASH: detailed analytics links to picking without mounting the picking workspace', async () => {
-  const props = dashboardProps()
-  render(<DashboardPage {...props} />)
+test('UI-UX-REPORTS: analytics retains periods and contains no operational workspace', async () => {
+  render(<DashboardPage {...dashboardProps()} />)
   await screen.findByTestId('dashboard-period-summary')
-  const summary = screen.getByTestId('picking-compact-summary')
-  fireEvent.click(within(summary).getByRole('button', { name: 'Görüntüle' }))
-  expect(props.onNavigatePage).toHaveBeenCalledWith('picking')
-  expect(screen.queryByTestId('picking-card')).toBeNull()
+  for (const name of ['Operasyon Akışı', 'Toplanacak Ürünler', 'Son Operasyonlar']) expect(screen.queryByText(name)).toBeNull()
+  expect(screen.queryByTestId('picking-compact-summary')).toBeNull()
+  expect(screen.queryByLabelText('Sipariş detayı')).toBeNull()
+  for (const name of ['Bugün', 'Dün', '7 Gün', '30 Gün', 'Bu Ay', 'Özel']) expect(screen.getByRole('button', { name })).toBeTruthy()
 })
 
 test('UI-IA-SALES: unknown amounts/refund source stay unavailable in both themes', () => {

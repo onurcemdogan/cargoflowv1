@@ -38,7 +38,7 @@ afterEach(() => {
 
 test('N11-UI-1: iç test rozeti; dürüst metin (canlı doğrulama yok, yazma kapalı); sır DEĞERİ hiçbir yerde yok', async () => {
   responder = () => ({ status: 200, body: { ok: true, accounts: [ACCOUNT] } })
-  render(<N11Section />)
+  render(<N11Section expanded />)
   expect(await screen.findByText('n11 • Satıcı 9876543')).toBeTruthy()
   expect(screen.getByTestId('n11-rollout-badge').textContent).toBe('SİPARİŞ OKUMA')
   const section = screen.getByTestId('n11-section').textContent ?? ''
@@ -63,7 +63,7 @@ test('N11-UI-2: Düzenle appKey/appSecret GERİ DOLDURMAZ; hesap kimliğiyle kay
     }
     return { status: 200, body: { ok: true, accounts: [ACCOUNT] } }
   }
-  render(<N11Section />)
+  render(<N11Section expanded />)
   await screen.findByText('n11 • Satıcı 9876543')
   fireEvent.click(screen.getByRole('button', { name: 'Düzenle' }))
   expect((document.getElementById('n11-app-key') as HTMLInputElement).value).toBe('')
@@ -86,9 +86,9 @@ test('N11-UI-3: Test Et / Senkronize Et hesap kimliğiyle çağrılır; iç test
     if (url.endsWith('/accounts/test')) return { status: 200, body: { ok: true, recordsRead: 1, message: 'Bu iç test aşamasıdır.' } }
     return { status: 200, body: { ok: true, accounts: [ACCOUNT] } }
   }
-  render(<N11Section />)
+  render(<N11Section expanded />)
   await screen.findByText('n11 • Satıcı 9876543')
-  fireEvent.click(screen.getByRole('button', { name: 'Senkronize Et' }))
+  fireEvent.click(screen.getByRole('button', { name: /Siparişleri Senkronize Et|Senkronize Et/ }))
   expect(await screen.findByText(/4 kayıt okundu\. İç test aşaması/)).toBeTruthy()
   expect(JSON.parse(String(calls.find((call) => call.url.endsWith('/accounts/sync'))?.body))).toEqual({ marketplaceAccountId: 'acc-n11' })
 
@@ -130,7 +130,7 @@ test('N11-UI-VERIFICATION: Test Et reloads persisted evidence; credential save i
     }
     return { status: 200, body: { ok: true, accounts: [account] } }
   }
-  render(<N11Section />)
+  render(<N11Section expanded />)
   await screen.findByText('Siparişler pasif')
   expect(screen.queryByText('Bağlı — Hesap doğrulandı')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Test Et' }))

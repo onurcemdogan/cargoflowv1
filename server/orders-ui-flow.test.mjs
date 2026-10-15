@@ -107,7 +107,10 @@ test('Sipariş sekmeleri ilgili statüleri çeker ve şablon editörü görünü
   )
   assert.match(integrationsHtml, /Entegrasyonlar \/ Ayarlar/)
   assert.match(integrationsHtml, /Trendyol/)
-  assert.match(integrationsHtml, /Senkronize Et/)
+  // Credential/operational details are collapsed by default; DOM tests exercise explicit actions.
+  assert.doesNotMatch(integrationsHtml, /Senkronize Et/)
+  assert.match(integrationsHtml, /Trendyol yönet/)
+  assert.match(integrationsHtml, /aria-expanded="false"/)
   assert.match(integrationsHtml, /Ayarlar/)
   assert.doesNotMatch(integrationsHtml, /Servis Çalışma Saatleri/)
 

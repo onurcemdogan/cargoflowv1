@@ -46,7 +46,7 @@ afterEach(() => {
 })
 
 test('WW-1: önerilen yol — mağaza adresi → bağlan → WooCommerce onay ekranı', async () => {
-  render(<WooCommerceSection />)
+  render(<WooCommerceSection expanded />)
   const input = await screen.findByLabelText('Mağaza adresi')
   fireEvent.change(input, { target: { value: 'https://shop.example.com' } })
   fireEvent.click(screen.getByRole('button', { name: 'Mağazaya bağlan' }))
@@ -59,7 +59,7 @@ test('WW-1: önerilen yol — mağaza adresi → bağlan → WooCommerce onay ek
 
 test('WW-2: HTTPS uygulama adresi yoksa sihirbaz kapalıdır; elle anahtar yalnız gelişmiş bölümdedir', async () => {
   storesPayload = { ok: true, stores: [], authorizationAvailable: false }
-  render(<WooCommerceSection />)
+  render(<WooCommerceSection expanded />)
   expect(await screen.findByText(/Otomatik bağlantı bu ortamda kapalı/)).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Mağazaya bağlan' })).toBeNull()
   const advanced = screen.getByText('Gelişmiş: REST anahtarıyla bağlan').closest('details') as HTMLDetailsElement
@@ -100,7 +100,7 @@ test('WW-4: onay reddedildiyse hata yetkilendirme adımında açıkça gösteril
 })
 
 test('WW-5: elle anahtar kaydı tarayıcıda sır bırakmaz', async () => {
-  render(<WooCommerceSection />)
+  render(<WooCommerceSection expanded />)
   await screen.findByLabelText('Mağaza adresi')
   fireEvent.change(screen.getByLabelText('Consumer Secret'), { target: { value: 'cs_GIZLI' } })
   fireEvent.click(screen.getByRole('button', { name: 'Bağlantıyı Test Et ve Kaydet' }))

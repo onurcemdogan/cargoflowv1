@@ -38,7 +38,7 @@ afterEach(() => {
 
 test('IKAS-UI-1: iç test rozeti ve dürüst metin; her mağaza bağımsız satır; sır DEĞERİ yok', async () => {
   responder = () => ({ status: 200, body: { ok: true, stores: [STORE_A, STORE_B] } })
-  render(<IkasSection />)
+  render(<IkasSection expanded />)
   expect(await screen.findByText('Mağaza A')).toBeTruthy()
   expect(screen.getByTestId('ikas-rollout-badge').textContent).toBe('İÇ TEST')
   expect(screen.getByTestId('ikas-section').textContent).toMatch(/canlı sipariş, kargo ve etiket akışına aktarılmaz/)
@@ -60,7 +60,7 @@ test('IKAS-UI-2: başarılı bağlantıda sır alanı BOŞALTILIR; başarısızd
     }
     return { status: 200, body: { ok: true, stores } }
   }
-  render(<IkasSection />)
+  render(<IkasSection expanded />)
   await screen.findByText('Mağaza A')
   fireEvent.change(screen.getByLabelText('ikas mağaza adı'), { target: { value: 'magazab' } })
   fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'cid-B' } })
@@ -94,7 +94,7 @@ test('IKAS-UI-3: sipariş okuma testi yalnız SAYI gösterir; kaldırma yalnız 
     }
     return { status: 200, body: { ok: true, stores } }
   }
-  render(<IkasSection />)
+  render(<IkasSection expanded />)
   await screen.findByText('Mağaza A')
   const rowA = document.querySelector('[data-ikas-store="acc-A"]') as HTMLElement
   await act(async () => {

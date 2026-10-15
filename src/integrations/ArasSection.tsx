@@ -2,6 +2,7 @@
 import { Alert, Badge, Field } from '../ui/primitives'
 import {
   IntegrationConnectionCard,
+  type IntegrationDisclosureProps,
   IntegrationAccountCard,
   IntegrationFormSection,
   IntegrationFormActions,
@@ -30,9 +31,10 @@ function verificationText(store: ArasStoreRow): string {
   return 'Kayıtlı, doğrulanmadı'
 }
 
-export function ArasSection() {
+export function ArasSection(disclosure: IntegrationDisclosureProps = {}) {
   const [stores, setStores] = useState<ArasStoreRow[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [userName, setUserName] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -44,16 +46,23 @@ export function ArasSection() {
     const body = (await response.json()) as { ok?: boolean; stores?: ArasStoreRow[] }
     if (!response.ok || !body?.ok) {
       setStores([])
+      setLoadError('Aras hesapları yüklenemedi.')
       return
     }
+    setLoadError(null)
     setStores(Array.isArray(body.stores) ? body.stores : [])
   }, [])
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
-      await load()
-      if (!cancelled) setLoading(false)
+      try {
+        await load()
+      } catch {
+        if (!cancelled) setLoadError('Aras hesapları yüklenemedi.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
     })()
     return () => {
       cancelled = true
@@ -86,7 +95,8 @@ export function ArasSection() {
 
   if (loading) {
     return (
-      <IntegrationConnectionCard
+      <IntegrationConnectionCard {...disclosure}
+        summary={<IntegrationLoading>Aras hesapları yükleniyor…</IntegrationLoading>}
         provider="aras"
         title="Aras Kargo"
         kind="carrier"
@@ -98,7 +108,8 @@ export function ArasSection() {
     )
   }
   return (
-    <IntegrationConnectionCard
+    <IntegrationConnectionCard {...disclosure}
+      summary={<>{loadError ? <Alert tone="danger" role="alert">{loadError}</Alert> : <p>{stores.length ? stores.length + ' hesap kayıtlı' : 'Bağlı Aras hesabı yok.'}</p>}{stores.map((store) => <div key={store.marketplaceAccountId} className="integration-summary-account"><strong>{store.displayName ?? 'Aras hesabı'}</strong><span>{verificationText(store)}</span></div>)}</>}
       provider="aras"
       title="Aras Kargo"
       kind="carrier"
@@ -135,7 +146,8 @@ export function ArasSection() {
           />
         ))}
       </ul>
-      {stores.length === 0 ? (
+      {loadError ? <Alert tone="danger" role="alert">{loadError}</Alert> : null}
+      {!loadError && stores.length === 0 ? (
         <p className="integration-connection-empty">Bağlı Aras hesabı yok.</p>
       ) : null}
       <IntegrationFormSection

@@ -117,6 +117,7 @@ function payload(url: string) {
   if (url.includes('/aras/stores')) return { ok: true, stores: [ARAS] }
   if (url === '/api/carrier-accounts')
     return { ok: true, accounts: [], mappings: [], marketplaceAccounts: [] }
+  if (url === '/api/debug/surat-traces') return { traces: [] }
   if (url === '/api/shipping/payer') return { ok: true, accounts: [] }
   throw new Error(`Unexpected request: ${url}`)
 }
@@ -157,6 +158,10 @@ test.each([
   '%s shares connection/account/form presentation and loads persisted metadata only',
   async (provider, Component) => {
     const { container } = render(<Component />)
+    const toggle = screen.getByRole('button', { name: names[provider] + ' yönet' })
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(container.querySelector('.integration-connection-form')).toBeNull()
+    fireEvent.click(toggle)
     await waitFor(() =>
       expect(
         container.querySelector('.integration-connection-account'),
@@ -181,17 +186,19 @@ test.each([
     )
     expect(secrets.length).toBeGreaterThan(0)
     expect([...secrets].every((field) => field.value === '')).toBe(true)
-    expect(section.textContent).not.toMatch(
-      /Canlı bağlantı|üretimde kullanılabilir/i,
-    )
+    expect(section.textContent).not.toMatch(/Canlı bağlantı|üretimde kullanılabilir/i)
+    fireEvent.click(within(section).getByRole('button', { name: names[provider] + ' detaylarını kapat' }))
+    expect(toggle.getAttribute('aria-expanded')).toBe('false')
+    expect(section.querySelector('.integration-connection-form')).toBeNull()
+    expect(calls.every((call) => call.method === 'GET')).toBe(true)
   },
 )
 
 test('configured credentials never become verified; read activation cannot enable blocked n11 checkpoints', async () => {
   const { container } = render(
     <>
-      <HepsiburadaSection />
-      <N11Section />
+      <HepsiburadaSection expanded />
+      <N11Section expanded />
     </>,
   )
   await screen.findByText('HB örnek mağaza')
@@ -317,7 +324,7 @@ test('Trendyol/Sürat primary handlers are unchanged and opening their panels pe
   const trendyol = screen
     .getByRole('heading', { name: 'Trendyol' })
     .closest('section') as HTMLElement
-  fireEvent.click(within(trendyol).getByRole('button', { name: 'Ayarlar' }))
+  fireEvent.click(within(trendyol).getByRole('button', { name: /yönet$/ }))
   expect(props.onSave).not.toHaveBeenCalled()
   expect(props.onTestTrendyol).not.toHaveBeenCalled()
   fireEvent.click(
@@ -330,7 +337,7 @@ test('Trendyol/Sürat primary handlers are unchanged and opening their panels pe
   const surat = screen
     .getByRole('heading', { name: 'Sürat Kargo' })
     .closest('section') as HTMLElement
-  fireEvent.click(within(surat).getByRole('button', { name: 'Ayarlar' }))
+  fireEvent.click(within(surat).getByRole('button', { name: /yönet$/ }))
   expect(props.onTestSurat).not.toHaveBeenCalled()
   fireEvent.click(within(surat).getByRole('button', { name: 'Test Et' }))
   expect(props.onTestSurat).toHaveBeenCalledTimes(1)
@@ -342,7 +349,7 @@ test('Aras has only existing explicit account save, clears password and never of
     init?.method === 'POST'
       ? { ok: true, message: 'Kaydedildi. Aras Kargo iç testtedir.' }
       : payload(url)
-  render(<ArasSection />)
+  render(<ArasSection expanded />)
   await screen.findByText('Aras örnek hesap')
   expect(screen.getByText('Kayıtlı, doğrulanmadı')).toBeTruthy()
   expect(
@@ -365,4 +372,43 @@ test('Aras has only existing explicit account save, clears password and never of
     displayName: '',
   })
   expect((screen.getByLabelText('Şifre') as HTMLInputElement).value).toBe('')
+})
+
+ test('all seven cards default collapsed and toggle in place without operational actions', async () => {
+  const props = pageProps()
+  render(<IntegrationsPage {...props} />)
+  for (const [category, providers] of [
+    ['Pazaryerleri', ['trendyol', 'hepsiburada', 'n11']],
+    ['Kargo Firmaları', ['surat', 'aras']],
+    ['E-Ticaret Siteleri', ['woocommerce', 'ikas']],
+  ] as const) {
+    fireEvent.click(screen.getByRole('button', { name: category }))
+    for (const key of providers) {
+      const card = await screen.findByRole('region', { name: names[key] })
+      const toggle = within(card).getByRole('button', { name: names[key] + ' yönet' })
+      expect(toggle.getAttribute('aria-expanded')).toBe('false')
+      expect(within(card).queryByRole('textbox')).toBeNull()
+      if (key === 'n11') expect(within(card).getByText(/N11_EPOCH_SEMANTICS_UNVERIFIED/)).toBeTruthy()
+      if (key === 'aras') await within(card).findByText('Canlı gönderi kapalı')
+      fireEvent.click(toggle)
+      if (key === 'trendyol') fireEvent.click(within(card).getByRole('button', { name: 'API Bilgileri' }))
+      if (key === 'surat') fireEvent.click(within(card).getByRole('button', { name: 'Hesap' }))
+      await waitFor(() => expect(card.querySelector('input'), key).toBeTruthy())
+      const secrets = Array.from(card.querySelectorAll<HTMLInputElement>('input[type="password"]'))
+      expect(secrets.every((field) => field.value === '')).toBe(true)
+      fireEvent.click(toggle)
+      expect(toggle.getAttribute('aria-expanded')).toBe('false')
+      expect(card.querySelector('input')).toBeNull()
+    }
+  }
+  for (const action of [props.onSave, props.onTestTrendyol, props.onTestSurat, props.onFetchOrders, props.onFetchProducts]) expect(action).not.toHaveBeenCalled()
+  expect(calls.every((call) => call.method === 'GET')).toBe(true)
+ })
+
+test('Aras rejected metadata GET shows an error while collapsed and never claims an empty account', async () => {
+  vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('Synthetic unavailable') }))
+  render(<ArasSection />)
+  expect((await screen.findByRole('alert')).textContent).toContain('Aras hesapları yüklenemedi.')
+  expect(screen.queryByText('Bağlı Aras hesabı yok.')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Aras Kargo yönet' }).getAttribute('aria-expanded')).toBe('false')
 })

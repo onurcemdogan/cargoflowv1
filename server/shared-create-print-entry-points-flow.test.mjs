@@ -119,34 +119,15 @@ test('SEP-8: Detay Gelişmiş İşlemler ÜÇ eski handler\'ı korur', () => {
 })
 
 // ---------------------------------------------------------------- 9 + 14
-test('SEP-9/14: Dashboard yazıcı ikonu ORTAK handler, metin provider-bağımsız', () => {
-  const zone = dashboard.slice(
-    dashboard.indexOf('dashboard-row-actions'),
-    dashboard.indexOf('</td>', dashboard.indexOf('dashboard-row-actions')),
-  )
-  assert.match(zone, /onCreateAndPrintLabelForOrder \?\? onPrintOrder\)\(\s*operation\.id,?\s*\)/)
-  assert.match(zone, /title="Kargo etiketi oluştur ve yazdır"/)
-  assert.match(zone, /kargo etiketi oluştur ve yazdır/)
-  assert.equal(/Sürat/.test(zone), false, 'kullanıcı metninde provider adı YOK')
-  // Görüntüle ve indirme ikonları KORUNUR.
-  assert.match(zone, /Sipariş detayını görüntüle/)
-  assert.match(zone, /ZPL indir/)
+test('SEP-9/14: Reports has no shipment/print/download action surface', () => {
+  assert.doesNotMatch(dashboard, /dashboard-row-actions|<OrderDetailDrawer|<Printer|<Download/)
+  assert.match(dashboard, /data-testid="dashboard-period-summary"/)
 })
 
-// ---------------------------------------------------------------- 10
-test('SEP-10: Dashboard ikonu "Barkod Bekliyor" siparişte DISABLED DEĞİL', () => {
-  const zone = dashboard.slice(
-    dashboard.indexOf('dashboard-row-actions'),
-    dashboard.indexOf('</td>', dashboard.indexOf('dashboard-row-actions')),
-  )
-  const printBtn = zone.slice(
-    zone.indexOf('kargo etiketi oluştur ve yazdır'),
-    zone.indexOf('<Printer size={15} />'),
-  )
-  // Eski salt-baskı kuralı (canPrint) ARTIK kapatmıyor.
-  assert.equal(/disabled=\{!operation\.canPrint\}/.test(printBtn), false)
-  assert.match(printBtn, /!operation\.id/)
-  assert.match(printBtn, /isCarrierLabelActionBusy\?\.\(operation\.id\)/)
+test('SEP-10: operational create/print remains in Orders and its detail drawer', () => {
+  assert.match(ordersPage, /onCreateAndPrintLabel/)
+  assert.match(drawer, /Kargo Etiketi Oluştur ve Yazdır/)
+  assert.match(app, /runSuratCreateAndPrint/)
 })
 
 // ---------------------------------------------------------------- 15

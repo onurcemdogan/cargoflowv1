@@ -126,8 +126,8 @@ test('PERF-7: Dashboard mount /api/orders/sync çağırmaz; sales+claims ayrı p
   // İki ayrı effect: satış analitiği ve iade (claims) bağımsız yüklenir.
   assert.match(page, /fetchDashboardAnalyticsOrders\(/)
   assert.match(page, /fetchDashboardAnalyticsClaims\(/)
-  // Sales analitiği yüklenirken operasyon bölümleri bloklanmaz (bölümsel).
-  assert.match(page, /Operasyon verileri \(aşağıda\) zaten hazır/)
+  // Reports contains analytics only; Home owns operational surfaces.
+  assert.doesNotMatch(page, /title="Operasyon Akışı"|title="Son Operasyonlar"/)
 })
 
 // ── 8: timing metadata PII/secret sızdırmaz + DEV-gated ─────────────────────

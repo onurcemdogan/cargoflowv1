@@ -18,6 +18,7 @@
 import { Alert, Badge, Field } from '../ui/primitives'
 import {
   IntegrationConnectionCard,
+  type IntegrationDisclosureProps,
   IntegrationAccountCard,
   IntegrationFormSection,
   IntegrationFormActions,
@@ -87,7 +88,7 @@ function formatDateTime(value: string | null): string {
   return new Intl.DateTimeFormat('tr-TR', { timeZone: 'Europe/Istanbul', dateStyle: 'short', timeStyle: 'short' }).format(new Date(ms))
 }
 
-export function HepsiburadaSection() {
+export function HepsiburadaSection(disclosure: IntegrationDisclosureProps = {}) {
   const [accounts, setAccounts] = useState<HepsiburadaAccountRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -216,7 +217,8 @@ export function HepsiburadaSection() {
   }
 
   return (
-    <IntegrationConnectionCard
+    <IntegrationConnectionCard {...disclosure}
+      summary={<>{loadError ? <Alert tone="danger" role="alert">{loadError}</Alert> : <p>{loading ? 'Hesaplar yükleniyor…' : accounts.length ? accounts.length + ' hesap kayıtlı' : 'Bağlı hesap yok'}</p>}{accounts.map((account) => <div key={account.marketplaceAccountId} className="integration-summary-account"><strong>{account.displayName ?? account.merchantId}</strong><AccountReadStatus isActive={account.isActive} configured={Boolean(account.config)} verificationStatus={account.verificationStatus} ordersActive={Boolean(account.ordersActive)} verifying={verifyingAccount === account.marketplaceAccountId || (formState === 'saving' && editing === account.marketplaceAccountId)} /><small>Son okuma: {formatDateTime(account.health.lastSuccessfulSyncAt)}</small></div>)}</>}
       provider="hepsiburada"
       title="Hepsiburada"
       kind="marketplace"
