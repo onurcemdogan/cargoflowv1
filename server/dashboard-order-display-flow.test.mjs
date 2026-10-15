@@ -158,7 +158,8 @@ test('Faz 2: Dashboard Yenile /api/orders/sync çağırmaz; Siparişler Şimdi Y
   const reloadIdx = appSrc.indexOf('async function handleReloadOrders')
   assert.ok(reloadIdx >= 0, 'handleReloadOrders tanımı bulunur')
   const reloadWindow = appSrc.slice(reloadIdx, reloadIdx + 1500)
-  assert.match(reloadWindow, /loadOrdersWorkspace\(/, 'handleReloadOrders DB reload kullanır')
+  assert.match(reloadWindow, /requestOrdersWorkspaceRevalidation\(/, 'handleReloadOrders ortak DB reload kullanır')
+  assert.match(appSrc, /if \(query && mounted.current\) await loadOrdersWorkspace\(query\)/, 'ortak okuyucu güncel workspace sorgusunu kullanır')
   assert.equal(/orders\/sync/.test(reloadWindow), false, 'handleReloadOrders sync ÇAĞIRMAZ')
 
   // Siparişler "Şimdi Yenile" (onFetchOrders) hâlâ handleFetchOrders (sync) kullanır.

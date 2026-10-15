@@ -358,10 +358,14 @@ test('PAG-15: kısmi hata UI listesini boşaltmaz (App çağrı yerleri)', () =>
   // güvenli bir mesaj gösterilir; `orders` alanına DOKUNULMAZ.
   const loadIdx = app.indexOf('const loadOrdersWorkspace = useCallback(')
   assert.notEqual(loadIdx, -1, 'çalışma alanı yükleyicisi bulunamadı')
-  const loadBlock = app.slice(loadIdx, loadIdx + 2400)
-  const catchIdx = loadBlock.indexOf('} catch {')
+  const loadEnd = app.indexOf('const [workspaceRevalidator]', loadIdx)
+  assert.ok(loadEnd > loadIdx, 'çalışma alanı okuyucusunun sonu bulunur')
+  const loadBlock = app.slice(loadIdx, loadEnd)
+  // Optional image enrichment has its own catch. Inspect the OUTER read error
+  // handler in full, without a character limit truncating its state assertions.
+  const catchIdx = loadBlock.lastIndexOf('} catch {')
   assert.notEqual(catchIdx, -1, 'hata yolu bulunamadı')
-  const catchBlock = loadBlock.slice(catchIdx, catchIdx + 500)
+  const catchBlock = loadBlock.slice(catchIdx)
   assert.doesNotMatch(catchBlock, /orders:/, 'hata yolu listeyi DEĞİŞTİRMEZ')
   assert.match(catchBlock, /ordersLoading: false/)
   assert.match(catchBlock, /ordersError:/)

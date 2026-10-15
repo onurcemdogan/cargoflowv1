@@ -298,7 +298,8 @@ test('SSC-8: App.tsx — çift-tık tek sync (single-flight) + Dashboard Yenile 
   const reload = sliceBlock(app, 'async function handleReloadOrders()', 2000)
   assert.doesNotMatch(reload, /\/api\/orders\/sync/)
   assert.doesNotMatch(reload, /handleFetchOrders/)
-  assert.match(reload, /loadOrdersWorkspace\(/)
+  assert.match(reload, /requestOrdersWorkspaceRevalidation\(/)
+  assert.match(app, /if \(query && mounted.current\) await loadOrdersWorkspace\(query\)/)
 })
 
 // ── DB destekli sözleşme testleri ───────────────────────────────────────────

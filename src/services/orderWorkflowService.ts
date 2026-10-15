@@ -319,6 +319,19 @@ export class OrderWorkflowService {
   private ordersWorkspaceGeneration = 0
   // Kanonik havuz: gorulen siparisler id -> kayit. Secim cozumu ve siparis
   // detayi buradan yapilir; sayfa degisimi secimi KAYBETTIRMEZ.
+  private canonicalChangeListeners = new Set<() => void>()
+  subscribeCanonicalOrderChanges(listener: () => void): () => void {
+    this.canonicalChangeListeners.add(listener)
+    return () => { this.canonicalChangeListeners.delete(listener) }
+  }
+  private canonicalOrderChanged(accountGeneration: number): void {
+    if (accountGeneration !== this.marketplaceAccountGeneration) return
+    this.ordersWorkspaceGeneration += 1
+    for (const listener of this.canonicalChangeListeners) {
+      try { listener() } catch { /* UI notification must not invalidate a committed write. */ }
+    }
+  }
+
   private canonicalOrderPool = new Map<string, CargoOrder>()
   // Ucustaki calisma alani istekleri (sorgu dizesi -> promise).
   private workspaceInFlight = new Map<
@@ -326,6 +339,7 @@ export class OrderWorkflowService {
     Promise<{
       workspace?: OrdersWorkspaceResult
       externalProcessing?: ExternalProcessingState
+      diagnostics?: { cacheHit?: boolean; dbMs?: number; projectionMs?: number }
     }>
   >()
 
@@ -349,7 +363,7 @@ export class OrderWorkflowService {
   // Account-scoped KISA ÖMÜRLÜ (SWR) in-memory önbellek: yalnız AKTİF hesap için;
   // hesap değişince tamamen atılır. Raw order/ZPL/PII localStorage'a YAZILMAZ —
   // yalnız oturum-içi bellek. Bounded (LRU) + TTL. Yeniden mount/navigasyonda
-  // önce taze cache gösterilir, arkada DB'den revalidate edilir.
+  // cache lookup/action desteğidir; Orders görünürlüğünü güncel workspace belirler.
   private readonly accountScopedOrdersCache = new Map<
     string,
     { at: number; generation: number; orders: CargoOrder[] }
@@ -410,6 +424,7 @@ export class OrderWorkflowService {
     orders: CargoOrder[],
     processed: boolean,
   ): Promise<{ orders: CargoOrder[]; result: WorkflowResult }> {
+    const accountGeneration = this.getMarketplaceAccountGeneration()
     const keys = externalProcessingKeys(orders)
     if (keys.length === 0) {
       return {
@@ -437,6 +452,10 @@ export class OrderWorkflowService {
           payload?.message ?? 'Harici işlem durumu güncellenemedi.',
         )
       }
+      if (accountGeneration !== this.getMarketplaceAccountGeneration()) {
+        return { orders: this.authOrdersCache, result: { level: 'warning', message: 'Hesap değişti; önceki işlemin sonucu bu hesaba uygulanmadı.' } }
+      }
+      this.canonicalOrderChanged(accountGeneration)
       this.externalProcessingState = payload.externalProcessing ?? {
         entries: {},
       }
@@ -663,6 +682,8 @@ export class OrderWorkflowService {
   async fetchOrdersWorkspace(
     query: OrdersWorkspaceQuery,
   ): Promise<{ workspace: OrdersWorkspaceResult; stale: boolean }> {
+    const startedAt = performance.now()
+    const accountGeneration = this.getMarketplaceAccountGeneration()
     this.ordersWorkspaceGeneration += 1
     const generation = this.ordersWorkspaceGeneration
     const params = new URLSearchParams()
@@ -699,11 +720,12 @@ export class OrderWorkflowService {
     // ISTEK TEKILLESTIRME: AYNI sorgu zaten ucustaysa ikinci bir ag cagrisi
     // ACILMAZ. React StrictMode'un cift efekt calistirmasi ve sekmeye hizli
     // gidip gelme, ayni sayfayi iki kez indirmeye yol aciyordu.
-    const key = params.toString()
+    const queryString = params.toString()
+    const key = `${accountGeneration}|${queryString}`
     const inFlight = this.workspaceInFlight.get(key)
     const request = inFlight
       ? inFlight
-      : fetch(`/api/orders/workspace?${key}`, { credentials: 'include' })
+      : fetch(`/api/orders/workspace?${queryString}`, { credentials: 'include' })
           .then(async (response) => {
             if (!response.ok) {
               throw new Error(
@@ -713,6 +735,7 @@ export class OrderWorkflowService {
             return (await response.json()) as {
               workspace?: OrdersWorkspaceResult
               externalProcessing?: ExternalProcessingState
+              diagnostics?: { cacheHit?: boolean; dbMs?: number; projectionMs?: number }
             }
           })
           .finally(() => {
@@ -720,7 +743,15 @@ export class OrderWorkflowService {
           })
     if (!inFlight) this.workspaceInFlight.set(key, request)
     const payload = await request
-    if (payload.externalProcessing) {
+    const diagnostics = payload.diagnostics
+    console.info('[orders-workspace]', {
+      workspaceReloadMs: performance.now() - startedAt,
+      cacheHit: typeof diagnostics?.cacheHit === 'boolean' ? diagnostics.cacheHit : undefined,
+      dbMs: Number.isFinite(diagnostics?.dbMs) ? diagnostics?.dbMs : undefined,
+      projectionMs: Number.isFinite(diagnostics?.projectionMs) ? diagnostics?.projectionMs : undefined,
+    })
+    const stale = generation !== this.ordersWorkspaceGeneration || accountGeneration !== this.getMarketplaceAccountGeneration()
+    if (!stale && payload.externalProcessing) {
       this.externalProcessingState = payload.externalProcessing
     }
     const workspace = payload.workspace
@@ -729,30 +760,13 @@ export class OrderWorkflowService {
     }
     // Sayfadaki kayitlar KANONIK havuza yazilir: baska sayfada secilen bir
     // siparis, sayfa degisse bile toplu islemde COZULEBILIR kalir.
-    for (const order of workspace.items) {
+    for (const order of stale ? [] : workspace.items) {
       this.canonicalOrderPool.set(String(order.id), order)
     }
     return {
       workspace,
-      stale: generation !== this.ordersWorkspaceGeneration,
+      stale,
     }
-  }
-
-  /**
-   * KALICI KAYIT SAYISI — tek sayfa, tek istek.
-   *
-   * Yalnizca sayi gerektiginde tum tabloyu indirmek israftir; `/api/orders`
-   * zaten `total` doner. pageSize=1 ile agirlik neredeyse sifirdir.
-   */
-  private async fetchOrdersTotal(): Promise<number> {
-    const response = await fetch('/api/orders?page=1&pageSize=1', {
-      credentials: 'include',
-    })
-    if (!response.ok) {
-      throw new Error(`Siparis sayisi okunamadi (HTTP ${response.status}).`)
-    }
-    const payload = (await response.json()) as { total?: number }
-    return Number(payload.total ?? 0)
   }
 
   /** Bu oturumda GORULEN tum siparisler (ziyaret edilen sayfalarin birlesimi). */
@@ -1373,12 +1387,8 @@ export class OrderWorkflowService {
     // her bastığında ~100 HTTP turu oluşuyor, 20k üstünde ise sync başarılı
     // olsa bile ekran AÇIK hata veriyordu.
     //
-    // Mesajlarda gösterilen tek şey KALICI KAYIT SAYISIDIR; onu öğrenmek için
-    // tek bir sayfa (pageSize=1) yeterlidir. Görünür liste zaten sunucu
-    // tarafı çalışma alanı sorgusuyla tazelenir.
-    const total = await this
-      .fetchOrdersTotal()
-      .catch(() => this.authOrdersCache.length)
+    // Sync reports its own outcome. Membership and totals arrive with the
+    // workspace response; no extra count request is needed for copy.
     // Geriye dönük sözleşme: `orders` alanı korunur. Auth modunda çağıran
     // (App) bu diziyi KULLANMAZ; çalışma alanı sayfasını yeniden çeker.
     const orders = this.authOrdersCache
@@ -1388,14 +1398,14 @@ export class OrderWorkflowService {
       this.auditLogService.append({
         action: 'Siparişler çekildi',
         level: 'info',
-        details: `Senkronizasyon zaten sürüyor; ${total} sipariş kayıtlı.`,
+        details: `Senkronizasyon zaten sürüyor; siparişler kayıtlı.`,
       })
       return {
         orders,
         result: {
           level: 'info',
           source: 'real',
-          message: `Bu hesap için bir senkronizasyon zaten çalışıyor. Kayıtlı ${total} sipariş korunuyor; tamamlanınca "Yenile" ile listeyi güncelleyin.`,
+          message: `Bu hesap için bir senkronizasyon zaten çalışıyor. Kayıtlı siparişler korunuyor; tamamlanınca "Yenile" ile listeyi güncelleyin.`,
         },
       }
     }
@@ -1420,7 +1430,7 @@ export class OrderWorkflowService {
       this.auditLogService.append({
         action: 'Siparişler çekildi',
         level: 'warning',
-        details: `${syncPayload.message ?? 'Senkron tamamlanamadı.'}${statusSummary} Kayıtlı ${total} sipariş korunuyor.`,
+        details: `${syncPayload.message ?? 'Senkron tamamlanamadı.'}${statusSummary} Kayıtlı siparişler korunuyor.`,
       })
       return {
         orders,
@@ -1429,7 +1439,7 @@ export class OrderWorkflowService {
           source: 'real',
           message: `${
             partial ? 'Senkron kısmi kaldı.' : syncPayload.message ?? 'Senkron tamamlanamadı.'
-          }${statusSummary} Sunucu kaydı silinmedi; ${total} sipariş korundu.`,
+          }${statusSummary} Sunucu kaydı silinmedi; siparişler korundu.`,
         },
       }
     }
@@ -1437,14 +1447,14 @@ export class OrderWorkflowService {
     this.auditLogService.append({
       action: 'Siparişler çekildi',
       level: 'success',
-      details: `Sunucu senkronu tamamlandı: ${syncPayload.insertedCount ?? 0} yeni, ${syncPayload.updatedCount ?? 0} güncellendi. Toplam ${total} sipariş.`,
+      details: `Sunucu senkronu tamamlandı: ${syncPayload.insertedCount ?? 0} yeni, ${syncPayload.updatedCount ?? 0} güncellendi.`,
     })
     return {
       orders,
       result: {
-        level: total > 0 ? 'success' : 'warning',
+        level: 'success',
         source: 'real',
-        message: `Sunucu senkronu tamamlandı (${syncPayload.persistedCount ?? 0} kaydedildi, ${syncPayload.failedCount ?? 0} başarısız). Kalıcı operasyon listesi: ${total}.`,
+        message: `Sunucu senkronu tamamlandı (${syncPayload.persistedCount ?? 0} kaydedildi, ${syncPayload.failedCount ?? 0} başarısız). Güncel liste çalışma alanından okunur.`,
       },
     }
   }
@@ -1659,6 +1669,8 @@ export class OrderWorkflowService {
   // yazılır). Başarısızlıkta hata FIRLATIR → çağıran optimistic başarıyı geri alır.
   async persistLabelReady(orderId: string): Promise<void> {
     if (!this.authMode) return
+    const accountGeneration = this.getMarketplaceAccountGeneration()
+    const startedAt = performance.now()
     const id = String(orderId ?? '').trim()
     if (!id) return
     const response = await fetch(
@@ -1678,16 +1690,20 @@ export class OrderWorkflowService {
         String(payload?.message ?? 'Etiket durumu sunucuya kaydedilemedi.'),
       )
     }
+    console.info('[orders-label-persist]', { labelReadyPersistMs: performance.now() - startedAt })
+    this.canonicalOrderChanged(accountGeneration)
   }
 
   // Kullanıcı Yazdır/Tekrar Yazdır aksiyonunu başarıyla başlattığında canonical
   // LABEL_PRINTED durumunu DB'ye KALICI yazar (idempotent + no-regress). Yeni
   // shipment/barkod OLUŞTURMAZ; Sürat create servisini ÇAĞIRMAZ. Legacy modda
   // no-op (localStorage zaten persistOrders ile yazılır). Backend LABEL_READY
-  // değilse 409 döner; bu durumda sessiz geçilir (yazdırma zaten yapılmıştır,
-  // durum eski akıştaki gibi optimistic in-memory korunur).
+  // değilse 409 döner. Hata çağırana taşınır; fiziksel baskı sonucu korunur,
+  // kanonik çalışma alanında başarılı durum geçişi varsayılmaz.
   async persistLabelPrinted(orderId: string): Promise<void> {
     if (!this.authMode) return
+    const accountGeneration = this.getMarketplaceAccountGeneration()
+    const startedAt = performance.now()
     const id = String(orderId ?? '').trim()
     if (!id) return
     const response = await fetch(
@@ -1707,6 +1723,8 @@ export class OrderWorkflowService {
         String(payload?.message ?? 'Etiket baskı durumu sunucuya kaydedilemedi.'),
       )
     }
+    console.info('[orders-label-persist]', { labelPrintedPersistMs: performance.now() - startedAt })
+    this.canonicalOrderChanged(accountGeneration)
   }
 
   async createShipments(
@@ -2930,11 +2948,11 @@ export class OrderWorkflowService {
         orderNumber: currentOrder.orderNumber,
       })
     }
-    this.persistOrders(nextOrders)
+    let persistenceFailures = 0
     // Auth modda canonical LABEL_PRINTED durumunu DB'ye KALICI yaz (idempotent +
     // no-regress; yeni shipment/barkod OLUŞMAZ, provider ÇAĞRILMAZ). Sayfa
     // yenilemesinde "Etiket Basıldı" korunur. Persistence hatası baskıyı geçersiz
-    // KILMAZ (baskı zaten yapıldı); optimistic in-memory durum korunur.
+    // KILMAZ (baskı zaten yapıldı); kanonik durum geçişi varsayılmaz.
     if (this.authMode) {
       for (const printedOrder of successfulPrintableOrders) {
         try {
@@ -2951,15 +2969,18 @@ export class OrderWorkflowService {
           await this.persistLabelReady(printedOrder.id)
           await this.persistLabelPrinted(printedOrder.id)
         } catch {
-          // yut: baskı başarılı; DB persistence en fazla bir sonraki senkronda düzelir.
+          persistenceFailures += 1
+          const original = orders.find((order) => order.id === printedOrder.id)
+          if (original) nextOrders = replaceOrder(nextOrders, original)
         }
       }
     }
+    this.persistOrders(nextOrders)
     return {
       orders: nextOrders,
       result: {
         level:
-          failedPrintableOrders.length > 0 || skippedWithReasons.length > 0
+          persistenceFailures > 0 || failedPrintableOrders.length > 0 || skippedWithReasons.length > 0
             ? 'warning'
             : 'success',
         message: `${
@@ -2970,7 +2991,7 @@ export class OrderWorkflowService {
                 )
               ? `${successfulPrintableOrders.length} etiket tekrar baskıya gönderildi.`
               : `${successfulPrintableOrders.length} etiket baskıya gönderildi.`
-        }${skippedSummary}`,
+        }${skippedSummary}${persistenceFailures ? ` ${persistenceFailures} siparişin baskı durumu kaydedilemedi; güncel durum DB çalışma alanından okunur.` : ''}`,
         bulkActionDebug: buildBulkActionDebug(
           'PRINT_LABELS',
           selected,
@@ -3312,6 +3333,9 @@ export class OrderWorkflowService {
     orders: CargoOrder[],
     selectedIds: string[],
   ): { orders: CargoOrder[]; result: WorkflowResult } {
+    if (this.authMode) {
+      return { orders, result: { level: 'warning', message: 'Kargoya verildi durumu sunucuda doğrulanmış taşıyıcı veya pazaryeri kaydından güncellenir; manuel durum değişikliği kullanılamıyor.' } }
+    }
     if (selectedIds.length === 0) {
       return this.fail(orders, 'Kargoya verildi yapmak için sipariş seçmelisin.')
     }

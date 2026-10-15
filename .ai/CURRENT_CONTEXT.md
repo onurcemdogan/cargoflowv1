@@ -1,3 +1,47 @@
+# Current context — ORDERS-CORE-001
+
+2026-10-15 Europe/Istanbul. COMPLETE / READY_FOR_USER_REVIEW on
+feat/orders-core-001-authoritative-fast-workspace. Exact baseline:
+7e5102d0b5901e3b372b45ed8ba6d7451ba48f22 (user-merged PR #24).
+Local delivery commit is branch HEAD. No push, merge or deployment.
+
+Auth Orders paints only a matching current server workspace for its mounted
+consumer/query. Pending entry/re-entry hides rows/actions/pagination and leaves
+counts unknown. Canonical pool remains selection/detail support; pooled cargo
+navigation is preserved. Current workspace rows are never replaced by optimistic
+pool objects. Manual refresh is sync POST then workspace GET, without count read,
+full collection or automatic product sync. Equal-valued initial search debounce
+cannot add another read; real filters retain their debounce and paging behavior.
+
+One coalesced DB reader handles canonical ready/printed/archive notifications and
+create/track workflow completion. Account/request generations and consumer keys
+reject stale responses before pool/UI writes. Print persistence failure warns and
+retains prior operation state. Unsupported auth manual handoff warns without
+transport or memory-only status changes. New timing logs contain safe scalars.
+
+Validation: 23 new focused tests; 28 including existing cargo detail navigation;
+full UI496/53 files; performance55; runtime-memory24; health53; billing43;
+onboarding22 server+13 UI; affected server72; full Sürat3442/270 files/7 batches.
+All pass. tsc force, lint (0 errors/6 pre-existing warnings), build, worktree and
+staged diff checks pass. Different-model gpt-6-astra read-only review APPROVED,
+including pending counts and the equal-value debounce correction. Early source
+selector failures were repaired without skips; the final full Sürat run exited0.
+
+No migration or production/provider access. No proof for a cheap incremental
+provider tail or safe create-response print authority/activation consolidation:
+15-minute cadence, concurrency2, persisted hydration and separate ready POST stay.
+Shipping payer/mapping, tenant authority, idempotency, UNKNOWN_AFTER_NETWORK,
+worker/status-sync flags and N11 epoch/BLOCKED_EXTERNAL remain unchanged.
+Known ambiguous production record was never accessed or retried.
+
+Full root causes, flows, audit evidence, timings, all20 changed files and results:
+docs/orders-core-001-authoritative-workspace.md. User review is next. Stop after
+local commit: do not push, merge or deploy.
+
+---
+
+# Previous completed task context
+
 # Current context
 
 2026-10-15. Additional ORDER-SELECTION-TARGETS UX change COMPLETE /

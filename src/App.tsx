@@ -1,3 +1,4 @@
+import { createOrdersWorkspaceRevalidator } from './services/ordersWorkspaceRevalidation'
 import {
   Suspense,
   lazy,
@@ -404,10 +405,12 @@ function App() {
   )
   const [ordersWorkspace, setOrdersWorkspace] = useState<OrdersWorkspaceResult>()
   const workspaceQueryRef = useRef<OrdersWorkspaceQuery | null>(null)
-  const workspaceLoadInFlight = useRef(false)
-  // STALE-WHILE-REVALIDATE: elde gösterilebilir bir sayfa varsa yeniden
-  // yükleme onu EKRANDAN SİLMEZ; liste görünür kalır ve arkada tazelenir.
-  // "Yenile" veya sekmeye dönüş BOŞ EKRAN gibi hissettirmez.
+  const [ordersWorkspaceKey, setOrdersWorkspaceKey] = useState<string>()
+  const workspaceConsumerRef = useRef('')
+  const workspaceRequestId = useRef(0)
+  // A validated result may stay visible during a reload of the same mounted
+  // query. OrdersPage masks it on entry/re-entry or query changes until the
+  // new consumer/query key has an authoritative response.
   const shownWorkspaceRef = useRef(false)
 
   const loadOrdersWorkspace = useCallback(
@@ -416,6 +419,9 @@ function App() {
       const accountGeneration = workflowService.getMarketplaceAccountGeneration()
       // Gösterilecek bir sonuç ZATEN varsa tam yükleme durumuna DÜŞÜLMEZ:
       // mevcut sayfa görünür kalır, yalnız arka plan tazeleme işareti yanar.
+      const requestId = ++workspaceRequestId.current
+      const consumerId = workspaceConsumerRef.current
+      const requestKey = `${consumerId}|${JSON.stringify(query)}`
       const revalidating = shownWorkspaceRef.current
       setOrdersState((current) => ({
         ...current,
@@ -423,31 +429,32 @@ function App() {
         ordersRefreshing: revalidating,
         ordersError: undefined,
       }))
-      workspaceLoadInFlight.current = true
       try {
         const { workspace, stale } =
           await workflowService.fetchOrdersWorkspace(query)
         // BAYAT YANIT KORUMASI: daha yeni bir istek başladıysa (hızlı filtre
         // yazımı) veya hesap değiştiyse bu sonuç YAZILMAZ.
         if (stale) return
+        if (!mounted.current || requestId !== workspaceRequestId.current || consumerId !== workspaceConsumerRef.current) return
         if (
           accountGeneration !== workflowService.getMarketplaceAccountGeneration()
         ) {
           return
         }
         setOrdersWorkspace(workspace)
+        setOrdersWorkspaceKey(requestKey)
         shownWorkspaceRef.current = true
+        let pooledOrders = workflowService.getCanonicalOrderPool()
+        try { pooledOrders = workflowService.enrichOrderImages(pooledOrders, catalogProductsRef.current) } catch { /* Optional presentation data. */ }
         setOrdersState((current) => ({
           ...current,
-          orders: workflowService.enrichOrderImages(
-            workflowService.getCanonicalOrderPool(),
-            catalogProductsRef.current,
-          ),
+          orders: pooledOrders,
           ordersLoading: false,
           ordersRefreshing: false,
           ordersError: undefined,
         }))
       } catch {
+        if (requestId !== workspaceRequestId.current || accountGeneration !== workflowService.getMarketplaceAccountGeneration() || consumerId !== workspaceConsumerRef.current) return
         // Hata durumunda MEVCUT liste KORUNUR (silinmez); yalnız güvenli,
         // yükleme kapsamlı bir mesaj gösterilir.
         setOrdersState((current) => ({
@@ -457,39 +464,38 @@ function App() {
           ordersError:
             'Sipariş verileri yüklenemedi. Bağlantıyı kontrol edip tekrar deneyin.',
         }))
-      } finally {
-        workspaceLoadInFlight.current = false
       }
     },
     [],
   )
 
+  const [workspaceRevalidator] = useState(() => createOrdersWorkspaceRevalidator(async () => {
+    const query = workspaceQueryRef.current
+    if (query && mounted.current) await loadOrdersWorkspace(query)
+  }))
+  const requestOrdersWorkspaceRevalidation = useCallback(() => workspaceRevalidator.request(), [workspaceRevalidator])
   const handleWorkspaceQueryChange = useCallback(
-    (query: OrdersWorkspaceQuery) => {
+    (query: OrdersWorkspaceQuery, consumerId: string) => {
       workspaceQueryRef.current = query
-      void loadOrdersWorkspace(query)
+      workspaceConsumerRef.current = consumerId
+      if (integrationHydrated) void requestOrdersWorkspaceRevalidation()
     },
-    [loadOrdersWorkspace],
+    [integrationHydrated, requestOrdersWorkspaceRevalidation],
   )
+  useEffect(() => workflowService.subscribeCanonicalOrderChanges(() => {
+    void requestOrdersWorkspaceRevalidation()
+  }), [requestOrdersWorkspaceRevalidation])
 
-  // Tablo satırları KANONİK havuzdan çözülür. Böylece bir create/print sonrası
-  // yerel durum güncellemesi (LABEL_READY → LABEL_PRINTED) sunucuya yeniden
-  // gitmeden ANINDA listede görünür; sayfa metadata'sı (sayaçlar, toplam)
-  // sunucudan gelmeye devam eder.
-  const ordersById = useMemo(() => {
-    const map = new Map<string, CargoOrder>()
-    for (const order of orders) map.set(String(order.id), order)
-    return map
-  }, [orders])
+  // Membership, counts and operational fields come exclusively from the server.
+  // The separate canonical pool remains available for selection/action/detail lookup.
   const workspaceView = useMemo(() => {
     if (!ordersWorkspace) return undefined
-    return {
-      ...ordersWorkspace,
-      items: ordersWorkspace.items.map(
-        (item) => ordersById.get(String(item.id)) ?? item,
-      ),
+    try {
+      return { ...ordersWorkspace, items: workflowService.enrichOrderImages(ordersWorkspace.items, products) }
+    } catch {
+      return ordersWorkspace
     }
-  }, [ordersById, ordersWorkspace])
+  }, [ordersWorkspace, products])
 
   // Yazıcı Ayarları sayfası kaldırıldı; eski route'a düşen kullanıcı boş
   // ekran görmesin diye Dashboard'a yönlendirilir (yazdırma ALTYAPISI
@@ -531,14 +537,10 @@ function App() {
       const isFresh = () =>
         active && generation === workflowService.getMarketplaceAccountGeneration()
 
-      // SWR: aktif hesap için taze cache varsa siparişleri ANINDA göster; arkada
-      // yine de sunucudan revalidate edilir.
-      const cachedOrders = authMode ? workflowService.peekCachedOrders() : null
+      // Operational membership is never bootstrapped from the SWR pool.
       catalogProductsRef.current = []
       setOrdersState({
-        orders: cachedOrders
-          ? workflowService.enrichOrderImages(cachedOrders, [])
-          : [],
+        orders: [],
         ordersLoading: true,
       })
       setProductsState((current) => ({ ...current, productsLoading: true }))
@@ -616,11 +618,11 @@ function App() {
     }
   }, [])
 
-  // Yalnız DB'den (auth: GET /api/orders, legacy: localStorage) okur; Trendyol'a
+  // Yalnız DB'den (auth: GET /api/orders/workspace, legacy: localStorage) okur; Trendyol'a
   // İSTEK ATMAZ. Route/tab/mount/dashboard geçişleri bunu kullanır. Trendyol
   // sync YALNIZ açık "Şimdi Yenile / Senkronize Et" butonuyla (handleFetchOrders).
   async function handleReloadOrders() {
-    // Yalnız yerel DB okur (auth: GET /api/orders, legacy: localStorage);
+    // Yalnız yerel DB okur (auth: GET /api/orders/workspace, legacy: localStorage);
     // sync/etiket/desi/create akışına GİRMEZ. ordersError yalnız yükleme hatası.
     if (ordersReloadInFlight.current) return
     ordersReloadInFlight.current = true
@@ -631,7 +633,7 @@ function App() {
         // henüz açılmadıysa (sorgu yok) yapılacak bir şey yoktur: Panel kendi
         // operasyon anlık görüntüsünü ayrıca tazeler.
         const query = workspaceQueryRef.current
-        if (query) await loadOrdersWorkspace(query)
+        if (query) await requestOrdersWorkspaceRevalidation()
       } finally {
         ordersReloadInFlight.current = false
       }
@@ -810,6 +812,7 @@ function App() {
         ordersMessage: response.result,
         ordersDebug: response.result.debug,
       }))
+      if (integrationConfigService.isAuthMode()) await requestOrdersWorkspaceRevalidation()
     } finally {
       refreshLogs()
       setOrdersState((current) => ({ ...current, ordersLoading: false }))
@@ -826,6 +829,10 @@ function App() {
     ordersSyncInFlight.current = true
     const defaultSyncRange = marketplaceSyncRange()
     const requestId = ++ordersFetchRequestId.current
+    const accountGeneration = workflowService.getMarketplaceAccountGeneration()
+    const refreshStarted = performance.now()
+    let providerSyncMs = 0
+    let workspaceReloadMs = 0
     setOrdersState((current) => ({
       ...current,
       ordersLoading: true,
@@ -843,41 +850,10 @@ function App() {
           ? defaultSyncRange.endDate
           : options.endDate ?? defaultSyncRange.endDate,
       })
-      let productCatalog = productsState.products
-      let nextOrders = workflowService.enrichOrderImages(
-        response.orders,
-        productCatalog,
-      )
-      if (ordersMissingImages(nextOrders)) {
-        try {
-          const productResponse = await workflowService.fetchProducts(config)
-          productCatalog = productResponse.products
-          nextOrders = workflowService.enrichOrderImages(
-            nextOrders,
-            productCatalog,
-          )
-          setProductsState((current) => ({
-            ...current,
-            products: productCatalog,
-            productsMessage: productResponse.result,
-            productsError:
-              productResponse.result.level === 'error'
-                ? productResponse.result.message
-                : undefined,
-            productsDebug: productResponse.result.productSyncDebug,
-            metadata: workflowService.loadProductCatalog().metadata,
-          }))
-        } catch (imageError) {
-          setProductsState((current) => ({
-            ...current,
-            productsError:
-              imageError instanceof Error
-                ? `Ürün görseli enrichment tamamlanamadı: ${imageError.message}`
-                : 'Ürün görseli enrichment tamamlanamadı.',
-          }))
-        }
-      }
-      if (requestId !== ordersFetchRequestId.current) return
+      providerSyncMs = performance.now() - refreshStarted
+      let nextOrders = response.orders
+      try { nextOrders = workflowService.enrichOrderImages(response.orders, catalogProductsRef.current) } catch { /* Images are optional. */ }
+      if (requestId !== ordersFetchRequestId.current || accountGeneration !== workflowService.getMarketplaceAccountGeneration()) return
       // AUTH MODU: sync yanıtı TAM listeyi taşımaz (taşımamalıdır da).
       // Görünür sayfa, sunucu tarafı çalışma alanı sorgusuyla tazelenir;
       // kanonik havuz o sayfadan güncellenir.
@@ -894,10 +870,13 @@ function App() {
       }))
       if (authMode) {
         const query = workspaceQueryRef.current
-        if (query) await loadOrdersWorkspace(query)
+        const workspaceStarted = performance.now()
+        if (query) await requestOrdersWorkspaceRevalidation()
+        workspaceReloadMs = performance.now() - workspaceStarted
       }
       if (!options.silent) setSelectedIds([])
     } finally {
+      console.info('[orders-manual-refresh]', { providerSyncMs, workspaceReloadMs, manualRefreshMs: performance.now() - refreshStarted })
       ordersSyncInFlight.current = false
       refreshLogs()
       if (requestId === ordersFetchRequestId.current) {
@@ -1969,6 +1948,9 @@ function App() {
           key={ordersNavigationRequest?.id ?? 'orders-default'}
           orders={orders}
           workspace={workspaceView}
+          workspaceKey={ordersWorkspaceKey}
+          workspaceError={ordersState.ordersError}
+          useServerWorkspace={!integrationHydrated || integrationConfigService.isAuthMode()}
           onWorkspaceQueryChange={handleWorkspaceQueryChange}
           products={products}
           selectedIds={selectedIds}
@@ -2197,10 +2179,4 @@ function marketplaceSyncRange(): Pick<
   startDate.setDate(startDate.getDate() - 29)
   const endDate = new Date()
   return { startDate, endDate }
-}
-
-function ordersMissingImages(orders: CargoOrder[]): boolean {
-  return orders.some((order) =>
-    order.items.some((item) => !item.imageUrl && !item.productImageUrl),
-  )
 }
