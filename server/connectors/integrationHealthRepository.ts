@@ -38,6 +38,7 @@
 import { and, eq } from 'drizzle-orm'
 import { normalizeProviderKey } from './connectorKernel.ts'
 import { integrationSyncState, marketplaceAccounts } from '../db/schema.ts'
+import { isCurrentMarketplaceAccount } from '../../src/integrations/marketplaceAccountVisibility.ts'
 import {
   connectionKey,
   resolveIntegrationHealth,
@@ -189,6 +190,7 @@ export async function loadIntegrationHealth(
     .select({
       id: marketplaceAccounts.id,
       marketplace: marketplaceAccounts.marketplace,
+      isActive: marketplaceAccounts.isActive,
     })
     .from(marketplaceAccounts)
     .where(
@@ -197,7 +199,15 @@ export async function loadIntegrationHealth(
         eq(marketplaceAccounts.organizationId, organizationId),
       ),
     )
-  for (const row of tenantAccountRows) {
+  const currentTrendyolIds = new Set(tenantAccountRows
+    .filter((row) => normalizeProviderKey(row.marketplace) === 'trendyol' && isCurrentMarketplaceAccount(row))
+    .map((row) => String(row.id)))
+  // Old sync rows remain stored, but cannot resurrect a retired seller in health.
+  for (const [key, connection] of connections) {
+    if (connection.providerKey === 'trendyol' && connection.marketplaceAccountId
+      && !currentTrendyolIds.has(connection.marketplaceAccountId)) connections.delete(key)
+  }
+  for (const row of tenantAccountRows.filter(isCurrentMarketplaceAccount)) {
     const providerKey = normalizeProviderKey(row.marketplace)
     if (!supportedProviders.has(providerKey)) continue
     const accountId = String(row.id)

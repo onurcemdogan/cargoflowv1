@@ -1,3 +1,67 @@
+# ORDER-SELECTION-TARGETS — local follow-up delivery
+
+2026-10-15. Same feat/single-marketplace-account-001-trendyol branch; incremental
+baseline 5c2374b35a61f8d49ed772a25e7fe5ecdb7d3a91. COMPLETE / READY_FOR_USER_REVIEW.
+Final delivery commit is branch HEAD. No push, merge or deploy.
+
+Product content toggles the existing row selection through a native toggle
+button; checkbox and selected-row theme stay synchronized. Other cells/actions
+remain separate. The overflow selection shortcut was removed to meet the user's
+no-selection-from-actions rule. Header checkbox44x44 and adjacent visible count
+label share the same checkbox. Counts intersect visible IDs, preserving off-page
+selection. Six table columns/sorting and App/OrdersPage selection/filter/page
+logic are unchanged. Empty page disables select-all. No Shift-click/new toolbar.
+
+Tests: new DOM16, focused+filter18; full UI473/50 files; affected orders node65.
+TypeScript --force/lint/build/diff passed; lint0 errors/6 existing warnings.
+Different-model gpt-6-astra APPROVED, including final alignment margin. Synthetic
+browser light/dark proof is in conversation outputs/order-selection-{light,dark}.jpg.
+Header and row checkbox align at x44; target44x44 and visible label72x44 at tested
+viewport. Preview files/server/tab removed; no viewport override remained.
+
+Only UI runtime changed: src/components/OrdersTable.tsx and src/index.css.
+New src/test/orderSelectionTargets.dom.test.tsx covers all requested behaviors
+plus keyboard/empty/off-page cases. No backend/provider/production calls, DB
+migration, scheduler or fulfillment changes. Original Trendyol account fix and
+N11/Aras/UNKNOWN protections remain. User reviews local commits; stop here.
+
+---
+
+# SINGLE-MARKETPLACE-ACCOUNT-001 — local delivery handoff
+
+2026-10-15. Branch feat/single-marketplace-account-001-trendyol; baseline
+6bb4d2e3ccfd663e4e2e880f7abb538f327db7a0. COMPLETE / READY_FOR_USER_REVIEW.
+Local final commit is branch HEAD. Independent gpt-6-astra review APPROVED.
+No push, merge or deployment.
+
+Current payer, carrier mapping settings, integration health/catalog and onboarding
+hide inactive Trendyol. The shared predicate affects Trendyol only. UI mixed
+response protection and concise actual seller labels are covered by regressions.
+Missing stored display name falls back to real seller ID. Backend mapping API
+rejects inactive targets; historical mappings remain stored and usable by the
+unchanged routing resolver. History repositories and order IDs are not filtered
+or reassigned. Trendyol activation now serializes atomically using the tenant
+organization row lock; idempotency and old-row preservation remain. There was
+no remaining global single-active index to preserve (0013 removed it for Woo).
+No migration was introduced; schema edits correct comments only.
+
+Tests: UI457/49; status9+8 UI; billing43; carriers16+4 UI; onboarding22+13 UI;
+runtime-memory24; health53; focused account regressions48 including new7 backend;
+new4 UI/pure cases included in UI457. Registry orphans0. tsc -b --force/build/
+diff check pass; lint0 errors/6 baseline warnings. Initial local API startup
+load timeout was cleaned up only for the owned child and passed on isolated
+and final sequential reruns. No timeout/skip workaround committed.
+
+Subscription connections.marketplace remains the existing stored-row usage
+aggregate and still includes retained history; it is not a current selector.
+No provider/production access, scheduler, payer-derivation, fulfillment/create/
+label behavior or historical order changes. N11/Aras/UNKNOWN_AFTER_NETWORK and
+tenant/encryption/idempotency safety remain. Known ambiguous production shipment
+untouched. Full inventory/limits: docs/single-marketplace-account-001-trendyol.md.
+Stop after local commit. User reviews; do not push, merge or deploy.
+
+---
+
 # UI-UX-FIX-001 — local delivery handoff
 
 2026-10-15. Branch `feat/ui-ux-fix-001-operational-polish`, exact baseline

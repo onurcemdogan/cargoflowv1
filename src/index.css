@@ -8899,8 +8899,63 @@ button.ui-setup-item:hover,
 }
 
 .orders-product-summary {
-  grid-template-columns: 24px 40px minmax(0, 1fr);
+  grid-template-columns: 24px minmax(0, 1fr);
   gap: 10px;
+}
+
+.orders-product-select {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  min-height: 44px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.orders-product-copy {
+  min-width: 0;
+}
+
+.orders-select-all-checkbox,
+.orders-select-all-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.orders-select-all-checkbox {
+  min-width: 44px;
+  margin-inline: -12px;
+}
+
+.orders-select-all-label {
+  margin-right: 14px;
+  padding: 0 8px;
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.orders-select-all-checkbox:hover,
+.orders-select-all-label:hover {
+  background: var(--hover);
+}
+
+.orders-product-select:focus-visible,
+.orders-select-all-checkbox:focus-within {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
 }
 
 .orders-product-summary img,

@@ -64,3 +64,21 @@ test('CA-UI-3: legacy modda (uç yok) bölüm gösterilmez', async () => {
   const { container } = render(<CarrierAccountsSection />)
   await waitFor(() => expect(container.textContent).toBe(''))
 })
+
+test('SMA-E/F: old Trendyol is not a mapping choice even in a mixed response; viewing does not write', async () => {
+  const resolution = { ok: true, account: SURAT, source: 'ONLY_ACCOUNT_FOR_PROVIDER' }
+  payload = {
+    ok: true, accounts: [SURAT], mappings: [{ marketplaceAccountId: 'retired', carrierAccountId: SURAT.id }],
+    marketplaceAccounts: [
+      { id: 'retired', marketplace: 'Trendyol', displayName: 'Trendyol • 111', isActive: false, resolution },
+      { id: 'current', marketplace: 'Trendyol', displayName: 'Trendyol • 222', isActive: true, resolution },
+      { id: 'other', marketplace: 'n11', displayName: 'n11 Mağaza', isActive: false, resolution },
+    ],
+  }
+  render(<CarrierAccountsSection />)
+  expect(await screen.findByRole('combobox', { name: /^Trendyol · 222 siparişleri/ })).toBeTruthy()
+  expect(screen.queryByText(/111 siparişleri/)).toBeNull()
+  expect(screen.getByRole('combobox', { name: /^n11 Mağaza siparişleri/ })).toBeTruthy()
+  expect(screen.getAllByRole('combobox')).toHaveLength(2)
+  expect(calls).toEqual([{ url: '/api/carrier-accounts', method: 'GET', body: null }])
+})

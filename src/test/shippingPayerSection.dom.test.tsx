@@ -168,3 +168,22 @@ test('PAYER-UI-5: UI SIR TASIMAZ ve otomatik tasiyici secimi YAPMAZ', async () =
     (screen.getByLabelText('Kargo ücretini kim ödüyor?') as HTMLSelectElement).value,
   ).toBe('UNKNOWN')
 })
+
+test('SMA-F: mixed historical response renders one current Trendyol row with concise seller identity; view is GET only', async () => {
+  const current = { ...accounts('UNKNOWN')[0], marketplace: 'Trendyol', displayName: 'Trendyol • 222' }
+  const historic = { ...current, marketplaceAccountId: 'retired', displayName: 'Trendyol • 111', isActive: false }
+  const other = { ...accounts('UNKNOWN')[1], isActive: false }
+  const source = [historic, current, other]
+  const fetchMock = vi.fn<(path: string, init?: RequestInit) => Promise<Response>>(async () => jsonResponse({ ok: true, accounts: source }))
+  vi.stubGlobal('fetch', fetchMock)
+  render(<ShippingPayerSection />)
+  expect(await screen.findByRole('heading', { name: 'Trendyol · 222' })).toBeTruthy()
+  expect(screen.queryByText(/111/)).toBeNull()
+  expect(screen.getAllByRole('heading', { level: 3 })).toHaveLength(2)
+  expect(screen.getByText('n11 · n11 Mağaza')).toBeTruthy()
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+  expect(fetchMock.mock.calls[0][0]).toBe('/api/shipping/payer')
+  expect(fetchMock.mock.calls[0][1]?.method ?? 'GET').toBe('GET')
+  expect(source).toHaveLength(3)
+  expect(source[0].isActive).toBe(false)
+})

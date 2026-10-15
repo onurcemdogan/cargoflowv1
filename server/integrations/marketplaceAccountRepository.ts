@@ -1,6 +1,7 @@
 // Pazaryeri hesabı (marketplace account) repository'si. Bir organization aynı
-// marketplace'te birden fazla satıcı hesabı bağlayabilir; her hesap AYRI veri
-// kapsamıdır. TÜM fonksiyonlarda organizationId ZORUNLUDUR.
+// marketplace'te birden fazla tarihsel hesap satırı taşıyabilir; Trendyol'da
+// yalnız TEK güncel satıcı desteklenir. Her hesap AYRI veri kapsamıdır.
+// TÜM fonksiyonlarda organizationId ZORUNLUDUR.
 //
 // GÜVENLİK: providerAccountId = provider'ın kalıcı, GİZLİ OLMAYAN hesap kimliği
 // (Trendyol için sellerId — API URL path'inde ve User-Agent'ta zaten açık geçer).
@@ -8,7 +9,7 @@
 // ASLA saklanmaz/loglanmaz. displayName yalnız güvenli, gösterilebilir bir
 // etikettir.
 import { and, eq, ne } from 'drizzle-orm'
-import { marketplaceAccounts } from '../db/schema.ts'
+import { marketplaceAccounts, organizations } from '../db/schema.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type Db = any
@@ -64,6 +65,25 @@ export async function resolveOrCreateActiveAccount(
   marketplace: string,
   providerAccountId: string,
 ): Promise<MarketplaceAccount> {
+  if (marketplace.trim().toLowerCase() !== 'trendyol') {
+    return activateAccount(db, organizationId, marketplace, providerAccountId)
+  }
+  // The former global single-active index was removed for Woo multi-store.
+  // Serialize Trendyol transitions even when no account exists yet; row locks
+  // on accounts alone cannot protect two concurrent first connections.
+  return db.transaction(async (tx: Db) => {
+    await tx.select({ id: organizations.id }).from(organizations)
+      .where(eq(organizations.id, organizationId)).for('update')
+    return activateAccount(tx, organizationId, marketplace, providerAccountId)
+  })
+}
+
+async function activateAccount(
+  db: Db,
+  organizationId: string,
+  marketplace: string,
+  providerAccountId: string,
+): Promise<MarketplaceAccount> {
   const now = new Date()
   const displayName = buildAccountDisplayName(marketplace, providerAccountId)
   // 1) Hesabı garanti et (idempotent: aynı provider kimliği yeni hesap açmaz).
@@ -87,8 +107,7 @@ export async function resolveOrCreateActiveAccount(
     })
     .returning({ id: marketplaceAccounts.id })
   const accountId = String(row.id)
-  // 2) Diğer hesapları pasifleştir (tek aktif hesap: partial unique koruması —
-  //    önce diğerlerini kapat, sonra hedefi aç → unique çakışması olmaz).
+  // 2) Diğer hesapları pasifleştir; Trendyol geçişi org kilidiyle atomiktir.
   await db
     .update(marketplaceAccounts)
     .set({ isActive: false, updatedAt: now })

@@ -267,5 +267,6 @@
   "server/trendyol-stream-memory-flow.test.mjs",
   "server/hepsiburada-live-read-flow.test.mjs",
   "server/n11-live-read-flow.test.mjs",
-  "server/integrations-ui-presentation-flow.test.mjs"
+  "server/integrations-ui-presentation-flow.test.mjs",
+  "server/single-marketplace-account-flow.test.mjs"
 ]

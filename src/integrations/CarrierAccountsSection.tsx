@@ -10,6 +10,7 @@ import {
   IntegrationLoading,
 } from './IntegrationConnection'
 import { useCallback, useEffect, useState } from 'react'
+import { isCurrentMarketplaceAccount, marketplaceAccountLabel } from './marketplaceAccountVisibility'
 
 interface CarrierAccount {
   id: string
@@ -184,11 +185,11 @@ export function CarrierAccountsSection() {
               ))}
             </ul>
           )}
-          {data.marketplaceAccounts.length > 0 ? (
+          {data.marketplaceAccounts.some(isCurrentMarketplaceAccount) ? (
             <div className="integration-routing-settings">
               <h3>Satış hesabı → kargo hesabı</h3>
               <div className="integration-connection-fields">
-                {data.marketplaceAccounts.map((row) => {
+                {data.marketplaceAccounts.filter(isCurrentMarketplaceAccount).map((row) => {
                   const mapping = data.mappings.find(
                     (entry) => entry.marketplaceAccountId === row.id,
                   )
@@ -197,7 +198,7 @@ export function CarrierAccountsSection() {
                     <Field
                       key={row.id}
                       htmlFor={selectId}
-                      label={`${row.displayName ?? row.marketplace} siparişleri`}
+                      label={`${row.marketplace.trim().toLowerCase() === 'trendyol' ? marketplaceAccountLabel(row) : row.displayName ?? row.marketplace} siparişleri`}
                     >
                       <select
                         id={selectId}

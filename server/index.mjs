@@ -2636,25 +2636,8 @@ app.get('/api/carrier-accounts', async (request, response) => {
   if (!context) return
   try {
     const carriers = await import('./carriers/carrierAccounts.ts')
-    const { listOrganizationMarketplaceAccounts } = await import('./onboarding/onboardingRepository.ts')
-    const [accounts, mappings, marketplaceRows] = await Promise.all([
-      carriers.listCarrierAccounts(context.db, context.organizationId),
-      carriers.listCarrierMappings(context.db, context.organizationId),
-      listOrganizationMarketplaceAccounts(context.db, context.organizationId),
-    ])
-    const marketplaceAccounts = marketplaceRows
-      .filter((row) => String(row.marketplace ?? '').toLowerCase() !== 'aras')
-      .map((row) => ({
-        id: String(row.id),
-        marketplace: String(row.marketplace ?? ''),
-        displayName: row.displayName ? String(row.displayName) : null,
-        isActive: row.isActive === true,
-        resolution: carriers.resolveCarrierAccountFromRecords(accounts, mappings, {
-          provider: 'surat',
-          marketplaceAccountId: String(row.id),
-        }),
-      }))
-    response.json({ ok: true, accounts, mappings, marketplaceAccounts })
+    const settings = await carriers.loadCarrierAccountSettings(context.db, context.organizationId)
+    response.json({ ok: true, ...settings })
   } catch {
     response.status(500).json({ ok: false, message: 'Taşıyıcı hesapları okunamadı.' })
   }

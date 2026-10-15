@@ -209,11 +209,12 @@ export const integrationCredentials = pgTable(
 )
 
 // Pazaryeri hesapları (organization bazlı). Bir organization aynı marketplace'te
-// (ör. Trendyol) BİRDEN FAZLA satıcı hesabı bağlayabilir; her hesap ayrı veri
+// birden fazla tarihsel hesap satırı taşıyabilir; Trendyol'da TEK güncel satıcı
+// desteklenir. WooCommerce çoklu mağaza destekler; her hesap ayrı veri
 // kapsamıdır. providerAccountId = provider'ın kalıcı, GİZLİ OLMAYAN hesap
 // kimliği (Trendyol için sellerId; API key/secret DEĞİL, hash DEĞİL). Aynı
 // (org, marketplace, providerAccountId) tekrar kaydedilirse yeni hesap
-// OLUŞMAZ. Bir (org, marketplace) için EN FAZLA bir aktif hesap (partial unique).
+// OLUŞMAZ. Trendyol'da tek aktif hesap repository'nin atomik geçişiyle korunur.
 // Hesap değişince eski hesap SİLİNMEZ; yalnız isActive=false yapılır (veriler
 // korunur, kullanıcı geri bağlarsa yeniden görünür).
 export const marketplaceAccounts = pgTable(
@@ -260,8 +261,8 @@ export const marketplaceAccounts = pgTable(
     // Yeniden üretildi: ikinci aktif Woo satırı unique ihlaliyle REDDEDİLDİ.
     //
     // TRENDYOL DAVRANIŞI DEĞİŞMEZ: tek aktif hesap garantisi DB kısıtından
-    // DEĞİL, `resolveOrCreateActiveAccount` içindeki "kardeşleri pasifleştir"
-    // adımından gelir ve o adım OLDUĞU GİBİ DURUR (WOO-MS-2 kilitler).
+    // DEĞİL, `resolveOrCreateActiveAccount` içindeki org kilidi + atomik
+    // "kardeşleri pasifleştir" geçişinden gelir (WOO-MS-2 de kilitler).
     index('marketplace_accounts_org_marketplace_idx').on(
       table.organizationId,
       table.marketplace,

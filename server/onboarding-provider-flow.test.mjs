@@ -272,8 +272,10 @@ test('ONB-9: kardeş hesabın başarısı diğer hesabı DOĞRULAMAZ', async (t)
     status.marketplaces[0].accounts.map((view) => [view.marketplaceAccountId, view]),
   )
   assert.equal(views[current.id].bootstrapReady, false, 'aktif hesap kendi başarısını ister')
-  assert.equal(views[old.id].credentials, 'NOT_BOUND', 'sağlayıcı geneli kimlik pasif hesaba bağlanmaz')
-  assert.equal(views[old.id].bootstrapReady, false)
+  assert.deepEqual(Object.keys(views), [current.id], 'pasif Trendyol güncel kurulum hesabı olarak sunulmaz')
+  const historical = await accounts.getAccountById(db, org, old.id)
+  assert.equal(historical.isActive, false)
+  assert.equal(historical.providerAccountId, '999', 'geçmiş hesap kimliği depoda korunur')
   // R4 yeniden üretimi: kardeşin sipariş SATIRI kanıt DEĞİLDİR.
   assert.equal(status.counts.orders, 1)
   assert.deepEqual(status.blockers, ['MARKETPLACE_VERIFICATION_REQUIRED', 'FIRST_SYNC_REQUIRED'])

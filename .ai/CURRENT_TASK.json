@@ -1,70 +1,32 @@
 {
   "schemaVersion": 1,
   "project": "cargoflow",
-  "ticket": "UI-UX-FIX-001",
+  "ticket": "ORDER-SELECTION-TARGETS",
   "status": "READY_FOR_USER_REVIEW",
   "implementationStatus": "COMPLETE",
   "phase": "LOCAL_COMMIT_DELIVERY",
-  "ticketBranch": "feat/ui-ux-fix-001-operational-polish",
-  "baselineCommit": "c499611d26e76add3d8332662a08a1e73434149c",
-  "specPath": ".ai/tickets/UI-UX-FIX-001.md",
-  "reportPath": "docs/ui-ux-fix-001-operational-polish.md",
+  "ticketBranch": "feat/single-marketplace-account-001-trendyol",
+  "baselineCommit": "5c2374b35a61f8d49ed772a25e7fe5ecdb7d3a91",
+  "specPath": ".ai/tickets/ORDER-SELECTION-TARGETS.md",
   "activeWorker": null,
   "lastImplementationWorker": "codex",
   "reviewer": "gpt-6-astra",
   "reviewStatus": "APPROVED",
-  "previousTicket": "INTEGRATIONS-UI-001",
+  "previousTicket": "SINGLE-MARKETPLACE-ACCOUNT-001",
   "completedCriteria": [
-    "Reports is a standalone sidebar destination with analytics only and unchanged period/financial semantics",
-    "Picking inspection reuses existing projection/images, exposes variants/orders and supports close/Escape/focus restoration",
-    "Real App cargo-to-Orders regression reproduced and fixed via scoped canonical memory retention; exact identity and account-generation guards added",
-    "Background label preparation is secondary, collapsed and read-only with accurate worker status",
-    "All seven provider cards share default-collapsed disclosure; metadata/status/blockers remain visible; proven Woo OAuth return intent opens only Woo",
-    "Aras metadata failures are visibly unavailable rather than falsely empty",
-    "Required suites, affected regressions, type/lint/build and synthetic visual checks passed",
-    "New server test registry orphans are zero; no migration, provider/backend/scheduler changes, push, merge or deploy"
+    "Only primary product image/title/variant/barcode content toggles the existing controlled selection; native keyboard support and checkbox synchronization",
+    "Detail, menu, chevron and non-product cells never select; redundant explicit menu selection shortcut removed",
+    "Header checkbox target44x44 and adjacent native label share one checkbox; visible-only count and partial indeterminate state",
+    "Six columns, sort headers, existing bulk callbacks, filtering and pagination unchanged; existing selected-row theme reused",
+    "16 new DOM regressions; full UI473 and affected node65 pass; synthetic light/dark browser QA and final type/lint/build/diff pass",
+    "Independent different-model review approved; local commit only"
   ],
   "qualityGates": {
-    "uiTests": 453,
-    "uiFiles": 48,
-    "dashboardTests": 11,
-    "productIaTests": 12,
-    "runtimeMemoryTests": 24,
-    "integrationStatus": {
-      "backend": 9,
-      "ui": 8
-    },
-    "onboarding": {
-      "backend": 22,
-      "ui": 13
-    },
-    "hepsiburada": {
-      "backend": 23,
-      "ui": 4
-    },
-    "n11": {
-      "backend": 78,
-      "ui": 5
-    },
-    "woocommerce": {
-      "backend": 105,
-      "ui": 5
-    },
-    "ikas": {
-      "backend": 32,
-      "ui": 3
-    },
-    "aras": 95,
-    "carriers": {
-      "backend": 16,
-      "ui": 3
-    },
-    "billingParty": 43,
-    "affectedNodeTests": 131,
-    "newCargoNavigationTests": 5,
-    "newPickingAndAutomationTests": 4,
-    "integrationPresentationDomTests": 13,
-    "serverTestRegistryOrphans": 0,
+    "newSelectionDomTests": 16,
+    "focusedDomWithFilterReset": 18,
+    "uiTests": 473,
+    "uiFiles": 50,
+    "affectedOrdersNodeTests": 65,
     "tsc": true,
     "lintErrors": 0,
     "preExistingLintWarnings": 6,
@@ -72,18 +34,27 @@
     "diffCheck": true
   },
   "failingTests": [],
+  "validationNotes": [
+    "Synthetic browser proof: outputs/order-selection-light.jpg and order-selection-dark.jpg in conversation workspace",
+    "Header target44x44; label72x44 at tested viewport; six columns; header and row checkbox x44px",
+    "Temporary preview files/server/tab removed; no viewport override used"
+  ],
   "constraints": {
+    "tableRedesigned": false,
+    "wholeRowClickAdded": false,
+    "shiftClickAdded": false,
+    "newBulkToolbarAdded": false,
+    "filterOrPaginationSemanticsChanged": false,
+    "backendRuntimeChanged": false,
     "providerCallsPerformed": false,
     "productionAccessPerformed": false,
-    "backendRuntimeChanged": false,
     "schedulerBehaviorChanged": false,
+    "shipmentOrLabelCreationChanged": false,
     "dbMigrationAdded": false,
     "n11EpochLogicChanged": false,
-    "arasLiveWritesOpened": false,
-    "unknownShipmentRetryChanged": false,
     "pushPerformed": false,
     "mergePerformed": false,
     "deployPerformed": false
   },
-  "nextAction": "User reviews local branch HEAD and delivery report. Do not push, merge or deploy. N11 blocker, Aras restrictions and UNKNOWN shipment safety remain unchanged."
+  "nextAction": "Review local branch HEAD. It includes original Trendyol account commit 5c2374b plus this selection UX follow-up. Do not push, merge or deploy."
 }

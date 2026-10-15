@@ -5,7 +5,7 @@ import {
   MoveDown,
   MoveUp,
 } from 'lucide-react'
-import { Fragment, useMemo } from 'react'
+import { Fragment, useId, useMemo, type ReactNode } from 'react'
 import type { SameProductGroupHeader } from '../utils/orderProductFamily'
 import type { CargoOrder, CargoProduct, OrderItem } from '../types/cargoflow'
 import { resolveNormalizedDesi } from '../utils/desi'
@@ -85,8 +85,12 @@ export function OrdersTable({
     }
     return ids
   }, [groupHeaders, orders])
-  const allSelected =
-    orders.length > 0 && orders.every((order) => selectedIds.includes(order.id))
+  const selectAllId = useId()
+  const visibleSelectedCount = orders.filter((order) => selectedIds.includes(order.id)).length
+  const allSelected = orders.length > 0 && visibleSelectedCount === orders.length
+  const selectionLabel = visibleSelectedCount === 0
+    ? 'Tümünü seç'
+    : `${visibleSelectedCount}/${orders.length} seçildi`
 
   return (
     <div className="orders-table-shell">
@@ -95,12 +99,19 @@ export function OrdersTable({
           <thead>
             <tr>
               <th className="checkbox-cell">
-                <input
-                  type="checkbox"
-                  aria-label="Bu sayfadaki siparişleri seç"
-                  checked={allSelected}
-                  onChange={onToggleAll}
-                />
+                <label className="orders-select-all-checkbox" htmlFor={selectAllId}>
+                  <input
+                    id={selectAllId}
+                    type="checkbox"
+                    aria-label="Bu sayfadaki siparişleri seç"
+                    checked={allSelected}
+                    ref={(input) => {
+                      if (input) input.indeterminate = visibleSelectedCount > 0 && !allSelected
+                    }}
+                    disabled={orders.length === 0}
+                    onChange={onToggleAll}
+                  />
+                </label>
               </th>
               <SortableHeader
                 label="Ürün"
@@ -108,6 +119,11 @@ export function OrdersTable({
                 activeKey={sortKey}
                 direction={sortDirection}
                 onSortChange={onSortChange}
+                leading={
+                  <label className="orders-select-all-label" htmlFor={selectAllId}>
+                    <span aria-live="polite">{selectionLabel}</span>
+                  </label>
+                }
               />
               <SortableHeader
                 label="Sipariş / Müşteri"
@@ -197,22 +213,30 @@ export function OrdersTable({
                             <ChevronRight size={17} />
                           )}
                         </button>
-                        <ProductImageThumb
-                          candidates={imageCandidates}
-                          alt={firstItem?.productName ?? ''}
-                        />
-                        <div>
-                          <strong>{productSummary(order)}</strong>
-                          <span>
-                            {order.items.length} kalem, {totalQuantity(order)} adet
+                        <button
+                          type="button"
+                          className="orders-product-select"
+                          aria-label={`${order.orderNumber} siparişini seç`}
+                          aria-pressed={selected}
+                          onClick={() => onToggleOrder(order.id)}
+                        >
+                          <ProductImageThumb
+                            candidates={imageCandidates}
+                            alt={firstItem?.productName ?? ''}
+                          />
+                          <span className="orders-product-copy">
+                            <strong>{productSummary(order)}</strong>
+                            <span>
+                              {order.items.length} kalem, {totalQuantity(order)} adet
+                            </span>
+                            <span>
+                              {[firstItem?.color, firstItem?.size]
+                                .filter(Boolean)
+                                .join(' / ') || '-'}
+                            </span>
+                            <span>Barkod: {firstItem?.barcode || '-'}</span>
                           </span>
-                          <span>
-                            {[firstItem?.color, firstItem?.size]
-                              .filter(Boolean)
-                              .join(' / ') || '-'}
-                          </span>
-                          <span>Barkod: {firstItem?.barcode || '-'}</span>
-                        </div>
+                        </button>
                       </div>
                     </td>
                     <td>
@@ -287,12 +311,6 @@ export function OrdersTable({
                             >
                               {expanded ? 'Satırı kapat' : 'Satırı genişlet'}
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => onToggleOrder(order.id)}
-                            >
-                              {selected ? 'Seçimi kaldır' : 'Siparişi seç'}
-                            </button>
                           </div>
                         </details>
                       </div>
@@ -333,16 +351,19 @@ function SortableHeader({
   activeKey,
   direction,
   onSortChange,
+  leading,
 }: {
   label: string
   sortKey: OrdersSortKey
   activeKey: OrdersSortKey
   direction: OrdersSortDirection
   onSortChange: (key: OrdersSortKey) => void
+  leading?: ReactNode
 }) {
   const active = activeKey === sortKey
   return (
     <th>
+      {leading}
       <button
         type="button"
         className={active ? 'orders-sort-button active' : 'orders-sort-button'}
