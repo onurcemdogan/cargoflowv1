@@ -1,49 +1,32 @@
 {
   "schemaVersion": 1,
   "project": "cargoflow",
-  "ticket": "SINGLE-MARKETPLACE-ACCOUNT-001",
+  "ticket": "ORDER-SELECTION-TARGETS",
   "status": "READY_FOR_USER_REVIEW",
   "implementationStatus": "COMPLETE",
   "phase": "LOCAL_COMMIT_DELIVERY",
   "ticketBranch": "feat/single-marketplace-account-001-trendyol",
-  "baselineCommit": "6bb4d2e3ccfd663e4e2e880f7abb538f327db7a0",
-  "specPath": ".ai/tickets/SINGLE-MARKETPLACE-ACCOUNT-001.md",
-  "reportPath": "docs/single-marketplace-account-001-trendyol.md",
+  "baselineCommit": "5c2374b35a61f8d49ed772a25e7fe5ecdb7d3a91",
+  "specPath": ".ai/tickets/ORDER-SELECTION-TARGETS.md",
   "activeWorker": null,
   "lastImplementationWorker": "codex",
   "reviewer": "gpt-6-astra",
   "reviewStatus": "APPROVED",
-  "previousTicket": "UI-UX-FIX-001",
+  "previousTicket": "SINGLE-MARKETPLACE-ACCOUNT-001",
   "completedCriteria": [
-    "Current payer, carrier settings, health/catalog and onboarding expose only active Trendyol; other providers retain visibility",
-    "Backend mapping mutation rejects retired Trendyol targets; historical routing still uses persisted full mappings",
-    "Current views show actual seller identity with no repeated provider; missing display name falls back to seller ID",
-    "Historical rows and original order marketplaceAccountId/detail reads remain intact",
-    "Supported Trendyol activation remains idempotent and is transactionally serialized with tenant organization row lock",
-    "Required and affected local gates passed; new server suite registered; no migration or live provider/production access"
+    "Only primary product image/title/variant/barcode content toggles the existing controlled selection; native keyboard support and checkbox synchronization",
+    "Detail, menu, chevron and non-product cells never select; redundant explicit menu selection shortcut removed",
+    "Header checkbox target44x44 and adjacent native label share one checkbox; visible-only count and partial indeterminate state",
+    "Six columns, sort headers, existing bulk callbacks, filtering and pagination unchanged; existing selected-row theme reused",
+    "16 new DOM regressions; full UI473 and affected node65 pass; synthetic light/dark browser QA and final type/lint/build/diff pass",
+    "Independent different-model review approved; local commit only"
   ],
   "qualityGates": {
-    "uiTests": 457,
-    "uiFiles": 49,
-    "integrationStatus": {
-      "backend": 9,
-      "ui": 8
-    },
-    "billingParty": 43,
-    "carriers": {
-      "backend": 16,
-      "ui": 4
-    },
-    "onboarding": {
-      "backend": 22,
-      "ui": 13
-    },
-    "runtimeMemory": 24,
-    "integrationHealth": 53,
-    "focusedAccountRegressions": 48,
-    "newBackendTests": 7,
-    "newUiTests": 4,
-    "serverTestRegistryOrphans": 0,
+    "newSelectionDomTests": 16,
+    "focusedDomWithFilterReset": 18,
+    "uiTests": 473,
+    "uiFiles": 50,
+    "affectedOrdersNodeTests": 65,
     "tsc": true,
     "lintErrors": 0,
     "preExistingLintWarnings": 6,
@@ -52,24 +35,26 @@
   },
   "failingTests": [],
   "validationNotes": [
-    "Initial local API startup timed out under parallel load; only owned child stopped; isolated and final sequential integration-status runs passed",
-    "Subscription marketplace connection usage remains stored-row metering and still counts retained history",
-    "PGlite parallel-call and SQL-lock assertions are not a multi-process production Postgres stress test"
+    "Synthetic browser proof: outputs/order-selection-light.jpg and order-selection-dark.jpg in conversation workspace",
+    "Header target44x44; label72x44 at tested viewport; six columns; header and row checkbox x44px",
+    "Temporary preview files/server/tab removed; no viewport override used"
   ],
   "constraints": {
+    "tableRedesigned": false,
+    "wholeRowClickAdded": false,
+    "shiftClickAdded": false,
+    "newBulkToolbarAdded": false,
+    "filterOrPaginationSemanticsChanged": false,
+    "backendRuntimeChanged": false,
     "providerCallsPerformed": false,
     "productionAccessPerformed": false,
-    "historicalOrdersChanged": false,
     "schedulerBehaviorChanged": false,
     "shipmentOrLabelCreationChanged": false,
-    "shippingPayerDerivationChanged": false,
     "dbMigrationAdded": false,
     "n11EpochLogicChanged": false,
-    "arasLiveWritesOpened": false,
-    "unknownShipmentRetryChanged": false,
     "pushPerformed": false,
     "mergePerformed": false,
     "deployPerformed": false
   },
-  "nextAction": "Review local branch HEAD and delivery report. Stop here; no push, merge or deploy without user authorization."
+  "nextAction": "Review local branch HEAD. It includes original Trendyol account commit 5c2374b plus this selection UX follow-up. Do not push, merge or deploy."
 }

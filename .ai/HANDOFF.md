@@ -1,3 +1,32 @@
+# ORDER-SELECTION-TARGETS — local follow-up delivery
+
+2026-10-15. Same feat/single-marketplace-account-001-trendyol branch; incremental
+baseline 5c2374b35a61f8d49ed772a25e7fe5ecdb7d3a91. COMPLETE / READY_FOR_USER_REVIEW.
+Final delivery commit is branch HEAD. No push, merge or deploy.
+
+Product content toggles the existing row selection through a native toggle
+button; checkbox and selected-row theme stay synchronized. Other cells/actions
+remain separate. The overflow selection shortcut was removed to meet the user's
+no-selection-from-actions rule. Header checkbox44x44 and adjacent visible count
+label share the same checkbox. Counts intersect visible IDs, preserving off-page
+selection. Six table columns/sorting and App/OrdersPage selection/filter/page
+logic are unchanged. Empty page disables select-all. No Shift-click/new toolbar.
+
+Tests: new DOM16, focused+filter18; full UI473/50 files; affected orders node65.
+TypeScript --force/lint/build/diff passed; lint0 errors/6 existing warnings.
+Different-model gpt-6-astra APPROVED, including final alignment margin. Synthetic
+browser light/dark proof is in conversation outputs/order-selection-{light,dark}.jpg.
+Header and row checkbox align at x44; target44x44 and visible label72x44 at tested
+viewport. Preview files/server/tab removed; no viewport override remained.
+
+Only UI runtime changed: src/components/OrdersTable.tsx and src/index.css.
+New src/test/orderSelectionTargets.dom.test.tsx covers all requested behaviors
+plus keyboard/empty/off-page cases. No backend/provider/production calls, DB
+migration, scheduler or fulfillment changes. Original Trendyol account fix and
+N11/Aras/UNKNOWN protections remain. User reviews local commits; stop here.
+
+---
+
 # SINGLE-MARKETPLACE-ACCOUNT-001 — local delivery handoff
 
 2026-10-15. Branch feat/single-marketplace-account-001-trendyol; baseline

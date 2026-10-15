@@ -1,5 +1,40 @@
 # Current context
 
+2026-10-15. Additional ORDER-SELECTION-TARGETS UX change COMPLETE /
+READY_FOR_USER_REVIEW. Same branch feat/single-marketplace-account-001-trendyol,
+incremental baseline 5c2374b35a61f8d49ed772a25e7fe5ecdb7d3a91. Final local commit
+is branch HEAD; original Trendyol account fix remains its parent. No push/merge/deploy.
+
+OrdersTable keeps six columns and existing sort/checkbox controls. Only primary
+product image/name/variant/barcode content is now a keyboard-accessible native
+toggle button, synchronized through existing onToggleOrder/selectedIds. Existing
+selected-row theme is reused. Chevron, detail, overflow and non-product cells do
+not select. Removed the redundant explicit selection action from the overflow.
+
+Header has an enlarged44x44 checkbox label plus a visible adjacent native label
+linked to that same checkbox via useId, retaining the narrow checkbox column.
+Visible-only text is Tümünü seç or N/M seçildi; partial state is indeterminate.
+No changes to App/OrdersPage bulk semantics, filters, pagination or off-page
+selection; no whole-row click, Shift-click or new toolbar. Empty-page control is
+disabled. CSS uses existing theme variables; no new visual system.
+
+Validation: 16 new DOM tests; focused+filter18; full UI473/50 files; affected
+orders/filter/pagination/external-processing node65; tsc force/lint/build/diff
+pass, lint0 errors/6 baseline warnings. Independent gpt-6-astra APPROVED,
+including final checkbox alignment adjustment. Synthetic browser light/dark QA
+verified selection and label-driven select/deselect; screenshots are conversation
+outputs/order-selection-light.jpg and order-selection-dark.jpg. Temporary
+preview files/server/tab removed. No viewport override. No backend/provider/
+production/scheduler/fulfillment changes or migrations; N11/Aras safety unchanged.
+
+Changed files: OrdersTable.tsx, index.css, new orderSelectionTargets.dom.test.tsx,
+CURRENT_TASK/CURRENT_CONTEXT/HANDOFF and .ai/tickets/ORDER-SELECTION-TARGETS.md.
+Stop after local commit; user review is next.
+
+---
+
+# Previous context — SINGLE-MARKETPLACE-ACCOUNT-001
+
 2026-10-15, Europe/Istanbul. SINGLE-MARKETPLACE-ACCOUNT-001 is COMPLETE /
 READY_FOR_USER_REVIEW on feat/single-marketplace-account-001-trendyol.
 Exact baseline: 6bb4d2e3ccfd663e4e2e880f7abb538f327db7a0 (fresh origin/master).
