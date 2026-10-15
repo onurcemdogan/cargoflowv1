@@ -9535,6 +9535,18 @@ button.integration-board-item:hover {
   color: var(--text-2);
   scroll-margin-top: 20px;
 }
+.integration-provider-list { display: grid; gap: 16px; min-width: 0; }
+.integration-management-body { display: grid; gap: 16px; min-width: 0; border-top: 1px solid var(--border); padding-top: 16px; }
+.integration-management-body[hidden] { display: none; }
+.integration-management-body > .integration-detail-panel { margin: 0; padding: 0; border: 0; box-shadow: none; background: transparent; }
+.integration-management-body .integration-detail-tabs { flex-wrap: wrap; overflow-x: visible; }
+.integration-manage-toggle { justify-self: start; }
+.integration-manage-toggle[aria-expanded='true'] svg { transform: rotate(180deg); }
+.integration-connection-summary { display: grid; gap: 10px; min-width: 0; font-size: 12px; }
+.integration-connection-summary p { margin: 0; }
+.integration-summary-account { display: grid; gap: 5px; min-width: 0; overflow-wrap: anywhere; }
+.integration-summary-account small { color: var(--muted); }
+.integration-summary-blocker { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--amber-border); background: var(--amber-soft); color: var(--amber); border-radius: var(--radius-sm); overflow-wrap: anywhere; font-size: 11px; }
 .integration-connection:focus-visible, .integration-detail-panel:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; }
 .integration-connection-header { display: grid; grid-template-columns: 48px minmax(0, 1fr) auto; align-items: start; gap: 14px; }
 .integration-connection-header .integration-provider-icon { width: 48px; height: 48px; border-radius: var(--radius); }
@@ -11708,4 +11720,33 @@ button.integration-board-item:hover {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* UI-UX-FIX-001: inspect persisted product details without increasing list density. */
+.picking-image-button { display: block; width: fit-content; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; cursor: zoom-in; }
+.picking-image-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.picking-detail-overlay { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 20px; background: var(--overlay); }
+.picking-detail-dialog { width: min(880px, 100%); max-height: calc(100dvh - 40px); overflow-y: auto; min-width: 0; color: var(--text-2); }
+.picking-detail-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+.picking-detail-header h2 { margin: 0; color: var(--text); font-size: 18px; }
+.picking-detail-dialog h3 { color: var(--text); font-size: 14px; overflow-wrap: anywhere; }
+.picking-detail-main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+.picking-detail-main > div, .picking-detail-facts, .picking-detail-orders { min-width: 0; }
+.picking-detail-image { display: block; width: 100%; height: 320px; object-fit: contain; background: var(--surface-2); border-radius: var(--radius); }
+.picking-detail-facts dl { display: grid; gap: 12px; }
+.picking-detail-facts dt { font-size: 11px; color: var(--muted); }
+.picking-detail-facts dd { margin: 4px 0 0; font-size: 13px; overflow-wrap: anywhere; }
+.picking-detail-orders { display: grid; gap: 8px; }
+.cargo-ops-grid { grid-template-columns: minmax(0, 1fr); }
+.cargo-ops-advanced { padding: 14px 18px; }
+.cargo-ops-advanced > summary { cursor: pointer; color: var(--text-2); font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+.cargo-ops-advanced > summary .ui-badge { margin-left: 8px; }
+.cargo-ops-advanced-body { padding-top: 16px; }
+@media (max-width: 640px) {
+  .picking-product-main > .picking-image-button { grid-column: 1; grid-row: 1; justify-self: start; }
+  .picking-detail-overlay { padding: 10px; }
+  .picking-detail-dialog { padding: 16px; max-height: calc(100dvh - 20px); }
+  .picking-detail-main { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .picking-detail-image { height: 240px; }
+  .picking-detail-dialog .picking-order-link { flex-wrap: wrap; }
 }

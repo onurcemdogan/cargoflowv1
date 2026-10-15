@@ -1,29 +1,22 @@
 import {
   AlertTriangle,
   ArrowDownRight,
-  ArrowRight,
   ArrowUpRight,
   CalendarDays,
-  Download,
-  Eye,
   MapPin,
   Minus,
-  Printer,
   RefreshCcw,
   Store,
   XCircle,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ProductImageThumb } from '../components/ProductImageThumb'
-import { OrderDetailDrawer } from '../components/OrderDetailDrawer'
-import { PickingSummary } from '../components/PickingSummary'
 import {
   buildDashboardProviderHealth,
   type DashboardProviderCounts,
 } from '../dashboard/dashboardSummary'
 import {
   buildDashboardViewModel,
-  resolveDashboardOrder,
   type DashboardComparison,
   type DashboardDateRange,
   type DashboardDistributionRow,
@@ -40,8 +33,6 @@ import type {
   CargoProduct,
   IntegrationConfig,
   PageKey,
-  PrinterSettings,
-  TenantDesiConfig,
 } from '../types/cargoflow'
 import { formatDisplayDate } from '../utils/formatters'
 import type { OrdersNavigationFilters } from '../utils/ordersNavigation'
@@ -81,7 +72,6 @@ interface DashboardPageProps {
   products?: CargoProduct[]
   integrationConfig: IntegrationConfig
   maskedIntegrationStatus?: MaskedIntegrationStatus | null
-  printerSettings: PrinterSettings
   apiDebugLogs: ApiDebugLog[]
   loading: boolean
   error?: string
@@ -93,20 +83,6 @@ interface DashboardPageProps {
     orderId?: string,
     filters?: OrdersNavigationFilters,
   ) => void
-  onDownloadOrder: (orderId: string) => void
-  onPrintOrder: (orderId: string) => void
-  onCreateShipment: (orderId: string) => void
-  /** Ortak tek-tus akisi (Siparisler sayfasiyla AYNI handler). */
-  onCreateAndPrintLabelForOrder?: (orderId: string) => void
-  isCarrierLabelActionBusy?: (orderId: string) => boolean
-  carrierLabelPhaseText?: string
-  onTrackShipment: (orderId: string) => void
-  onDesiChange: (
-    orderId: string,
-    desi: number | null,
-    desiSource: CargoOrder['desiSource'],
-  ) => void
-  desiConfig?: TenantDesiConfig
   /** Ayrıntılı rapor görünümü; Home kendi kompakt özetini kullanır. */
   variant?: 'section' | 'page'
 }
@@ -129,7 +105,6 @@ export function DashboardPage({
   products = [],
   integrationConfig,
   maskedIntegrationStatus,
-  printerSettings,
   apiDebugLogs,
   loading,
   error,
@@ -137,24 +112,12 @@ export function DashboardPage({
   onRefresh,
   onNavigatePage,
   onNavigateOrders,
-  onDownloadOrder,
-  onPrintOrder,
-  onCreateShipment,
-  onCreateAndPrintLabelForOrder,
-  isCarrierLabelActionBusy,
-  carrierLabelPhaseText,
-  onTrackShipment,
-  onDesiChange,
-  desiConfig,
   variant = 'page',
 }: DashboardPageProps) {
   const todayInput = formatInputDate(new Date())
   const [periodKey, setPeriodKey] = useState<DashboardPeriodKey>('today')
   const [customStartDate, setCustomStartDate] = useState(todayInput)
   const [customEndDate, setCustomEndDate] = useState(todayInput)
-  const [activeDashboardOperationId, setActiveDashboardOperationId] =
-    useState<string>()
-  const [dashboardDetailError, setDashboardDetailError] = useState<string>()
   const selectedPeriod = useMemo<DashboardPeriodSelection>(
     () => ({
       key: periodKey,
@@ -446,13 +409,6 @@ export function DashboardPage({
     () => navigationFiltersForPeriod(viewModel.period),
     [viewModel.period],
   )
-  const activeDashboardOperation = viewModel.recentOperations.find(
-    (operation) => operation.id === activeDashboardOperationId,
-  )
-  const activeDashboardOrder = activeDashboardOperation
-    ? resolveDashboardOrder(orders, activeDashboardOperation)
-    : undefined
-
   useEffect(() => {
     if (!import.meta.env.DEV) return
     console.debug('DASHBOARD_MODEL_READY', {
@@ -523,33 +479,12 @@ export function DashboardPage({
     onNavigateOrders(tab, orderId, filters)
   }
 
-  function openDashboardOrderDetail(operationId: string) {
-    const operation = viewModel.recentOperations.find(
-      (item) => item.id === operationId,
-    )
-    if (!operation) {
-      setActiveDashboardOperationId(undefined)
-      setDashboardDetailError('Sipariş detayı bulunamadı.')
-      return
-    }
-    const order = resolveDashboardOrder(orders, operation)
-    if (!order) {
-      setActiveDashboardOperationId(undefined)
-      setDashboardDetailError('Sipariş detayı bulunamadı.')
-      return
-    }
-    setDashboardDetailError(undefined)
-    setActiveDashboardOperationId(operation.id)
-  }
-
-  void printerSettings
-
   return (
     <div className="dashboard-page dashboard-analytics" data-testid="dashboard-analytics">
       <header className="dashboard-analytics-header">
         <div>
           {variant === 'page' ? <h1>Raporlar</h1> : <h2>İstatistikler</h2>}
-          <p>Satış ve kargo operasyon verilerinizi dönem bazında inceleyin.</p>
+          <p>Satış, iptal ve iade verilerinizi dönem bazında inceleyin.</p>
         </div>
         <div className="dashboard-analytics-controls">
           <div className="dashboard-period-switch" aria-label="Dashboard dönemi">
@@ -624,7 +559,7 @@ export function DashboardPage({
         <section className="dashboard-alert error">
           <XCircle size={20} />
           <div>
-            <strong>Dashboard verileri yenilenemedi</strong>
+            <strong>Rapor verileri yenilenemedi</strong>
             <span>{error}</span>
           </div>
           <button type="button" onClick={handleRefresh} disabled={loading}>
@@ -729,8 +664,7 @@ export function DashboardPage({
           <div className="dashboard-skeleton dashboard-skeleton-cards" />
           <div className="dashboard-skeleton dashboard-skeleton-chart" />
           <span>
-            Satış analitiği yükleniyor… Operasyon verileri (aşağıda) zaten hazır;
-            bu bölüm bloklamıyor.
+            Satış analitiği yükleniyor…
           </span>
         </section>
       ) : (
@@ -891,192 +825,8 @@ export function DashboardPage({
         </>
       )}
 
-      <section className="dashboard-section-heading dashboard-operation-heading" aria-labelledby="operation-analytics-title">
-        <div>
-          <span>Operasyon Analitiği</span>
-          <h2 id="operation-analytics-title">Kargo operasyon görünümü</h2>
-        </div>
-        <p>Mevcut CargoFlow operasyon sınıflandırması ve işlem bekleyen kayıtlar korunur.</p>
-      </section>
-
-      <section className="dashboard-analytics-grid dashboard-analytics-row-ops">
-        <article className="dashboard-analytics-card dashboard-operation-flow-card">
-          <DashboardCardHeader
-            title="Operasyon Akışı"
-            helper="Backlog alanları anlık, tamamlanan adımlar seçili dönemdir"
-          />
-          <div className="dashboard-operation-flow">
-            {viewModel.operationFlow.map((step, index) => (
-              <button
-                type="button"
-                key={step.key}
-                onClick={() =>
-                  navigateOrders(
-                    step.filterTarget,
-                    ['printed', 'cargo', 'delivered'].includes(step.key)
-                      ? periodFilters
-                      : undefined,
-                  )
-                }
-              >
-                <span>{index + 1}</span>
-                <small>{step.label}</small>
-                <strong>{step.count}</strong>
-              </button>
-            ))}
-          </div>
-        </article>
-
-      </section>
-
-      {/* Toplama ayrıntıları kendi çalışma alanında; burada yalnız özet ve geçiş. */}
-      <section
-        className="dashboard-analytics-grid dashboard-picking-row"
-        aria-label="Toplanacak Ürünler"
-      >
-        <PickingSummary
-          quantity={statsBlocked ? undefined : viewModel.pickingLists.totalQuantity}
-          orderCount={statsBlocked ? undefined : viewModel.pickingLists.orderCount}
-          onOpen={() => onNavigatePage('picking')}
-        />
-      </section>
-
-      <section className="dashboard-analytics-grid dashboard-analytics-row-bottom">
-        <article className="dashboard-analytics-card dashboard-recent-ops-card">
-          <DashboardCardHeader
-            title="Son Operasyonlar"
-            action={
-              <button
-                type="button"
-                className="dashboard-card-link"
-                onClick={() => navigateOrders('all')}
-              >
-                Tümünü gör <ArrowRight size={14} />
-              </button>
-            }
-          />
-          {viewModel.recentOperations.length > 0 ? (
-            <div className="dashboard-table-wrap">
-              <table className="dashboard-compact-table dashboard-operations-table">
-                <thead>
-                  <tr>
-                    <th>Sipariş No</th>
-                    <th>Pazaryeri</th>
-                    <th>Müşteri</th>
-                    <th>Ürün</th>
-                    <th>Durum</th>
-                    <th>Kargo</th>
-                    <th>İşlem</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {viewModel.recentOperations.map((operation) => (
-                    <tr key={operation.id}>
-                      <td><strong>{operation.displayOrderNumber}</strong></td>
-                      <td>{operation.marketplace}</td>
-                      <td>{operation.customerName}</td>
-                      <td>
-                        <div className="dashboard-product-cell-new">
-                          <ProductImageThumb
-                            candidates={operation.imageCandidates}
-                            alt={operation.productName}
-                            className="dashboard-mini-product-image"
-                            placeholderClassName="dashboard-mini-product-placeholder"
-                          />
-                          <span>
-                            <strong>{operation.productName}</strong>
-                            <small>
-                              {operation.productVariant || 'Varyant bilgisi yok'}
-                              {operation.additionalItemCount > 0
-                                ? ` · +${operation.additionalItemCount} ürün`
-                                : ''}
-                            </small>
-                          </span>
-                        </div>
-                      </td>
-                      <td><span className="dashboard-operation-status">{operation.status}</span></td>
-                      <td>{operation.carrier}</td>
-                      <td>
-                        <div className="dashboard-row-actions">
-                          <button
-                            type="button"
-                            aria-label="Sipariş detayını görüntüle"
-                            title="Detayı Gör"
-                            data-order-number={operation.displayOrderNumber}
-                            onClick={() => openDashboardOrderDetail(operation.id)}
-                          >
-                            <Eye size={15} />
-                          </button>
-                          {/* Ortak tek-tus akisi: etiket yoksa olusturur,
-                              varsa yazdirir, PRINTED ise reprint eder.
-                              "Barkod Bekliyor" siparis ARTIK disabled DEGIL —
-                              onkontrol sonucu tiklamadan sonra gosterilir. */}
-                          <button
-                            type="button"
-                            aria-label={`${operation.displayOrderNumber} kargo etiketi oluştur ve yazdır`}
-                            title="Kargo etiketi oluştur ve yazdır"
-                            disabled={
-                              !operation.id ||
-                              Boolean(isCarrierLabelActionBusy?.(operation.id))
-                            }
-                            onClick={() =>
-                              (onCreateAndPrintLabelForOrder ?? onPrintOrder)(
-                                operation.id,
-                              )
-                            }
-                          >
-                            <Printer size={15} />
-                          </button>
-                          <button
-                            type="button"
-                            aria-label={`${operation.displayOrderNumber} ZPL indir`}
-                            title={operation.canDownloadZpl ? 'ZPL indir' : operation.zplDisabledReason}
-                            disabled={!operation.canDownloadZpl}
-                            onClick={() => onDownloadOrder(operation.id)}
-                          >
-                            <Download size={15} />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <div className="dashboard-empty-card">Henüz operasyon kaydı bulunamadı.</div>
-          )}
-        </article>
-      </section>
         </>
       )}
-      {dashboardDetailError ? (
-        <div className="dashboard-detail-error" role="status">
-          {dashboardDetailError}
-        </div>
-      ) : null}
-      {activeDashboardOrder ? (
-        <OrderDetailDrawer
-          order={activeDashboardOrder}
-          products={products}
-          busy={loading}
-          onClose={() => {
-            setActiveDashboardOperationId(undefined)
-            setDashboardDetailError(undefined)
-          }}
-          onCreateShipment={onCreateShipment}
-          onCreateAndPrintLabel={onCreateAndPrintLabelForOrder}
-          createAndPrintBusy={Boolean(
-            isCarrierLabelActionBusy?.(activeDashboardOrder.id),
-          )}
-          createAndPrintPhaseText={carrierLabelPhaseText}
-          onTrackShipment={onTrackShipment}
-          onDownloadZpl={onDownloadOrder}
-          onPrintLabel={onPrintOrder}
-          onDesiChange={onDesiChange}
-          desiConfig={desiConfig}
-        />
-      ) : null}
     </div>
   )
 }

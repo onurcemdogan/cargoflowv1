@@ -73,7 +73,7 @@ test('UI-1: anahtar Sürat ayar panelinin İÇİNDE DEĞİLDİR', async () => {
   // için sorguyu Sürat kartıyla sınırlıyoruz.
   const suratCard = screen.getByRole('heading', { name: 'Sürat Kargo' }).closest('section')
   expect(suratCard).not.toBe(null)
-  await user.click(within(suratCard as HTMLElement).getByRole('button', { name: 'Ayarlar' }))
+  await user.click(within(suratCard as HTMLElement).getByRole('button', { name: 'Sürat Kargo yönet' }))
 
   const carrierPanel = screen.getByRole('region', {
     name: 'Sürat Kargo ayarları',
@@ -111,7 +111,7 @@ test('UI-4: başka sağlayıcı (Trendyol) sekmesi seçiliyken anahtar KAYBOLMAZ
   const user = userEvent.setup()
   renderPage(makeConfig())
   await user.click(screen.getByRole('button', { name: /Pazaryerleri/ }))
-  await user.click(screen.getByRole('button', { name: 'Ayarlar' }))
+  await user.click(screen.getByRole('button', { name: 'Trendyol yönet' }))
   expect(
     screen.getByRole('region', { name: 'Trendyol ayarları' }),
   ).toBeTruthy()

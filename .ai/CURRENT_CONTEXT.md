@@ -1,5 +1,45 @@
 # Current context
 
+2026-10-15, Europe/Istanbul. Active ticket UI-UX-FIX-001, COMPLETE and
+READY_FOR_USER_REVIEW on `feat/ui-ux-fix-001-operational-polish`. Exact baseline:
+`c499611d26e76add3d8332662a08a1e73434149c` (current origin/master at startup).
+Local delivery commit is branch HEAD. No push, merge or deployment.
+
+Five fixes: standalone analytics Reports after Shipments in sidebar; persisted
+picking product detail modal; cargo attention order opening survives paged reads;
+background label preparation is collapsed secondary read-only information; all
+seven integration providers use the same default-collapsed management shell.
+Only validated Woo OAuth-return intent auto-opens Woo. Board selection explicitly
+opens/focuses the selected provider. Aras metadata failures remain visible even
+while collapsed; failed reads do not claim there are no accounts.
+
+The cargo regression used real App, CargoOperationsPage, OrdersPage and drawer.
+Before the fix a single-record GET was appended only to App state, so the next
+workspace read replaced it from the service pool and closed the detail. The fix
+retains scoped persisted records in existing canonical client memory, checks exact
+response identity and rejects a stale account generation. No DB persistence or
+provider operation is added. Reports receives no shipment/print/track callbacks.
+
+Checks: UI 453/48 files, dashboard11, productIA12, runtime-memory24,
+status9+8 UI, onboarding22+13 UI, HB23+4 UI, n11 78+5 UI,
+Woo105+5 UI, ikas32+3 UI, Aras95, carriers16+3 UI, billing43,
+affected node131, registry orphans0. tsc --force/build/diff check pass;
+lint 0 errors/6 pre-existing warnings. Different-model gpt-6-astra review APPROVED.
+Synthetic visual checks: all five desktop surfaces light/dark, 1024px integration
+layout, 375px product modal and navigation/provider disclosure; no horizontal
+page overflow. Temporary harness files/server/tab removed; viewport reset.
+
+Provider/backend contracts, encryption, tenant authority, scheduler flags and
+shipping safety gates are unchanged. No migration or production/provider calls.
+N11_EPOCH_SEMANTICS_UNVERIFIED/BLOCKED_EXTERNAL, Aras internal_test/live-write
+restrictions and UNKNOWN_AFTER_NETWORK protections remain. Known ambiguous
+production record was not accessed or retried. Existing UTC reporting semantics
+remain; detail images use best persisted candidates without higher-resolution claims.
+
+Report and complete inventory: docs/ui-ux-fix-001-operational-polish.md.
+
+## Previous task context (INTEGRATIONS-UI-001, included in current master)
+
 2026-10-14, Europe/Istanbul. Supervisor-selected INTEGRATIONS-UI-001, implemented
 on `feat/integrations-ui-001-standardize-connections` from current `origin/master`
 `891e8f9ef83e47cef56aa14bcf2e72780a55fb7d` (user merged UI-IA-001 via PR #21).

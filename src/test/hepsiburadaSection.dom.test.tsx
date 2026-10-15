@@ -46,7 +46,7 @@ afterEach(() => {
 
 test('HB-UI-1: iç test rozeti, dürüst metin ("canlı" iddiası yok); parola DEĞERİ hiçbir yerde yok', async () => {
   responder = () => ({ status: 200, body: { ok: true, accounts: [ACCOUNT] } })
-  render(<HepsiburadaSection />)
+  render(<HepsiburadaSection expanded />)
   expect(await screen.findByText('Hepsiburada • m-1001')).toBeTruthy()
   expect(screen.getByTestId('hepsiburada-rollout-badge').textContent).toBe('SİPARİŞ OKUMA')
   const section = screen.getByTestId('hepsiburada-section').textContent ?? ''
@@ -67,7 +67,7 @@ test('HB-UI-2: Düzenle parolayı/kullanıcı adını GERİ DOLDURMAZ; kayıt so
     }
     return { status: 200, body: { ok: true, accounts: [ACCOUNT] } }
   }
-  render(<HepsiburadaSection />)
+  render(<HepsiburadaSection expanded />)
   await screen.findByText('Hepsiburada • m-1001')
   fireEvent.click(screen.getByRole('button', { name: 'Düzenle' }))
   expect((document.getElementById('hb-merchant-id') as HTMLInputElement).value).toBe('m-1001')
@@ -90,9 +90,9 @@ test('HB-UI-3: Test Et / Senkronize Et hesap kimliğiyle çağrılır; iç test 
     if (url.endsWith('/accounts/test')) return { status: 200, body: { ok: true, recordsRead: 1, message: 'Bu iç test aşamasıdır.' } }
     return { status: 200, body: { ok: true, accounts: [ACCOUNT] } }
   }
-  render(<HepsiburadaSection />)
+  render(<HepsiburadaSection expanded />)
   await screen.findByText('Hepsiburada • m-1001')
-  fireEvent.click(screen.getByRole('button', { name: 'Senkronize Et' }))
+  fireEvent.click(screen.getByRole('button', { name: /Siparişleri Senkronize Et|Senkronize Et/ }))
   expect(await screen.findByText(/3 kayıt okundu\. İç test aşaması/)).toBeTruthy()
   const syncCall = calls.find((call) => call.url.endsWith('/accounts/sync'))
   expect(JSON.parse(String(syncCall?.body))).toEqual({ marketplaceAccountId: 'acc-1' })
@@ -116,7 +116,7 @@ test('HB-UI-VERIFICATION: saved credentials remain inactive until exact account 
     }
     return { status: 200, body: { ok: true, accounts: [account] } }
   }
-  render(<HepsiburadaSection />)
+  render(<HepsiburadaSection expanded />)
   await screen.findByText('Siparişler pasif')
   expect(screen.queryByText('Bağlı — Hesap doğrulandı')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Test Et' }))

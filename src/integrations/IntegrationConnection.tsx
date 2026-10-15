@@ -1,5 +1,10 @@
-import type { HTMLAttributes, ReactNode } from 'react'
-import { ShoppingBag, Store, Truck } from 'lucide-react'
+import { useId, useState, type HTMLAttributes, type ReactNode } from 'react'
+import { ChevronDown, ShoppingBag, Store, Truck } from 'lucide-react'
+
+export interface IntegrationDisclosureProps {
+  expanded?: boolean
+  onExpandedChange?: (expanded: boolean) => void
+}
 
 /** Presentation only: provider modules own credentials, requests and capability decisions. */
 export function IntegrationConnectionCard({
@@ -10,7 +15,11 @@ export function IntegrationConnectionCard({
   badges,
   children,
   testId,
-}: {
+  summary,
+  expanded,
+  onExpandedChange,
+  defaultExpanded = false,
+}: IntegrationDisclosureProps & {
   provider: string
   title: string
   kind: 'marketplace' | 'commerce' | 'carrier'
@@ -18,7 +27,12 @@ export function IntegrationConnectionCard({
   badges?: ReactNode
   children: ReactNode
   testId?: string
+  summary?: ReactNode
+  defaultExpanded?: boolean
 }) {
+  const [localExpanded, setLocalExpanded] = useState(defaultExpanded)
+  const isExpanded = expanded ?? localExpanded
+  const detailId = useId()
   const Icon =
     kind === 'carrier' ? Truck : kind === 'commerce' ? Store : ShoppingBag
   return (
@@ -49,7 +63,17 @@ export function IntegrationConnectionCard({
         </div>
         <div className="integration-connection-badges">{badges}</div>
       </header>
-      {children}
+      {summary && !isExpanded ? <div className="integration-connection-summary">{summary}</div> : null}
+      <button type="button" className="ui-btn ui-btn-secondary integration-manage-toggle" aria-label={`${title} ${isExpanded ? 'detaylarını kapat' : 'yönet'}`} aria-expanded={isExpanded} aria-controls={detailId} onClick={() => {
+        const next = !isExpanded
+        if (onExpandedChange) onExpandedChange(next)
+        else setLocalExpanded(next)
+      }}>
+        {isExpanded ? 'Kapat' : 'Yönet'} <ChevronDown size={16} aria-hidden="true" />
+      </button>
+      <div id={detailId} className="integration-management-body" hidden={!isExpanded}>
+        {isExpanded ? children : null}
+      </div>
     </section>
   )
 }

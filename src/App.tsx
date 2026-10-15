@@ -704,17 +704,26 @@ function App() {
   // işleyicilerle çalışır. Yazdırma mevcut BASKI akışıdır — create YOK.
   async function requestOrderAction(kind: 'open' | 'print' | 'track', orderId: string) {
     setOrderActionError(null)
-    if (!orders.some((order) => order.id === orderId)) {
+    const accountGeneration = workflowService.getMarketplaceAccountGeneration()
+    const pooledOrder = orders.find((order) => order.id === orderId)
+    if (pooledOrder) {
+      workflowService.rememberPersistedOrder(pooledOrder, accountGeneration)
+    } else {
       try {
         const response = await fetch(`/api/orders/${encodeURIComponent(orderId)}`, {
           credentials: 'include',
         })
         const payload = (await response.json().catch(() => null)) as { order?: CargoOrder } | null
-        if (!response.ok || !payload?.order) {
+        if (!response.ok || !payload?.order || payload.order.id !== orderId) {
           setOrderActionError('Sipariş yüklenemedi; Siparişler ekranından açmayı deneyin.')
           return
         }
         const loaded = payload.order
+        if (!mounted.current) return
+        if (!workflowService.rememberPersistedOrder(loaded, accountGeneration)) {
+          setOrderActionError('Hesap değişti; siparişi mevcut hesapta yeniden açın.')
+          return
+        }
         setOrdersState((current) =>
           current.orders.some((order) => order.id === loaded.id)
             ? current
@@ -1945,24 +1954,12 @@ function App() {
           products={products}
           integrationConfig={integrationConfig}
           maskedIntegrationStatus={maskedIntegrationStatus}
-          printerSettings={printerSettings}
           apiDebugLogs={apiDebugLogs}
           loading={ordersState.ordersLoading || !integrationHydrated}
           error={ordersState.ordersError}
           lastSyncedAt={resolvedLastSyncedAt}
           onNavigatePage={handleNavigate}
           onNavigateOrders={handleDashboardNavigateOrders}
-          onDownloadOrder={handleDownloadZplForOrder}
-          onPrintOrder={handleMarkPrintedForOrder}
-          onCreateAndPrintLabelForOrder={
-            handleCreateAndPrintCarrierLabelForOrder
-          }
-          isCarrierLabelActionBusy={isCarrierLabelActionBusy}
-          carrierLabelPhaseText={carrierLabelPhaseText}
-          onCreateShipment={handleCreateShipmentForOrder}
-          onTrackShipment={handleTrackShipmentForOrder}
-          onDesiChange={handleOrderDesiChange}
-          desiConfig={integrationConfig.desi}
           onRefresh={handleReloadOrders}
         />
       ) : null}

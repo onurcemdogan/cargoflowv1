@@ -129,10 +129,10 @@ export function CargoOperationsPage({
   const automationText = !worker
     ? ''
     : automationOn
-      ? 'Yeni siparişlerin etiketi arka planda önceden hazırlanır; butona basıldığında yeniden oluşturulmaz.'
+      ? 'Açık olduğunda uygun yeni siparişlerin etiketi arka planda önceden hazırlanır. Etiket otomatik yazdırılmaz.'
       : worker.backgroundEnabled
-        ? 'Bu çalışma alanında kapalı: etiketler siz butona bastığınızda hazırlanır.'
-        : 'Kapalı: etiketler siz butona bastığınızda hazırlanır.'
+        ? 'Bu çalışma alanında kapalı. Etiketler mevcut kullanıcı işlemi sırasında hazırlanır.'
+        : 'Kapalı. Etiketler mevcut kullanıcı işlemi sırasında hazırlanır.'
 
   return (
     <div className="cargo-ops" data-testid="cargo-operations-page">
@@ -183,40 +183,7 @@ export function CargoOperationsPage({
       </section>
 
       <div className="cargo-ops-grid">
-        <Card title="Otomatik etiket hazırlama" labelledBy="cargo-worker-title" className="cargo-ops-worker">
-          {!worker ? (
-            <div className="ui-skeleton-list" aria-hidden="true">
-              <i />
-              <i />
-            </div>
-          ) : (
-            <>
-              <p className="cargo-ops-worker-state">
-                <Badge tone={automationOn ? 'success' : 'neutral'} dot>
-                  {automationOn ? 'Açık' : 'Kapalı'}
-                </Badge>
-                <span>{automationText}</span>
-              </p>
-              <dl className="cargo-ops-facts">
-                <div><dt>Son hazırlanan etiket</dt><dd>{formatDateTime(worker.lastPreparedAt)}</dd></div>
-                <div>
-                  <dt>Ortalama hazırlama süresi</dt>
-                  <dd>
-                    {formatDuration(worker.averagePrepSeconds)}
-                    {worker.sampleSize > 0 ? <small> · son 7 gün, {worker.sampleSize} etiket</small> : null}
-                  </dd>
-                </div>
-              </dl>
-              <ul className="cargo-ops-queue" aria-label="Hazırlama kuyruğu">
-                <li><span>Sırada</span><b>{worker.counts.QUEUED + worker.counts.FAILED_SAFE_TO_RETRY}</b></li>
-                <li><span>Hazırlanıyor</span><b>{worker.counts.PREPARING}</b></li>
-                <li><span>Hazırlandı</span><b>{worker.counts.READY}</b></li>
-                <li className="is-warning"><span>Engellendi</span><b>{worker.counts.BLOCKED}</b></li>
-                <li className="is-danger"><span>Sonucu belirsiz</span><b>{worker.counts.UNKNOWN_AFTER_NETWORK}</b></li>
-              </ul>
-            </>
-          )}
-        </Card>
+
 
         <Card
           title="Kontrol gereken işlemler"
@@ -259,6 +226,44 @@ export function CargoOperationsPage({
           )}
         </Card>
       </div>
+
+        <details className="ui-card cargo-ops-worker cargo-ops-advanced">
+          <summary>Gelişmiş · Arka planda etiket hazırlama <Badge tone={worker ? (automationOn ? 'success' : 'neutral') : 'neutral'}>{worker ? (automationOn ? 'Açık' : 'Kapalı') : 'Durum alınamadı'}</Badge></summary>
+          <div className="cargo-ops-advanced-body">
+          {!worker ? (
+            <div className="ui-skeleton-list" aria-hidden="true">
+              <i />
+              <i />
+            </div>
+          ) : (
+            <>
+              <p className="cargo-ops-worker-state">
+                <Badge tone={automationOn ? 'success' : 'neutral'} dot>
+                  {automationOn ? 'Açık' : 'Kapalı'}
+                </Badge>
+                <span>{automationText}</span>
+              </p>
+              <dl className="cargo-ops-facts">
+                <div><dt>Son hazırlanan etiket</dt><dd>{formatDateTime(worker.lastPreparedAt)}</dd></div>
+                <div>
+                  <dt>Ortalama hazırlama süresi</dt>
+                  <dd>
+                    {formatDuration(worker.averagePrepSeconds)}
+                    {worker.sampleSize > 0 ? <small> · son 7 gün, {worker.sampleSize} etiket</small> : null}
+                  </dd>
+                </div>
+              </dl>
+              <ul className="cargo-ops-queue" aria-label="Hazırlama kuyruğu">
+                <li><span>Sırada</span><b>{worker.counts.QUEUED + worker.counts.FAILED_SAFE_TO_RETRY}</b></li>
+                <li><span>Hazırlanıyor</span><b>{worker.counts.PREPARING}</b></li>
+                <li><span>Hazırlandı</span><b>{worker.counts.READY}</b></li>
+                <li className="is-warning"><span>Engellendi</span><b>{worker.counts.BLOCKED}</b></li>
+                <li className="is-danger"><span>Sonucu belirsiz</span><b>{worker.counts.UNKNOWN_AFTER_NETWORK}</b></li>
+              </ul>
+            </>
+          )}
+          </div>
+        </details>
 
       <Card title="Son işlemler" labelledBy="cargo-recent-title" subtitle="Son gönderi oluşturma kayıtları.">
         {!pipeline ? (

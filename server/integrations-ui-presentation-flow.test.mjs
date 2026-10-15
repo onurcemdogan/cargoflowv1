@@ -4,7 +4,7 @@ import test from 'node:test'
 
 test('INTEGRATIONS-UI: shared shell has no IO or capability logic; provider decisions stay outside it', () => {
   const source = readFileSync('src/integrations/IntegrationConnection.tsx', 'utf8')
-  assert.doesNotMatch(source, /fetch\(|authenticatedApiRequest|useEffect|useState|localStorage|verificationStatus|ordersActive/)
+  assert.doesNotMatch(source, /fetch\(|authenticatedApiRequest|useEffect|localStorage|verificationStatus|ordersActive/)
   assert.match(source, /ui-card integration-connection/)
 })
 

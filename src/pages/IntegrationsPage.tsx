@@ -1,6 +1,4 @@
 import {
-  CheckCircle2,
-  CircleAlert,
   Clock3,
   FileText,
   Globe2,
@@ -44,6 +42,8 @@ import { HepsiburadaSection } from '../integrations/HepsiburadaSection'
 import { N11Section } from '../integrations/N11Section'
 import { ArasSection } from '../integrations/ArasSection'
 import { CarrierAccountsSection } from '../integrations/CarrierAccountsSection'
+import { IntegrationConnectionCard } from '../integrations/IntegrationConnection'
+import { Badge } from '../ui/primitives'
 import { readWooAuthReturn } from '../integrations/wooAuthReturn'
 import {
   IntegrationStatusBoard,
@@ -127,8 +127,8 @@ export function IntegrationsPage({
     readWooAuthReturn() ? 'commerceSites' : 'marketplaces',
   )
   const [activeIntegration, setActiveIntegration] = useState<
-    'trendyol' | 'surat' | 'aras' | null
-  >(null)
+    IntegrationBoardKey | null
+  >(() => readWooAuthReturn() ? 'woocommerce' : null)
   const [activeTrendyolTab, setActiveTrendyolTab] =
     useState<TrendyolDetailTab>('general')
   const [activeSuratTab, setActiveSuratTab] =
@@ -162,10 +162,10 @@ export function IntegrationsPage({
       setActiveIntegration('aras')
     } else if (key === 'hepsiburada' || key === 'n11') {
       setActiveCategory('marketplaces')
-      setActiveIntegration(null)
+      setActiveIntegration(key)
     } else {
       setActiveCategory('commerceSites')
-      setActiveIntegration(null)
+      setActiveIntegration(key)
     }
     requestAnimationFrame(() => {
       const target = detailRef.current?.querySelector<HTMLElement>(`[data-provider-management="${key}"]`)
@@ -206,95 +206,12 @@ export function IntegrationsPage({
         ))}
       </nav>
 
-      <form
-        className="integration-settings-form"
-        onSubmit={(event) => {
-          event.preventDefault()
-          onSave(form)
-        }}
-      >
-        {activeCategory === 'marketplaces' ? (
-          <IntegrationCard
-            type="marketplace"
-            title="Trendyol"
-            description="Pazaryeri sipariş ve ürün entegrasyonu"
-            configured={trendyolConfigured}
-            test={trendyolTest}
-            facts={[
-              ['Mağaza', form.trendyol.sellerId || '-'],
-              [
-                'Ortam',
-                form.trendyol.environment === 'prod' ? 'Canlı' : 'Test',
-              ],
-              ['API', trendyolConfigured ? 'Yapılandırıldı' : 'Eksik'],
-              ['Son kontrol', formatTestDate(trendyolTest)],
-            ]}
-            busy={busy}
-            primaryAction={{
-              label: 'Senkronize Et',
-              icon: <RefreshCcw size={16} />,
-              onClick: () => onFetchOrders(form),
-            }}
-            onSettings={() => {
-              setActiveIntegration('trendyol')
-              setActiveTrendyolTab('general')
-            }}
-          />
-        ) : null}
-
-        {activeCategory === 'carriers' ? (
-          <>
-            <IntegrationCard
-              type="carrier"
-              title="Sürat Kargo"
-              description="Gönderi, ortak barkod ve takip entegrasyonu"
-              configured={suratConfigured}
-              test={suratTest}
-              facts={[
-                ['Müşteri Kodu', form.surat.kullaniciAdi || '-'],
-                ['Ortam', form.surat.ortam === 'live' ? 'Canlı' : 'Test'],
-                ['Anlaşmalı', suratConfigured ? 'Evet' : 'Kurulum gerekli'],
-                ['Son bağlantı', formatTestDate(suratTest)],
-              ]}
-              busy={busy}
-              primaryAction={{
-                label: 'Test Et',
-                icon: <TestTube2 size={16} />,
-                onClick: () => onTestSurat(form),
-              }}
-              onSettings={() => {
-                setActiveIntegration('surat')
-                setActiveSuratTab('general')
-              }}
-            />
-            <IntegrationCard
-              type="carrier"
-              title="Aras Kargo"
-              description="İç test — resmî Aras test servisi"
-              configured={false}
-              facts={[['Yayın', 'İç test'], ['Canlı gönderi', 'Kapalı']]}
-              busy={busy}
-              primaryAction={{
-                label: 'Hesap Bağla',
-                icon: <TestTube2 size={16} />,
-                onClick: () => setActiveIntegration('aras'),
-              }}
-              onSettings={() => setActiveIntegration('aras')}
-            />
-          </>
-        ) : null}
-
-        {activeCategory !== 'marketplaces' &&
-        activeCategory !== 'carriers' &&
-        activeCategory !== 'commerceSites' ? (
-          <EmptyIntegrationCategory
-            {...emptyCategoryMessages[activeCategory]}
-          />
-        ) : null}
-
-        {activeCategory === 'marketplaces' &&
-        activeIntegration === 'trendyol' ? (
-          <TrendyolSettingsPanel
+      <div className="integration-provider-list">
+        {activeCategory === 'marketplaces' ? <>
+          <form className="integration-settings-form" onSubmit={(event) => { event.preventDefault(); onSave(form) }}>
+            <IntegrationConnectionCard provider="trendyol" title="Trendyol" kind="marketplace" description="Pazaryeri sipariş ve ürün entegrasyonu" expanded={activeIntegration === 'trendyol'} onExpandedChange={(open) => setActiveIntegration(open ? 'trendyol' : null)} badges={<Badge tone={trendyolTest ? (trendyolTest.ok ? 'success' : 'warning') : 'neutral'}>{trendyolTest ? (trendyolTest.ok ? 'Bağlantı testi başarılı' : 'Kontrol gerekli') : trendyolConfigured ? 'Kayıtlı · henüz test edilmedi' : 'Kurulum gerekli'}</Badge>} summary={<ReadOnlyIntegrationGrid values={[["Mağaza", form.trendyol.sellerId || '—'], ["Ortam", form.trendyol.environment === 'prod' ? 'Canlı' : 'Test'], ["Son kontrol", formatTestDate(trendyolTest)]]} />}>
+              <button type="button" className="ui-btn ui-btn-primary" disabled={busy} onClick={() => onFetchOrders(form)}><RefreshCcw size={16} /> Senkronize Et</button>
+              <TrendyolSettingsPanel
             form={form}
             setForm={setForm}
             activeTab={activeTrendyolTab}
@@ -308,10 +225,15 @@ export function IntegrationsPage({
             onFetchOrders={onFetchOrders}
             onFetchProducts={onFetchProducts}
           />
-        ) : null}
-
-        {activeCategory === 'carriers' && activeIntegration === 'surat' ? (
-          <SuratSettingsPanel
+            </IntegrationConnectionCard>
+          </form>
+          <HepsiburadaSection expanded={activeIntegration === 'hepsiburada'} onExpandedChange={(open) => setActiveIntegration(open ? 'hepsiburada' : null)} />
+          <N11Section expanded={activeIntegration === 'n11'} onExpandedChange={(open) => setActiveIntegration(open ? 'n11' : null)} />
+        </> : null}
+        {activeCategory === 'carriers' ? <>
+          <form className="integration-settings-form" onSubmit={(event) => { event.preventDefault(); onSave(form) }}>
+            <IntegrationConnectionCard provider="surat" title="Sürat Kargo" kind="carrier" description="Gönderi, ortak barkod ve takip entegrasyonu" expanded={activeIntegration === 'surat'} onExpandedChange={(open) => setActiveIntegration(open ? 'surat' : null)} badges={<Badge tone={suratTest ? (suratTest.ok ? 'success' : 'warning') : 'neutral'}>{suratTest ? (suratTest.ok ? 'Bağlantı testi başarılı' : 'Kontrol gerekli') : suratConfigured ? 'Kayıtlı · henüz test edilmedi' : 'Kurulum gerekli'}</Badge>} summary={<ReadOnlyIntegrationGrid values={[["Müşteri kodu", form.surat.kullaniciAdi || '—'], ["Ortam", form.surat.ortam === 'live' ? 'Canlı' : 'Test'], ["Son kontrol", formatTestDate(suratTest)]]} />}>
+              <SuratSettingsPanel
             form={form}
             setForm={setForm}
             activeTab={activeSuratTab}
@@ -323,36 +245,16 @@ export function IntegrationsPage({
             onSave={onSave}
             onTest={onTestSurat}
           />
-        ) : null}
-
-      </form>
-
-      {activeCategory === 'carriers' && activeIntegration === 'aras' ? (
-        <ArasSection />
-      ) : null}
-
-      {/*
-        PAZARYERİ — Hepsiburada + n11 (İÇ TEST, YALNIZ OKUMA). Formun DIŞINDA durur:
-        bölümün kendi düğmeleri vardır; Enter sayfanın ayar formunu GÖNDEREMEZ.
-      */}
-      {activeCategory === 'marketplaces' ? (
-        <div className="integration-marketplace-sections">
-          <HepsiburadaSection />
-          <N11Section />
-        </div>
-      ) : null}
-
-      {/*
-        E-TİCARET SİTELERİ — ikas (İÇ TEST). Formun DIŞINDA durur: bölümün
-        kendi düğmeleri vardır ve ikas alanında Enter, sayfanın ayar formunu
-        GÖNDEREMEZ.
-      */}
-      {activeCategory === 'commerceSites' ? (
-        <div className="integration-commerce-sites">
-          <WooCommerceSection />
-          <IkasSection />
-        </div>
-      ) : null}
+            </IntegrationConnectionCard>
+          </form>
+          <ArasSection expanded={activeIntegration === 'aras'} onExpandedChange={(open) => setActiveIntegration(open ? 'aras' : null)} />
+        </> : null}
+        {activeCategory === 'commerceSites' ? <>
+          <WooCommerceSection expanded={activeIntegration === 'woocommerce'} onExpandedChange={(open) => setActiveIntegration(open ? 'woocommerce' : null)} />
+          <IkasSection expanded={activeIntegration === 'ikas'} onExpandedChange={(open) => setActiveIntegration(open ? 'ikas' : null)} />
+        </> : null}
+        {activeCategory !== 'marketplaces' && activeCategory !== 'carriers' && activeCategory !== 'commerceSites' ? <EmptyIntegrationCategory {...emptyCategoryMessages[activeCategory]} /> : null}
+      </div>
       </div>
 
       <div className="integration-shared-settings">
@@ -515,91 +417,6 @@ function ShipmentDefaultsSection({
   )
 }
 
-interface IntegrationCardProps {
-  type: 'marketplace' | 'carrier'
-  title: string
-  description: string
-  configured: boolean
-  test?: IntegrationTestResult
-  facts: Array<[string, string]>
-  busy: boolean
-  primaryAction: {
-    label: string
-    icon: React.ReactNode
-    onClick: () => void
-  }
-  onSettings: () => void
-}
-
-function IntegrationCard({
-  type,
-  title,
-  description,
-  configured,
-  test,
-  facts,
-  busy,
-  primaryAction,
-  onSettings,
-}: IntegrationCardProps) {
-  const Icon = type === 'marketplace' ? ShoppingBag : Truck
-  const statusOk = test ? test.ok : configured
-
-  return (
-    <section className="integration-provider-card">
-      <div className={`integration-provider-icon ${type}`}>
-        <Icon size={24} />
-      </div>
-      <div className="integration-provider-main">
-        <div className="integration-provider-heading">
-          <div>
-            <span className="integration-card-kicker">
-              {type === 'marketplace' ? 'Pazaryeri' : 'Kargo firması'}
-            </span>
-            <h2>{title}</h2>
-            <p>{description}</p>
-          </div>
-          <span
-            className={`integration-status-badge ${statusOk ? 'active' : 'waiting'}`}
-          >
-            {statusOk ? <CheckCircle2 size={14} /> : <CircleAlert size={14} />}
-            {test ? (test.ok ? 'Bağlı' : 'Kontrol gerekli') : configured ? 'Aktif' : 'Kurulum gerekli'}
-          </span>
-        </div>
-
-        <div className="integration-card-facts">
-          {facts.map(([label, value]) => (
-            <div key={label}>
-              <span>{label}</span>
-              <strong>{value}</strong>
-            </div>
-          ))}
-        </div>
-
-        <div className="integration-card-actions">
-          <button
-            type="button"
-            className="secondary-button"
-            onClick={onSettings}
-          >
-            <Settings2 size={16} />
-            Ayarlar
-          </button>
-          <button
-            type="button"
-            className="primary-button"
-            onClick={primaryAction.onClick}
-            disabled={busy}
-          >
-            {primaryAction.icon}
-            {primaryAction.label}
-          </button>
-        </div>
-      </div>
-    </section>
-  )
-}
-
 function EmptyIntegrationCategory({
   title,
   description,
@@ -659,7 +476,7 @@ function TrendyolSettingsPanel({
   }
 
   return (
-    <section className="integration-detail-panel" aria-label="Trendyol ayarları" data-provider-management="trendyol" tabIndex={-1}>
+    <section className="integration-detail-panel" aria-label="Trendyol ayarları">
       <div className="integration-detail-heading">
         <div className="integration-provider-icon marketplace">
           <ShoppingBag size={22} />
@@ -927,7 +744,7 @@ function SuratSettingsPanel({
   }
 
   return (
-    <section className="integration-detail-panel" aria-label="Sürat Kargo ayarları" data-provider-management="surat" tabIndex={-1}>
+    <section className="integration-detail-panel" aria-label="Sürat Kargo ayarları">
       <div className="integration-detail-heading">
         <div className="integration-provider-icon carrier">
           <Truck size={22} />

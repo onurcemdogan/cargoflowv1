@@ -13,6 +13,7 @@
 import { Alert, Badge, Field } from '../ui/primitives'
 import {
   IntegrationConnectionCard,
+  type IntegrationDisclosureProps,
   IntegrationAccountCard,
   IntegrationFormSection,
   IntegrationFormActions,
@@ -42,7 +43,7 @@ interface ReadTestResult {
   message: string
 }
 
-export function IkasSection() {
+export function IkasSection(disclosure: IntegrationDisclosureProps = {}) {
   const [stores, setStores] = useState<IkasStoreRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -163,7 +164,8 @@ export function IkasSection() {
   }
 
   return (
-    <IntegrationConnectionCard
+    <IntegrationConnectionCard {...disclosure}
+      summary={<>{loadError ? <Alert tone="danger" role="alert">{loadError}</Alert> : <p>{loading ? 'Mağazalar yükleniyor…' : stores.length ? stores.length + ' mağaza kayıtlı' : 'Bağlı mağaza yok'}</p>}{stores.map((store) => <div key={store.marketplaceAccountId} className="integration-summary-account"><strong>{store.displayName ?? store.storeName ?? store.providerAccountId}</strong><span>{store.isActive ? 'Bağlı · iç test' : 'Pasif'}</span></div>)}</>}
       provider="ikas"
       title="ikas"
       kind="commerce"

@@ -214,7 +214,7 @@ test('FAZ1-E: DashboardPage banner order-load hatasını gösterir; desi/label m
       onDesiChange: () => {},
     }),
   )
-  assert.ok(html.includes('Dashboard verileri yenilenemedi'))
+  assert.ok(html.includes('Rapor verileri yenilenemedi'))
   assert.ok(html.includes('Sipariş verileri yüklenemedi'))
   // Banner label iş akışı mesajı taşımaz.
   assert.ok(!html.includes(DESI_ERROR))
@@ -244,7 +244,7 @@ test('FAZ1-F: DashboardPage error=undefined iken "yenilenemedi" banner render ed
       onDesiChange: () => {},
     }),
   )
-  assert.ok(!html.includes('Dashboard verileri yenilenemedi'))
+  assert.ok(!html.includes('Rapor verileri yenilenemedi'))
 })
 
 test('FAZ1-G: DashboardPage LABEL_PRINTED + desi=null siparişte hiçbir desi/label hata metni göstermez', async (t) => {
@@ -294,9 +294,9 @@ test('FAZ1-G: DashboardPage LABEL_PRINTED + desi=null siparişte hiçbir desi/la
     }),
   )
   assert.ok(!html.includes(DESI_ERROR))
-  assert.ok(!html.includes('Dashboard verileri yenilenemedi'))
+  assert.ok(!html.includes('Rapor verileri yenilenemedi'))
   // Canonical LABEL_PRINTED "Etiket Basıldı" olarak görünür.
-  assert.ok(html.includes('Etiket Basıldı'))
+  assert.ok(!html.includes('Etiket Basıldı'), 'Reports must not expose operational label status')
 })
 
 test('FAZ1-H: buildDashboardViewModel saf yeniden hesaptır (girdi mutasyonu yok, çift çağrı stabildir)', async (t) => {

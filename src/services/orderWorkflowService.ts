@@ -760,6 +760,13 @@ export class OrderWorkflowService {
     return [...this.canonicalOrderPool.values()]
   }
 
+  /** Retain a scoped persisted detail read across paged workspace refreshes. Memory only. */
+  rememberPersistedOrder(order: CargoOrder, accountGeneration: number): boolean {
+    if (accountGeneration !== this.getMarketplaceAccountGeneration()) return false
+    this.canonicalOrderPool.set(String(order.id), order)
+    return true
+  }
+
   /** Hesap degisiminde havuz TAMAMEN bosaltilir (capraz hesap sizintisi YOK). */
   resetCanonicalOrderPool(): void {
     this.canonicalOrderPool.clear()

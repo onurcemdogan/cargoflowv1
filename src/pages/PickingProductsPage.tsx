@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ArrowRight,
   ChevronDown,
@@ -9,6 +9,8 @@ import {
 } from 'lucide-react'
 import { PageHeader } from '../components/PageHeader'
 import { ProductImageThumb } from '../components/ProductImageThumb'
+import { PickingProductDetail } from '../components/PickingProductDetail'
+import type { DashboardPickingProduct } from '../dashboard/dashboardViewModel'
 import {
   buildPickingWorkspace,
   type PickingWorkspaceResult,
@@ -38,6 +40,8 @@ export function PickingProductsPage({
   const [stage, setStage] = useState('')
   const [page, setPage] = useState(0)
   const [expanded, setExpanded] = useState<string>()
+  const [inspectedProduct, setInspectedProduct] = useState<DashboardPickingProduct>()
+  const closeDetail = useCallback(() => setInspectedProduct(undefined), [])
   const [refresh, setRefresh] = useState(0)
   const query = useMemo(() => ({ search, stage, page }), [search, stage, page])
   const key = JSON.stringify([query, lastSyncedAt, refresh])
@@ -205,12 +209,14 @@ export function PickingProductsPage({
                   data-testid="picking-product"
                 >
                   <div className="picking-product-main">
+                    <button type="button" className="picking-image-button" aria-label={`${product.productName} görselini büyüt`} onClick={() => setInspectedProduct(product)}>
                     <ProductImageThumb
                       candidates={product.imageCandidates}
                       alt={product.productName}
                       className="picking-product-image"
                       placeholderClassName="picking-product-image"
                     />
+                    </button>
                     <div className="picking-product-identity">
                       <h2>{product.productName}</h2>
                       {product.color ? <span>{product.color}</span> : null}
@@ -218,6 +224,7 @@ export function PickingProductsPage({
                         SKU: {product.sku || '—'} · Barkod:{' '}
                         {product.barcode || '—'}
                       </small>
+                      <button type="button" className="text-button" onClick={() => setInspectedProduct(product)}>Ürün detayları</button>
                     </div>
                     <div className="picking-product-quantity">
                       <strong>
@@ -328,6 +335,7 @@ export function PickingProductsPage({
           </>
         ) : null}
       </Card>
+      {inspectedProduct ? <PickingProductDetail product={inspectedProduct} onClose={closeDetail} onOpenOrder={onOpenOrder} /> : null}
     </div>
   )
 }

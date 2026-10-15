@@ -18,6 +18,7 @@
 import { Alert, Badge, Field } from '../ui/primitives'
 import {
   IntegrationConnectionCard,
+  type IntegrationDisclosureProps,
   IntegrationAccountCard,
   IntegrationFormSection,
   IntegrationFormActions,
@@ -64,7 +65,7 @@ function formatDateTime(value: string | null): string {
   return new Intl.DateTimeFormat('tr-TR', { timeZone: 'Europe/Istanbul', dateStyle: 'short', timeStyle: 'short' }).format(new Date(ms))
 }
 
-export function N11Section() {
+export function N11Section(disclosure: IntegrationDisclosureProps = {}) {
   const [accounts, setAccounts] = useState<N11AccountRow[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -185,7 +186,8 @@ export function N11Section() {
   }
 
   return (
-    <IntegrationConnectionCard
+    <IntegrationConnectionCard {...disclosure}
+      summary={<>{loadError ? <Alert tone="danger" role="alert">{loadError}</Alert> : <p>{loading ? 'Hesaplar yükleniyor…' : accounts.length ? accounts.length + ' hesap kayıtlı' : 'Bağlı hesap yok'}</p>}{accounts.map((account) => <div key={account.marketplaceAccountId} className="integration-summary-account"><strong>{account.displayName ?? 'n11 hesabı'}</strong><AccountReadStatus isActive={account.isActive} configured={Boolean(account.config)} verificationStatus={account.verificationStatus} ordersActive={Boolean(account.ordersActive)} verifying={verifyingAccount === account.marketplaceAccountId || (formState === 'saving' && editing?.marketplaceAccountId === account.marketplaceAccountId)} /><small>Son okuma: {formatDateTime(account.health.lastSuccessfulSyncAt)}</small></div>)}<p className="integration-summary-blocker"><code>N11_EPOCH_SEMANTICS_UNVERIFIED · BLOCKED_EXTERNAL</code><span>Tarih doğrulanana kadar senkronizasyon imleci engelli. Etiket ve yazma kapalı.</span></p></>}
       provider="n11"
       title="n11"
       kind="marketplace"
@@ -207,12 +209,12 @@ export function N11Section() {
       <details className="integration-connection-advanced integration-capability-warning">
         <summary>
           Senkronizasyon imleci engelli · tarih doğrulaması bekleniyor
+          <br />
+          <code>N11_EPOCH_SEMANTICS_UNVERIFIED · BLOCKED_EXTERNAL</code>
         </summary>
         <Alert tone="warning">
           Hesabın okuma doğrulaması tarih parametrelerinin anlamını kanıtlamaz.
           Tarih semantiği doğrulanana kadar kontrol noktası ilerlemez.
-          <br />
-          <code>N11_EPOCH_SEMANTICS_UNVERIFIED · BLOCKED_EXTERNAL</code>
         </Alert>
       </details>
       {loading ? <IntegrationLoading /> : null}

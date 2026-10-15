@@ -1,3 +1,40 @@
+# UI-UX-FIX-001 — local delivery handoff
+
+2026-10-15. Branch `feat/ui-ux-fix-001-operational-polish`, exact baseline
+`c499611d26e76add3d8332662a08a1e73434149c`. COMPLETE / READY_FOR_USER_REVIEW.
+Local delivery commit is branch HEAD. No push, merge or deploy.
+
+Delivered the five user-selected corrections: Reports is an analytics-only sidebar
+workspace; picking has a persisted-data image/detail modal; cargo order-open now
+retains the exact scoped record across workspace refresh; background label
+preparation is collapsed/read-only secondary information; all seven providers
+share default-collapsed management cards and unchanged explicit action handlers.
+Woo's proven OAuth-return exception remains; N11 blocker and Aras restrictions
+remain visible. Aras read failures show unavailable status rather than false empty.
+
+Cargo reproduction: real App attention row → Orders → exact visible drawer. The
+absent-pool case failed before the fix when a workspace GET replaced App-only
+records. Existing canonical memory now retains detail reads, with exact-id and
+account-generation checks. Five navigation tests cover pooled/loaded/failure,
+wrong identity and late account-switched response. No provider/write path added.
+
+All gates passed: UI453/48 files; dashboard11; productIA12; runtime-memory24;
+status9+8 UI; onboarding22+13 UI; HB23+4 UI; n11 78+5 UI; Woo105+5 UI;
+ikas32+3 UI; Aras95; carriers16+3 UI; billing43; affected node131;
+new cargo5 and detail/automation4 are included in full UI. Registry orphans0.
+TypeScript --force, build and diff check pass; lint0 errors/6 baseline warnings.
+Independent gpt-6-astra review APPROVED after fixing collapsed Aras error display.
+Synthetic light/dark desktop and narrow/mobile previews verified; no horizontal
+page overflow. Temporary preview files/server/tab removed; viewport reset.
+
+No migration, provider/backend contract change, scheduler activation, production
+access or provider calls. N11 epoch/id:null, Aras live-write, unknown payer,
+tenant/account authority and UNKNOWN_AFTER_NETWORK protections are unchanged.
+Known ambiguous production record remains untouched. User review is next.
+Full inventory/results/limits: docs/ui-ux-fix-001-operational-polish.md.
+
+---
+
 # INTEGRATIONS-UI-001 — local delivery handoff
 
 2026-10-14. Branch `feat/integrations-ui-001-standardize-connections`, baseline
